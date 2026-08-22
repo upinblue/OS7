@@ -1,17 +1,33 @@
 #!/bin/bash
-# OS/7 — Azure tooling: Connected Machine agent (Arc) + Azure CLI.
+# OS/7 — Azure tooling: Azure CLI, plus the Connected Machine agent staged for
+# install time.
 #
-# Both are published for amd64 AND arm64, so unlike hook 0030 this is not
-# architecture-limited.
+# WHY azcmagent IS NOT INSTALLED HERE.
 #
-# azcmagent is README's management path for HEADLESS installs (Arc-enabled
-# Servers). It is installed into the shared base image but deliberately NOT
-# configured or onboarded here - onboarding needs tenant credentials and is the
-# installer's job, per-machine. Installing the agent is not the same as
-# enrolling the machine.
+# Its postinst cannot complete inside a live-build chroot. Verified 2026-08-22:
 #
-# Azure CLI is a "Recommended addition" in the README's scope table, for both
-# modes.
+#   * Plain install ->
+#       "System has not been booted with systemd as init system (PID 1)."
+#   * With policy-rc.d AND SYSTEMD_OFFLINE=1 the unit symlinks are created and
+#     `start` is correctly skipped ("Running in chroot, ignoring command"), but
+#     the postinst then fails in the Arc guest-configuration step with
+#       "Unexpected system service controller. Expected ... systemd and upstart."
+#
+# Either way dpkg ends at `iF` - installed, failed-config. Shipping an OS image
+# with a half-configured package in its dpkg database is worse than not shipping
+# the package: apt will keep trying to reconfigure it, and the agent is in an
+# undefined state.
+#
+# It also does not belong in the image on principle. azcmagent is per-machine
+# management enrollment: it needs tenant credentials and a running system, so
+# both the install and the onboarding belong to the installer.
+#
+# The .deb is cached into the image so the installer can do that OFFLINE.
+#
+# (Harmless but worth knowing: azcmagent's postinst prints "Patched
+# pwsh.runtimeconfig.json: set System.Globalization.Invariant to true". That is
+# its own bundled PowerShell, not OS/7's at /opt/microsoft/powershell/7 -
+# verified untouched, and `pwsh --version` still works afterwards.)
 
 set -euo pipefail
 
@@ -19,9 +35,39 @@ ARCH="$(dpkg --print-architecture)"
 echo "OS/7 hook 0040: installing Azure tooling (arch=${ARCH})"
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get install -y --no-install-recommends azcmagent azure-cli
+# --- Azure CLI: installs cleanly in a chroot, both architectures. ------------
+apt-get install -y --no-install-recommends azure-cli
+az version --output tsv 2>/dev/null | head -1 | cut -f1 | sed 's/^/OS\/7 hook 0040:   azure-cli /'
 
-# Do not let the Arc agent start on a machine that was never onboarded.
-systemctl disable himdsd.service 2>/dev/null || true
+# --- Connected Machine agent: cached, NOT installed. -------------------------
+CACHE_DIR="/var/cache/os7/packages"
+install -d -m 0755 "${CACHE_DIR}"
+
+echo "OS/7 hook 0040: caching azcmagent for install-time deployment"
+( cd "${CACHE_DIR}" && apt-get download azcmagent )
+
+CACHED="$(ls -1 "${CACHE_DIR}"/azcmagent_*.deb 2>/dev/null | head -1)"
+if [ -z "${CACHED}" ]; then
+	echo "OS/7 hook 0040: failed to cache azcmagent" >&2
+	exit 1
+fi
+echo "OS/7 hook 0040:   cached $(basename "${CACHED}")"
+
+# Leave a breadcrumb so the installer - and anyone poking at the image - knows
+# this is deliberate rather than a missing package.
+cat > "${CACHE_DIR}/README" <<'NOTE'
+OS/7: packages staged here are installed by the INSTALLER, not by the live image.
+
+azcmagent (Azure Connected Machine agent, README "Core for headless installs")
+cannot be configured inside a live-build chroot: its postinst requires a running
+systemd and ends in dpkg state `iF` (installed, failed-config) if forced.
+
+The installer must, on the target system with systemd running:
+  1. dpkg -i /var/cache/os7/packages/azcmagent_*.deb   (or apt install ./...)
+  2. onboard it with `azcmagent connect`, using tenant credentials collected
+     during setup.
+
+Do not install these into the live image.
+NOTE
 
 echo "OS/7 hook 0040: done"

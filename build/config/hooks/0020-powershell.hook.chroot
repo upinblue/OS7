@@ -10,6 +10,8 @@
 #     `apt upgrade powershell`. An unmanaged package - or the snap, which
 #     self-refreshes on snapd's schedule - would break that guarantee.
 #     A pinned tarball puts the version fully under OS/7's control.
+#   * The .deb could not be used on resolute even if it existed for arm64: its
+#     Depends list ends at libicu74, and resolute ships libicu78.
 #
 # Bump PWSH_VERSION and both hashes together when the release train moves.
 
@@ -32,6 +34,30 @@ DEST="/opt/microsoft/powershell/7"
 
 echo "OS/7 hook 0020: installing PowerShell ${PWSH_VERSION} (${PWSH_ARCH})"
 
+# ---------------------------------------------------------------------------
+# Runtime dependency. The tarball carries NO dependency metadata, unlike a .deb,
+# so nothing pulls this in for us. PowerShell is a .NET application and aborts
+# at startup without ICU:
+#
+#   Couldn't find a valid ICU package installed on the system.
+#   Process terminated.
+#
+# dotnet-sdk-10.0 in the base package list happens to pull libicu78 in today,
+# but depending on that transitively means PowerShell breaks mysteriously the
+# day .NET moves or is dropped. Install it here, next to the thing that needs it.
+#
+# Resolved from the archive rather than hardcoded: the soname version changes
+# between Ubuntu releases (resolute is on 78), and a stale pin fails as an
+# unhelpful "package not found".
+# ---------------------------------------------------------------------------
+ICU_PKG="$(apt-cache search --names-only '^libicu[0-9]+$' | awk '{print $1}' | sort -V | tail -n1)"
+if [ -z "${ICU_PKG}" ]; then
+	echo "OS/7 hook 0020: no libicu package found in the archive - PowerShell cannot run" >&2
+	exit 1
+fi
+echo "OS/7 hook 0020: installing PowerShell's ICU dependency (${ICU_PKG})"
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${ICU_PKG}"
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
@@ -50,5 +76,7 @@ ln -sf "${DEST}/pwsh" /usr/bin/pwsh
 # NOT added to /etc/shells: bash stays the real login shell (README "Shell").
 # pwsh becomes the visible interactive shell via hook 0050 instead.
 
+# Run it for real. This is the check that catches a missing runtime dependency
+# at BUILD time instead of on a user's machine at first login.
 /usr/bin/pwsh --version
 echo "OS/7 hook 0020: done"

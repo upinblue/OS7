@@ -6,9 +6,23 @@
 # because the repos do not exist yet when the lists are processed.
 # (docs/BUILD-NOTES.md #10)
 #
-# Verified 2026-08-22: Microsoft publishes a real `resolute` suite for 26.04.
-# The June-2026 session had to fall back to `ubuntu/24.04/prod noble`; that
-# workaround is obsolete and should not be reintroduced.
+# TWO SIGNING KEYS ARE REQUIRED. Microsoft rotated keys in spring 2025:
+#
+#   microsoft.asc       EB3E94ADBE1229CF  old key, contains SHA1 signatures.
+#                                         Still signs pre-existing repos.
+#   microsoft-2025.asc  EE4D7792F748182B  current key, SHA1-free. Signs repos
+#                                         created since.
+#
+# Verified against the live repos on 2026-08-22:
+#   ubuntu/26.04/prod  resolute  ->  EE4D7792F748182B  (new repo, 2025 key)
+#   repos/edge         stable    ->  EB3E94ADBE1229CF  (old repo, legacy key)
+#   repos/azure-cli    noble     ->  EB3E94ADBE1229CF  (old repo, legacy key)
+#
+# Using only microsoft.asc - the obvious choice, and what most documentation
+# still shows - fails the resolute repo with "is not signed".
+#
+# Keys are scoped per-repo via Signed-By rather than dumped into one keyring, so
+# neither key can authenticate a repo it does not actually sign.
 
 set -euo pipefail
 
@@ -17,19 +31,38 @@ echo "OS/7 hook 0010: adding Microsoft repositories (arch=${ARCH})"
 
 install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
 
-curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-  | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
-chmod 0644 /usr/share/keyrings/microsoft.gpg
+# Fetch a key, dearmor it, and ASSERT its fingerprint. Pinning here means a
+# future key rotation fails the build loudly instead of silently trusting
+# whatever is served.
+fetch_key() {
+	local name="$1" dest="$2" want_fpr="$3"
+	curl -fsSL "https://packages.microsoft.com/keys/${name}" | gpg --dearmor -o "${dest}"
+	chmod 0644 "${dest}"
+	local got_fpr
+	got_fpr="$(gpg --show-keys --with-colons "${dest}" 2>/dev/null | awk -F: '/^fpr:/{print $10; exit}')"
+	if [ "${got_fpr}" != "${want_fpr}" ]; then
+		echo "OS/7 hook 0010: FINGERPRINT MISMATCH for ${name}" >&2
+		echo "OS/7 hook 0010:   expected ${want_fpr}" >&2
+		echo "OS/7 hook 0010:   got      ${got_fpr}" >&2
+		exit 1
+	fi
+	echo "OS/7 hook 0010:   ${name} -> ${dest} (${got_fpr})"
+}
+
+fetch_key microsoft-2025.asc /usr/share/keyrings/microsoft-2025.gpg \
+	AA86F75E427A19DD33346403EE4D7792F748182B
+fetch_key microsoft.asc      /usr/share/keyrings/microsoft-legacy.gpg \
+	BC528686B50D79E339D3721CEB3E94ADBE1229CF
 
 # --- prod/resolute: azcmagent (both arches), intune-portal + identity broker
-# --- (amd64 only). Native 26.04 suite, no cross-release pinning.
+# --- (amd64 only). Native 26.04 suite - no cross-release pinning needed.
 cat > /etc/apt/sources.list.d/microsoft-prod.sources <<SRC
 Types: deb
 URIs: https://packages.microsoft.com/ubuntu/26.04/prod
 Suites: resolute
 Components: main
 Architectures: ${ARCH}
-Signed-By: /usr/share/keyrings/microsoft.gpg
+Signed-By: /usr/share/keyrings/microsoft-2025.gpg
 SRC
 
 # --- Azure CLI. Published against the noble suite only; it is arch-independent
@@ -40,7 +73,7 @@ URIs: https://packages.microsoft.com/repos/azure-cli
 Suites: noble
 Components: main
 Architectures: ${ARCH}
-Signed-By: /usr/share/keyrings/microsoft.gpg
+Signed-By: /usr/share/keyrings/microsoft-legacy.gpg
 SRC
 
 # --- Microsoft Edge. amd64 ONLY, for two independent reasons: arm64 is a
@@ -53,7 +86,7 @@ URIs: https://packages.microsoft.com/repos/edge
 Suites: stable
 Components: main
 Architectures: amd64
-Signed-By: /usr/share/keyrings/microsoft.gpg
+Signed-By: /usr/share/keyrings/microsoft-legacy.gpg
 SRC
 else
 	echo "OS/7 hook 0010: skipping the Edge repo - ${ARCH} is a server-only target (no GUI)."
