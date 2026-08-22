@@ -1,25 +1,31 @@
 # =============================================================================
 # OS/7 — build container
 #
-#   *** STUB — UNVALIDATED ***
+#   *** STUB — the OS/7 content is not written yet, but the build-environment
+#   *** fixes below are HARVESTED FROM A PRIOR BUILD SESSION (2026-06-24) that
+#   *** did get an arm64 ISO out of live-build. Don't "simplify" them back.
+#   *** See docs/BUILD-NOTES.md for why each one is here.
 #
-# Never successfully built or run. Package list is a first guess at what
-# live-build needs to bootstrap an Ubuntu 26.04 "resolute" live system.
-#
-# Must be run PRIVILEGED: live-build mounts /proc, /sys and loop devices
-# inside the chroot it builds. See the Makefile's DOCKER_RUN.
+# Must run PRIVILEGED: live-build needs chroot, bind mounts and loop devices.
 # =============================================================================
 
-# STUB: assumes an ubuntu:26.04 image exists and that its live-build/debootstrap
-# know the "resolute" suite. If bootstrap fails with "unknown suite", this base
-# image (or debootstrap's script set) is the first thing to check.
+# 26.04 host for a 26.04 target, so debootstrap is guaranteed to know the
+# "resolute" suite. The prior session used ubuntu:24.04 successfully; if this
+# base causes trouble, that is the proven fallback (but check for
+# /usr/share/debootstrap/scripts/resolute before blaming anything else).
 FROM ubuntu:26.04
+
+# HARVESTED FIX 1: the build container must be architecture-MATCHED to the
+# target ISO. GRUB bootloader binaries are arch-specific and are not
+# cross-available from a single archive: amd64 has grub-pc-bin +
+# grub-efi-amd64-bin, arm64 has grub-efi-arm64-bin. Installing both in one
+# image can never resolve. TARGETARCH is populated by BuildKit from the
+# --platform the Makefile passes.
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C.UTF-8
 
-# STUB: unpinned, unverified. Nothing here is known to be sufficient — or
-# necessary — yet.
 RUN apt-get update && apt-get install --no-install-recommends -y \
 	live-build \
 	debootstrap \
@@ -27,20 +33,31 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 	xorriso \
 	isolinux \
 	syslinux-common \
-	grub-pc-bin \
-	grub-efi-amd64-bin \
-	grub-efi-arm64-bin \
 	mtools \
 	dosfstools \
 	ca-certificates \
 	curl \
+	gnupg \
 	git \
 	make \
 	rsync \
 	sudo \
+	`# HARVESTED FIX 2: unmkinitramfs needs these to decompress Ubuntu's` \
+	`# (zstd-compressed) initrd during lb_binary_disk. Without them the` \
+	`# binary stage fails.` \
+	zstd \
+	xz-utils \
+	lz4 \
+	&& if [ "${TARGETARCH}" = "arm64" ]; then \
+		apt-get install --no-install-recommends -y grub-efi-arm64-bin; \
+	else \
+		apt-get install --no-install-recommends -y grub-pc-bin grub-efi-amd64-bin; \
+	fi \
 	&& rm -rf /var/lib/apt/lists/*
 
-# The repo is bind-mounted here by the Makefile; live-build runs in build/.
-WORKDIR /os7/build
+# The repo is bind-mounted here at run time (see Makefile). NOTE: the build
+# itself does NOT happen here — build.sh stages into a container-local dir.
+# See HARVESTED FIX 3 in docs/BUILD-NOTES.md.
+WORKDIR /work
 
 CMD ["/bin/bash"]

@@ -1,28 +1,26 @@
-# --- live-build working state (build/config/auto/config is tracked; the rest
-# --- of build/ is generated) -------------------------------------------------
-build/.build/
-build/auto/
-build/cache/
-build/chroot/
-build/chroot.files
-build/chroot.packages.*
-build/binary/
-build/binary.*
-build/local/
-build/config/*
-!build/config/auto/
-build/config/auto/*
-!build/config/auto/config
-
 # --- build outputs -----------------------------------------------------------
+out/
 *.iso
 *.img
 *.squashfs
 *.log
 *.buildlog
 
-# --- Session 0 / VM scratch --------------------------------------------------
-.scratch/
+# --- live-build working state ------------------------------------------------
+# build.sh stages into a container-local dir, but older/in-place builds and
+# `lb config` runs can still litter the authored config tree.
+build/config/.build/
+build/config/chroot/
+build/config/chroot.files
+build/config/chroot.packages.*
+build/config/binary/
+build/config/binary.*
+build/config/cache/
+build/config/local/
+build/config/config/
+
+# --- local VM state (scripts/run-vm.sh) --------------------------------------
+.vm/
 *.qcow2
 
 # --- OS noise ----------------------------------------------------------------

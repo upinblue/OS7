@@ -12,7 +12,7 @@
 		{
 			"label": "docker build (os7-build image)",
 			"type": "shell",
-			"command": "docker build -t os7-build .",
+			"command": "make image-amd64",
 			"options": { "cwd": "${workspaceFolder}" },
 			"problemMatcher": [],
 			"group": "build"
