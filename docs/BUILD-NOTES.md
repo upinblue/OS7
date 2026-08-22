@@ -115,3 +115,79 @@ a 26.04 path before assuming this works.
 - **dash-to-panel / ArcMenu are not in the resolute archive.** GNOME Shell 50
   was too new for packaged builds of either. The README's "familiar feel" goal
   needs them vendored in-repo or pulled from extensions.gnome.org at build time.
+
+---
+
+# Build status — 2026-08-22
+
+First end-to-end build attempt against this scaffold.
+
+| Target | Result |
+|---|---|
+| `lb config` | **Passes.** live-build `3.0~a57-1`; `ubuntu:26.04` ships a `resolute` debootstrap script, so the newer build base works. |
+| `make build-arm64` | **Produces a bootable ISO** — `out/os7-arm64.iso`, 1.4 GB. |
+| arm64 ISO boots? | **Yes.** UEFI → `BOOTAA64.EFI` → GRUB 2.14 → kernel → casper → systemd → `serial-getty`. Verified in QEMU/HVF. |
+| `make build-amd64` | **Blocked locally** on Apple Silicon. See below. |
+
+This closes the prior session's open item 3 ("arm64 UEFI boot — real test pending"): the remaster script's output does boot, not merely validate structurally. The ISO carries an El Torito UEFI entry pointing at `/boot/grub/efiboot.img` plus an `0xef` MBR partition for USB.
+
+Two incidental findings:
+
+- **`casper` came in on its own.** Harvested fix 5 warned it must be in the base package list. With `--mode ubuntu` live-build pulls it in by default, so the missing package list was not fatal here. The `--bootappend-live "boot=casper ..."` half is still required.
+- **`casper-md5check.service` fails on the arm64 ISO.** Expected: the remaster rebuilds the ISO *after* live-build generates the checksums, so they no longer match. Harmless, but it is a visible red `[FAILED]` at boot — regenerate the checksums inside the remaster step before shipping anything to users.
+
+## What the arm64 ISO actually contains
+
+348 packages — a bare Ubuntu 26.04 live system, exactly as the stub `auto/config`
+predicts. Confirmed absent: `zfsutils-linux`, `zfs-initramfs`, `powershell`,
+`dotnet-sdk`, `authd`, `authd-msentraid`, `calamares`, `gnome-shell`,
+`microsoft-edge-stable`.
+
+So the build *pipeline* works end to end; only the OS/7 *content* is missing.
+That content is the next unit of work, and it needs the installer-time
+GUI/headless split designed first.
+
+## 12. amd64 cannot be built on Apple Silicon (host limitation, not a config bug)
+
+`make build-amd64` fails at the first debootstrap extraction:
+
+```
+I: Extracting base-files...
+E: Tried to extract package, but tar failed. Exit...
+```
+
+This looks like harvested fix 3 (the VirtioFS problem) but **is not**. The real
+error, in a *container-local* path:
+
+```
+tar: ./etc/os-release: Cannot open: Function not implemented
+tar: ./usr/share/common-licenses/GPL: Cannot create symlink to 'GPL-3': Function not implemented
+```
+
+`Function not implemented` is `ENOSYS`. Isolated with four tests:
+
+| Test — identical command and image definition | Result |
+|---|---|
+| Extract in native **arm64** container | exit 0 |
+| Extract in emulated **amd64** container | exit 2, `ENOSYS` |
+| `mkdir -p` / `touch` / `ln -s` in emulated amd64 | all fine |
+| Python `tarfile` on the same archive, emulated amd64 | fine |
+
+The filesystem and ordinary syscalls work. **GNU tar 1.35's** extraction path
+(almost certainly `openat2`) is what Docker Desktop's x86-on-ARM emulation does
+not implement — GNU tar fails even on an archive it just created itself.
+
+**Do not work around this by replacing `tar`.** A Python or busybox extractor
+mishandles ownership, device nodes and xattrs, which is precisely what a root
+filesystem depends on; the result is a subtly broken ISO instead of an honest
+failure.
+
+Options, in order of preference:
+
+1. **Build amd64 in CI** — `.github/workflows/build-iso.yml` already targets a
+   native x86 runner. This is what the README's CI design is for.
+2. **Toggle Rosetta** in Docker Desktop → Settings → General ("Use Rosetta for
+   x86_64/amd64 emulation"). No Rosetta key is set in the settings store, so it
+   is on this version's default; the other setting may implement `openat2`.
+3. **Iterate on arm64 locally.** The config is arch-agnostic, so almost every
+   change can be validated natively and fast.

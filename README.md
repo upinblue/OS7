@@ -20,12 +20,12 @@ This repository is freshly scaffolded. Nothing here is a working build yet — t
 | Component | Status |
 |---|---|
 | Repo scaffold / README | done (this commit) |
-| `build/config/auto/config` (live-build config) | stub — placeholder only, unvalidated |
+| `build/config/auto/config` (live-build config) | **validated** — `lb config` passes and an arm64 ISO builds from it; still has no package lists, hooks or includes |
 | `powershell/OS7/` module | stub — function signatures only, no logic |
 | Installer (Calamares + ZFS) | not started |
 | `.devcontainer` / VS Code dev environment | stub, untested |
-| CI (`.github/workflows`) | stub, untested |
-| Bootable ISO | does not exist yet |
+| CI (`.github/workflows`) | stub — never run; now the only way to build amd64 (see [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) #12) |
+| Bootable ISO | **arm64: builds and boots** to a live session (bare Ubuntu, no OS/7 content yet). amd64: blocked on Apple Silicon, needs a native runner |
 
 ## Locked decisions
 
