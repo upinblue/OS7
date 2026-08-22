@@ -1,5 +1,19 @@
 # OS/7 installer — Calamares + ZFS
 
+> **SUPERSEDED 2026-08-22 by [SETUP-PLAN.md](SETUP-PLAN.md).**
+>
+> The installer is now planned as **`os7-setup`** — an OS/7-authored,
+> keyboard-driven **text-mode** installer in C#/.NET, styled after MS-DOS 6.22
+> Setup and the Windows 2000 text-mode Setup phase, in up in blue blue
+> `#1289ff`. It serves **both** architectures, which closes open problem #1
+> below (arm64 had no install path because Calamares is a Qt GUI app), and
+> removes the need for Subiquity.
+>
+> Read [SETUP-PLAN.md](SETUP-PLAN.md) first. The Calamares material below is
+> kept because its **ZFS**, **Entra** and **encryption** findings (open problems
+> #2 and #3) are unaffected by the change of installer — only the Calamares
+> parts are obsolete.
+
 **Status: not started.** No Calamares configuration exists yet. What follows is
 what has been *established* about the problem, so the next pass doesn't
 re-derive it.
