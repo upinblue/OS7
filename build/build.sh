@@ -112,6 +112,28 @@ else
 	exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# GUARD: live-build 3.0 globs hooks at config/hooks/*.chroot - FLAT. The older
+# Debian live-build layout (config/hooks/normal/) does NOT match, and when it
+# does not match live-build prints "Begin executing hooks..." and silently runs
+# nothing, exit 0. The build then "succeeds" and hands you an ISO with none of
+# the hook content in it. That cost a full build cycle on 2026-08-22.
+#
+# Fail loudly instead: if the repo has hooks but none landed where live-build
+# will look, stop.
+# ---------------------------------------------------------------------------
+shopt -s nullglob
+AUTHORED_HOOKS=( "${SRC_CONFIG}"/hooks/*.chroot "${SRC_CONFIG}/hooks-${ARCH}"/*.chroot )
+STAGED_HOOKS=( "${WORK}"/config/hooks/*.chroot )
+shopt -u nullglob
+
+if (( ${#AUTHORED_HOOKS[@]} > 0 )) && (( ${#STAGED_HOOKS[@]} == 0 )); then
+	echo "!!! ${#AUTHORED_HOOKS[@]} hook(s) authored, but none staged at config/hooks/*.chroot" >&2
+	echo "!!! live-build would skip them SILENTLY. Check the hook filenames/layout." >&2
+	exit 1
+fi
+echo "    staged ${#STAGED_HOOKS[@]} hook(s) at config/hooks/*.chroot"
+
 cd "${WORK}"
 
 export OS7_ARCH="${ARCH}"   # read by auto/config

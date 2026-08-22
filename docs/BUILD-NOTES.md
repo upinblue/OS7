@@ -191,3 +191,37 @@ Options, in order of preference:
    is on this version's default; the other setting may implement `openat2`.
 3. **Iterate on arm64 locally.** The config is arch-agnostic, so almost every
    change can be validated natively and fast.
+
+## 13. Hooks live at `config/hooks/*.chroot` — FLAT, not `config/hooks/normal/`
+
+**A silent failure, and the most expensive kind: the build succeeds anyway.**
+
+live-build `3.0~a57-1` globs local hooks at:
+
+```
+config/hooks/*.chroot          # lb_chroot_hooks, line ~87
+```
+
+The older Debian live-build layout — `config/hooks/normal/` — does **not**
+match. When nothing matches, live-build prints `Begin executing hooks...`, runs
+nothing, and exits 0. `lb_chroot_hooks` and `lb_chroot_hacks` land on the same
+timestamp; that one-second gap is the only visible symptom.
+
+Cost when this bit on 2026-08-22: a full arm64 build produced a 1.7 GB ISO that
+looked fine. Package lists had worked (ZFS, `authd`, `dotnet-sdk-10.0`, `casper`
+all present across 523 packages), so the image was plausible. But **every hook
+had been skipped** — no PowerShell, no Microsoft repos, no Azure tooling, and no
+OS7 module verification. Proven by `azcmagent` and `azure-cli` being absent from
+`casper/filesystem.manifest`: those come only from hook 0040.
+
+Note this very likely bit the June-2026 session too — that tree also used
+`config/hooks/normal/`. Its handoff describes hook behaviour (repo setup, `GAP:`
+logging) that probably never actually executed. Treat any claim about hook
+effects from that session as unverified.
+
+`build.sh` now hard-fails if hooks are authored but none land at
+`config/hooks/*.chroot`. Do not remove that guard: live-build will not warn you.
+
+**Verification habit this argues for:** never conclude a hook worked because the
+build exited 0. Check for its *effect* — a package it installs, a file it
+writes — in the produced image.
