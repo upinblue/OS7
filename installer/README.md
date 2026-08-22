@@ -1,39 +1,90 @@
 # OS/7 installer — Calamares + ZFS
 
-**Status: not started.** This directory is empty apart from this file. No
-Calamares configuration exists yet.
+**Status: not started.** No Calamares configuration exists yet. What follows is
+what has been *established* about the problem, so the next pass doesn't
+re-derive it.
 
-## Intent
+## What is now known (verified 2026-08-22)
 
-Per the root [README.md](../README.md), the installer is Calamares plus its ZFS
-module — chosen as the best available option for a customizable, brandable
-installer on a ZFS-root Ubuntu derivative.
+The single biggest unknown in README Open Question #3 — whether Calamares can
+even do ZFS on 26.04 — is answered, and favourably:
 
-It has to do two things that off-the-shelf Calamares does not do out of the box:
+| Fact | Detail |
+|---|---|
+| Calamares is in `resolute` | `calamares 3.3.14-0ubuntu25`, both architectures |
+| Ubuntu maintains settings for it | `calamares-settings-ubuntu 1:26.04.12` published for resolute |
+| **It ships a ZFS module** | `modules/zfs/libcalamares_job_zfs.so` + `modules/zfshostid/` in the packaged build |
+| ZFS itself is safe to target | [docs/SESSION-0-ZFS-VALIDATION.md](../docs/SESSION-0-ZFS-VALIDATION.md) |
 
-1. **Install to a ZFS root**, laid out so the OS/7 release train
-   (`Update-OS7` / `Restore-OS7`) can create and activate boot environments.
-2. **Ask GUI vs. headless at setup time**, and install a different package set
-   for each — GNOME + Microsoft Edge + Intune for GUI, no desktop packages plus
-   the Azure Connected Machine agent for headless.
+So this is an *integration* job against packaged, distro-supported components —
+not a port, and not a build-from-source exercise. That is a much smaller risk
+than the README assumed.
 
-## Why this is the hard part
+Calamares is already installed into the live image by
+`build/config/package-lists/os7-desktop.list.chroot`.
 
-This is Open Question #3 in the root README, and the project's known hard part.
-The unknown is not Calamares itself but the seam between three moving pieces:
+## What the installer still has to do
 
-- **live-build** produces the live medium and the squashfs that gets unpacked;
-- **Calamares** unpacks it and configures the target;
-- **ZFS root** changes what "the target" even looks like — datasets and boot
-  environments rather than a partition with a filesystem on it.
+1. **Install to a ZFS root**, laid out so `Update-OS7` / `Restore-OS7` can
+   create and activate boot environments. The `zfs` module handles pool and
+   dataset creation; the boot-environment *layout* is OS/7's design decision and
+   is not something Calamares will decide for you.
+2. **Ask GUI vs. headless at setup time** and diverge:
+   - **GUI** → keep GNOME, keep the Microsoft desktop stack, Intune enrollment.
+   - **Headless** → remove the desktop packages, onboard to Azure Arc instead.
 
-Nobody has validated how far Calamares' ZFS module actually gets with that
-combination. Assume nothing works until it has been run.
+   Because the ISO ships one shared package base, headless is a **removal** step
+   after unpacking, not a different image. Calamares' `packages` module can do
+   this via a `try_remove` operation driven by the user's choice.
+3. **Onboard the management agent.** `azcmagent` is installed by hook 0040 but
+   deliberately left un-onboarded and disabled — onboarding needs tenant
+   credentials and is per-machine, so it belongs here.
 
-## Blocked on
+## Open problems, in order of how much they hurt
 
-Open Question #1 — the ZFS-on-Linux-7.0 warning
-([openzfs/zfs#18488](https://github.com/openzfs/zfs/issues/18488)). If ZFS root
-turns out not to be safe to build on for 26.04, the installer's whole storage
-design changes, and any Calamares work done first is wasted. Validate that
-first.
+### 1. arm64 GUI mode cannot be Intune-enrolled — needs a product decision
+
+Microsoft does not build Edge for arm64 Linux, and `intune-portal` +
+`microsoft-identity-broker` are published for amd64 only. The root README
+requires GNOME **and** Edge for supported Intune enrollment and does **not**
+split by architecture — but the June-2026 README did split, calling arm64
+"server-leaning," for precisely this reason.
+
+Hook 0030 logs the gap rather than pretending. The installer needs a decided
+answer before it can offer a coherent set of choices. Options:
+
+- Re-introduce the arch split: arm64 is headless/Arc-only, GUI mode is amd64.
+- Offer GUI on arm64 but state plainly that it is not Intune-manageable.
+- Drop arm64 from the GUI target entirely.
+
+### 2. Entra ID login is not in the image yet
+
+`authd` is in the archive, but its Entra broker **`authd-msentraid` is not** —
+it is a Canonical-verified **snap** (0.4.1, both architectures). The root README
+says it is in the archive with no PPA needed; the "no PPA" half is right, the
+"archive" half is not.
+
+Seeding a snap into a live-build image is its own unsolved task
+(`snap download` + `snap ack` into `/var/lib/snapd/seed` plus a seed manifest,
+none of which plain live-build supports). It was deferred rather than half-done.
+Until it is solved, **no OS/7 build can actually log in with Entra ID**, which
+is a headline feature.
+
+### 3. Encryption is undecided
+
+ZFS native encryption vs. LUKS underneath. This interacts with Intune
+disk-encryption compliance reporting on managed amd64 desktops — confirm what
+Intune actually detects before choosing.
+
+### 4. Calamares branding
+
+Untouched. README wants a classic/retro identity in up in blue Orange `#ff6912`
+for branding surfaces — note that this explicitly does **not** extend to the
+GNOME desktop itself.
+
+## Prerequisite reading
+
+- [docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md) — build system findings,
+  including why amd64 cannot currently be built on Apple Silicon.
+- [docs/SESSION-0-ZFS-VALIDATION.md](../docs/SESSION-0-ZFS-VALIDATION.md) — the
+  ZFS risk assessment this all rests on.
