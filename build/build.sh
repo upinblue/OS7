@@ -74,6 +74,23 @@ for sub in package-lists hooks includes.chroot; do
 	fi
 done
 
+# ---------------------------------------------------------------------------
+# Stage the OS7 PowerShell module from its ONE source of truth (powershell/OS7)
+# into the image, at a path already on PowerShell 7's default PSModulePath.
+# Hook 0060 verifies it imports. Keeping a second copy checked in under
+# includes.chroot - as the June-2026 tree did - just lets the two drift.
+# ---------------------------------------------------------------------------
+OS7_MODULE_SRC="${HERE}/../powershell/OS7"
+OS7_MODULE_DST="${WORK}/config/includes.chroot/usr/local/share/powershell/Modules/OS7"
+if [[ -d "${OS7_MODULE_SRC}" ]]; then
+	mkdir -p "${OS7_MODULE_DST}"
+	cp -a "${OS7_MODULE_SRC}/." "${OS7_MODULE_DST}/"
+	echo "    staged OS7 PowerShell module -> ${OS7_MODULE_DST#${WORK}/}"
+else
+	echo "!!! OS7 module source missing: ${OS7_MODULE_SRC}" >&2
+	exit 1
+fi
+
 cd "${WORK}"
 
 export OS7_ARCH="${ARCH}"   # read by auto/config

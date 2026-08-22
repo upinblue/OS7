@@ -1,0 +1,31 @@
+# OS/7 desktop (GNOME).
+#
+# Present in the LIVE image on every architecture, because:
+#   a) Calamares is a Qt GUI application and needs a running desktop session to
+#      run the install at all, and
+#   b) GUI vs. headless is an INSTALLER-TIME choice (README) - the installer
+#      removes the desktop for a headless install rather than the ISO shipping
+#      two package bases.
+#
+# GNOME specifically is required for supported Microsoft Intune enrollment.
+#
+# NOTE: this list contains no Microsoft packages. The Microsoft APT repos do not
+# exist yet during the package-list pass - they are added by hook 0010, so
+# anything from them must be installed in a later hook.
+# (docs/BUILD-NOTES.md #10)
+
+ubuntu-desktop-minimal
+gnome-shell
+gdm3
+nautilus
+gnome-terminal
+
+# --- Installer ---------------------------------------------------------------
+# Calamares 3.3.14 in resolute ships the zfs and zfshostid modules, which is why
+# the README's Calamares decision is viable. Configuration is still to be
+# written - see installer/README.md.
+calamares
+
+# The "familiar feel" extensions (dash-to-panel taskbar, ArcMenu start menu) are
+# deliberately absent: neither has a GNOME-50-compatible build in the resolute
+# archive. Hook 0070 logs this gap rather than failing the build.

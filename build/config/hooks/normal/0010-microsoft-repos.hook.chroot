@@ -1,0 +1,62 @@
+#!/bin/bash
+# OS/7 — add the Microsoft APT repositories.
+#
+# Runs INSIDE the chroot, after the package-list pass. Anything that comes from
+# a Microsoft repo must be installed by a later hook, never by a package list,
+# because the repos do not exist yet when the lists are processed.
+# (docs/BUILD-NOTES.md #10)
+#
+# Verified 2026-08-22: Microsoft publishes a real `resolute` suite for 26.04.
+# The June-2026 session had to fall back to `ubuntu/24.04/prod noble`; that
+# workaround is obsolete and should not be reintroduced.
+
+set -euo pipefail
+
+ARCH="$(dpkg --print-architecture)"
+echo "OS/7 hook 0010: adding Microsoft repositories (arch=${ARCH})"
+
+install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+
+curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+  | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+chmod 0644 /usr/share/keyrings/microsoft.gpg
+
+# --- prod/resolute: azcmagent (both arches), intune-portal + identity broker
+# --- (amd64 only). Native 26.04 suite, no cross-release pinning.
+cat > /etc/apt/sources.list.d/microsoft-prod.sources <<SRC
+Types: deb
+URIs: https://packages.microsoft.com/ubuntu/26.04/prod
+Suites: resolute
+Components: main
+Architectures: ${ARCH}
+Signed-By: /usr/share/keyrings/microsoft.gpg
+SRC
+
+# --- Azure CLI. Published against the noble suite only; it is arch-independent
+# --- Python tooling and is available for amd64 and arm64 alike.
+cat > /etc/apt/sources.list.d/microsoft-azure-cli.sources <<SRC
+Types: deb
+URIs: https://packages.microsoft.com/repos/azure-cli
+Suites: noble
+Components: main
+Architectures: ${ARCH}
+Signed-By: /usr/share/keyrings/microsoft.gpg
+SRC
+
+# --- Microsoft Edge. amd64 ONLY - Microsoft does not build Edge for arm64
+# --- Linux. Adding this repo on arm64 would just produce apt noise.
+if [ "${ARCH}" = "amd64" ]; then
+	cat > /etc/apt/sources.list.d/microsoft-edge.sources <<SRC
+Types: deb
+URIs: https://packages.microsoft.com/repos/edge
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/microsoft.gpg
+SRC
+else
+	echo "OS/7 hook 0010: GAP: skipping the Edge repo - Microsoft ships no arm64 Linux build."
+fi
+
+apt-get update
+echo "OS/7 hook 0010: done"

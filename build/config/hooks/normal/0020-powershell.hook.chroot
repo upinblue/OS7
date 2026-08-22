@@ -1,0 +1,54 @@
+#!/bin/bash
+# OS/7 — install PowerShell 7 from the pinned upstream tarball.
+#
+# WHY THE TARBALL AND NOT A PACKAGE:
+#   * Microsoft ships no PowerShell .deb for arm64 at all, and the amd64 .deb
+#     only exists in the `noble` suite, not `resolute`. A tarball is the one
+#     method that is identical on both architectures.
+#   * README locks PowerShell to the OS/7 release train: it updates via
+#     Update-OS7 into a new ZFS boot environment, NEVER a standalone
+#     `apt upgrade powershell`. An unmanaged package - or the snap, which
+#     self-refreshes on snapd's schedule - would break that guarantee.
+#     A pinned tarball puts the version fully under OS/7's control.
+#
+# Bump PWSH_VERSION and both hashes together when the release train moves.
+
+set -euo pipefail
+
+PWSH_VERSION="7.6.5"
+SHA256_x64="b34ab3b19acac1d3d4d0d3cfdb02acf62f457b0b6a962ff008132033f7566844"
+SHA256_arm64="ed4084f215d8bce2edd23aa7cb1f1e7b0818e41363a635a22065d2701b6141df"
+
+ARCH="$(dpkg --print-architecture)"
+case "${ARCH}" in
+	amd64) PWSH_ARCH="x64";   PWSH_SHA="${SHA256_x64}"   ;;
+	arm64) PWSH_ARCH="arm64"; PWSH_SHA="${SHA256_arm64}" ;;
+	*) echo "OS/7 hook 0020: unsupported architecture '${ARCH}'" >&2; exit 1 ;;
+esac
+
+TARBALL="powershell-${PWSH_VERSION}-linux-${PWSH_ARCH}.tar.gz"
+URL="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/${TARBALL}"
+DEST="/opt/microsoft/powershell/7"
+
+echo "OS/7 hook 0020: installing PowerShell ${PWSH_VERSION} (${PWSH_ARCH})"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+
+curl -fsSL -o "${TMP}/${TARBALL}" "${URL}"
+
+# Verify before unpacking anything into the image. A silent swap here would
+# ship a compromised interactive shell to every OS/7 user.
+echo "${PWSH_SHA}  ${TMP}/${TARBALL}" | sha256sum -c - \
+	|| { echo "OS/7 hook 0020: SHA256 MISMATCH for ${TARBALL} - refusing to install" >&2; exit 1; }
+
+install -d -m 0755 "${DEST}"
+tar -xzf "${TMP}/${TARBALL}" -C "${DEST}"
+chmod +x "${DEST}/pwsh"
+ln -sf "${DEST}/pwsh" /usr/bin/pwsh
+
+# NOT added to /etc/shells: bash stays the real login shell (README "Shell").
+# pwsh becomes the visible interactive shell via hook 0050 instead.
+
+/usr/bin/pwsh --version
+echo "OS/7 hook 0020: done"

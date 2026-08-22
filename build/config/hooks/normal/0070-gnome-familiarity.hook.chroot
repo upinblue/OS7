@@ -1,0 +1,28 @@
+#!/bin/bash
+# OS/7 — "familiar feel" GNOME extensions.
+#
+#   *** NOT IMPLEMENTED - this hook only records the gap. ***
+#
+# README wants a Windows-admin-familiar desktop: a taskbar (dash-to-panel) and
+# a start menu (ArcMenu), explicitly NOT a retro skin.
+#
+# Neither has a GNOME-Shell-50-compatible build in the resolute archive.
+# Re-verified 2026-08-22, unchanged since the June-2026 session found the same
+# thing: gnome-shell-extension-arc-menu is absent outright, and
+# gnome-shell-extension-dash-to-panel has no installation candidate.
+#
+# Options, best first:
+#   1. Vendor GNOME-50-compatible releases of both in-repo under
+#      includes.chroot/usr/share/gnome-shell/extensions/<uuid>/ - reproducible
+#      and offline-safe, at the cost of owning the update cadence.
+#   2. Download pinned releases from extensions.gnome.org at build time -
+#      tracks upstream, but makes the build network-dependent and mutable.
+#   3. Approximate with stock GNOME tuned via dconf until upstream catches up.
+#
+# The build must not fail over this; GNOME is functional, just not yet familiar.
+
+set -euo pipefail
+
+echo "OS/7 hook 0070: GAP: dash-to-panel and ArcMenu are not installed."
+echo "OS/7 hook 0070: GAP:   Neither has a GNOME 50 build in the resolute archive."
+echo "OS/7 hook 0070: GAP:   GNOME is functional but not yet 'familiar' per README."

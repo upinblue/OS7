@@ -1,0 +1,50 @@
+#!/bin/bash
+# OS/7 — make PowerShell the visible interactive shell, without displacing bash.
+#
+# README "Shell", and the reason this is a profile drop-in rather than a chsh:
+#   bash stays the actual system/login shell. cron, systemd units, dpkg
+#   maintainer scripts and Intune's bash-based custom compliance scripts all
+#   assume bash is there and working. Changing the login shell breaks them.
+#
+# So: bash still starts, and hands off to pwsh only for real interactive human
+# sessions. The lived experience is "PowerShell by default"; nothing that
+# expects bash underneath notices.
+
+set -euo pipefail
+
+echo "OS/7 hook 0050: installing the PowerShell interactive-shell drop-in"
+install -d -m 0755 /etc/profile.d
+
+cat > /etc/profile.d/95-os7-powershell.sh <<'DROPIN'
+# OS/7: hand interactive human sessions over to PowerShell 7.
+#
+# Every guard here exists to avoid breaking something specific. Removing any of
+# them will break that thing.
+
+# 1. Interactive shells only. Without this, scp/sftp, `ssh host command`, cron
+#    and dpkg hooks would all get exec'd into pwsh and break.
+case $- in
+	*i*) ;;
+	*) return ;;
+esac
+
+# 2. A non-interactive ssh command still sets this; belt and braces with (1).
+[ -n "${SSH_ORIGINAL_COMMAND:-}" ] && return
+
+# 3. Re-entry guard. pwsh itself can start a login bash; without this the two
+#    would exec each other forever.
+[ -n "${OS7_PWSH_ACTIVE:-}" ] && return
+
+# 4. Never strand a user without a shell if PowerShell is missing or broken.
+[ -x /usr/bin/pwsh ] || return
+
+# 5. Opt-out, so an admin can get plain bash without editing system files.
+[ -n "${OS7_NO_PWSH:-}" ] && return
+
+OS7_PWSH_ACTIVE=1
+export OS7_PWSH_ACTIVE
+exec /usr/bin/pwsh -NoLogo
+DROPIN
+
+chmod 0644 /etc/profile.d/95-os7-powershell.sh
+echo "OS/7 hook 0050: done"

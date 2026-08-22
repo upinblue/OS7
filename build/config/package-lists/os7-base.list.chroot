@@ -1,0 +1,46 @@
+# OS/7 base system — installed for BOTH GUI and headless modes, all architectures.
+#
+# README "Locked decisions": one shared package base per architecture; GUI vs.
+# headless is chosen by the installer, not by shipping two different images.
+#
+# IMPORTANT: live-build package lists do NOT support trailing inline comments.
+# Every token on a non-comment line is passed to apt as a package name.
+# Keep comments on their own lines. (docs/BUILD-NOTES.md #9)
+
+ubuntu-standard
+
+# casper provides the Ubuntu live-boot init. live-build's ubuntu mode pulls it
+# in by default, but naming it explicitly keeps the ISO's live-bootability from
+# depending on a default. (docs/BUILD-NOTES.md #5)
+casper
+
+# --- Storage: ZFS root -------------------------------------------------------
+# The GA-kernel-matched PREBUILT module, never zfs-dkms, so kernel and ZFS move
+# in lockstep. Validated 2026-08-22: docs/SESSION-0-ZFS-VALIDATION.md
+zfsutils-linux
+zfs-initramfs
+
+# linux-generic carries the matching prebuilt zfs.ko. Do NOT swap this for a
+# -virtual or -kvm flavour: those do not ship the ZFS module.
+linux-generic
+
+# --- Identity: Entra ID login ------------------------------------------------
+# authd is in the archive. Its Entra broker (authd-msentraid) is NOT - it is a
+# Canonical snap, and seeding snaps into a live-build image is unsolved here.
+# See installer/README.md.
+authd
+
+# --- .NET (README: Core, non-negotiable, both modes) --------------------------
+# resolute ships .NET 10, not 9. Canonical packages this now; it does not come
+# from packages.microsoft.com any more.
+dotnet-sdk-10.0
+
+# --- Base tooling ------------------------------------------------------------
+openssh-server
+curl
+ca-certificates
+gnupg
+sudo
+git
+less
+vim

@@ -1,0 +1,41 @@
+#!/bin/bash
+# OS/7 — Microsoft GUI stack: Edge, Intune portal, identity broker.
+#
+#   *** amd64 ONLY - and that is an upstream constraint, not a choice. ***
+#
+# Verified against the live repos on 2026-08-22:
+#   microsoft-edge-stable      amd64 only  (no arm64 Linux build exists)
+#   intune-portal              amd64 only  (resolute suite)
+#   microsoft-identity-broker  amd64 only  (resolute suite)
+#
+# CONSEQUENCE, and it is a real one: README says GUI mode requires GNOME AND
+# Edge for supported Intune enrollment, and does not split by architecture.
+# On arm64 that promise cannot be kept - an arm64 GUI install gets GNOME but
+# CANNOT be Intune-enrolled. The June-2026 README split arm64 off as
+# "server-leaning" for exactly this reason. Unresolved; see installer/README.md.
+#
+# This hook does not fail the build on arm64. It logs the gap loudly instead.
+
+set -euo pipefail
+
+ARCH="$(dpkg --print-architecture)"
+
+if [ "${ARCH}" != "amd64" ]; then
+	echo "OS/7 hook 0030: GAP: Microsoft GUI stack skipped on ${ARCH}."
+	echo "OS/7 hook 0030: GAP:   Edge, intune-portal and microsoft-identity-broker"
+	echo "OS/7 hook 0030: GAP:   are published for amd64 only. An ${ARCH} GUI install"
+	echo "OS/7 hook 0030: GAP:   therefore CANNOT be Intune-enrolled."
+	exit 0
+fi
+
+echo "OS/7 hook 0030: installing the Microsoft GUI stack (amd64)"
+export DEBIAN_FRONTEND=noninteractive
+
+# microsoft-identity-broker is what actually brokers the Entra ID sign-in that
+# Intune enrollment depends on - it is not optional alongside intune-portal.
+apt-get install -y --no-install-recommends \
+	microsoft-edge-stable \
+	intune-portal \
+	microsoft-identity-broker
+
+echo "OS/7 hook 0030: done"

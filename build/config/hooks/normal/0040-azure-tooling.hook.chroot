@@ -1,0 +1,27 @@
+#!/bin/bash
+# OS/7 — Azure tooling: Connected Machine agent (Arc) + Azure CLI.
+#
+# Both are published for amd64 AND arm64, so unlike hook 0030 this is not
+# architecture-limited.
+#
+# azcmagent is README's management path for HEADLESS installs (Arc-enabled
+# Servers). It is installed into the shared base image but deliberately NOT
+# configured or onboarded here - onboarding needs tenant credentials and is the
+# installer's job, per-machine. Installing the agent is not the same as
+# enrolling the machine.
+#
+# Azure CLI is a "Recommended addition" in the README's scope table, for both
+# modes.
+
+set -euo pipefail
+
+ARCH="$(dpkg --print-architecture)"
+echo "OS/7 hook 0040: installing Azure tooling (arch=${ARCH})"
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get install -y --no-install-recommends azcmagent azure-cli
+
+# Do not let the Arc agent start on a machine that was never onboarded.
+systemctl disable himdsd.service 2>/dev/null || true
+
+echo "OS/7 hook 0040: done"

@@ -1,0 +1,46 @@
+#!/bin/bash
+# OS/7 — verify the OS7 PowerShell module landed and is importable.
+#
+# The module itself is placed by build.sh, which copies powershell/OS7/ into the
+# staged includes.chroot. That keeps ONE source of truth in the repo - the
+# June-2026 tree carried a second, drifting copy baked in under
+# includes.chroot, which is exactly what this avoids.
+#
+# /usr/local/share/powershell/Modules is on PowerShell 7's default PSModulePath,
+# so no path configuration is needed.
+#
+# This hook only checks the result. If the module is missing or unimportable,
+# fail the build - shipping an OS/7 image whose management surface is absent
+# would be worse than not shipping one.
+
+set -euo pipefail
+
+MODULE_DIR="/usr/local/share/powershell/Modules/OS7"
+
+echo "OS/7 hook 0060: verifying the OS7 module at ${MODULE_DIR}"
+
+if [ ! -f "${MODULE_DIR}/OS7.psd1" ] || [ ! -f "${MODULE_DIR}/OS7.psm1" ]; then
+	echo "OS/7 hook 0060: OS7 module missing from ${MODULE_DIR}" >&2
+	echo "OS/7 hook 0060: build.sh should have staged it from powershell/OS7/" >&2
+	exit 1
+fi
+
+chown -R root:root "${MODULE_DIR}"
+find "${MODULE_DIR}" -type f -exec chmod 0644 {} +
+find "${MODULE_DIR}" -type d -exec chmod 0755 {} +
+
+# Import it for real. Catches a broken manifest at build time rather than on a
+# user's machine. The functions are documented stubs that throw when CALLED -
+# importing them must still work.
+/usr/bin/pwsh -NoLogo -NoProfile -Command '
+	$ErrorActionPreference = "Stop"
+	Import-Module OS7
+	$expected = @("Set-OS7Mode","Update-OS7","Restore-OS7")
+	$actual   = (Get-Command -Module OS7).Name
+	foreach ($f in $expected) {
+		if ($actual -notcontains $f) { throw "OS7 module does not export $f" }
+	}
+	Write-Host "OS/7 hook 0060: module imports, exports: $($actual -join ", ")"
+'
+
+echo "OS/7 hook 0060: done"
