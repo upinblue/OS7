@@ -1,0 +1,30 @@
+// =============================================================================
+// OS/7 — VS Code Dev Container
+//
+//   *** STUB — UNTESTED ***
+//
+// Wraps the same Dockerfile the build uses, so "Reopen in Container" drops you
+// into an environment that can run `make build-amd64` directly.
+//
+// runArgs pass --privileged because live-build needs real mounts and loop
+// devices. See README.md "Dev environment".
+// =============================================================================
+{
+	"name": "OS/7 build",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"context": ".."
+	},
+	"runArgs": ["--privileged"],
+	"workspaceFolder": "/os7",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/os7,type=bind",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-vscode.powershell",
+				"ms-azuretools.vscode-docker",
+				"timonwong.shellcheck"
+			]
+		}
+	}
+}

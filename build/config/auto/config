@@ -1,0 +1,72 @@
+#!/bin/sh
+# =============================================================================
+# OS/7 — live-build configuration
+#
+#   *** STUB — UNVALIDATED PLACEHOLDER ***
+#
+# This file has never been run through `lb config` successfully. Every option
+# below is a best-guess starting point, not a verified working configuration.
+# Do not treat any value here as a locked decision except DISTRIBUTION, which
+# is fixed at "resolute" (Ubuntu 26.04 LTS) per README.md "Locked decisions".
+#
+# Invoked automatically by `lb config` (live-build reads auto/config from the
+# build directory). Must remain executable.
+# =============================================================================
+
+set -e
+
+# --- Locked ------------------------------------------------------------------
+# Ubuntu 26.04 LTS "Resolute Raccoon". Not overridable.
+OS7_DISTRIBUTION="resolute"
+
+# --- Build-time knobs --------------------------------------------------------
+# Architecture is driven by the Makefile (make build-amd64 / make build-arm64).
+OS7_ARCH="${OS7_ARCH:-amd64}"
+
+# Ubuntu splits its archive by architecture: amd64 lives on archive.ubuntu.com,
+# every other port (incl. arm64) lives on ports.ubuntu.com. Getting this wrong
+# fails at debootstrap time.
+case "${OS7_ARCH}" in
+	amd64)
+		OS7_MIRROR="http://archive.ubuntu.com/ubuntu/"
+		# STUB: syslinux for BIOS + grub-efi for UEFI. Untested.
+		OS7_BOOTLOADERS="syslinux,grub-efi"
+		;;
+	arm64)
+		OS7_MIRROR="http://ports.ubuntu.com/ubuntu-ports/"
+		# arm64 is UEFI-only — no syslinux.
+		OS7_BOOTLOADERS="grub-efi"
+		;;
+	*)
+		echo "OS/7: unsupported architecture '${OS7_ARCH}' (expected amd64 or arm64)" >&2
+		exit 1
+		;;
+esac
+
+# =============================================================================
+# STUB: no package lists, no hooks, no includes.chroot yet. A build from this
+# config produces (at best) a bare Ubuntu live system with none of OS/7 in it:
+#   - no PowerShell 7 / .NET            (README: Core, non-negotiable)
+#   - no authd + authd-msentraid        (README: Identity)
+#   - no ZFS root support               (README: Storage — blocked on Open Q #1)
+#   - no Calamares installer            (README: Open Q #3, the hard part)
+#   - no GNOME / headless mode split    (README: installer-time choice)
+# =============================================================================
+
+lb config noauto \
+	--mode ubuntu \
+	--distribution "${OS7_DISTRIBUTION}" \
+	--architectures "${OS7_ARCH}" \
+	--mirror-bootstrap "${OS7_MIRROR}" \
+	--mirror-chroot "${OS7_MIRROR}" \
+	--mirror-binary "${OS7_MIRROR}" \
+	--archive-areas "main restricted universe multiverse" \
+	--linux-flavours generic \
+	--binary-images iso-hybrid \
+	--bootloaders "${OS7_BOOTLOADERS}" \
+	--debian-installer none \
+	--iso-application "OS/7" \
+	--iso-publisher "up in blue GmbH; https://github.com/upinblue; https://github.com/upinblue/os7" \
+	--iso-volume "OS7" \
+	--bootappend-live "boot=casper quiet splash ---" \
+	"${@}"

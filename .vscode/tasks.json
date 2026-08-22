@@ -1,0 +1,45 @@
+// =============================================================================
+// OS/7 — local build workflow
+//
+//   *** STUB — UNTESTED ***
+//
+// Wires up the four commands named in README.md "Dev environment":
+// docker build, lb config, make build-amd64, make build-arm64.
+// =============================================================================
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "docker build (os7-build image)",
+			"type": "shell",
+			"command": "docker build -t os7-build .",
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "lb config (validate live-build config)",
+			"type": "shell",
+			"command": "make lb-config",
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "make build-amd64",
+			"type": "shell",
+			"command": "make build-amd64",
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": [],
+			"group": { "kind": "build", "isDefault": true }
+		},
+		{
+			"label": "make build-arm64",
+			"type": "shell",
+			"command": "make build-arm64",
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

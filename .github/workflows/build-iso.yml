@@ -1,0 +1,61 @@
+# =============================================================================
+# OS/7 — ISO build CI
+#
+#   *** STUB — UNVALIDATED, EXPECTED TO FAIL ***
+#
+# Per README.md ("CI"): amd64 on standard hosted runners, arm64 on the free
+# NATIVE arm64 hosted runners available to public repos. Nothing here builds
+# under QEMU emulation — there is deliberately no setup-qemu-action /
+# docker/setup-buildx cross-build step, and none should be added.
+#
+# Trigger is workflow_dispatch only for now: the build is a known-failing stub,
+# and a red X on every push is noise. Add `push:` once `make build-amd64`
+# actually produces an ISO.
+# =============================================================================
+
+name: build-iso
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-amd64:
+    name: ISO (amd64)
+    # Standard x86_64 hosted runner — native, no emulation.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ISO
+        run: make build-amd64
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: os7-amd64-iso
+          path: build/*.iso
+          if-no-files-found: error
+
+  build-arm64:
+    name: ISO (arm64)
+    # Free NATIVE arm64 hosted runner for public repos — no QEMU.
+    # STUB: label unverified. GitHub currently documents `ubuntu-24.04-arm`;
+    # if a `ubuntu-26.04-arm` label exists by build time, prefer it. The runner
+    # OS does not need to match the target distribution — live-build bootstraps
+    # `resolute` inside the build container regardless.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ISO
+        run: make build-arm64
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: os7-arm64-iso
+          path: build/*.iso
+          if-no-files-found: error

@@ -1,0 +1,29 @@
+# --- live-build working state (build/config/auto/config is tracked; the rest
+# --- of build/ is generated) -------------------------------------------------
+build/.build/
+build/auto/
+build/cache/
+build/chroot/
+build/chroot.files
+build/chroot.packages.*
+build/binary/
+build/binary.*
+build/local/
+build/config/*
+!build/config/auto/
+build/config/auto/*
+!build/config/auto/config
+
+# --- build outputs -----------------------------------------------------------
+*.iso
+*.img
+*.squashfs
+*.log
+*.buildlog
+
+# --- Session 0 / VM scratch --------------------------------------------------
+.scratch/
+*.qcow2
+
+# --- OS noise ----------------------------------------------------------------
+.DS_Store
