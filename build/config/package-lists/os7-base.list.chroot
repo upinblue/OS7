@@ -1,7 +1,12 @@
-# OS/7 base system — installed for BOTH GUI and headless modes, all architectures.
+# OS/7 base system — installed on EVERY architecture, in every mode.
 #
-# README "Locked decisions": one shared package base per architecture; GUI vs.
-# headless is chosen by the installer, not by shipping two different images.
+# The two architectures are different products:
+#   amd64 - GUI or headless, chosen at install time. Adds the desktop from
+#           package-lists-amd64/ and the Microsoft GUI stack from hooks-amd64/.
+#   arm64 - SERVER ONLY. No GUI target, so no desktop list and no Calamares.
+#
+# README's "one shared package base" is per-architecture, so this split is
+# consistent with it. Everything below is common to both.
 #
 # IMPORTANT: live-build package lists do NOT support trailing inline comments.
 # Every token on a non-comment line is passed to apt as a package name.

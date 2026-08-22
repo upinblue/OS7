@@ -1,0 +1,34 @@
+#!/bin/bash
+# OS/7 — Microsoft GUI stack: Edge, Intune portal, identity broker.
+#
+# Lives under hooks-amd64/ because it applies to amd64 only. That is a product
+# decision (arm64 is SERVER ONLY, no GUI target) that happens to line up with an
+# upstream constraint — verified against the live repos on 2026-08-22:
+#
+#   microsoft-edge-stable      amd64 only  (no arm64 Linux build exists)
+#   intune-portal              amd64 only  (resolute suite)
+#   microsoft-identity-broker  amd64 only  (resolute suite)
+#
+# So even if arm64 were a GUI target, it could not be Intune-enrolled. It isn't,
+# so this hook is simply never staged there.
+
+set -euo pipefail
+
+ARCH="$(dpkg --print-architecture)"
+if [ "${ARCH}" != "amd64" ]; then
+	# Defensive only: build.sh should never stage this hook on a non-amd64 build.
+	echo "OS/7 hook 0030: staged on ${ARCH} but this hook is amd64-only - skipping." >&2
+	exit 0
+fi
+
+echo "OS/7 hook 0030: installing the Microsoft GUI stack (amd64)"
+export DEBIAN_FRONTEND=noninteractive
+
+# microsoft-identity-broker is what actually brokers the Entra ID sign-in that
+# Intune enrollment depends on — not optional alongside intune-portal.
+apt-get install -y --no-install-recommends \
+	microsoft-edge-stable \
+	intune-portal \
+	microsoft-identity-broker
+
+echo "OS/7 hook 0030: done"

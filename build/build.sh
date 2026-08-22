@@ -69,8 +69,29 @@ for sub in package-lists hooks includes.chroot; do
 	if [[ -d "${SRC_CONFIG}/${sub}" ]]; then
 		cp -a "${SRC_CONFIG}/${sub}" "${WORK}/config/${sub}"
 	else
-		# STUB: none of these are authored yet. Expected, for now.
 		echo "    (no ${sub}/ authored yet - skipping)"
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# Architecture-scoped config: <sub>-<arch>/ is merged over <sub>/ for that
+# architecture only.
+#
+# This exists because the two architectures are NOT the same product:
+#   amd64 - GUI or headless, chosen at install time. Ships GNOME + Calamares.
+#   arm64 - SERVER ONLY, no GUI target. Ships no desktop at all.
+#
+# README's "one shared package base" is per-architecture, so this is consistent
+# with it. Done explicitly here rather than via live-build's package-list
+# preprocessing: the staging is visible, greppable, and does not depend on
+# undocumented behaviour.
+# ---------------------------------------------------------------------------
+for sub in package-lists hooks includes.chroot; do
+	ARCH_SUB="${SRC_CONFIG}/${sub}-${ARCH}"
+	if [[ -d "${ARCH_SUB}" ]]; then
+		mkdir -p "${WORK}/config/${sub}"
+		cp -a "${ARCH_SUB}/." "${WORK}/config/${sub}/"
+		echo "    merged ${sub}-${ARCH}/ -> config/${sub}/"
 	fi
 done
 

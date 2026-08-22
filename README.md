@@ -31,16 +31,18 @@ This repository is freshly scaffolded. Nothing here is a working build yet — t
 
 Treated as fixed. Do not re-architect without discussion — see "Open questions" for what's still genuinely undecided.
 
-- **Base:** Ubuntu 26.04 LTS, codename `resolute` ("Resolute Raccoon"), x86_64 + arm64.
-- **GUI vs. headless:** one shared package base per architecture. The **installer** asks at setup time whether to install a GUI (GNOME) or stay headless — a setup-time choice, not just a runtime toggle.
-  - GUI mode → GNOME, with dash-to-panel + arc-menu for a familiar feel (**not** a retro skin). Required for Microsoft Intune enrollment.
+- **Base:** Ubuntu 26.04 LTS, codename `resolute` ("Resolute Raccoon"), x86_64 + arm64 — but the two are **different products**, see below.
+- **GUI vs. headless:** one shared package base per architecture. On **x86_64**, the **installer** asks at setup time whether to install a GUI (GNOME) or stay headless — a setup-time choice, not just a runtime toggle.
+  - GUI mode → GNOME, with dash-to-panel + arc-menu for a familiar feel (**not** a retro skin). Required for Microsoft Intune enrollment. **x86_64 only.**
   - Headless mode → no desktop packages. Not eligible for Intune (Linux enrollment requires GNOME); managed via Azure Arc-enabled Servers instead.
+- **arm64 is server-only** (decided 2026-08-22). No GUI target, so no GNOME, no Calamares and no Microsoft desktop stack in the arm64 image — Azure Arc is its only management path. This also matches upstream reality: Microsoft ships no arm64 Linux Edge, and `intune-portal` / `microsoft-identity-broker` are x86_64-only, so an arm64 GUI could never have been Intune-enrolled.
+  - **Consequence, still open:** Calamares is a GUI installer, so it cannot install arm64. That architecture needs a separate non-GUI install path — see [installer/README.md](installer/README.md).
 - **Storage:** ZFS root everywhere, using the GA-kernel-matched prebuilt ZFS module (not `zfs-dkms`), so kernel and ZFS ship in lockstep.
   - **Known risk:** OpenZFS on the Linux 7.0 kernel (Ubuntu 26.04's default) has been logging an "EXPERIMENTAL / SERIOUS DATA LOSS may occur" warning — see upstream issue [openzfs/zfs#18488](https://github.com/openzfs/zfs/issues/18488). Validated 2026-08-22 — not a real defect, ZFS root confirmed safe to build on: [docs/SESSION-0-ZFS-VALIDATION.md](docs/SESSION-0-ZFS-VALIDATION.md).
 - **Shell:** bash stays the actual system/login shell (cron, systemd, dpkg hooks, and Intune's bash-based custom compliance scripts all assume it's there and working). PowerShell 7 auto-launches as the visible, interactive shell for every human session — the lived experience is "PowerShell by default" without breaking anything that expects bash underneath.
   - PowerShell itself updates through the **same** OS7 release train as the rest of the system (`Update-OS7`, new ZFS boot environment), not a standalone `apt upgrade powershell` — keeps the whole system atomically rollback-safe.
 - **Identity:**
-  - `authd` + `authd-msentraid` for native Microsoft Entra ID login (in the Ubuntu archive as of 26.04, no PPA needed).
+  - `authd` + `authd-msentraid` for native Microsoft Entra ID login. **Correction (verified 2026-08-22):** `authd` is in the Ubuntu archive, but `authd-msentraid` is **not** — it is a Canonical-verified **snap** (0.4.1, both architectures). No PPA is needed either way, but the delivery mechanism differs; see [installer/README.md](installer/README.md).
   - GUI installs: Microsoft Intune enrollment (requires GNOME + Microsoft Edge — both mandatory per Microsoft's current docs, not optional extras).
   - Headless installs: Azure Arc-enabled Servers as the management path. Verify current Ubuntu 26.04 support against Microsoft's live Arc prerequisites page before treating this as locked.
 - **Updates:** curated release train over ZFS boot environments, driven by the OS7 PowerShell module: `Set-OS7Mode`, `Update-OS7`, `Restore-OS7`.
@@ -54,9 +56,9 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
 
 | Tier | Components | GUI-mode only? |
 |---|---|---|
-| Core (non-negotiable) | PowerShell 7, .NET SDK/Runtime, `authd` + `authd-msentraid` | No |
-| Core for GUI installs | Microsoft Edge, Microsoft Intune app | Yes |
-| Core for headless installs | Azure Connected Machine agent (Azure Arc) | Headless only |
+| Core (non-negotiable) | PowerShell 7 (installed from the pinned upstream tarball — Microsoft ships no arm64 `.deb`), .NET SDK/Runtime (`dotnet-sdk-10.0`, from the **Ubuntu** archive — resolute has .NET 10, not 9), `authd` + `authd-msentraid` | No |
+| Core for GUI installs | Microsoft Edge, Microsoft Intune app (+ `microsoft-identity-broker`, which brokers the Entra sign-in enrollment needs) — **x86_64 only, no arm64 builds exist** | Yes |
+| Core for headless installs | Azure Connected Machine agent (Azure Arc) — available for x86_64 **and** arm64 | Headless only |
 | Recommended addition | Azure CLI | No |
 | Recommended addition, GUI only | VS Code — default to **VSCodium** (MIT, no proprietary MS additions); official MS build optional/opt-in | Yes |
 | Deliberately excluded from v1 | OneDrive sync (no official Linux client, only a community GPLv3 client), Microsoft Defender for Endpoint (own tenant licensing) | — |

@@ -43,8 +43,9 @@ Architectures: ${ARCH}
 Signed-By: /usr/share/keyrings/microsoft.gpg
 SRC
 
-# --- Microsoft Edge. amd64 ONLY - Microsoft does not build Edge for arm64
-# --- Linux. Adding this repo on arm64 would just produce apt noise.
+# --- Microsoft Edge. amd64 ONLY, for two independent reasons: arm64 is a
+# --- SERVER-ONLY target with no GUI, and Microsoft builds no arm64 Linux Edge
+# --- anyway. Adding the repo on arm64 would only produce apt noise.
 if [ "${ARCH}" = "amd64" ]; then
 	cat > /etc/apt/sources.list.d/microsoft-edge.sources <<SRC
 Types: deb
@@ -55,7 +56,7 @@ Architectures: amd64
 Signed-By: /usr/share/keyrings/microsoft.gpg
 SRC
 else
-	echo "OS/7 hook 0010: GAP: skipping the Edge repo - Microsoft ships no arm64 Linux build."
+	echo "OS/7 hook 0010: skipping the Edge repo - ${ARCH} is a server-only target (no GUI)."
 fi
 
 apt-get update

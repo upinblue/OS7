@@ -29,33 +29,46 @@ Calamares is already installed into the live image by
    create and activate boot environments. The `zfs` module handles pool and
    dataset creation; the boot-environment *layout* is OS/7's design decision and
    is not something Calamares will decide for you.
-2. **Ask GUI vs. headless at setup time** and diverge:
+2. **Ask GUI vs. headless at setup time** — **x86_64 only**, since arm64 has
+   no GUI to offer:
    - **GUI** → keep GNOME, keep the Microsoft desktop stack, Intune enrollment.
    - **Headless** → remove the desktop packages, onboard to Azure Arc instead.
 
-   Because the ISO ships one shared package base, headless is a **removal** step
-   after unpacking, not a different image. Calamares' `packages` module can do
-   this via a `try_remove` operation driven by the user's choice.
+   Because the x86_64 ISO ships one shared package base, headless is a
+   **removal** step after unpacking, not a different image. Calamares' `packages`
+   module can do this via a `try_remove` operation driven by the user's choice.
+
+   On arm64 there is no question to ask: it is always headless.
 3. **Onboard the management agent.** `azcmagent` is installed by hook 0040 but
    deliberately left un-onboarded and disabled — onboarding needs tenant
    credentials and is per-machine, so it belongs here.
 
 ## Open problems, in order of how much they hurt
 
-### 1. arm64 GUI mode cannot be Intune-enrolled — needs a product decision
+### 1. arm64 has no install path yet — Calamares cannot serve it
 
-Microsoft does not build Edge for arm64 Linux, and `intune-portal` +
-`microsoft-identity-broker` are published for amd64 only. The root README
-requires GNOME **and** Edge for supported Intune enrollment and does **not**
-split by architecture — but the June-2026 README did split, calling arm64
-"server-leaning," for precisely this reason.
+**Decided 2026-08-22: arm64 is server-only, no GUI target.** That closes the
+old question (an arm64 GUI could never have been Intune-enrolled anyway — no
+arm64 Linux Edge, and `intune-portal` / `microsoft-identity-broker` are
+x86_64-only) but opens a new one.
 
-Hook 0030 logs the gap rather than pretending. The installer needs a decided
-answer before it can offer a coherent set of choices. Options:
+Calamares is a Qt **GUI** application. The arm64 image ships no desktop, so
+Calamares cannot run there at all. The README's Calamares decision therefore
+covers **x86_64 only**, and arm64 needs its own install path. Options:
 
-- Re-introduce the arch split: arm64 is headless/Arc-only, GUI mode is amd64.
-- Offer GUI on arm64 but state plainly that it is not Intune-manageable.
-- Drop arm64 from the GUI target entirely.
+1. **Subiquity autoinstall.** Ubuntu's server installer, text-based, and it
+   already understands ZFS root via `storage: layout: {name: zfs}`. Note the
+   June-2026 session had a draft profile for exactly this — dropped when
+   Calamares was locked in, but now relevant again *for arm64 specifically*.
+   Best fit for bare-metal servers.
+2. **Ship arm64 as a preinstalled disk image** (raw/qcow2) rather than an
+   installer ISO, the way ARM server and edge estates are usually provisioned.
+   Cheapest to build, but no bare-metal install story.
+3. **A scripted console installer.** Full control, but it means owning
+   partitioning, ZFS layout and bootloader code that Subiquity already has.
+
+(1) for bare metal and (2) alongside it for cloud/edge is the combination that
+covers the realistic arm64 deployment shapes. Nothing is built yet.
 
 ### 2. Entra ID login is not in the image yet
 
