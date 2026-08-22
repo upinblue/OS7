@@ -36,7 +36,7 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
   - GUI mode → GNOME, with dash-to-panel + arc-menu for a familiar feel (**not** a retro skin). Required for Microsoft Intune enrollment.
   - Headless mode → no desktop packages. Not eligible for Intune (Linux enrollment requires GNOME); managed via Azure Arc-enabled Servers instead.
 - **Storage:** ZFS root everywhere, using the GA-kernel-matched prebuilt ZFS module (not `zfs-dkms`), so kernel and ZFS ship in lockstep.
-  - **Known risk:** OpenZFS on the Linux 7.0 kernel (Ubuntu 26.04's default) has been logging an "EXPERIMENTAL / SERIOUS DATA LOSS may occur" warning — see upstream issue [openzfs/zfs#18488](https://github.com/openzfs/zfs/issues/18488). Validate hands-on before relying on this further; see "Open questions."
+  - **Known risk:** OpenZFS on the Linux 7.0 kernel (Ubuntu 26.04's default) has been logging an "EXPERIMENTAL / SERIOUS DATA LOSS may occur" warning — see upstream issue [openzfs/zfs#18488](https://github.com/openzfs/zfs/issues/18488). Validated 2026-08-22 — not a real defect, ZFS root confirmed safe to build on: [docs/SESSION-0-ZFS-VALIDATION.md](docs/SESSION-0-ZFS-VALIDATION.md).
 - **Shell:** bash stays the actual system/login shell (cron, systemd, dpkg hooks, and Intune's bash-based custom compliance scripts all assume it's there and working). PowerShell 7 auto-launches as the visible, interactive shell for every human session — the lived experience is "PowerShell by default" without breaking anything that expects bash underneath.
   - PowerShell itself updates through the **same** OS7 release train as the rest of the system (`Update-OS7`, new ZFS boot environment), not a standalone `apt upgrade powershell` — keeps the whole system atomically rollback-safe.
 - **Identity:**
@@ -65,7 +65,7 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
 
 Genuinely undecided — flag before making irreversible choices in a Claude Code session:
 
-1. **ZFS-on-kernel-7.0 risk** (see above) — needs a hands-on validation pass (install in a VM, check `journalctl -b` for the ZFS warning) before further investment in "ZFS root everywhere."
+1. ~~**ZFS-on-kernel-7.0 risk**~~ — **RESOLVED 2026-08-22, proceed.** Validated hands-on on both architectures: the warning is present (kernel `7.0.0-28-generic`, ZFS `2.4.1-1ubuntu5`), but it marks build *provenance*, not a defect — confirmed by the OpenZFS and Ubuntu ZFS maintainers on the upstream issue. A real pool passed create / write / export / import / scrub / snapshot / rollback with zero errors. Upstream fixed this in ZFS 2.4.2; 26.04 has not received the SRU yet. Full evidence and caveats: [docs/SESSION-0-ZFS-VALIDATION.md](docs/SESSION-0-ZFS-VALIDATION.md).
 2. **Azure Arc-enabled Servers + Ubuntu 26.04** — exact current support status should be checked against Microsoft's live prerequisites page before it's treated as a locked decision.
 3. **Calamares ZFS module maturity** — how far it gets with a ZFS-root, dual-mode (GUI/headless) install is untested. This is the project's known hard part.
 4. **License** — this README currently assumes MIT for OS7's own tooling/scripts (matching up in blue's other public repos); Ubuntu/upstream components keep their own licenses regardless. Confirm before the first public commit.
