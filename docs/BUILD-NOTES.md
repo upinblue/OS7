@@ -253,9 +253,29 @@ unchrooted, fails chrooted, regardless of environment or working directory.
 Since live-build runs **every** hook inside a chroot, no hook can test anything
 that needs module discovery.
 
-Verified on Docker Desktop / macOS arm64. A booted ISO reaches a working
-`PS /home/ubuntu>` prompt with PSReadLine active, so the installed system is
-unaffected. Not yet re-checked on a native Linux builder.
+Verified on Docker Desktop / macOS arm64. Not yet re-checked on a native Linux
+builder.
+
+**Confirmed non-chrooted, against the shipped image (2026-08-23).** Running the
+ISO's *own* pwsh from the mounted squashfs, outside any chroot:
+
+```
+PSHOME        = /mnt/sq/opt/microsoft/powershell/7
+ListAvailable = 10
+Write-Host    : OK (Utility loaded by NAME)
+Import-Module OS7 by NAME: OK
+OS7 exports   = Restore-OS7, Set-OS7Mode, Update-OS7
+Update-OS7 throws as designed: NotImplementedException
+```
+
+The booted ISO independently agrees: it reaches a working `PS /home/ubuntu>`
+prompt with PSReadLine (itself an on-disk module) active. The image is correct;
+only chroot is affected.
+
+Note on method: driving the boot over QEMU's serial console proved unreliable -
+bytes sent faster than the console consumes arrive corrupted, and PSReadLine's
+rendering makes capture worse. Mounting the squashfs and running the image's own
+binaries is faster and gives clean, quotable output. Prefer it.
 
 ### What this means for hooks
 
