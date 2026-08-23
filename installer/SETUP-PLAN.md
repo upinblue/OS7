@@ -108,24 +108,110 @@ So the brand colour appears on every screen, at the top, and the surface people
 actually read from is AAA. `F5` swaps the field to `#003366` (12.58 : 1) for
 high-contrast/projector use; the `#1289ff` stripe stays in both modes.
 
-### 2.3 Glyphs and geometry
+### 2.3 The font — Fixedsys Excelsior (decided)
 
-* **Box drawing** (`┌ ─ ┐ │ └ ┘ ═ █`): present in every console font Ubuntu
-  ships and in the kernel's built-in fonts. No custom font strictly required.
-* **Cell size.** Ubuntu's kernel has `CONFIG_FONT_TER16x32` enabled (Launchpad
-  #1819881), so `fbcon=font:TER16x32` on the cmdline gives 16×32 cells with no
-  userspace font loading — chunky and period-correct on a modern panel.
+**Decided: [Fixedsys Excelsior](https://github.com/kika/fixedsys) is OS/7's
+console font**, for Setup and for the installed system in non-GUI mode.
+
+It is the right choice for more than nostalgia: it is a deliberate simulation of
+the 8×16 bitmap font Windows and DOS actually used, drawn to be rendered
+*without* antialiasing at 16 px, so it reproduces the reference screenshots
+rather than approximating them.
+
+Verified against the upstream repository on 2026-08-22:
+
+| | |
+|---|---|
+| Licence | **Public domain / CC0.** No attribution obligation, no redistribution constraint — it can be shipped inside the ISO. |
+| Release | `v3.09.10`, `FSEX302.ttf`, 580 724 bytes |
+| Format | **TTF only** (source is an 8.9 MB TTX). The Linux console needs **PSF**, so a conversion step is unavoidable — see §2.5. |
+| Design metrics | Simulated **8×16** bitmap, drawn for 16 px / 12 pt @ 96 dpi, no antialiasing |
+| Coverage | 6 193 codepoints |
+
+**The coverage question was the real risk, and it passed.** The upstream README
+only advertises windows-1250/1251/1252/1253/1254, none of which contain
+box-drawing characters — and OS/7's entire UI is built from them. Reading the
+cmap out of `FSEX.ttx` directly settled it:
+
+| Unicode block | Coverage |
+|---|---|
+| Box Drawing `U+2500–257F` | **128 / 128 — complete** |
+| Block Elements `U+2580–259F` | **32 / 32 — complete** |
+| ASCII, Latin-1 Supplement, Latin Extended-A | complete |
+| Greek, Cyrillic, Arrows, Geometric Shapes | partial |
+
+Every glyph the mockups in §3.1 use — `─ │ ┌ ┐ └ ┘ ├ ┤ ═ ║ ╔ ╗ ╚ ╝ ▀ ▄ █ ░ ▒ ▓ •`
+and the German umlauts — is present. **Had this failed**, the fallback was
+grafting the `U+2500` block in from another font during the PSF build, since box
+drawing at 8×16 is a handful of straight lines. It is not needed.
+
+**Use `FSEX302.ttf`, not `FSEX302-alt.ttf`.** The two differ only in programming
+ligatures, and ligatures are meaningless in a PSF: the console is a fixed cell
+grid with no shaping engine. The conversion discards them either way.
+
+### 2.4 Geometry
+
+* **Two sizes get built**, because 8×16 is unreadable on a modern panel — at
+  1920×1080 it gives a 240×67 grid. Pixel-doubling the PSF to **16×32** is a
+  mechanical transform (duplicate each bit horizontally, each row vertically)
+  and needs no redraw. Setup picks by framebuffer height; the installed console
+  gets the same treatment.
+* **fbcon handles 16-wide fonts** — the kernel's own `TER16x32` is proof.
 * **80×25 is not obtainable everywhere.** UEFI hands us whatever GOP mode the
-  firmware likes. At 1280×800 with TER16x32 you get exactly 80×25; at 1920×1080
-  you get 120×33.
+  firmware likes. At 1280×800 with a 16×32 font you get exactly 80×25; at
+  1920×1080 you get 120×33.
 
   **Layout rule:** chrome is **full-bleed** (title row and status row always
   touch the screen edges, as in the original), body content is laid out in a
   column capped at 80 cells and centred. This keeps the look at any geometry and
   avoids 200-character-wide paragraphs. `os7.setup.geometry=80x25` forces a
   letterboxed exact-80×25 canvas for screenshots and marketing.
+* **Before userspace runs, the font is still the kernel's.** `setfont` is a
+  userspace tool, so the GRUB entry keeps `fbcon=font:TER16x32` as the closest
+  built-in match and Setup calls `setfont` with the Fixedsys PSF before it paints
+  its first screen. On the *installed* system, `console-setup` applies it from
+  the initramfs (`FRAMEBUFFER=y`), i.e. before the root filesystem is mounted —
+  so only the earliest boot frames use the kernel font.
 
-### 2.4 The rest of the boot is blue too
+### 2.5 Building the console font
+
+A build-time step, not a runtime one. It belongs in the **build container**, so
+no font toolchain ships in the image:
+
+```
+FSEX302.ttf  --otf2bdf -p 16-->  fixedsys-16.bdf
+             --bdf2psf + symbol set-->  os7-fixedsys-8x16.psf
+             --pixel-double-->  os7-fixedsys-16x32.psf
+```
+
+`bdf2psf` is the Debian tool `console-setup` itself uses, so this is the
+supported path rather than a bespoke one.
+
+Three things this step must do, and a fourth it must never skip:
+
+1. **Pin the download** — release tag, filename and **SHA256**, asserted before
+   use, exactly as hook 0020 pins the PowerShell tarball. The hash is not
+   recorded here because nothing has been downloaded yet; whoever implements
+   this records it from a verified fetch.
+2. **Subset to 512 glyphs.** PSF on the Linux console caps at 512, and the font
+   has 6 193 codepoints. The subset is ASCII + Latin-1 + the Latin Extended-A
+   characters German needs + Box Drawing + Block Elements + the punctuation the
+   UI uses. Greek and Cyrillic do not fit alongside that, which is consistent
+   with L9 (English and German for v1).
+3. **Emit the Unicode table** so `setfont` maps codepoints, not raw byte values.
+4. **Assert the result.** Decode the produced PSF's Unicode table and fail the
+   build if any required codepoint is missing. This is [docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md)
+   #13's habit applied to fonts: never conclude a step worked because it exited
+   0 — check for its effect. A silently under-subsetted font produces an
+   installer drawn in `?` characters, and the build would not notice.
+
+**Optional, not required by the decision:** dropping `FSEX302.ttf` into
+`/usr/share/fonts/truetype/fixedsys-excelsior/` costs 580 KB and makes the same
+font available to GNOME Terminal and VS Code on GUI installs. The instruction
+covers the console; this is a cheap extra, and it is the *only* place the TTF
+itself is useful, since the console never reads TTF.
+
+### 2.6 The rest of the boot is blue too
 
 Cheap authenticity, worth doing in phase 4:
 
@@ -137,7 +223,7 @@ Cheap authenticity, worth doing in phase 4:
   configuration...` while udev settles and pools are scanned — the Win2k line,
   and it is honest about what is actually happening.
 
-### 2.5 Where it does *not* work
+### 2.7 Where it does *not* work
 
 | Surface | Result |
 |---|---|
@@ -639,6 +725,11 @@ Added by D3 (LUKS2 under ZFS) — these go into the **installed system** as well
 as the ISO, or it will not boot: `cryptsetup`, `cryptsetup-initramfs`,
 `tpm2-tools`, and a zram provider (`systemd-zram-generator`) for D4.
 
+The Fixedsys font (§2.3) adds nothing to the image beyond the built PSF files
+themselves plus `kbd` and `console-setup`, which are already listed. Its
+toolchain — `otf2bdf` and `bdf2psf` — belongs in the **build container**, not
+in the shipped system.
+
 `calamares` can be dropped from `build/config/package-lists-amd64/os7-desktop.list.chroot`.
 
 ---
@@ -665,6 +756,8 @@ as the ISO, or it will not boot: `cryptsetup`, `cryptsetup-initramfs`,
 | L16 | Intune's "Allowed distributions" rule matches on `/etc/os-release`; branding OS/7 as its own `ID=` could make every device fail it | keep `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"`, brand only `NAME` / `PRETTY_NAME` (§4.6). **Not decided anywhere in this repo yet** |
 | L17 | LUKS unlock at boot needs a passphrase prompt unless TPM2 enrolment happens at install time | enrol TPM2 in the install's configure step (`systemd-cryptenroll`), keep a passphrase as recovery — and test that a TPM-less VM still boots |
 | L18 | **`bpool` may still trip the encryption check.** Microsoft exempts `/boot`, but `bpool` is an unencrypted fixed writable partition holding a ZFS *pool member*, not a directly mounted filesystem. Whether the agent maps it to `/boot` and exempts it is undocumented | verify in the first real enrolment test (Phase 6). If it fails: either move `/boot` into `rpool` and switch to ZFSBootMenu (D1 reopens), or carry a custom-compliance script. Do not assume it passes |
+| L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 193 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
+| L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4) |
 
 ---
 
@@ -679,6 +772,7 @@ as the ISO, or it will not boot: `cryptsetup`, `cryptsetup-initramfs`,
 | D5 | Field colour vs. white-text contrast | **DECIDED 2026-08-22 — field `#0057ad`** (`#1289ff` darkened along its own hue, 7.07 : 1, WCAG AAA); `#1289ff` becomes the full-width title stripe and the progress fill; `F5` → `#003366` (§2.2) |
 | D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
+| D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3) |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **New, raised by §4.6.** Recommend `ID=ubuntu` + branded `NAME`/`PRETTY_NAME`; needs a decision before the first Intune enrolment test |
 
 ---
@@ -756,7 +850,9 @@ belong in an installer log). `espeakup` accessibility. CI installs in QEMU.
 | Wherever `/etc/os-release` gets branded | Must not change `ID` / `VERSION_ID` without deciding D8 first — Intune's "Allowed distributions" rule reads them (§4.6). |
 | `build/config/auto/config` | `--bootappend-live` gains the palette/font parameters; the ISO grows an Install entry. |
 | `build/build.sh` | New stage: `dotnet publish` `os7-setup` into `includes.chroot/usr/lib/os7-setup/`. |
-| `Dockerfile` | `dotnet-sdk-10.0` + `clang` + `zlib1g-dev` in the build container (pending S2). |
+| `Dockerfile` | `dotnet-sdk-10.0` + `clang` + `zlib1g-dev` in the build container (pending S2), plus `otf2bdf` + `bdf2psf` for the console font (§2.5). |
+| `build/build.sh` (font) | New stage: fetch and hash-pin `FSEX302.ttf`, convert to `os7-fixedsys-8x16.psf` and `os7-fixedsys-16x32.psf`, assert coverage, stage into `includes.chroot/usr/share/consolefonts/`. |
+| `build/config/includes.chroot/etc/default/console-setup` | New: point the installed non-GUI console at the Fixedsys PSF. |
 | `powershell/OS7/OS7.psm1` | Gains the BE primitives Setup and `Update-OS7` share; `Restore-OS7 -BootEnvironment` gets the naming scheme from §4.4. |
 
 Nothing here has been implemented and no file above has been modified by this
@@ -784,6 +880,8 @@ remembered. What was *not* checked is marked as a spike in Phase 0.
 | **Intune's Linux encryption compliance recognises only dm-crypt, prefers LUKS + cryptsetup, and explicitly ignores `/boot` and `/boot/efi`** — the basis for D3 | [Linux device compliance settings in Microsoft Intune](https://learn.microsoft.com/en-us/intune/device-security/compliance/ref-linux-settings) (page updated 2026-05-20) |
 | **Intune Linux compliance supports Ubuntu Desktop 26.04 LTS, x86/64 only** — confirms the base choice and the arm64-is-server-only decision | same page |
 | Intune's "Allowed distributions" rule matches distribution type and version, which is what raises L16/D8 | same page |
+| **Fixedsys Excelsior is public domain / CC0**, ships as TTF only, simulates an 8×16 bitmap drawn for 16 px without antialiasing; release `v3.09.10`, `FSEX302.ttf`, 580 724 bytes | [kika/fixedsys](https://github.com/kika/fixedsys) and its release metadata |
+| **Its cmap covers Box Drawing `U+2500–257F` 128/128 and Block Elements `U+2580–259F` 32/32**, so every glyph the OS/7 UI draws is present — the upstream README advertises only windows-125x, which would not have been enough | read directly from `FSEX.ttx` in the repository, 6 193 codepoints total |
 
 Contrast ratios in §2.2 were computed from the sRGB relative-luminance formula,
 not taken from a source.
