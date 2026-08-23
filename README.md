@@ -22,7 +22,7 @@ This repository is freshly scaffolded. Nothing here is a working build yet — t
 | Repo scaffold / README | done (this commit) |
 | `build/config/auto/config` (live-build config) | **validated** — `lb config` passes and an arm64 ISO builds from it; still has no package lists, hooks or includes |
 | `powershell/OS7/` module | stub — function signatures only, no logic |
-| Installer (Calamares + ZFS) | not started |
+| Installer (`os7-setup`) | not started — **designed and decided**: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) |
 | `.devcontainer` / VS Code dev environment | stub, untested |
 | CI (`.github/workflows`) | stub — never run; now the only way to build amd64 (see [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) #12) |
 | Bootable ISO | **arm64: builds and boots** to a live session (bare Ubuntu, no OS/7 content yet). amd64: blocked on Apple Silicon, needs a native runner |
@@ -36,21 +36,33 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
   - GUI mode → GNOME, with dash-to-panel + arc-menu for a familiar feel (**not** a retro skin). Required for Microsoft Intune enrollment. **x86_64 only.**
   - Headless mode → no desktop packages. Not eligible for Intune (Linux enrollment requires GNOME); managed via Azure Arc-enabled Servers instead.
 - **arm64 is server-only** (decided 2026-08-22). No GUI target, so no GNOME, no Calamares and no Microsoft desktop stack in the arm64 image — Azure Arc is its only management path. This also matches upstream reality: Microsoft ships no arm64 Linux Edge, and `intune-portal` / `microsoft-identity-broker` are x86_64-only, so an arm64 GUI could never have been Intune-enrolled.
-  - **Consequence, still open:** Calamares is a GUI installer, so it cannot install arm64. That architecture needs a separate non-GUI install path — see [installer/README.md](installer/README.md).
-- **Storage:** ZFS root everywhere, using the GA-kernel-matched prebuilt ZFS module (not `zfs-dkms`), so kernel and ZFS ship in lockstep.
+  - **Consequence, resolved 2026-08-22:** Calamares is a GUI installer and could not install arm64. It has been replaced by `os7-setup`, a text-mode installer that serves both architectures — see Installer below and [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
+- **Intune compatibility is a hard requirement, not a feature** (decided 2026-08-22). On the x86_64 GUI product, a design that cannot pass Intune compliance is not shippable, and **Intune's constraints outrank OS/7's technical preferences** wherever the two collide. Verified against [Microsoft's Linux compliance settings reference](https://learn.microsoft.com/en-us/intune/device-security/compliance/ref-linux-settings) on 2026-08-22. What it currently dictates:
+  - **Ubuntu Desktop 26.04 LTS is officially supported**, x86/64 only, physical or Hyper-V. The base choice is confirmed from Microsoft's side, and so is arm64-is-server-only.
+  - **Disk encryption must go through `dm-crypt`.** Microsoft: *"Intune recognizes any encryption system that uses the underlying dm-crypt subsystem […] The preferred method […] is to use the LUKS format with the cryptsetup tool."* ZFS **native** encryption is therefore disqualified — it would report every managed device as unencrypted. See Storage below.
+  - **`/boot` and `/boot/efi` are explicitly exempt** from the encryption check, which is what makes an unencrypted ESP and boot pool acceptable.
+  - **`/etc/os-release` must stay Ubuntu-identifiable.** Intune's *Allowed distributions* rule matches on distribution type and version. Brand `NAME` / `PRETTY_NAME` / `HOME_URL`; keep `ID=ubuntu`, `ID_LIKE=ubuntu`, `VERSION_ID="26.04"`. Rebranding `ID` would make every device fail the rule.
+  - **GNOME and Microsoft Edge stay mandatory** for GUI installs — Microsoft requires both for enrollment; they are not optional extras.
+  - **Rule for future changes:** anything touching disk layout, encryption, OS identity, desktop or browser is checked against Intune's live docs *first*. Do not discover a compliance failure at a customer.
+- **Storage:** ZFS root everywhere, using the GA-kernel-matched prebuilt ZFS module (not `zfs-dkms`), so kernel and ZFS ship in lockstep. **ZFS is the only filesystem OS/7 installs** — the sole non-ZFS filesystem on disk is the FAT32 EFI System Partition, which UEFI firmware mandates.
+  - **Encryption: LUKS2 *underneath* ZFS** (decided 2026-08-22), forced by the Intune requirement above. LUKS is a block layer, not a filesystem: the stack is `partition -> LUKS2 -> zpool -> datasets`, and ZFS keeps snapshots, rollback, compression, checksums and boot environments unchanged. Trade-off accepted: no per-dataset encryption and no raw encrypted `zfs send`. Do **not** also enable ZFS native encryption — that is double encryption for no gain.
+  - **Boot layout:** shim + Canonical-signed GRUB, so Secure Boot works out of the box. GRUB reads ZFS read-only, which requires the standard unencrypted `bpool` for `/boot` alongside the encrypted `rpool`. Both are ZFS. Full reasoning and the ZFSBootMenu alternative: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
+  - **Swap is never on ZFS** — swap-on-zvol still deadlocks upstream. Default is zram (RAM only, nothing on disk); a plain swap partition is opt-in for hibernation.
   - **Known risk:** OpenZFS on the Linux 7.0 kernel (Ubuntu 26.04's default) has been logging an "EXPERIMENTAL / SERIOUS DATA LOSS may occur" warning — see upstream issue [openzfs/zfs#18488](https://github.com/openzfs/zfs/issues/18488). Validated 2026-08-22 — not a real defect, ZFS root confirmed safe to build on: [docs/SESSION-0-ZFS-VALIDATION.md](docs/SESSION-0-ZFS-VALIDATION.md).
 - **Shell:** bash stays the actual system/login shell (cron, systemd, dpkg hooks, and Intune's bash-based custom compliance scripts all assume it's there and working). PowerShell 7 auto-launches as the visible, interactive shell for every human session — the lived experience is "PowerShell by default" without breaking anything that expects bash underneath.
   - PowerShell itself updates through the **same** OS7 release train as the rest of the system (`Update-OS7`, new ZFS boot environment), not a standalone `apt upgrade powershell` — keeps the whole system atomically rollback-safe.
 - **Identity:**
   - `authd` + `authd-msentraid` for native Microsoft Entra ID login. **Correction (verified 2026-08-22):** `authd` is in the Ubuntu archive, but `authd-msentraid` is **not** — it is a Canonical-verified **snap** (0.4.1, both architectures). No PPA is needed either way, but the delivery mechanism differs; see [installer/README.md](installer/README.md).
-  - GUI installs: Microsoft Intune enrollment (requires GNOME + Microsoft Edge — both mandatory per Microsoft's current docs, not optional extras).
+  - GUI installs: Microsoft Intune enrollment (requires GNOME + Microsoft Edge — both mandatory per Microsoft's current docs, not optional extras). Compliance is a hard requirement — see "Intune compatibility" above.
   - Headless installs: Azure Arc-enabled Servers as the management path. Verify current Ubuntu 26.04 support against Microsoft's live Arc prerequisites page before treating this as locked.
 - **Updates:** curated release train over ZFS boot environments, driven by the OS7 PowerShell module: `Set-OS7Mode`, `Update-OS7`, `Restore-OS7`.
 - **Target audience:** IT admins, MSPs, and organizations running a Microsoft-centric stack — not a consumer desktop distro.
 - **Branding:** classic/retro visual identity (logo, boot splash, website) in up in blue Orange `#ff6912` — applies to marketing/branding only, **not** to the GNOME desktop itself.
 - **Dev environment:** VS Code Dev Container wrapping the Docker-based build container; `.vscode/tasks.json` wires up `docker build`, `lb config`, `make build-amd64` / `make build-arm64`.
 - **CI:** GitHub Actions — `amd64` on standard hosted runners, `arm64` on the free native arm64 hosted runners (public repo), so nothing builds under QEMU emulation.
-- **Installer:** Calamares + its ZFS module — best available option for a customizable, brandable installer on a ZFS-root Ubuntu derivative. Not yet validated hands-on; this is the project's known hard part (live-build <-> installer <-> ZFS-root integration).
+- **Installer: `os7-setup`** (decided 2026-08-22, replacing Calamares) — an OS/7-authored, keyboard-driven **text-mode** installer written in C#/.NET and published as a NativeAOT binary, styled after MS-DOS 6.22 Setup and the Windows 2000 text-mode Setup phase. Field colour `#0057ad` (up in blue `#1289ff` darkened to WCAG AAA against white text), with `#1289ff` as the title stripe and progress fill on every screen.
+  - **One installer serves both architectures**, which is why Calamares went: it is a Qt GUI application and could never have installed the desktop-less arm64 image. Subiquity is no longer needed either.
+  - Nothing is implemented yet. Design, limitations, decisions and the phased plan — including the spikes that must pass before any installer code is written: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
 
 ## Microsoft technology scope (v1 draft)
 
@@ -69,7 +81,9 @@ Genuinely undecided — flag before making irreversible choices in a Claude Code
 
 1. ~~**ZFS-on-kernel-7.0 risk**~~ — **RESOLVED 2026-08-22, proceed.** Validated hands-on on both architectures: the warning is present (kernel `7.0.0-28-generic`, ZFS `2.4.1-1ubuntu5`), but it marks build *provenance*, not a defect — confirmed by the OpenZFS and Ubuntu ZFS maintainers on the upstream issue. A real pool passed create / write / export / import / scrub / snapshot / rollback with zero errors. Upstream fixed this in ZFS 2.4.2; 26.04 has not received the SRU yet. Full evidence and caveats: [docs/SESSION-0-ZFS-VALIDATION.md](docs/SESSION-0-ZFS-VALIDATION.md).
 2. **Azure Arc-enabled Servers + Ubuntu 26.04** — exact current support status should be checked against Microsoft's live prerequisites page before it's treated as a locked decision.
-3. **Calamares ZFS module maturity** — how far it gets with a ZFS-root, dual-mode (GUI/headless) install is untested. This is the project's known hard part.
+3. ~~**Calamares ZFS module maturity**~~ — **MOOT 2026-08-22.** Calamares was replaced by `os7-setup` ([installer/SETUP-PLAN.md](installer/SETUP-PLAN.md)). The underlying hard part did not go away, it moved: **no OS/7 build has ever been installed to a disk by any means.** Spike S3 in the plan (a ZFS-on-LUKS root that actually boots) is now the project's highest-risk unknown.
+   - **Newly open, from the Intune work:** does Intune's encryption check treat the unencrypted `bpool` partition as a non-compliant fixed writable disk? Microsoft exempts `/boot`, but `bpool` is a ZFS pool member rather than a directly mounted partition, so the exemption may not be recognised. Verify in the first real enrollment test, before it becomes a customer's discovery.
+   - **Newly open, from the Intune work:** `/etc/os-release` branding vs. the *Allowed distributions* rule (see "Intune compatibility").
 4. **License** — this README currently assumes MIT for OS7's own tooling/scripts (matching up in blue's other public repos); Ubuntu/upstream components keep their own licenses regardless. Confirm before the first public commit.
 
 ## Repository layout

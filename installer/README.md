@@ -9,10 +9,11 @@
 > below (arm64 had no install path because Calamares is a Qt GUI app), and
 > removes the need for Subiquity.
 >
-> Read [SETUP-PLAN.md](SETUP-PLAN.md) first. The Calamares material below is
-> kept because its **ZFS**, **Entra** and **encryption** findings (open problems
-> #2 and #3) are unaffected by the change of installer — only the Calamares
-> parts are obsolete.
+> Read [SETUP-PLAN.md](SETUP-PLAN.md) first. It also **closes open problem #3
+> below (encryption): LUKS2 under ZFS**, because Intune's compliance check only
+> recognises dm-crypt. The Calamares material below is kept for its **ZFS** and
+> **Entra** findings — open problem #2 (the `authd-msentraid` snap) is untouched
+> and still blocking. Only the Calamares-specific parts are obsolete.
 
 **Status: not started.** No Calamares configuration exists yet. What follows is
 what has been *established* about the problem, so the next pass doesn't
