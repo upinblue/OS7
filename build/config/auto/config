@@ -48,7 +48,7 @@ esac
 #   - no PowerShell 7 / .NET            (README: Core, non-negotiable)
 #   - no authd + authd-msentraid        (README: Identity)
 #   - no ZFS root support               (README: Storage - blocked on Open Q #1)
-#   - no Calamares installer            (README: Open Q #3, the hard part)
+#   - no os7-setup installer            (installer/SETUP-PLAN.md - the hard part)
 #   - no GNOME / headless mode split    (README: installer-time choice)
 # =============================================================================
 

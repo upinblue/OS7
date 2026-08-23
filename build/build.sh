@@ -78,7 +78,7 @@ done
 # architecture only.
 #
 # This exists because the two architectures are NOT the same product:
-#   amd64 - GUI or headless, chosen at install time. Ships GNOME + Calamares.
+#   amd64 - GUI or headless, chosen at install time. Ships GNOME.
 #   arm64 - SERVER ONLY, no GUI target. Ships no desktop at all.
 #
 # README's "one shared package base" is per-architecture, so this is consistent

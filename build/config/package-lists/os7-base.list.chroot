@@ -3,7 +3,8 @@
 # The two architectures are different products:
 #   amd64 - GUI or headless, chosen at install time. Adds the desktop from
 #           package-lists-amd64/ and the Microsoft GUI stack from hooks-amd64/.
-#   arm64 - SERVER ONLY. No GUI target, so no desktop list and no Calamares.
+#   arm64 - SERVER ONLY. No GUI target, so no desktop list. os7-setup is
+#           text-mode, so it installs this architecture too.
 #
 # README's "one shared package base" is per-architecture, so this split is
 # consistent with it. Everything below is common to both.

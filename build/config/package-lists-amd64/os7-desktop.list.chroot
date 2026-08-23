@@ -1,18 +1,25 @@
-# OS/7 desktop (GNOME).
+# OS/7 desktop (GNOME) — amd64 only.
 #
-# Present in the LIVE image on every architecture, because:
-#   a) Calamares is a Qt GUI application and needs a running desktop session to
-#      run the install at all, and
-#   b) GUI vs. headless is an INSTALLER-TIME choice (README) - the installer
-#      removes the desktop for a headless install rather than the ISO shipping
-#      two package bases.
+# GNOME is here because GUI mode REQUIRES it: supported Microsoft Intune
+# enrollment needs GNOME (README, "Identity"). arm64 is server-only and gets no
+# desktop list at all.
 #
-# GNOME specifically is required for supported Microsoft Intune enrollment.
+# It ships in the live image so the installer can lay it down OFFLINE when the
+# operator picks GUI mode; headless is then a package-removal step, per README's
+# one-shared-package-base-per-architecture rule.
 #
-# NOTE: this list contains no Microsoft packages. The Microsoft APT repos do not
-# exist yet during the package-list pass - they are added by hook 0010, so
-# anything from them must be installed in a later hook.
-# (docs/BUILD-NOTES.md #10)
+# NOTE: the desktop is NOT here for the installer's benefit. os7-setup is a
+# keyboard-driven TEXT-MODE installer (installer/SETUP-PLAN.md) and needs no
+# desktop session - that is precisely why it replaced Calamares, which as a Qt
+# GUI app could never have installed the desktop-less arm64 image.
+#
+# IMPORTANT: live-build package lists do NOT support trailing inline comments.
+# Every token on a non-comment line is passed to apt as a package name.
+# (docs/BUILD-NOTES.md #9)
+#
+# NOTE: no Microsoft packages here. The Microsoft APT repos do not exist yet
+# during the package-list pass - they are added by hook 0010, so anything from
+# them must be installed in a later hook. (docs/BUILD-NOTES.md #10)
 
 ubuntu-desktop-minimal
 gnome-shell
@@ -21,10 +28,9 @@ nautilus
 gnome-terminal
 
 # --- Installer ---------------------------------------------------------------
-# Calamares 3.3.14 in resolute ships the zfs and zfshostid modules, which is why
-# the README's Calamares decision is viable. Configuration is still to be
-# written - see installer/README.md.
-calamares
+# Deliberately no installer package. os7-setup is authored by OS/7 itself
+# (C#/.NET, text mode) and is not an archive package. See
+# installer/SETUP-PLAN.md. Calamares was removed on 2026-08-23.
 
 # The "familiar feel" extensions (dash-to-panel taskbar, ArcMenu start menu) are
 # deliberately absent: neither has a GNOME-50-compatible build in the resolute
