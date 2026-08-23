@@ -1,0 +1,8 @@
+# OS/7 bootloader — arm64.
+#
+# Signed GRUB + shim, per D1 (installer/SETUP-PLAN.md 5). arm64 is server-only,
+# but Secure Boot still applies.
+#
+# grub-efi-arm64-signed exists ONLY in the arm64 archive, which is why this is
+# an arch-scoped list rather than a line in os7-base.
+grub-efi-arm64-signed

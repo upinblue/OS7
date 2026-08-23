@@ -1,0 +1,9 @@
+# OS/7 bootloader — amd64.
+#
+# Signed GRUB + shim, per D1 (installer/SETUP-PLAN.md 5): Secure Boot works out
+# of the box, because OS/7's audience runs Secure-Boot-on, Intune-managed
+# hardware. shim-signed is architecture-independent and lives in the base list.
+#
+# grub-efi-amd64-signed exists ONLY in the amd64 archive, which is why this is
+# an arch-scoped list rather than a line in os7-base.
+grub-efi-amd64-signed

@@ -41,6 +41,31 @@ authd
 # from packages.microsoft.com any more.
 dotnet-sdk-10.0
 
+# --- What Setup needs to install the system ----------------------------------
+# From installer/SETUP-PLAN.md 7.1. These are needed at INSTALL time, so they
+# must be on the ISO; the D3 group below must also end up on the INSTALLED
+# system or it will not boot.
+squashfs-tools
+rsync
+gdisk
+dosfstools
+efibootmgr
+shim-signed
+kbd
+console-setup
+
+# --- D3: LUKS2 under ZFS -----------------------------------------------------
+# Intune recognises only dm-crypt, so encryption is LUKS2 beneath the pool
+# rather than ZFS native. cryptsetup-initramfs is what actually unlocks rpool at
+# boot - without it an installed system stops at the initramfs prompt.
+cryptsetup
+cryptsetup-initramfs
+tpm2-tools
+
+# --- D4: swap ----------------------------------------------------------------
+# Swap must not live on ZFS.
+systemd-zram-generator
+
 # --- Base tooling ------------------------------------------------------------
 openssh-server
 curl
