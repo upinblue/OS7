@@ -9,7 +9,7 @@ code.
 | Spike | Question | State |
 |---|---|---|
 | S1 | Does the look actually work | not started |
-| S2 | Does NativeAOT build in the `os7-build` container | not started |
+| **S2** | **Does NativeAOT build in the `os7-build` container** | **PASS 2026-08-23 (both arches)** |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | **PASS 2026-08-23 (arm64)** |
 | **S4** | **Does it survive Secure Boot, and does TPM2 unlock work** | **PASS 2026-08-23 (arm64)** |
 
@@ -65,6 +65,33 @@ The work itself takes seconds.
   actually get used at boot — which is the part nobody tells you about.
 - [`run-s4.py`](run-s4.py) drives QEMU with `AAVMF_CODE.secboot.fd` and `swtpm`.
 - [`../../docs/SESSION-S4-SECUREBOOT-TPM.md`](../../docs/SESSION-S4-SECUREBOOT-TPM.md)
+  is the write-up.
+
+## S2
+
+```bash
+./run-s2.sh build [arch]   publish the NativeAOT binary in os7-build:<arch>
+./run-s2.sh iso   [arch]   run that binary inside the ISO's own root
+./run-s2.sh all   [arch]   both, in order              (default arch: arm64)
+```
+
+No VM: `iso` overlays a tmpfs on the read-only squashfs and chroots in, so the
+binary meets the image's real glibc and ICU in seconds. It runs the binary
+twice — once as the image ships, and once with `/usr/lib/dotnet` deleted from
+the overlay, because the ISO **does** carry `dotnet-sdk-10.0` and running there
+otherwise proves nothing about runtime independence.
+
+`build amd64` works on an Apple Silicon host even though `make build-amd64` does
+not — the `ENOSYS` in BUILD-NOTES #12 is specific to debootstrap's tar. But
+`iso amd64` needs an amd64 ISO, which does not exist yet.
+
+- [`s2-nativeaot/`](s2-nativeaot) is the project. Deliberately not a
+  hello-world: it exercises `LibraryImport` into libc, source-generated JSON,
+  `Process.Start` and German globalization — the four things SETUP-PLAN §6.2
+  commits `os7-setup` to and NativeAOT can break.
+- [`s2-nativeaot.sh`](s2-nativeaot.sh) runs in the container and installs the
+  packages `os7-build` is missing; that list is the deliverable.
+- [`../../docs/SESSION-S2-NATIVEAOT.md`](../../docs/SESSION-S2-NATIVEAOT.md)
   is the write-up.
 
 ## Shared

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OS/7 — Phase 0 spike S2. The smallest project that still exercises every
+    NativeAOT-risky thing installer/SETUP-PLAN.md §6.2 says os7-setup will do.
+    A hello-world would build cleanly and prove nothing.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>os7-s2</AssemblyName>
+    <RootNamespace>OS7.Spike</RootNamespace>
+
+    <PublishAot>true</PublishAot>
+
+    <!-- Required by LibraryImport: the generated marshalling code is unsafe.
+         SYSLIB1062 says so outright if this is missing. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Globalization stays ON deliberately. L9/§2 want English + German, and
+         InvariantGlobalization=true would quietly make that impossible while
+         shrinking the binary and looking like a win. The program reports at
+         runtime whether ICU actually resolved. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- Turn AOT/trim analyser complaints into build errors: the point of the
+         spike is to find them here, not in an installer at 3am. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+</Project>

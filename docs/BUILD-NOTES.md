@@ -521,3 +521,46 @@ Two things to know before using it:
 * **arm64 has no SMM**, so the Secure Boot variable store is not tamper-proof
   the way it is on x86. Signature enforcement is real; the threat model is
   weaker. A platform property, not a configuration mistake.
+
+## 22. `LibraryImport` only marshals blittable types — `termios` needs a `fixed` buffer
+
+Found in spike S2 ([SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md)), and it
+lands squarely on `Native/Termios.cs` in SETUP-PLAN §6.5.
+
+`struct termios` carries `cc_t c_cc[NCCS]`. Declared the obvious way —
+
+```csharp
+[MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+public byte[] Cc;
+```
+
+— the build fails:
+
+```
+SYSLIB1051: The type 'Termios' is not supported by source-generated P/Invokes.
+SYSLIB1062: LibraryImportAttribute requires unsafe code.
+```
+
+The `LibraryImport` source generator handles blittable types only. Use a
+`fixed byte Cc[32]` inside an `unsafe struct`, and set
+`<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
+
+The older `[DllImport]` accepts the array form — and gives up the generated,
+AOT-friendly marshalling that is the entire reason to prefer `LibraryImport`.
+Take the fixed buffer.
+
+(The layout is the same on both target arches: four 4-byte flag words, `c_line`,
+32 control chars, two 4-byte speeds — 60 bytes.)
+
+## 23. amd64 .NET builds work under emulation, even though amd64 ISO builds do not
+
+#12 says Docker's amd64 emulation on Apple Silicon cannot unpack a Debian
+rootfs, so `make build-amd64` is unavailable here. It is easy to generalise that
+into "nothing amd64 can be built on this machine". **That is wrong.**
+
+Spike S2 published a working `linux-x64` NativeAOT binary in `os7-build:amd64`
+on an Apple Silicon Mac, with zero warnings. The `ENOSYS` in #12 is specific to
+what GNU tar does during debootstrap; ordinary compilation is unaffected.
+
+Consequence: `os7-setup` can be built and iterated for **both** architectures
+locally, long before an amd64 ISO exists. Phase 1 is not blocked by #12.

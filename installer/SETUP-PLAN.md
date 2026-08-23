@@ -622,9 +622,14 @@ dotnet publish -c Release -r linux-x64  -p:PublishAot=true
 dotnet publish -c Release -r linux-arm64 -p:PublishAot=true
 ```
 
-Result: a self-contained native ELF (~10–15 MB) with no .NET runtime
-dependency. It starts instantly, which matters for something that runs before
-anything else on the machine.
+Result: a self-contained native ELF with no .NET runtime dependency. It starts
+instantly, which matters for something that runs before anything else on the
+machine.
+
+**Measured by S2 (2026-08-23):** 3.3 MB arm64 / 3.2 MB x64 for a minimal
+program — the ~10–15 MB guessed here was pessimistic — linked against nothing
+but `libc` and `libm`, and verified to run inside the ISO with
+`/usr/lib/dotnet` deleted.
 
 Two constraints, both already satisfied by this repo:
 
@@ -783,7 +788,7 @@ in the shipped system.
 | L8 | No screen reader equivalent to GNOME's Orca | `espeakup`/`speakup` and `brltty` do work on the Linux console (Debian's installer relies on this) — a phase-6 item, not a blocker |
 | L9 | Console fonts cap at ~512 glyphs — no CJK, no RTL | English + German for v1; state the limit rather than pretending |
 | L10 | Dropping Calamares means owning what it gave us free: partitioning UI, locale/keyboard lists, LUKS, OEM mode, 70+ translations, upstream maintenance | read the system's own data (`/usr/share/zoneinfo`, `xkb/rules/base.lst`, `i18n/SUPPORTED`) instead of hand-maintaining lists; accept the translation loss |
-| L11 | NativeAOT needs `clang` + `zlib1g-dev` and restores `Microsoft.DotNet.ILCompiler` from NuGet at publish time — unvalidated against Canonical's `dotnet-sdk-10.0` | **spike S2 below.** Fallback is a framework-dependent build against the `dotnet-runtime` already in the image — bounded risk |
+| L11 | NativeAOT needs `clang` + `zlib1g-dev` and restores `Microsoft.DotNet.ILCompiler` from NuGet at publish time — unvalidated against Canonical's `dotnet-sdk-10.0` | **RESOLVED by S2 (2026-08-23).** It works against SDK `10.0.111` with zero warnings, on both arches, and the fallback is not needed. The build container needs `dotnet-sdk-10.0 clang zlib1g-dev libc6-dev binutils` added before Phase 1 — the Dockerfile does not have them yet. **New, smaller limitation:** `LibraryImport` marshals blittable types only, so `Native/Termios.cs` must use a `fixed byte c_cc[32]` and the project `AllowUnsafeBlocks` (BUILD-NOTES #22) |
 | L12 | Setup must never offer its own boot medium as a target; NVMe/mmc/multipath naming, pre-existing `rpool` name collisions and stale pool hostids are all real failure modes | explicit exclusion + `zpool import -f -N -R`, `zpool labelclear`, `zgenhostid`; each gets a named error screen |
 | L13 | `/etc/hostid` must agree between install time and the target initramfs or the pool will not import at boot | `zgenhostid` into the target *before* `update-initramfs`; classic ZFS-root footgun |
 | L14 | Booting straight into Setup loses "try before you install" | keep both GRUB entries |
@@ -822,7 +827,7 @@ UI to exist. **Gate: all four pass before Phase 1 starts.**
 | Spike | Question | Method | Done when |
 |---|---|---|---|
 | **S1** | Does the look actually work | Boot the existing arm64 ISO in QEMU with the palette + `fbcon=font:TER16x32` cmdline; paint one static mockup screen; `screendump` from the QEMU monitor | Field is exactly `#0057ad`, stripe exactly `#1289ff`, box glyphs render, arrows and F-keys decode |
-| **S2** | Does NativeAOT build in the OS/7 container | `dotnet publish -p:PublishAot=true` for both arches in `os7-build` | Two static binaries that run in the ISO |
+| **S2** | Does NativeAOT build in the OS/7 container | `dotnet publish -p:PublishAot=true` for both arches in `os7-build` | **PASS 2026-08-23.** Both arches, zero warnings, 3.2–3.4 MB; the arm64 binary runs in the ISO *with .NET deleted from it*. `installer/spikes/s2-nativeaot/` + `run-s2.sh`; findings in [../docs/SESSION-S2-NATIVEAOT.md](../docs/SESSION-S2-NATIVEAOT.md) |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | Hand-scripted bash, no UI: partition → `cryptsetup luksFormat` → `bpool` + `rpool` on `/dev/mapper/os7_root` → `unsquashfs` → `zgenhostid` → `crypttab` → chroot config → `update-initramfs` → `grub-install` → reboot | **PASS 2026-08-23 (arm64).** `installer/spikes/s3-zfs-luks.sh`, driven by `installer/spikes/run-s3.py`; findings in [../docs/SESSION-S3-ZFS-LUKS.md](../docs/SESSION-S3-ZFS-LUKS.md) |
 | **S4** | Does it survive Secure Boot, and does TPM2 unlock work | Repeat S3 under OVMF with Secure Boot on and Microsoft keys, plus a software TPM (`swtpm`) and `systemd-cryptenroll --tpm2-device=auto` | **PASS 2026-08-23 (arm64).** All three: SB enabled, second boot needs no passphrase, TPM-less VM still boots. `installer/spikes/s4-tpm-enroll.sh` + `run-s4.py`; findings in [../docs/SESSION-S4-SECUREBOOT-TPM.md](../docs/SESSION-S4-SECUREBOOT-TPM.md) |
 
@@ -847,7 +852,12 @@ for: `shim-signed` chains to Canonical's signed GRUB, the firmware accepts it
 against the Microsoft UEFI CA, and ZFS-on-LUKS root comes up underneath. TPM2
 auto-unlock works too — but **not** from `systemd-cryptenroll` alone. See L17.
 
-**S1 and S2 are what remain.** Phase 1 is still gated on all four.
+**S2 passed on 2026-08-23** too: NativeAOT builds against Canonical's SDK on
+both architectures, and the binary runs in the ISO without .NET present. Note
+that the amd64 binary builds fine on an Apple Silicon host even though the amd64
+*ISO* cannot (BUILD-NOTES #23), so Phase 1 is not blocked by that.
+
+**S1 is the only spike left.** Phase 1 is still gated on all four.
 
 D3 made S3 harder than it was when this document was first written: the
 encryption layer is now part of the *first* spike rather than a later refinement.

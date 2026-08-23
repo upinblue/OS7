@@ -14,6 +14,7 @@ paid services.
 | That ISO boots | **Yes.** UEFI → GRUB → casper → systemd → login prompt, in QEMU. |
 | **Installing to a disk** | **Works on arm64, proven end to end.** ZFS-on-LUKS root, installed from the live ISO and booted from the disk alone. See [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md). |
 | **Secure Boot + TPM2** | **Works on arm64.** Boots with SB enabled against the Microsoft UEFI CA; TPM2 auto-unlock works and a TPM-less machine still prompts. See [SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md). |
+| **NativeAOT for `os7-setup`** | **Works on both arches.** 3.2–3.4 MB static-ish ELF, zero warnings, runs in the ISO with .NET deleted. See [SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md). |
 | PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all three functions (they are stubs that throw by design). `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
@@ -48,22 +49,39 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-Phase 0 has **two spikes left** — S1 and S2 — and SETUP-PLAN gates Phase 1 on
-all four. S3 and S4 are done.
+Phase 0 has **one spike left — S1** — and SETUP-PLAN gates Phase 1 on all four.
+S2, S3 and S4 are done.
 
-**S1 (the look) and S2 (NativeAOT in the build container) are independent** of
-each other and of everything above, so either can go first.
+**S1: does the look actually work.** Boot the arm64 ISO with the palette and
+`fbcon=font:TER16x32`, paint one static mockup screen, and `screendump` from the
+QEMU monitor. Pass = the field is exactly `#0057ad`, the stripe exactly
+`#1289ff`, box glyphs render, and arrows/F-keys decode.
 
-* **S1** wants the framebuffer palette specifically, so it needs
-  `-device virtio-gpu-pci` and `screendump` from the QEMU monitor — the S3/S4
-  harnesses deliberately run with `-display none`. `installer/spikes/vmconsole.py`
-  gives you the console driving; the display plumbing is new work.
-* **S2** is `dotnet publish -p:PublishAot=true` in `os7-build` for both arches.
-  It needs no VM at all.
+It is the only spike that needs a **framebuffer**: S3 and S4 deliberately run
+with `-display none`, so `run-s3.py`/`run-s4.py` give you the console driving
+(`installer/spikes/vmconsole.py`) but not the display. New work is
+`-device virtio-gpu-pci`, a QMP or monitor socket, and `screendump`.
+
+Two things S2 already de-risks for it: the AOT binary can be built for either
+arch on this machine, and `ioctl(TIOCGWINSZ)` / `tcgetattr` resolve — their
+behaviour on a real VT is precisely what S1 has to show.
 
 **Then Phase 1** — the `os7-setup` skeleton, strictly non-destructive.
 
-### What S3 and S4 changed about what Setup has to do
+### Before Phase 1: the build container needs .NET
+
+`os7-build` has no SDK today. S2 established the exact list:
+
+```
+dotnet-sdk-10.0  clang  zlib1g-dev  libc6-dev  binutils
+```
+
+The Dockerfile is deliberately **unchanged** — nothing in the repo builds C#
+yet, and an SDK would make every ISO build heavier for no current benefit.
+`installer/spikes/s2-nativeaot.sh` installs the list itself, which is why an S2
+run takes minutes. Move it into the Dockerfile when Phase 1 starts.
+
+### What S2, S3 and S4 changed about what Setup has to do
 
 * **`boot=zfs` is mandatory** on the kernel command line and nothing generates
   it. BUILD-NOTES #15.
@@ -78,6 +96,12 @@ each other and of everything above, so either can go first.
   has no users at all. BUILD-NOTES #17.
 * **Do the chroot's bind mounts inside `unshare --mount --propagation
   private`**, or the pool will not export. BUILD-NOTES #18.
+* **`Native/Termios.cs` must use a `fixed byte c_cc[32]`**, not a `byte[]` with
+  `[MarshalAs(ByValArray)]` — `LibraryImport` marshals blittable types only, and
+  the project needs `AllowUnsafeBlocks`. BUILD-NOTES #22.
+* **amd64 `os7-setup` can be built here**, even though the amd64 ISO cannot:
+  the `ENOSYS` in BUILD-NOTES #12 is specific to debootstrap's tar, not to
+  compilation. Phase 1 is not blocked by §3. BUILD-NOTES #23.
 * **TPM2 enrolment is more than `systemd-cryptenroll`.** It writes a valid
   token and changes nothing at boot; Setup must also install an initramfs hook
   carrying the token handler **and the libtss2 libraries systemd dlopens**, plus
@@ -175,6 +199,10 @@ Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
   pulls Ubuntu's `qemu-efi-aarch64` out of the build container instead. Expect
   10–15 minutes per boot: AAVMF renders GRUB's countdown on a 238-column serial
   console.
+- **#22 — `LibraryImport` marshals blittable types only.** `termios` needs a
+  `fixed` buffer, not a `byte[]`.
+- **#23 — amd64 .NET builds work under emulation** even though amd64 ISO builds
+  do not. Do not generalise #12 into "nothing amd64 builds here".
 - **`pwsh --version` is not a health check.** The banner, `Import-Module` by
   path and `Get-Command` are compiled into the binary and succeed while the
   whole on-disk module tree is unusable.
@@ -250,11 +278,14 @@ build/config/hooks-amd64/         amd64-only hooks
 build/lib/arm64-efi-remaster.sh   arm64 has no live-build bootloader; this fixes it
 powershell/OS7/                   the OS7 module - ONE source of truth, staged by build.sh
 installer/SETUP-PLAN.md           the installer design and decisions. Authoritative.
+installer/spikes/s2-nativeaot/    the NativeAOT smoke-test project (S2)
 installer/spikes/s3-zfs-luks.sh   the proven install sequence (S3)
 installer/spikes/s4-tpm-enroll.sh TPM2 enrolment + the initramfs pieces (S4)
+installer/spikes/run-s2.sh        S2: build in the container, run in the ISO
 installer/spikes/run-s3.py        QEMU harness for S3
 installer/spikes/run-s4.py        QEMU harness for S4 (Secure Boot + swtpm)
 installer/spikes/vmconsole.py     serial-console driving, shared by both
+docs/SESSION-S2-NATIVEAOT.md      what S2 proved, and what the container still needs
 docs/SESSION-S3-ZFS-LUKS.md       what S3 proved, and the nine things it depends on
 docs/SESSION-S4-SECUREBOOT-TPM.md what S4 proved, and what it deliberately does not
 docs/BUILD-NOTES.md               every trap found so far. Read before debugging.

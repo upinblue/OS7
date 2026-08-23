@@ -23,6 +23,7 @@ This repository is freshly scaffolded. Nothing here is a working build yet — t
 | `build/config/auto/config` (live-build config) | **validated** — `lb config` passes and an arm64 ISO builds from it; still has no package lists, hooks or includes |
 | `powershell/OS7/` module | stub — function signatures only, no logic |
 | Installer (`os7-setup`) | not started — **designed and decided**: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) |
+| `os7-setup` toolchain (NativeAOT) | **works on both arches** — spike S2: 3.2–3.4 MB native binary, no .NET runtime needed at run time. `os7-build` still needs the SDK added: [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md) |
 | Installing to a disk | **works on arm64** — the install sequence is proven end to end by spike S3, ahead of any Setup code: [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md) |
 | Secure Boot + TPM2 unlock | **works on arm64** — spike S4: boots against the Microsoft UEFI CA, TPM2 auto-unlock, TPM-less fallback intact: [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md) |
 | `.devcontainer` / VS Code dev environment | stub, untested |
@@ -70,7 +71,8 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
 - **Installer: `os7-setup`** (decided 2026-08-22, replacing Calamares) — an OS/7-authored, keyboard-driven **text-mode** installer written in C#/.NET and published as a NativeAOT binary, styled after MS-DOS 6.22 Setup and the Windows 2000 text-mode Setup phase. Field colour `#0057ad` (up in blue `#1289ff` darkened to WCAG AAA against white text), with `#1289ff` as the title stripe and progress fill on every screen.
   - **One installer serves both architectures**, which is why Calamares went: it is a Qt GUI application and could never have installed the desktop-less arm64 image. Subiquity is no longer needed either.
   - Nothing is implemented yet. Design, limitations, decisions and the phased plan — including the spikes that must pass before any installer code is written: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
-  - **Spikes S3 and S4 passed 2026-08-23:** the install sequence Setup's storage step will drive is written and proven end to end on arm64, and the installed system boots under Secure Boot with TPM2 auto-unlock — [installer/spikes/](installer/spikes/), [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md), [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md).
+  - **Spikes S2, S3 and S4 passed 2026-08-23:** `os7-setup` publishes as a NativeAOT binary on both architectures (3.2–3.4 MB, no .NET runtime needed at run time) — [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md).
+  - **Storage and boot:** the install sequence Setup's storage step will drive is written and proven end to end on arm64, and the installed system boots under Secure Boot with TPM2 auto-unlock — [installer/spikes/](installer/spikes/), [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md), [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md).
 
 ## Microsoft technology scope (v1 draft)
 
