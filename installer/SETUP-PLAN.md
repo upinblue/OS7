@@ -118,20 +118,28 @@ the 8×16 bitmap font Windows and DOS actually used, drawn to be rendered
 *without* antialiasing at 16 px, so it reproduces the reference screenshots
 rather than approximating them.
 
-Verified against the upstream repository on 2026-08-22:
+Verified on 2026-08-22 — first against the repository, then **re-verified against
+the downloaded release binary**, which is what actually ships. The two differ by
+one codepoint, which is exactly why the second pass was worth doing:
 
 | | |
 |---|---|
 | Licence | **Public domain / CC0.** No attribution obligation, no redistribution constraint — it can be shipped inside the ISO. |
-| Release | `v3.09.10`, `FSEX302.ttf`, 580 724 bytes |
+| Release | `v3.09.10` → `FSEX302.ttf`, **580 724 bytes** |
+| **SHA256** | **`842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899`** |
+| Internal version | `Fixedsys Excelsior 3.022` — note this differs from the release tag; kika's tag versions the ligature work, Darien Valentine's base font is 3.02 |
 | Format | **TTF only** (source is an 8.9 MB TTX). The Linux console needs **PSF**, so a conversion step is unavoidable — see §2.5. |
-| Design metrics | Simulated **8×16** bitmap, drawn for 16 px / 12 pt @ 96 dpi, no antialiasing |
-| Coverage | 6 193 codepoints |
+| Design metrics | `unitsPerEm = 160`, i.e. **exactly 10 font units per pixel at 16 px**. The "constructed from 10×10 pixel squares" claim is literally true, so every outline edge lands on a pixel boundary and a 16 px rasterisation is exact, not approximated. |
+| Coverage | 6 192 codepoints |
+
+The unused sibling, recorded so nobody has to re-derive it: `FSEX302-alt.ttf`,
+580 716 bytes, SHA256
+`21b801fe4179dc884a9836d1fbd570ce83249d77204a0a017fbae14aa2dea132`.
 
 **The coverage question was the real risk, and it passed.** The upstream README
 only advertises windows-1250/1251/1252/1253/1254, none of which contain
 box-drawing characters — and OS/7's entire UI is built from them. Reading the
-cmap out of `FSEX.ttx` directly settled it:
+cmap straight out of `FSEX302.ttf` settled it:
 
 | Unicode block | Coverage |
 |---|---|
@@ -187,14 +195,41 @@ FSEX302.ttf  --otf2bdf -p 16-->  fixedsys-16.bdf
 `bdf2psf` is the Debian tool `console-setup` itself uses, so this is the
 supported path rather than a bespoke one.
 
+**Rasterise the outlines. Do not extract the embedded bitmaps.** The font
+carries an `EBDT`/`EBLC` bitmap strike, and using it looks like the obviously
+more authentic choice. It is a trap:
+
+| Strike | ppem | Bit depth | Glyph IDs |
+|---|---|---|---|
+| 0 | 12 × 12 | 1 | 1699 only — a single glyph |
+| 1 | **16 × 16** | 1 | **66 … 4219** |
+
+Glyph 66 is `A`. Everything below it — **space, all ten digits, and every ASCII
+punctuation mark**, `U+0020`–`U+0040`, 33 codepoints — has *no* bitmap in the
+strike. A conversion built on `EBDT` yields a font with letters and perfect box
+drawing and no digits, which is the kind of defect that survives a casual look
+at the screen and then shows up in a partition size.
+
+Rasterising is not a compromise here: with `unitsPerEm = 160`, 16 px is exactly
+10 units per pixel, so `otf2bdf -p 16` reproduces the intended pixels rather
+than interpreting them.
+
 Three things this step must do, and a fourth it must never skip:
 
-1. **Pin the download** — release tag, filename and **SHA256**, asserted before
-   use, exactly as hook 0020 pins the PowerShell tarball. The hash is not
-   recorded here because nothing has been downloaded yet; whoever implements
-   this records it from a verified fetch.
+1. **Pin the download.** Fetched and hashed on 2026-08-22; assert before use,
+   exactly as hook 0020 pins the PowerShell tarball:
+
+   ```
+   URL    https://github.com/kika/fixedsys/releases/download/v3.09.10/FSEX302.ttf
+   SIZE   580724
+   SHA256 842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899
+   ```
+
+   The font is **not vendored into this repo** — the hook fetches and verifies
+   it, the same shape as PowerShell in hook 0020. Bump the tag and the hash
+   together.
 2. **Subset to 512 glyphs.** PSF on the Linux console caps at 512, and the font
-   has 6 193 codepoints. The subset is ASCII + Latin-1 + the Latin Extended-A
+   has 6 192 codepoints. The subset is ASCII + Latin-1 + the Latin Extended-A
    characters German needs + Box Drawing + Block Elements + the punctuation the
    UI uses. Greek and Cyrillic do not fit alongside that, which is consistent
    with L9 (English and German for v1).
@@ -756,7 +791,7 @@ in the shipped system.
 | L16 | Intune's "Allowed distributions" rule matches on `/etc/os-release`; branding OS/7 as its own `ID=` could make every device fail it | keep `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"`, brand only `NAME` / `PRETTY_NAME` (§4.6). **Not decided anywhere in this repo yet** |
 | L17 | LUKS unlock at boot needs a passphrase prompt unless TPM2 enrolment happens at install time | enrol TPM2 in the install's configure step (`systemd-cryptenroll`), keep a passphrase as recovery — and test that a TPM-less VM still boots |
 | L18 | **`bpool` may still trip the encryption check.** Microsoft exempts `/boot`, but `bpool` is an unencrypted fixed writable partition holding a ZFS *pool member*, not a directly mounted filesystem. Whether the agent maps it to `/boot` and exempts it is undocumented | verify in the first real enrolment test (Phase 6). If it fails: either move `/boot` into `rpool` and switch to ZFSBootMenu (D1 reopens), or carry a custom-compliance script. Do not assume it passes |
-| L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 193 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
+| L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
 | L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4) |
 
 ---
@@ -881,7 +916,9 @@ remembered. What was *not* checked is marked as a spike in Phase 0.
 | **Intune Linux compliance supports Ubuntu Desktop 26.04 LTS, x86/64 only** — confirms the base choice and the arm64-is-server-only decision | same page |
 | Intune's "Allowed distributions" rule matches distribution type and version, which is what raises L16/D8 | same page |
 | **Fixedsys Excelsior is public domain / CC0**, ships as TTF only, simulates an 8×16 bitmap drawn for 16 px without antialiasing; release `v3.09.10`, `FSEX302.ttf`, 580 724 bytes | [kika/fixedsys](https://github.com/kika/fixedsys) and its release metadata |
-| **Its cmap covers Box Drawing `U+2500–257F` 128/128 and Block Elements `U+2580–259F` 32/32**, so every glyph the OS/7 UI draws is present — the upstream README advertises only windows-125x, which would not have been enough | read directly from `FSEX.ttx` in the repository, 6 193 codepoints total |
+| **Its cmap covers Box Drawing `U+2500–257F` 128/128 and Block Elements `U+2580–259F` 32/32**, so every glyph the OS/7 UI draws is present — the upstream README advertises only windows-125x, which would not have been enough | read out of the **downloaded `FSEX302.ttf`**, 6 192 codepoints total (the repository's `FSEX.ttx` has 6 193 — checking the shipped artefact, not the source, is the point) |
+| `FSEX302.ttf` is 580 724 bytes, SHA256 `842f8fbf…3899`; `unitsPerEm = 160`, so 16 px is exactly 10 units per pixel | downloaded and hashed 2026-08-22 |
+| **The 16 ppem `EBDT` bitmap strike starts at glyph 66 (`A`)** — space, digits and ASCII punctuation have no embedded bitmap, so the conversion must rasterise outlines, not extract bitmaps | `EBLC` strike table read from the same file |
 
 Contrast ratios in §2.2 were computed from the sRGB relative-luminance formula,
 not taken from a source.
