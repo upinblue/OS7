@@ -61,7 +61,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${ICU
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
-curl -fsSL -o "${TMP}/${TARBALL}" "${URL}"
+# Retry: a 66MB fetch from GitHub inside the chroot is the single most
+# failure-prone step in the build. A 2026-08-22 run died on
+#   curl: (56) OpenSSL SSL_read: ... unexpected eof while reading
+# midway through. One flaky transfer should not fail a whole ISO build.
+curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors \
+	-o "${TMP}/${TARBALL}" "${URL}"
 
 # Verify before unpacking anything into the image. A silent swap here would
 # ship a compromised interactive shell to every OS/7 user.
@@ -73,10 +78,118 @@ tar -xzf "${TMP}/${TARBALL}" -C "${DEST}"
 chmod +x "${DEST}/pwsh"
 ln -sf "${DEST}/pwsh" /usr/bin/pwsh
 
+# ---------------------------------------------------------------------------
+# .NET needs a working RNG, i.e. /dev/urandom.
+#
+# PowerShell is a .NET application and calls Guid.NewGuid() while initialising
+# a runspace and while loading modules. With no usable /dev/urandom that throws
+#   System.Security.Cryptography.CryptographicException
+# and PowerShell then fails in a thoroughly misleading way: the binary still
+# starts and `pwsh --version` prints happily, but NO on-disk module can load -
+# surfacing much later as "The term 'Write-Host' is not recognized" or
+# "no valid module file was found in any module directory".
+#
+# Reproduced 2026-08-22: identical chroot, /dev absent -> CryptographicException;
+# /dev present -> everything works. A live-build chroot only gets /dev/pts
+# mounted (lb_chroot_devpts), so whatever debootstrap laid down is all there is.
+# ---------------------------------------------------------------------------
+echo "OS/7 hook 0020: checking /dev for .NET's RNG"
+printf 'OS/7 hook 0020:   /dev contains: %s\n' "$(ls /dev 2>/dev/null | tr '\n' ' ')"
+
+# name major minor
+for spec in "urandom 1 9" "random 1 8" "null 1 3" "zero 1 5"; do
+	set -- ${spec}
+	if [ ! -c "/dev/${1}" ]; then
+		echo "OS/7 hook 0020:   /dev/${1} missing - creating it"
+		mknod -m 0666 "/dev/${1}" c "${2}" "${3}" \
+			|| echo "OS/7 hook 0020:   WARNING: could not create /dev/${1}" >&2
+	fi
+done
+
+if head -c 32 /dev/urandom > /dev/null 2>&1; then
+	echo "OS/7 hook 0020:   /dev/urandom is readable"
+else
+	echo "OS/7 hook 0020: /dev/urandom is not readable - .NET crypto cannot work" >&2
+	exit 1
+fi
+
 # NOT added to /etc/shells: bash stays the real login shell (README "Shell").
 # pwsh becomes the visible interactive shell via hook 0050 instead.
 
-# Run it for real. This is the check that catches a missing runtime dependency
-# at BUILD time instead of on a user's machine at first login.
+# ---------------------------------------------------------------------------
+# Verify the install is COMPLETE, not merely present.
+#
+# `pwsh --version` is not sufficient and is actively misleading: the version
+# banner, Import-Module-by-path and Get-Command are all compiled into the pwsh
+# binary, so they work even when PowerShell's bundled module tree is missing.
+# A 2026-08-22 build got all the way to "PowerShell 7.6.5" and then died later
+# with "The term 'Write-Host' is not recognized" - Write-Host lives in
+# Microsoft.PowerShell.Utility, on disk under $PSHOME/Modules.
+#
+# So: check the module tree exists, and exercise a cmdlet that can only come
+# from it.
+# ---------------------------------------------------------------------------
 /usr/bin/pwsh --version
+
+if [ ! -d "${DEST}/Modules/Microsoft.PowerShell.Utility" ]; then
+	echo "OS/7 hook 0020: PowerShell module tree is incomplete after extraction" >&2
+	echo "OS/7 hook 0020: expected ${DEST}/Modules/Microsoft.PowerShell.Utility" >&2
+	echo "OS/7 hook 0020: ${DEST} contains:" >&2
+	ls -la "${DEST}" >&2 || true
+	echo "OS/7 hook 0020: ${DEST}/Modules contains:" >&2
+	ls -la "${DEST}/Modules" >&2 || true
+	exit 1
+fi
+
+echo "OS/7 hook 0020: verifying the PowerShell install"
+
+# Filesystem facts come from BASH, never from PowerShell.
+#
+# Lesson from 2026-08-22: a diagnostic must not depend on the subsystem it is
+# diagnosing. Earlier versions of this check reported through Write-Host, and
+# built paths with Join-Path - both from the very modules that were failing to
+# load - and so produced a confidently wrong "directory is empty" reading.
+UTIL_DIR="${DEST}/Modules/Microsoft.PowerShell.Utility"
+echo "OS/7 hook 0020:   files under ${DEST}: $(find "${DEST}" -type f | wc -l)"
+
+if [ ! -f "${UTIL_DIR}/Microsoft.PowerShell.Utility.psd1" ]; then
+	echo "OS/7 hook 0020: PowerShell's bundled module tree is incomplete." >&2
+	echo "OS/7 hook 0020: missing ${UTIL_DIR}/Microsoft.PowerShell.Utility.psd1" >&2
+	ls -la "${DEST}/Modules" >&2 || true
+	exit 1
+fi
+echo "OS/7 hook 0020:   bundled module tree present ($(ls -1 "${DEST}/Modules" | wc -l) modules)"
+
+# ---------------------------------------------------------------------------
+# What is NOT verified here, and why.
+#
+# `Write-Host`, `Get-Module -ListAvailable`, and any Import-Module BY NAME
+# cannot work at build time. live-build runs every hook inside chroot(2), and
+# under chroot PowerShell's module DISCOVERY is broken: it probes PSModulePath
+# entries with the character at index 1 dropped -
+#     /root/... -> /oot/...   /usr/local/... -> /sr/local/...
+#     /opt/microsoft/powershell/7/Modules -> /pt/microsoft/powershell/7/Modules
+# so it finds nothing and reports "no valid module file was found in any module
+# directory". Proven 2026-08-22 by satisfying the mangled path
+# (/pt/microsoft/...): discovery immediately returned all 10 modules.
+#
+# It is chroot(2) itself, not the environment: the same binary on the same
+# filesystem works when not chrooted, and fails when chrooted regardless of
+# env or cwd. $env:PSModulePath itself reads back correctly - only discovery
+# mangles it.
+#
+# This is therefore a BUILD-TIME artifact only. A booted OS/7 system is not
+# chrooted and PowerShell behaves normally. Do NOT "fix" it by installing
+# modules at the mangled paths.
+#
+# Verified on Docker Desktop / macOS arm64; not yet re-checked on a native
+# Linux builder. Confirm on a booted ISO before treating as fully closed.
+# ---------------------------------------------------------------------------
+if /usr/bin/pwsh -NoLogo -NoProfile -Command 'Write-Host "OS/7 hook 0020:   cmdlets resolve (not chrooted?)"' 2>/dev/null; then
+	:
+else
+	echo "OS/7 hook 0020:   NOTE: cmdlet discovery unavailable under chroot - expected, see comment above."
+	echo "OS/7 hook 0020:   NOTE: must be re-verified on a booted system."
+fi
+
 echo "OS/7 hook 0020: done"

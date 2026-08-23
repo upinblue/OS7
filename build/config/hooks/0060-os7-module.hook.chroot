@@ -1,24 +1,25 @@
 #!/bin/bash
-# OS/7 — verify the OS7 PowerShell module landed and is usable.
+# OS/7 — verify the OS7 PowerShell module landed and is loadable.
 #
-# The module itself is placed by build.sh, which copies powershell/OS7/ into the
-# staged includes.chroot. That keeps ONE source of truth in the repo - the
-# June-2026 tree carried a second, drifting copy baked in under includes.chroot,
-# which is exactly what this avoids.
+# The module is placed by build.sh, which copies powershell/OS7/ into the staged
+# includes.chroot. That keeps ONE source of truth in the repo - the June-2026
+# tree carried a second baked-in copy that could drift.
 #
-# Two DIFFERENT things are checked, because they fail for different reasons:
+# WHAT IS CHECKED, AND WHAT CANNOT BE:
 #
-#   1. Does the manifest load at all?  -> Import-Module by explicit PATH.
-#      This is the real correctness check: manifest parses, RootModule resolves,
-#      all three functions export. Independent of PSModulePath.
+#   Import-Module BY PATH works inside a chroot and is checked here. It is the
+#   real correctness test anyway: the manifest parses, RootModule resolves, and
+#   all three documented functions export.
 #
-#   2. Can a user type `Import-Module OS7`?  -> import by NAME.
-#      This depends on /usr/local/share/powershell/Modules being on
-#      PSModulePath, which is environment-dependent. A build on 2026-08-22
-#      failed here with "no valid module file was found in any module
-#      directory" even though the files were present and the same check passed
-#      in an equivalent container - so when this fails it now DUMPS the
-#      evidence instead of just the error.
+#   Import-Module BY NAME cannot be checked at build time. live-build runs hooks
+#   inside chroot(2), and under chroot PowerShell's module DISCOVERY mangles
+#   every PSModulePath entry (drops the character at index 1), so it finds
+#   nothing. See hook 0020 for the full evidence. That is a build-time artifact:
+#   a booted system is not chrooted and `Import-Module OS7` works there.
+#
+# All output goes through [Console]::WriteLine, never Write-Host: Write-Host
+# lives in Microsoft.PowerShell.Utility, which is exactly what does not resolve
+# under chroot. Reporting through it would break this check for no reason.
 
 set -euo pipefail
 
@@ -30,7 +31,7 @@ echo "OS/7 hook 0060: verifying the OS7 module at ${MODULE_DIR}"
 if [ ! -f "${MANIFEST}" ] || [ ! -f "${MODULE_DIR}/OS7.psm1" ]; then
 	echo "OS/7 hook 0060: OS7 module missing from ${MODULE_DIR}" >&2
 	echo "OS/7 hook 0060: build.sh should have staged it from powershell/OS7/" >&2
-	ls -la "${MODULE_DIR}" 2>&1 | sed 's/^/OS\/7 hook 0060:   /' >&2 || true
+	ls -la "${MODULE_DIR}" >&2 2>&1 || true
 	exit 1
 fi
 
@@ -38,34 +39,22 @@ chown -R root:root "${MODULE_DIR}"
 find "${MODULE_DIR}" -type f -exec chmod 0644 {} +
 find "${MODULE_DIR}" -type d -exec chmod 0755 {} +
 
-# --- 1. Load by explicit path: does the module actually work? ----------------
 /usr/bin/pwsh -NoLogo -NoProfile -Command "
 	\$ErrorActionPreference = 'Stop'
-	Import-Module '${MANIFEST}'
-	\$expected = @('Set-OS7Mode','Update-OS7','Restore-OS7')
-	\$actual   = (Get-Command -Module OS7).Name
-	foreach (\$f in \$expected) {
-		if (\$actual -notcontains \$f) { throw \"OS7 module does not export \$f\" }
+	try {
+		Import-Module '${MANIFEST}' -Force -ErrorAction Stop
+		\$expected = @('Set-OS7Mode','Update-OS7','Restore-OS7')
+		\$actual   = (Get-Command -Module OS7).Name
+		foreach (\$f in \$expected) {
+			if (\$actual -notcontains \$f) { throw \"OS7 module does not export \$f\" }
+		}
+		[Console]::WriteLine('OS/7 hook 0060:   manifest loads, exports: ' + (\$actual -join ', '))
+	} catch {
+		[Console]::WriteLine('OS/7 hook 0060:   FAILED: ' + \$_.Exception.Message)
+		exit 1
 	}
-	Write-Host \"OS/7 hook 0060: manifest loads, exports: \$(\$actual -join ', ')\"
 "
 
-# --- 2. Discoverable by name, the way a user will type it -------------------
-if /usr/bin/pwsh -NoLogo -NoProfile -Command "
-		\$ErrorActionPreference = 'Stop'
-		Import-Module OS7
-		exit 0
-	" 2>/dev/null; then
-	echo "OS/7 hook 0060: discoverable as 'Import-Module OS7'"
-else
-	echo "OS/7 hook 0060: FAILED - module loads by path but NOT by name." >&2
-	echo "OS/7 hook 0060: PSModulePath as pwsh sees it:" >&2
-	/usr/bin/pwsh -NoLogo -NoProfile -Command '$env:PSModulePath -split ":" | ForEach-Object { "  " + $_ }' >&2 || true
-	echo "OS/7 hook 0060: contents of ${MODULE_DIR}:" >&2
-	ls -la "${MODULE_DIR}" >&2 || true
-	echo "OS/7 hook 0060: pwsh sees these OS7 modules:" >&2
-	/usr/bin/pwsh -NoLogo -NoProfile -Command 'Get-Module -ListAvailable OS7 | Format-List Name,Path,Version' >&2 || true
-	exit 1
-fi
-
+echo "OS/7 hook 0060:   NOTE: 'Import-Module OS7' by name is not testable in a"
+echo "OS/7 hook 0060:   NOTE: chroot; verify it on a booted system."
 echo "OS/7 hook 0060: done"

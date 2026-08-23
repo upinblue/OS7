@@ -36,7 +36,8 @@ install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
 # whatever is served.
 fetch_key() {
 	local name="$1" dest="$2" want_fpr="$3"
-	curl -fsSL "https://packages.microsoft.com/keys/${name}" | gpg --dearmor -o "${dest}"
+	curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors \
+		"https://packages.microsoft.com/keys/${name}" | gpg --dearmor -o "${dest}"
 	chmod 0644 "${dest}"
 	local got_fpr
 	got_fpr="$(gpg --show-keys --with-colons "${dest}" 2>/dev/null | awk -F: '/^fpr:/{print $10; exit}')"
