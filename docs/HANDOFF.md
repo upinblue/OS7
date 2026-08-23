@@ -12,65 +12,85 @@ paid services.
 |---|---|
 | `make build-arm64` | **Works.** Produces `out/os7-arm64.iso`, ~2 GB. |
 | That ISO boots | **Yes.** UEFI → GRUB → casper → systemd → login prompt, in QEMU. |
-| PowerShell | **Works.** Login lands at `PS /home/ubuntu>`. `Import-Module OS7` resolves by name and exports all three functions (they are stubs that throw by design). `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
+| **Installing to a disk** | **Works on arm64, proven end to end.** ZFS-on-LUKS root, installed from the live ISO and booted from the disk alone. See [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md). |
+| PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all three functions (they are stubs that throw by design). `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
-| Installing to a disk | **Never done, by any means.** This is the gap. |
+| `os7-setup` | **Does not exist yet** — not a skeleton, not a stub. |
 
-The ISO is a **live** image only. `os7-setup` does not exist yet — not a
-skeleton, not a stub.
+### S3 is done — the gate is open
 
-### The current ISO is S3-ready
+`installer/SETUP-PLAN.md` §10 Phase 0 said S3 gated everything, because the repo
+had never installed OS/7 to a disk by any means. It has now:
 
-Built and verified 2026-08-23, 549 packages. Everything S3 needs is in it:
+```bash
+./installer/spikes/run-s3.py all
+```
 
-- Setup tooling: `squashfs-tools`, `rsync`, `gdisk`, `dosfstools`, `efibootmgr`,
-  `shim-signed`, `kbd`, `console-setup`
-- D3 encryption: `cryptsetup`, `cryptsetup-initramfs`, `tpm2-tools`
-- D4 swap: `systemd-zram-generator`
-- D1 bootloader: `grub-efi-arm64-signed`
-- Correctly absent on arm64: `gnome-shell`, `calamares`, `microsoft-edge-stable`
+partitions a blank disk (ESP + `bpool` + LUKS2), creates `bpool` and `rpool`,
+lays down the §4.4 datasets, `unsquashfs`es the live filesystem into them,
+configures the target and installs GRUB — then reboots **from the disk alone**,
+asks for the passphrase, and reaches a login prompt with `/` served from
+`rpool/ROOT/os7_2026.08.1_202608230935`. Roughly 15 minutes on Apple Silicon.
 
-`cryptsetup-initramfs` is the one to check first if an installed system stops at
-an initramfs prompt: without it nothing unlocks `rpool` at boot.
+* the sequence: [`installer/spikes/s3-zfs-luks.sh`](../installer/spikes/s3-zfs-luks.sh)
+  — throwaway in quality, load-bearing in **order**; `os7-setup`'s storage
+  executor is meant to be a front-end over exactly this
+* the harness: [`installer/spikes/run-s3.py`](../installer/spikes/run-s3.py)
+* the findings: [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md)
 
-Rebuild it with `make build-arm64` if `out/os7-arm64.iso` is missing — takes
-roughly 20 minutes on Apple Silicon.
+**The one thing to carry into every later boot problem:** a ZFS root needs
+**`boot=zfs`** on the kernel command line and *nothing generates it for you* —
+not `initramfs-tools`, not `grub.d/10_linux_zfs`. Without it the machine drops
+to an initramfs prompt. BUILD-NOTES #15.
 
-## 2. Do this first — spike S3
+## 2. Do this next
 
-`installer/SETUP-PLAN.md` §10 Phase 0 defines four spikes and says S3 gates
-everything. That is correct and nothing below changes it.
+Phase 0 has three spikes left and SETUP-PLAN gates Phase 1 on all four.
 
-**S3: prove a ZFS-on-LUKS root can boot at all.**
+**S4 — Secure Boot and TPM2 — is the natural continuation.** It reuses the S3
+harness and the same disk layout, and S3 already left the shim chain on the ESP
+(`/EFI/OS7/shimaa64.efi` + `grubaa64.efi`, plus `/EFI/BOOT/BOOTAA64.EFI`).
+Two prerequisites, both checked on 2026-08-23:
 
-No UI, no C#, no Setup code. A hand-written bash script in a QEMU VM:
+* **Homebrew's QEMU ships no Secure-Boot aarch64 firmware.** There is
+  `edk2-i386-secure-code.fd` and `edk2-x86_64-secure-code.fd`, but no aarch64
+  equivalent (and no aarch64 vars template — `run-s3.py` uses
+  `edk2-arm-vars.fd`). Ubuntu's `qemu-efi-aarch64` package ships
+  `AAVMF_CODE.ms.fd` with the Microsoft keys enrolled, and the build container
+  is `ubuntu:26.04`, so pulling it out of there is the obvious route.
+  **Unconfirmed** — nobody has fetched it yet.
+* **`swtpm` is available** — `swtpm 0.10.2`, bottled, `brew install swtpm`. Not
+  installed.
 
-1. Boot `out/os7-arm64.iso` in QEMU with a blank second disk.
-2. On that disk: `sgdisk` an ESP + a LUKS partition.
-3. `cryptsetup luksFormat`, open it.
-4. `bpool` on its own partition, `rpool` on `/dev/mapper/os7_root`.
-5. Datasets per SETUP-PLAN §4.4.
-6. `unsquashfs` the ISO's `/casper/filesystem.squashfs` into the pool.
-7. `zgenhostid`, write `/etc/crypttab` and `/etc/fstab`.
-8. chroot in, `update-initramfs -u -k all`, `grub-install`, `update-grub`.
-9. Reboot **from the disk only** and see what happens.
+S4 must also prove the negative case from L17: a **TPM-less** VM still boots via
+passphrase.
 
-**Pass = the VM asks for the passphrase and reaches a login prompt from
-`rpool/ROOT/os7_*`.**
+**S1 (the look) and S2 (NativeAOT in the build container) are independent** of
+both and can run in any order. S1 now has a useful precondition: GRUB's menu and
+the whole boot render on QEMU's serial console when no display device is
+attached, so screens can be captured without a framebuffer — though S1 wants the
+framebuffer palette specifically, so it needs `-device virtio-gpu-pci` and
+`screendump` from the monitor.
 
-Why first: if the layout cannot boot, every hour spent on Setup's screens is
-wasted. If it passes, the script *is* the install sequence, and Setup becomes a
-front-end over steps already proven to work.
+**Then Phase 1** — the `os7-setup` skeleton, strictly non-destructive.
 
-Keep the script in `installer/spikes/s3-zfs-luks.sh`. It is throwaway in
-quality but its **sequence** is the deliverable.
+Three things S3 turned up that change what Phase 1/2 should do:
 
-**Watch for:** the ZFS-on-root initramfs ordering (LUKS must open before the
-pool imports), `bpool` needing conservative feature flags so GRUB can read it,
-and `zgenhostid` — get the hostid wrong and the pool refuses to import on the
-next boot.
+* **L4 may be smaller than SETUP-PLAN assumes.** `grub-common` still ships
+  `/etc/grub.d/10_linux_zfs`, `10_linux` defers to it, and it generated correct
+  boot-environment entries unassisted. OS/7 may not need to write its own
+  generator — but it does emit zsys-era "Revert" entries that OS/7 has no `zsys`
+  to serve, and it titles the menu from `/etc/os-release`, so the entry reads
+  **"Ubuntu 26.04 LTS"**. Menu branding is now entangled with D8/L16.
+* **Never pin `root=ZFS=` in `GRUB_CMDLINE_LINUX`.** `10_linux_zfs` emits one
+  per boot environment and anything appended there wins, so every entry in the
+  menu would boot the same dataset — killing the feature the layout exists for.
+  It boots fine, which is what makes it dangerous.
+* **Setup cannot set a password through PAM in the chroot.** `common-password`
+  runs authd's helper, which cannot work there. Write the crypt hash directly.
+  BUILD-NOTES #17.
 
 ## 3. amd64 — why it fails here, and the two local options
 
@@ -116,11 +136,12 @@ implement the missing syscall; if it does, plain `make build-amd64` works here
 again.
 
 Until an amd64 ISO is actually built, **amd64 is unvalidated** — and since GUI
-mode is amd64-only, the entire GUI path is unvalidated with it.
+mode is amd64-only, the entire GUI path is unvalidated with it. **S3 is an arm64
+result only**, for the same reason.
 
 ## 4. Traps that already cost time — read before debugging
 
-Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The three that bite hardest:
+Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
 
 - **#13 — hooks must be at `config/hooks/*.chroot`, FLAT.** The older
   `config/hooks/normal/` layout does not match; live-build then runs nothing,
@@ -132,6 +153,18 @@ Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The three that bite hardest:
   Build-time only; the shipped image is fine. So no hook can test anything
   needing discovery — `Write-Host`, `Get-Module -ListAvailable`, or
   `Import-Module <name>`. Import **by path** works and is what hooks check.
+- **#15 — a ZFS root needs `boot=zfs`, and nothing puts it there for you.**
+- **#16 — driving a serial console:** Enter is `\r`, not `\n`, and an
+  *unanswered* terminal query kills PowerShell outright. Also: never expect a
+  marker that the typed command itself contains, or the shell's echo will match
+  it and report success for a command that never ran.
+- **#17 — `chpasswd` cannot work in a chroot on this image**, and the squashfs
+  contains no users at all.
+- **#18 — `mount --make-private --rbind` is not enough for an installer
+  chroot.** The bind propagates to other namespaces before it is made private,
+  and `zpool export` then says *"pool is busy"* with nothing mounted and `-f`
+  powerless. Do the binds and the chroot inside
+  `unshare --mount --propagation private`.
 - **`pwsh --version` is not a health check.** The banner, `Import-Module` by
   path and `Get-Command` are compiled into the binary and succeed while the
   whole on-disk module tree is unusable.
@@ -140,20 +173,35 @@ And the rule the whole episode argues for:
 
 > **A diagnostic must not depend on the subsystem it is diagnosing.**
 
-Three diagnostics here broke that rule — reporting via `Write-Host`, building
-paths with `Join-Path`, printing sizes with `New-Object`, all from the modules
-that would not load. Two produced a confident but **false** "the directory is
-empty" reading that sent the investigation after a filesystem bug that did not
-exist. Filesystem facts come from `bash`; PowerShell facts use pure .NET.
+Three diagnostics broke that rule; two produced a confident but **false** "the
+directory is empty" reading that sent the investigation after a filesystem bug
+that did not exist. Filesystem facts come from `bash`; PowerShell facts use pure
+.NET.
+
+S3 added its sibling, and it is just as expensive:
+
+> **A diagnostic must be checked against the thing it claims to check.**
+
+The S3 script asserts that the generated initramfs can really unlock and import.
+It reported `MISSING conf/conf.d/cryptroot` on an image that was perfectly fine:
+that is the pre-2.x path, and `/lib/cryptsetup/functions` sets
+`TABFILE=/cryptroot/crypttab` at initramfs stage. The check now uses the real
+path **and prints what the initramfs actually contains**, so a wrong expectation
+shows as a mismatch instead of a verdict. Keep that assertion — it is the
+difference between "the boot failed" and "the boot failed *because the unlock
+config never made it in*", and it costs seconds instead of a boot cycle.
 
 ## 5. Verifying a built ISO — the fast way
 
-Do **not** drive the boot over QEMU's serial console to check things. Bytes sent
-faster than the console consumes arrive corrupted, and PSReadLine's rendering
-makes capture worse; several attempts produced garbage.
+Do **not** drive the boot over QEMU's serial console by hand. Bytes sent faster
+than the console consumes arrive corrupted, and PSReadLine's rendering makes
+capture worse; several attempts produced garbage. `installer/spikes/run-s3.py`
+shows what it takes to do it reliably anyway (BUILD-NOTES #16) — read freely,
+type one character at a time, re-send a step whose acknowledgement never
+arrives, and answer the terminal's queries.
 
-Mount the squashfs and run the image's own binaries instead — fast, clean,
-quotable:
+For everything that is not "does it boot", mount the squashfs and run the
+image's own binaries — fast, clean, quotable:
 
 ```bash
 docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build:arm64 bash -c '
@@ -164,17 +212,7 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
 '
 ```
 
-Boot the ISO when you need to prove it *boots*; use the squashfs for everything
-else.
-
-## 6. After S3 passes
-
-Follow `installer/SETUP-PLAN.md` §10. Phase 1 is the `os7-setup` skeleton and is
-**strictly non-destructive** — walk the whole flow in a VM before anything
-touches a disk. S1 (the look) and S2 (NativeAOT in the build container) are
-independent of S3 and can run in any order.
-
-Two open items not yet decided anywhere:
+## 6. Open items not decided anywhere
 
 - **The live ISO and the setup ISO are currently the same image.** SETUP-PLAN §7
   has Setup running from the live medium. If they are meant to diverge, that
@@ -182,6 +220,13 @@ Two open items not yet decided anywhere:
 - **dash-to-panel / ArcMenu have no GNOME 50 build** in the resolute archive, so
   the "familiar desktop" goal is unmet on amd64. Hook 0070 logs the gap.
   Options are in BUILD-NOTES.
+- **D8/L16 — `/etc/os-release` identity.** Still undecided, and S3 gave it a
+  second face: the GRUB menu entry is titled from `PRETTY_NAME` and currently
+  reads "Ubuntu 26.04 LTS".
+- **`/var` mounts via `zfs-mount.service`, not `zfs-mount-generator`.** It
+  works, and the datasets all landed on their real mountpoints with no altroot
+  leakage — but there is no `zfs-list.cache`, so ordering under load has not
+  been tested.
 
 ## 7. Repo orientation
 
@@ -195,5 +240,9 @@ build/config/hooks-amd64/         amd64-only hooks
 build/lib/arm64-efi-remaster.sh   arm64 has no live-build bootloader; this fixes it
 powershell/OS7/                   the OS7 module - ONE source of truth, staged by build.sh
 installer/SETUP-PLAN.md           the installer design and decisions. Authoritative.
+installer/spikes/s3-zfs-luks.sh   the proven install sequence (S3)
+installer/spikes/run-s3.py        QEMU harness that runs and verifies it
+docs/SESSION-S3-ZFS-LUKS.md       what S3 proved, and the eight things it depends on
 docs/BUILD-NOTES.md               every trap found so far. Read before debugging.
+.vm/s3/                           S3 VM state and full serial logs (gitignored)
 ```

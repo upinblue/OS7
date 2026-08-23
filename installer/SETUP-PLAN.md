@@ -776,7 +776,7 @@ in the shipped system.
 | L1 | "ZFS only" cannot be literal: FAT32 ESP is mandatory | none possible; document it |
 | L2 | Secure Boot forces GRUB, which forces `bpool` | **accepted (D1)**; ZFSBootMenu stays behind a strategy interface for later (§5) |
 | L3 | Swap cannot live on ZFS | zram by default; optional plain partition for hibernation |
-| L4 | GRUB has no boot-environment awareness since `zsys` was dropped | OS/7 writes its own `grub.d` generator (~100 lines) |
+| L4 | GRUB has no boot-environment awareness since `zsys` was dropped | **Softened by S3 (2026-08-23).** `grub-common` still ships `/etc/grub.d/10_linux_zfs`, `10_linux` defers to it, and it generated correct `rpool/ROOT/*` entries unassisted — so the generator may not need writing. Two caveats: it also emits zsys-era *Revert* entries OS/7 has no `zsys` to serve, and it titles the menu from `PRETTY_NAME`, so the entry reads "Ubuntu 26.04 LTS" (ties into D8/L16). **And a new hazard:** it emits one `root=ZFS=` per boot environment, so anything appended via `GRUB_CMDLINE_LINUX` lands after it and wins — pinning a dataset there makes every entry in the menu boot the same one |
 | L5 | The palette can only be set on the kernel console | truecolor SGR fallback on serial/SSH |
 | L6 | White on `#1289ff` is 3.47 : 1, below WCAG AA | **resolved (D5)**: field darkened to `#0057ad` (7.07 : 1, AAA), `#1289ff` kept as the title stripe and progress fill; `F5` → `#003366` |
 | L7 | 80×25 is not guaranteed on UEFI | full-bleed chrome + 80-column body; `os7.setup.geometry=` to force |
@@ -823,12 +823,27 @@ UI to exist. **Gate: all four pass before Phase 1 starts.**
 |---|---|---|---|
 | **S1** | Does the look actually work | Boot the existing arm64 ISO in QEMU with the palette + `fbcon=font:TER16x32` cmdline; paint one static mockup screen; `screendump` from the QEMU monitor | Field is exactly `#0057ad`, stripe exactly `#1289ff`, box glyphs render, arrows and F-keys decode |
 | **S2** | Does NativeAOT build in the OS/7 container | `dotnet publish -p:PublishAot=true` for both arches in `os7-build` | Two static binaries that run in the ISO |
-| **S3** | **Does a ZFS-on-LUKS root install boot at all** | Hand-scripted bash, no UI: partition → `cryptsetup luksFormat` → `bpool` + `rpool` on `/dev/mapper/os7_root` → `unsquashfs` → `zgenhostid` → `crypttab` → chroot config → `update-initramfs` → `grub-install` → reboot | A VM asks for the passphrase and boots to a login prompt from `rpool/ROOT/os7_*` |
+| **S3** | **Does a ZFS-on-LUKS root install boot at all** | Hand-scripted bash, no UI: partition → `cryptsetup luksFormat` → `bpool` + `rpool` on `/dev/mapper/os7_root` → `unsquashfs` → `zgenhostid` → `crypttab` → chroot config → `update-initramfs` → `grub-install` → reboot | **PASS 2026-08-23 (arm64).** `installer/spikes/s3-zfs-luks.sh`, driven by `installer/spikes/run-s3.py`; findings in [../docs/SESSION-S3-ZFS-LUKS.md](../docs/SESSION-S3-ZFS-LUKS.md) |
 | **S4** | Does it survive Secure Boot, and does TPM2 unlock work | Repeat S3 under OVMF with Secure Boot on and Microsoft keys, plus a software TPM (`swtpm`) and `systemd-cryptenroll --tpm2-device=auto` | Boots with SB enabled; second boot needs no passphrase; a TPM-less VM still boots via passphrase |
 
-S3 is the one that matters. If S3 fails, no amount of UI work helps — and the
-existing repo has never installed OS/7 to a disk by any means, so this is
-genuinely unknown territory. **Do S3 first.**
+S3 was the one that mattered, and it **passed on 2026-08-23**: a VM asks for
+the passphrase and reaches a login prompt served from
+`rpool/ROOT/os7_2026.08.1_*`, with the §4.4 dataset layout intact and `USERDATA`
+outside `ROOT`. The script's *sequence* is the deliverable — Phase 2's storage
+executor should be a front-end over it, not a re-derivation.
+
+Two corrections it forces on this document, both in §4.4/§5 territory:
+
+* **`boot=zfs` is mandatory on the kernel command line** and nothing generates
+  it. `initramfs-tools` defaults to `BOOT=local`, `scripts/local` has no ZFS
+  handling at all, and `10_linux_zfs` emits only `root=ZFS=`. Without it the
+  machine drops to an initramfs prompt. It also settles the LUKS ordering
+  worry: `/scripts/zfs`'s `pre_mountroot()` runs `/scripts/local-top` before
+  importing, so `cryptroot` always unlocks first.
+* **`root=ZFS=` must not be pinned in `GRUB_CMDLINE_LINUX`** — see L4 below.
+
+**S4 is now the natural next spike**, since it reuses S3's harness and layout.
+S1 and S2 remain independent. Phase 1 is still gated on all four.
 
 D3 made S3 harder than it was when this document was first written: the
 encryption layer is now part of the *first* spike rather than a later refinement.

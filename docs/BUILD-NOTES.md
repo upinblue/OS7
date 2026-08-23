@@ -349,3 +349,100 @@ byte-identical to a healthy install: 580 files, 10 modules).
 without it .NET's `Guid.NewGuid()` throws `CryptographicException` and
 PowerShell dies at startup. live-build's chroot has a working `/dev/urandom`,
 but hook 0020 keeps a cheap guard because the failure mode is so obscure.
+
+---
+
+## 15. A ZFS root needs `boot=zfs`, and nothing puts it there for you
+
+Found while writing spike S3 ([SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md)).
+An installed system whose command line says only
+`root=ZFS=rpool/ROOT/<be>` **will not boot** — it drops to an initramfs prompt.
+Three separate pieces have to agree, and none of them supplies the missing one:
+
+| Piece | What it does |
+|---|---|
+| `initramfs-tools` `/init` | Defaults to `BOOT=local`. Sets `BOOT` only from a `boot=` on the command line (plus one NFS special case). |
+| `scripts/local` | Has **no ZFS handling at all** — `grep -i zfs` finds nothing. |
+| `scripts/zfs` | Is the ZFS root logic. Its own header: *"Enable this by passing `boot=zfs` on the kernel command line."* |
+| `grub.d/10_linux_zfs` | Emits `root=ZFS="<dataset>" ro` plus `$GRUB_CMDLINE_LINUX`. Does **not** emit `boot=zfs`. |
+
+So it must come from `GRUB_CMDLINE_LINUX` in `/etc/default/grub`.
+
+Two consequences worth carrying forward:
+
+* **It also fixes the LUKS ordering** the handoff flagged as a risk.
+  `/scripts/zfs`'s `pre_mountroot()` runs `/scripts/local-top` before importing
+  anything, and `local-top/cryptroot` is what prompts for the passphrase — so
+  the unlock always precedes the import. No sequencing work needed.
+* **Do not also pin `root=ZFS=` there.** `10_linux_zfs` emits one per boot
+  environment; anything appended via `GRUB_CMDLINE_LINUX` lands after it and
+  wins, so every entry in the menu boots the same dataset. It boots fine, which
+  is what makes it dangerous.
+
+## 16. Driving a serial console: Enter is CR, and silence kills PowerShell
+
+HANDOFF §5 says not to drive a boot over QEMU's serial console. That is right
+about *typing*, and `installer/spikes/run-s3.py` shows what it takes to do it
+anyway — reading freely, typing one character at a time, re-sending a step whose
+acknowledgement never arrives.
+
+**Enter is `\r`, not `\n`.** The console lands in PowerShell (hook 0050) and
+PSReadLine reads raw *keys*: LF is not the Enter key. Commands sent with `\n`
+accumulated into a single line that was never submitted — **while the echo of
+them still matched what the harness was waiting for.** The run reported success
+for a command that never ran. Two rules fall out:
+
+* send `\r`; a getty in canonical mode accepts it too, so it is right everywhere;
+* never expect a marker the typed command itself contains — split it
+  (`echo OS7-"READY"`) so the echo cannot be mistaken for the output.
+
+**Unanswered terminal queries kill the session.** With nothing on the far end of
+the line, PSReadLine's startup DSR/OSC probes go unanswered and pwsh exits
+within a second of printing its prompt; agetty respawns a fresh `login:`.
+Answering DSR, DA and OSC 10/11 keeps it alive. **This is a product finding, not
+just a test-rig one** — OS/7 ships PowerShell as its interactive shell, and
+`installer/SETUP-PLAN.md` §7 wants `os7-setup --serial` on `ttyAMA0`.
+
+**Answer the size probe honestly.** A program measures the terminal by parking
+the cursor at 32766;32766 and asking where it landed. Replying `ESC[24;1R` says
+"one column wide" and casper's `apt` step then hangs forever. Reply
+`ESC[24;80R`, and arm the responder only once the login prompt appears so a
+wrong answer can never wedge the boot itself.
+
+## 17. `chpasswd` cannot set a password inside a chroot on this image
+
+```
+chpasswd: (user os7) pam_chauthtok() failed, error:
+Failed preliminary check by password service
+```
+
+`common-password` runs `pam_authd_exec.so`, and authd's helper cannot work in a
+chroot. **Anything that sets a password through PAM fails there.** `passwd -d`
+and writing the crypt hash directly both bypass PAM and work.
+
+Related, and easy to miss: **the squashfs contains no users at all.** casper
+creates the live `ubuntu` account at boot, in the overlay, so none of it
+survives into an install. An installer that forgets to create one produces a
+system that boots perfectly to a login prompt nobody can get past.
+
+## 18. `mount --make-private --rbind` is not enough for an installer chroot
+
+`zpool export` after an install fails with
+
+```
+cannot export 'rpool': pool is busy
+```
+
+while **nothing is mounted under the target**, no process has a cwd or root
+inside it, and `zpool export -f` fails identically.
+
+`--make-private` makes the *new* mount private **after the fact**. By then the
+`--rbind` of `/dev`, `/proc` and `/sys` has already propagated to every peer of
+the live system's shared root, including mount namespaces owned by systemd
+services. Unmounting in your namespace leaves live copies in theirs, and those
+hold the pool; `-f` cannot force what your namespace can no longer see.
+
+Do the bind mounts and the `chroot` inside
+`unshare --mount --propagation private` instead. Nothing propagates out, and
+every mount vanishes when the namespace exits — no teardown to get wrong. See
+`installer/spikes/s3-zfs-luks.sh` step 8.

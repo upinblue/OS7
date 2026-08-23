@@ -23,6 +23,7 @@ This repository is freshly scaffolded. Nothing here is a working build yet — t
 | `build/config/auto/config` (live-build config) | **validated** — `lb config` passes and an arm64 ISO builds from it; still has no package lists, hooks or includes |
 | `powershell/OS7/` module | stub — function signatures only, no logic |
 | Installer (`os7-setup`) | not started — **designed and decided**: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) |
+| Installing to a disk | **works on arm64** — the install sequence is proven end to end by spike S3, ahead of any Setup code: [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md) |
 | `.devcontainer` / VS Code dev environment | stub, untested |
 | CI (`.github/workflows`) | stub — never run; now the only way to build amd64 (see [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) #12) |
 | Bootable ISO | **arm64: builds and boots** to a live session (bare Ubuntu, no OS/7 content yet). amd64: blocked on Apple Silicon, needs a native runner |
@@ -68,6 +69,7 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
 - **Installer: `os7-setup`** (decided 2026-08-22, replacing Calamares) — an OS/7-authored, keyboard-driven **text-mode** installer written in C#/.NET and published as a NativeAOT binary, styled after MS-DOS 6.22 Setup and the Windows 2000 text-mode Setup phase. Field colour `#0057ad` (up in blue `#1289ff` darkened to WCAG AAA against white text), with `#1289ff` as the title stripe and progress fill on every screen.
   - **One installer serves both architectures**, which is why Calamares went: it is a Qt GUI application and could never have installed the desktop-less arm64 image. Subiquity is no longer needed either.
   - Nothing is implemented yet. Design, limitations, decisions and the phased plan — including the spikes that must pass before any installer code is written: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
+  - **Spike S3 passed 2026-08-23:** the install sequence Setup's storage step will drive is written and proven end to end on arm64 — [installer/spikes/](installer/spikes/), [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md).
 
 ## Microsoft technology scope (v1 draft)
 
@@ -86,7 +88,7 @@ Genuinely undecided — flag before making irreversible choices in a Claude Code
 
 1. ~~**ZFS-on-kernel-7.0 risk**~~ — **RESOLVED 2026-08-22, proceed.** Validated hands-on on both architectures: the warning is present (kernel `7.0.0-28-generic`, ZFS `2.4.1-1ubuntu5`), but it marks build *provenance*, not a defect — confirmed by the OpenZFS and Ubuntu ZFS maintainers on the upstream issue. A real pool passed create / write / export / import / scrub / snapshot / rollback with zero errors. Upstream fixed this in ZFS 2.4.2; 26.04 has not received the SRU yet. Full evidence and caveats: [docs/SESSION-0-ZFS-VALIDATION.md](docs/SESSION-0-ZFS-VALIDATION.md).
 2. **Azure Arc-enabled Servers + Ubuntu 26.04** — exact current support status should be checked against Microsoft's live prerequisites page before it's treated as a locked decision.
-3. ~~**Calamares ZFS module maturity**~~ — **MOOT 2026-08-22.** Calamares was replaced by `os7-setup` ([installer/SETUP-PLAN.md](installer/SETUP-PLAN.md)). The underlying hard part did not go away, it moved: **no OS/7 build has ever been installed to a disk by any means.** Spike S3 in the plan (a ZFS-on-LUKS root that actually boots) is now the project's highest-risk unknown.
+3. ~~**Calamares ZFS module maturity**~~ — **MOOT 2026-08-22.** Calamares was replaced by `os7-setup` ([installer/SETUP-PLAN.md](installer/SETUP-PLAN.md)). The underlying hard part moved to spike S3 — a ZFS-on-LUKS root that actually boots — which was the project's highest-risk unknown. ~~**S3**~~ — **RESOLVED 2026-08-23 on arm64.** OS/7 now installs to a disk and boots from it: LUKS2 passphrase prompt, then a login prompt served from `rpool/ROOT/os7_*`, with the designed dataset layout intact. Sequence, harness and findings: [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md). **amd64 remains uninstalled and unvalidated**, because no amd64 ISO has been built yet.
    - **Newly open, from the Intune work:** does Intune's encryption check treat the unencrypted `bpool` partition as a non-compliant fixed writable disk? Microsoft exempts `/boot`, but `bpool` is a ZFS pool member rather than a directly mounted partition, so the exemption may not be recognised. Verify in the first real enrollment test, before it becomes a customer's discovery.
    - **Newly open, from the Intune work:** `/etc/os-release` branding vs. the *Allowed distributions* rule (see "Intune compatibility").
 4. **License** — this README currently assumes MIT for OS7's own tooling/scripts (matching up in blue's other public repos); Ubuntu/upstream components keep their own licenses regardless. Confirm before the first public commit.
@@ -97,7 +99,8 @@ Genuinely undecided — flag before making irreversible choices in a Claude Code
 os7/
 ├── build/config/auto/config   # live-build configuration (DISTRIBUTION=resolute)
 ├── powershell/OS7/            # OS7 PowerShell module (Set-OS7Mode, Update-OS7, Restore-OS7)
-├── installer/                 # Calamares configuration (planned)
+├── installer/                 # os7-setup design (SETUP-PLAN.md) + Phase 0 spikes
+├── docs/                      # handoff, build notes, session results
 ├── .devcontainer/             # VS Code Dev Container definition
 ├── .vscode/                   # tasks.json for the local build workflow
 └── .github/workflows/         # CI: amd64 + arm64 ISO builds
