@@ -225,3 +225,82 @@ effects from that session as unverified.
 **Verification habit this argues for:** never conclude a hook worked because the
 build exited 0. Check for its *effect* — a package it installs, a file it
 writes — in the produced image.
+
+## 14. PowerShell module discovery is broken inside `chroot(2)`
+
+**Build-time only. Not an OS/7 defect — do not "fix" it in the image.**
+
+Under `chroot`, PowerShell mangles every `PSModulePath` entry, dropping the
+character at **index 1**:
+
+```
+/root/.local/share/powershell/Modules  ->  /oot/.local/share/powershell/Modules
+/usr/local/share/powershell/Modules    ->  /sr/local/share/powershell/Modules
+/opt/microsoft/powershell/7/Modules    ->  /pt/microsoft/powershell/7/Modules
+```
+
+It therefore finds nothing and reports *"no valid module file was found in any
+module directory"*. `$env:PSModulePath` itself reads back **correctly** — only
+discovery mangles it.
+
+Proven, not inferred: creating the mangled path
+`/pt/microsoft/powershell/7/Modules` as a symlink to the real one made
+`Get-Module -ListAvailable` return all 10 modules and `Write-Host` work
+immediately.
+
+The trigger is `chroot(2)` itself. Same binary, same filesystem: works
+unchrooted, fails chrooted, regardless of environment or working directory.
+Since live-build runs **every** hook inside a chroot, no hook can test anything
+that needs module discovery.
+
+Verified on Docker Desktop / macOS arm64. A booted ISO reaches a working
+`PS /home/ubuntu>` prompt with PSReadLine active, so the installed system is
+unaffected. Not yet re-checked on a native Linux builder.
+
+### What this means for hooks
+
+Test what *works* in a chroot, and say plainly what doesn't:
+
+| Works in chroot | Does NOT work in chroot |
+|---|---|
+| `Import-Module <full path>` | `Import-Module <name>` |
+| `Get-Command -Module X` | `Get-Module -ListAvailable` |
+| Compiled-in Core cmdlets | Anything from an on-disk module (`Write-Host`, `Join-Path`, `New-Object`, …) |
+
+Hooks 0020 and 0060 hard-fail on the left column and only *note* the right one.
+
+### The trap that cost the most time
+
+**`pwsh --version` is not a health check.** The version banner,
+`Import-Module` by path and `Get-Command` are compiled into the binary, so they
+succeed while the entire on-disk module tree is unusable. The failure surfaces
+much later as a confusing `The term 'Write-Host' is not recognized`.
+
+### The rule this argues for
+
+**A diagnostic must not depend on the subsystem it is diagnosing.**
+
+Three separate diagnostics here were confounded by exactly that, each sending
+the investigation somewhere wrong:
+
+1. reported through `Write-Host` — from `Microsoft.PowerShell.Utility`
+2. built a path with `Join-Path` — from `Microsoft.PowerShell.Management`
+3. printed file sizes with `New-Object` — `Utility` again
+
+(2) and (3) produced a confident but **false** "the directory is empty" reading,
+which sent the hunt after a filesystem/extraction bug that never existed. The
+directory always had its file; the *printing* was what failed.
+
+Filesystem facts now come from `bash` (`ls`, `find`). PowerShell facts use pure
+.NET (`[Console]::WriteLine`, `[System.IO.*]`) only.
+
+### Ruled out — don't re-test these
+
+`dotnet-sdk-10.0`; `--privileged`; globalization / ICU invariant mode; the
+module analysis cache; working directory; incomplete tar extraction (the tree is
+byte-identical to a healthy install: 580 files, 10 modules).
+
+**`/dev/urandom` is a real and separate hazard**, though it was not this bug:
+without it .NET's `Guid.NewGuid()` throws `CryptographicException` and
+PowerShell dies at startup. live-build's chroot has a working `/dev/urandom`,
+but hook 0020 keeps a cheap guard because the failure mode is so obscure.
