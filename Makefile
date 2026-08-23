@@ -10,6 +10,13 @@
 IMAGE := os7-build
 OUT   := $(CURDIR)/out
 
+# Host architecture decides how amd64 gets built.
+#   x86_64 host (Intel/AMD Mac, x64 Windows, x86_64 Linux) -> native, use Docker.
+#   arm64 host  (Apple Silicon)                            -> Docker's amd64
+#     emulation cannot unpack a Debian rootfs (ENOSYS in GNU tar, still broken
+#     on Docker 29.7.2 - docs/BUILD-NOTES.md #12). Use the QEMU x86 VM instead.
+HOST_ARCH := $(shell uname -m)
+
 # Privileged: live-build needs chroot, bind mounts and loop devices (README:
 # "The build container runs privileged").
 #
@@ -25,12 +32,15 @@ docker run --rm --platform linux/$(1) \
   $(2) $(IMAGE):$(1)
 endef
 
-.PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 \
+.PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
+        build-amd64-vm build-amd64-vm-reset \
         lb-config shell-amd64 shell-arm64 clean
 
 help:
 	@echo "OS/7 build targets (STUBS - none has produced an OS/7 ISO yet):"
 	@echo "  make build-amd64  Build the x86_64 ISO -> ./out/os7-amd64.iso"
+	@echo "                    (x86_64 hosts only; on Apple Silicon use build-amd64-vm)"
+	@echo "  make build-amd64-vm  Build the x86_64 ISO in a QEMU x86 VM (ARM hosts; slow)"
 	@echo "  make build-arm64  Build the arm64 ISO  -> ./out/os7-arm64.iso"
 	@echo "  make lb-config    Run 'lb config' only (validates auto/config)"
 	@echo "  make shell-amd64  Interactive shell in the amd64 build container"
@@ -49,9 +59,38 @@ image-amd64:
 image-arm64:
 	docker build --provenance=false --platform linux/arm64 -t $(IMAGE):arm64 .
 
-build-amd64: image-amd64
+# Refuse early on a non-x86_64 host: the emulated build fails partway through
+# debootstrap, and this check must come BEFORE image-amd64 so we do not spend a
+# Docker build reaching a known failure.
+# Set OS7_FORCE_EMULATED_AMD64=1 to try anyway.
+check-amd64-host:
+	@if [ "$(HOST_ARCH)" != "x86_64" ] && [ -z "$$OS7_FORCE_EMULATED_AMD64" ]; then \
+		echo ""; \
+		echo "  Host is $(HOST_ARCH), not x86_64."; \
+		echo "  Docker's amd64 emulation cannot unpack a Debian rootfs here:"; \
+		echo "    tar: Cannot mkdir: Function not implemented   (ENOSYS)"; \
+		echo "  See docs/BUILD-NOTES.md #12."; \
+		echo ""; \
+		echo "  Use:  make build-amd64-vm     (full QEMU x86 VM; slow but works)"; \
+		echo "  Or run 'make build-amd64' on an x86_64 machine, where it is native."; \
+		echo "  Override:  OS7_FORCE_EMULATED_AMD64=1 make build-amd64"; \
+		echo ""; \
+		exit 1; \
+	fi
+
+# On an x86_64 host this is native and fast - the right way to build amd64.
+build-amd64: check-amd64-host image-amd64
 	mkdir -p $(OUT)
 	$(call DOCKER_RUN,amd64,) /work/build/build.sh amd64
+
+# amd64 ISO via full x86 system emulation. Needed only on ARM hosts.
+# Not Docker: QEMU emulates a whole x86 machine, so no syscall translation and
+# no ENOSYS. Takes hours under TCG - a correctness escape hatch, not a dev loop.
+build-amd64-vm:
+	./scripts/build-amd64-vm.sh
+
+build-amd64-vm-reset:
+	./scripts/build-amd64-vm.sh --reset
 
 build-arm64: image-arm64
 	mkdir -p $(OUT)

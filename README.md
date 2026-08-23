@@ -63,7 +63,7 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
   - **Pinned**, fetched at build time rather than vendored, the same shape as PowerShell in hook 0020: `v3.09.10` / `FSEX302.ttf` / 580 724 bytes / SHA256 `842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899`.
   - **Verified 2026-08-22:** its cmap carries Box Drawing `U+2500–257F` complete (128/128) and Block Elements `U+2580–259F` complete (32/32). That was the real risk — upstream advertises only the windows-125x codepages, which contain no box-drawing characters, and the entire installer UI is built from them.
   - PSF caps at 512 glyphs against the font's 6 193 codepoints, so the shipped subset is Latin-focused (English + German). Does **not** apply to the GNOME desktop.
-- **Dev environment:** VS Code Dev Container wrapping the Docker-based build container; `.vscode/tasks.json` wires up `docker build`, `lb config`, `make build-amd64` / `make build-arm64`.
+- **Dev environment:** VS Code Dev Container wrapping the Docker-based build container; `.vscode/tasks.json` wires up `docker build`, `lb config`, `make build-amd64` / `make build-arm64`. Note that the *native* architecture is the fast one on any given machine — see "Building" below; on Apple Silicon the amd64 ISO is built in a QEMU x86 VM instead of under Docker emulation.
 - **CI:** GitHub Actions — `amd64` on standard hosted runners, `arm64` on the free native arm64 hosted runners (public repo), so nothing builds under QEMU emulation.
 - **Installer: `os7-setup`** (decided 2026-08-22, replacing Calamares) — an OS/7-authored, keyboard-driven **text-mode** installer written in C#/.NET and published as a NativeAOT binary, styled after MS-DOS 6.22 Setup and the Windows 2000 text-mode Setup phase. Field colour `#0057ad` (up in blue `#1289ff` darkened to WCAG AAA against white text), with `#1289ff` as the title stripe and progress fill on every screen.
   - **One installer serves both architectures**, which is why Calamares went: it is a Qt GUI application and could never have installed the desktop-less arm64 image. Subiquity is no longer needed either.
@@ -103,11 +103,32 @@ os7/
 └── .github/workflows/         # CI: amd64 + arm64 ISO builds
 ```
 
-## Getting started (once implemented)
+## Building
 
-1. Clone the repo, open it in VS Code, accept the "Reopen in Container" prompt.
-2. Inside the container: `make build-amd64` or `make build-arm64`.
-3. See `installer/README.md` for installer status.
+**Which command depends on your host architecture.** This is not a preference —
+Docker's amd64 emulation on Apple Silicon cannot unpack a Debian rootfs
+(`tar: Cannot mkdir: Function not implemented`), so the x86 build has to happen
+somewhere that runs real x86 code. See
+[docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) #12.
+
+| Your machine | arm64 ISO | amd64 ISO |
+|---|---|---|
+| **x64 Windows / Intel Mac / x86_64 Linux** | `make build-arm64` — emulated; **untested on an x86 host** (different emulation path than the broken one, so it may well work) | **`make build-amd64`** — native, fast |
+| **Apple Silicon Mac** | **`make build-arm64`** — native, fast | `make build-amd64-vm` — full QEMU x86 VM, takes hours |
+
+In short: **each architecture is fast on its own kind of hardware.** Build the
+one that matches your machine for day-to-day work; reach for the slow path only
+when you need the other architecture's ISO.
+
+`make build-amd64` refuses early on a non-x86_64 host and tells you to use
+`build-amd64-vm`, so you cannot lose 20 minutes reaching a known failure.
+`make build-amd64-vm-reset` throws the builder VM away.
+
+Prerequisites: Docker Desktop (or Docker Engine) running. On Apple Silicon, the
+VM path additionally needs QEMU (`brew install qemu`).
+
+Output lands in `out/`. See [docs/HANDOFF.md](docs/HANDOFF.md) for what works
+today and what to do next, and `installer/SETUP-PLAN.md` for the installer.
 
 ---
 

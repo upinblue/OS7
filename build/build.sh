@@ -19,7 +19,9 @@ ARCH="${1:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_CONFIG="${HERE}/config"   # authored live-build config, on the bind mount
 WORK="/os7-build"             # container-local build root (overlayfs)
-OUT_DIR="/work/out"
+# /work/out is the bind-mounted repo inside the build container. The QEMU
+# amd64 VM path (scripts/build-amd64-vm.sh) has no such mount and overrides this.
+OUT_DIR="${OS7_OUT_DIR:-/work/out}"
 
 usage() { echo "Usage: $0 <amd64|arm64|clean>" >&2; exit 2; }
 

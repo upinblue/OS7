@@ -182,15 +182,40 @@ mishandles ownership, device nodes and xattrs, which is precisely what a root
 filesystem depends on; the result is a subtly broken ISO instead of an honest
 failure.
 
-Options, in order of preference:
+**Re-tested on Docker 29.7.2 (2026-08-23): still broken, identical error.** Do
+not expect a Docker update to fix it.
 
-1. **Build amd64 in CI** — `.github/workflows/build-iso.yml` already targets a
-   native x86 runner. This is what the README's CI design is for.
-2. **Toggle Rosetta** in Docker Desktop → Settings → General ("Use Rosetta for
-   x86_64/amd64 emulation"). No Rosetta key is set in the settings store, so it
-   is on this version's default; the other setting may implement `openat2`.
-3. **Iterate on arm64 locally.** The config is arch-agnostic, so almost every
-   change can be validated natively and fast.
+### How to actually build amd64
+
+| Host | What to do |
+|---|---|
+| **x86_64** — Intel/AMD Mac, x64 Windows, x86_64 Linux | `make build-amd64`. Native, fast, nothing special needed. |
+| **arm64** — Apple Silicon | `make build-amd64-vm`. Full QEMU x86 VM. |
+
+`make build-amd64` now refuses early on a non-x86_64 host rather than spending a
+Docker build to reach a known failure. Override with
+`OS7_FORCE_EMULATED_AMD64=1` if you want to re-test the emulation.
+
+**Why the VM works when Docker does not:** QEMU emulates a whole x86 machine
+running a real x86 kernel, so no syscall translation happens and the gap does
+not exist. Proven locally — the Session 0 amd64 VM installed ZFS packages fine,
+which is exactly the dpkg/tar path that fails under Docker.
+
+The cost is speed: there is no hardware acceleration for x86 on an ARM host, so
+it runs under TCG and takes **hours**. It is a correctness escape hatch, not a
+development loop — iterate on arm64, which is native and fast.
+
+`scripts/build-amd64-vm.sh` handles it: downloads and checksum-verifies the
+Ubuntu 26.04 amd64 cloud image, seeds it via cloud-init with the same packages
+the Dockerfile installs, copies the repo in over SSH, runs `build/build.sh
+amd64`, and copies `out/os7-amd64.iso` back. `make build-amd64-vm-reset` throws
+the VM away.
+
+**Also worth trying, one minute:** Docker Desktop → Settings → General → "Use
+Rosetta for x86_64/amd64 emulation on Apple Silicon". No key for it exists in
+`settings-store.json`, so it is at the default; flipping it selects a different
+emulator that may implement the missing syscall. If that ever works, plain
+`make build-amd64` becomes viable on Apple Silicon again.
 
 ## 13. Hooks live at `config/hooks/*.chroot` — FLAT, not `config/hooks/normal/`
 

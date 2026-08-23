@@ -76,20 +76,30 @@ Still present on Docker **29.7.2**.
 device nodes and xattrs — you get a subtly broken rootfs instead of an honest
 failure.
 
-Two local options:
+**Which command to run depends on the host:**
 
-1. **Toggle Rosetta.** Docker Desktop → Settings → General → "Use Rosetta for
-   x86_64/amd64 emulation on Apple Silicon". No key for it exists in
-   `~/Library/Group Containers/group.com.docker/settings-store.json`, so it is
-   at the default; flipping it selects a different emulator. One minute to test:
-   re-run the `tar` repro above.
-2. **Build in a full QEMU x86_64 VM.** Different mechanism — it emulates a whole
-   machine rather than translating syscalls, so the gap does not exist. Known to
-   work locally: the Session 0 amd64 VM ran `apt install zfsutils-linux`, which
-   is exactly this dpkg/tar path. Slow (hours under TCG) but reliable and free.
+| Host | Command |
+|---|---|
+| **x86_64** — Intel/AMD Mac, x64 Windows, x86_64 Linux | `make build-amd64` — native and fast |
+| **arm64** — Apple Silicon | `make build-amd64-vm` — full QEMU x86 VM, hours |
 
-Until one of these is done, **amd64 is unvalidated** — and since GUI mode is
-amd64-only, the entire GUI path is unvalidated with it.
+`make build-amd64` refuses early on a non-x86_64 host and points at the VM
+target, so you cannot accidentally spend 20 minutes reaching a known failure.
+
+The VM works because QEMU emulates a whole x86 machine rather than translating
+syscalls. `scripts/build-amd64-vm.sh` does everything: fetches and
+checksum-verifies the cloud image, provisions it with cloud-init, copies the
+repo in over SSH, builds, and copies the ISO back to `out/`.
+`make build-amd64-vm-reset` discards the VM.
+
+Worth one minute first: Docker Desktop → Settings → General → "Use Rosetta for
+x86_64/amd64 emulation on Apple Silicon" is at its default (no key in
+`settings-store.json`). Flipping it selects a different emulator which may
+implement the missing syscall; if it does, plain `make build-amd64` works here
+again.
+
+Until an amd64 ISO is actually built, **amd64 is unvalidated** — and since GUI
+mode is amd64-only, the entire GUI path is unvalidated with it.
 
 ## 4. Traps that already cost time — read before debugging
 
