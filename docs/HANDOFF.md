@@ -13,6 +13,7 @@ paid services.
 | `make build-arm64` | **Works.** Produces `out/os7-arm64.iso`, ~2 GB. |
 | That ISO boots | **Yes.** UEFI → GRUB → casper → systemd → login prompt, in QEMU. |
 | **Installing to a disk** | **Works on arm64, proven end to end.** ZFS-on-LUKS root, installed from the live ISO and booted from the disk alone. See [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md). |
+| **Secure Boot + TPM2** | **Works on arm64.** Boots with SB enabled against the Microsoft UEFI CA; TPM2 auto-unlock works and a TPM-less machine still prompts. See [SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md). |
 | PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all three functions (they are stubs that throw by design). `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
@@ -47,50 +48,50 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-Phase 0 has three spikes left and SETUP-PLAN gates Phase 1 on all four.
-
-**S4 — Secure Boot and TPM2 — is the natural continuation.** It reuses the S3
-harness and the same disk layout, and S3 already left the shim chain on the ESP
-(`/EFI/OS7/shimaa64.efi` + `grubaa64.efi`, plus `/EFI/BOOT/BOOTAA64.EFI`).
-Two prerequisites, both checked on 2026-08-23:
-
-* **Homebrew's QEMU ships no Secure-Boot aarch64 firmware.** There is
-  `edk2-i386-secure-code.fd` and `edk2-x86_64-secure-code.fd`, but no aarch64
-  equivalent (and no aarch64 vars template — `run-s3.py` uses
-  `edk2-arm-vars.fd`). Ubuntu's `qemu-efi-aarch64` package ships
-  `AAVMF_CODE.ms.fd` with the Microsoft keys enrolled, and the build container
-  is `ubuntu:26.04`, so pulling it out of there is the obvious route.
-  **Unconfirmed** — nobody has fetched it yet.
-* **`swtpm` is available** — `swtpm 0.10.2`, bottled, `brew install swtpm`. Not
-  installed.
-
-S4 must also prove the negative case from L17: a **TPM-less** VM still boots via
-passphrase.
+Phase 0 has **two spikes left** — S1 and S2 — and SETUP-PLAN gates Phase 1 on
+all four. S3 and S4 are done.
 
 **S1 (the look) and S2 (NativeAOT in the build container) are independent** of
-both and can run in any order. S1 now has a useful precondition: GRUB's menu and
-the whole boot render on QEMU's serial console when no display device is
-attached, so screens can be captured without a framebuffer — though S1 wants the
-framebuffer palette specifically, so it needs `-device virtio-gpu-pci` and
-`screendump` from the monitor.
+each other and of everything above, so either can go first.
+
+* **S1** wants the framebuffer palette specifically, so it needs
+  `-device virtio-gpu-pci` and `screendump` from the QEMU monitor — the S3/S4
+  harnesses deliberately run with `-display none`. `installer/spikes/vmconsole.py`
+  gives you the console driving; the display plumbing is new work.
+* **S2** is `dotnet publish -p:PublishAot=true` in `os7-build` for both arches.
+  It needs no VM at all.
 
 **Then Phase 1** — the `os7-setup` skeleton, strictly non-destructive.
 
-Three things S3 turned up that change what Phase 1/2 should do:
+### What S3 and S4 changed about what Setup has to do
 
-* **L4 may be smaller than SETUP-PLAN assumes.** `grub-common` still ships
-  `/etc/grub.d/10_linux_zfs`, `10_linux` defers to it, and it generated correct
-  boot-environment entries unassisted. OS/7 may not need to write its own
-  generator — but it does emit zsys-era "Revert" entries that OS/7 has no `zsys`
-  to serve, and it titles the menu from `/etc/os-release`, so the entry reads
-  **"Ubuntu 26.04 LTS"**. Menu branding is now entangled with D8/L16.
+* **`boot=zfs` is mandatory** on the kernel command line and nothing generates
+  it. BUILD-NOTES #15.
 * **Never pin `root=ZFS=` in `GRUB_CMDLINE_LINUX`.** `10_linux_zfs` emits one
   per boot environment and anything appended there wins, so every entry in the
-  menu would boot the same dataset — killing the feature the layout exists for.
-  It boots fine, which is what makes it dangerous.
-* **Setup cannot set a password through PAM in the chroot.** `common-password`
-  runs authd's helper, which cannot work there. Write the crypt hash directly.
-  BUILD-NOTES #17.
+  menu would boot the same dataset.
+* **L4 may be smaller than SETUP-PLAN assumes.** `10_linux_zfs` still ships and
+  generated correct entries unassisted — but it emits zsys-era "Revert" entries
+  OS/7 has no `zsys` to serve, and titles the menu **"Ubuntu 26.04 LTS"** from
+  `/etc/os-release`. Menu branding is entangled with D8/L16.
+* **Setup cannot set a password through PAM in the chroot**, and the squashfs
+  has no users at all. BUILD-NOTES #17.
+* **Do the chroot's bind mounts inside `unshare --mount --propagation
+  private`**, or the pool will not export. BUILD-NOTES #18.
+* **TPM2 enrolment is more than `systemd-cryptenroll`.** It writes a valid
+  token and changes nothing at boot; Setup must also install an initramfs hook
+  carrying the token handler **and the libtss2 libraries systemd dlopens**, plus
+  a `local-top` script that runs before `cryptroot`. BUILD-NOTES #19 and #20;
+  `installer/spikes/s4-tpm-enroll.sh` is the working version.
+
+### The two open risks S4 leaves behind
+
+* **PCR 7 sealing has no recovery story.** Sealing survives kernel and initramfs
+  updates, but **not** a Secure Boot policy change — a shim or dbx update drops
+  every machine back to the passphrase prompt. On a managed fleet that is a
+  support event, and nothing here addresses it.
+* **L18 is still untouched.** Whether Intune's encryption check accepts the
+  unencrypted `bpool` needs a real enrolment, not a VM.
 
 ## 3. amd64 — why it fails here, and the two local options
 
@@ -165,6 +166,15 @@ Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
   and `zpool export` then says *"pool is busy"* with nothing mounted and `-f`
   powerless. Do the binds and the chroot inside
   `unshare --mount --propagation private`.
+- **#19 — `systemd-cryptenroll` alone does nothing at boot**, and fails
+  silently: `cryptsetup-initramfs` has no concept of LUKS2 tokens.
+- **#20 — `copy_exec` cannot see a dlopen.** systemd dlopens the whole TPM
+  stack, so an initramfs built by walking ELF `NEEDED` gets the token handler
+  and no libtss2 at all.
+- **#21 — Homebrew's QEMU has no Secure-Boot aarch64 firmware.** `run-s4.py`
+  pulls Ubuntu's `qemu-efi-aarch64` out of the build container instead. Expect
+  10–15 minutes per boot: AAVMF renders GRUB's countdown on a 238-column serial
+  console.
 - **`pwsh --version` is not a health check.** The banner, `Import-Module` by
   path and `Get-Command` are compiled into the binary and succeed while the
   whole on-disk module tree is unusable.
@@ -241,8 +251,12 @@ build/lib/arm64-efi-remaster.sh   arm64 has no live-build bootloader; this fixes
 powershell/OS7/                   the OS7 module - ONE source of truth, staged by build.sh
 installer/SETUP-PLAN.md           the installer design and decisions. Authoritative.
 installer/spikes/s3-zfs-luks.sh   the proven install sequence (S3)
-installer/spikes/run-s3.py        QEMU harness that runs and verifies it
-docs/SESSION-S3-ZFS-LUKS.md       what S3 proved, and the eight things it depends on
+installer/spikes/s4-tpm-enroll.sh TPM2 enrolment + the initramfs pieces (S4)
+installer/spikes/run-s3.py        QEMU harness for S3
+installer/spikes/run-s4.py        QEMU harness for S4 (Secure Boot + swtpm)
+installer/spikes/vmconsole.py     serial-console driving, shared by both
+docs/SESSION-S3-ZFS-LUKS.md       what S3 proved, and the nine things it depends on
+docs/SESSION-S4-SECUREBOOT-TPM.md what S4 proved, and what it deliberately does not
 docs/BUILD-NOTES.md               every trap found so far. Read before debugging.
-.vm/s3/                           S3 VM state and full serial logs (gitignored)
+.vm/s3/, .vm/s4/, .vm/firmware/   VM state, serial logs, AAVMF (all gitignored)
 ```

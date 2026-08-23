@@ -446,3 +446,78 @@ Do the bind mounts and the `chroot` inside
 `unshare --mount --propagation private` instead. Nothing propagates out, and
 every mount vanishes when the namespace exits — no teardown to get wrong. See
 `installer/spikes/s3-zfs-luks.sh` step 8.
+
+## 19. `systemd-cryptenroll` alone does nothing at boot on this image
+
+Found in spike S4 ([SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md)).
+`systemd-cryptenroll --tpm2-device=auto` succeeds and writes a valid LUKS2
+token — and the next boot asks for the passphrase exactly as before, with no
+error to explain why. Two independent reasons, either of which is sufficient:
+
+* the stock `cryptsetup-initramfs` hook copies `cryptsetup`, `dmsetup`,
+  `askpass` and `sed`, and **no token handler** — `grep -i tpm2` over the hook
+  and its boot script returns nothing at all;
+* `local-top/cryptroot` feeds a passphrase to `cryptsetup open` on stdin, and
+  supplying key material is what makes cryptsetup skip token activation.
+
+Closing it takes two pieces, both in `installer/spikes/s4-tpm-enroll.sh`:
+a hook that carries `libcryptsetup-token-systemd-tpm2.so`, and a `local-top`
+script that runs **before** `cryptroot` and calls
+`cryptsetup open --token-only`. `--token-only` never falls back to a passphrase
+itself, so a machine with no TPM lands in cryptroot's normal prompt — the
+recovery path is a property of the flag, not an afterthought.
+
+The name matters: `initramfs-tools` orders `local-top` with
+`get_prereq_pairs | tsort`, which for scripts with no prereqs falls back to the
+directory glob. `00os7tpm2` is what puts it ahead of `cryptroot` — and the
+generated `ORDER` is worth checking rather than trusting, because `tsort` is not
+pure alphabetical once any prereqs exist.
+
+## 20. `copy_exec` cannot see a dlopen — systemd's TPM stack is dlopened
+
+The same spike, and the trap most likely to recur. `copy_exec` resolves ELF
+`NEEDED`, which is not how systemd loads optional features:
+
+```
+$ objdump -p libcryptsetup-token-systemd-tpm2.so | grep NEEDED
+  NEEDED   libsystemd-shared-259.so
+  NEEDED   libcryptsetup.so.12
+  NEEDED   libc.so.6
+```
+
+`libsystemd-shared` does not link the TPM stack either. It dlopens it, and
+advertises exactly that in its own metadata:
+
+```
+[{"feature":"tpm","description":"Support for TPM","priority":"suggested",
+  "soname":["libtss2-esys.so.0"]}]
+```
+
+Result: an initramfs containing the token handler and **no libtss2 at all**,
+which fails at boot with nothing useful on the console. Any hook putting
+systemd functionality in an initramfs has to name the dlopened libraries:
+`libtss2-esys.so.0`, `libtss2-mu.so.0`, `libtss2-rc.so.0`, and
+`libtss2-tcti-device.so.0` one level further down (systemd builds the string
+`device:/dev/tpmrm0` and dlopens the TCTI backend itself — it never calls
+`Tss2_TctiLdr_*`, so `libtss2-tctildr` is **not** on this path).
+
+## 21. Homebrew's QEMU has no Secure-Boot firmware for aarch64
+
+`$(brew --prefix qemu)/share/qemu/` has `edk2-i386-secure-code.fd` and
+`edk2-x86_64-secure-code.fd` — and for aarch64 only `edk2-aarch64-code.fd`, with
+no secure variant and no vars template at all (`scripts/run-vm.sh` and
+`run-s3.py` fall back to `edk2-arm-vars.fd`).
+
+Ubuntu's `qemu-efi-aarch64` package has what is needed:
+`AAVMF_CODE.secboot.fd` plus `AAVMF_VARS.ms.fd` with the Microsoft KEK/db
+pre-enrolled. `installer/spikes/run-s4.py` pulls it out of the `ubuntu:26.04`
+container into `.vm/firmware/` on first use.
+
+Two things to know before using it:
+
+* **It is slow.** AAVMF drives a 238-column serial console, and GRUB's
+  30-second `recordfail` countdown takes 10–15 minutes of wall time to render
+  over it. That is per boot.
+* **arm64 has no SMM**, so the Secure Boot variable store is not tamper-proof
+  the way it is on x86. Signature enforcement is real; the threat model is
+  weaker. A platform property, not a configuration mistake.

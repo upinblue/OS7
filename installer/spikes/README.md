@@ -11,7 +11,7 @@ code.
 | S1 | Does the look actually work | not started |
 | S2 | Does NativeAOT build in the `os7-build` container | not started |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | **PASS 2026-08-23 (arm64)** |
-| S4 | Does it survive Secure Boot, and does TPM2 unlock work | not started |
+| **S4** | **Does it survive Secure Boot, and does TPM2 unlock work** | **PASS 2026-08-23 (arm64)** |
 
 ## S3
 
@@ -39,3 +39,37 @@ The passphrase is `os7spike` and the spike leaves the `os7` account
 `s3-zfs-luks.sh` destroys everything on the disk it is given. It refuses the
 live medium and a target with mounted partitions, and that is the extent of its
 safety.
+
+## S4
+
+```bash
+./run-s4.py sb        Secure Boot on, Microsoft keys, no TPM
+./run-s4.py enroll    enrol the TPM and rebuild the initramfs
+./run-s4.py auto      boot again — must NOT ask for a passphrase
+./run-s4.py notpm     boot with no TPM — must ask for one again
+./run-s4.py all       all four, in order
+./run-s4.py reset     discard S4 state (the S3 disk is left alone)
+```
+
+Needs S3 to have run (it boots a **copy** of `.vm/s3/s3-target.qcow2`) and
+`brew install swtpm`. Secure Boot firmware is fetched from the `ubuntu:26.04`
+container into `../../.vm/firmware/` automatically — Homebrew's QEMU ships none
+for aarch64.
+
+**Budget an hour for `all`.** Ubuntu's AAVMF renders GRUB's 30-second countdown
+on a 238-column serial console, which takes 10–15 minutes of wall time per boot.
+The work itself takes seconds.
+
+- [`s4-tpm-enroll.sh`](s4-tpm-enroll.sh) runs **inside** the installed system:
+  `systemd-cryptenroll`, plus the two initramfs pieces that make the LUKS2 token
+  actually get used at boot — which is the part nobody tells you about.
+- [`run-s4.py`](run-s4.py) drives QEMU with `AAVMF_CODE.secboot.fd` and `swtpm`.
+- [`../../docs/SESSION-S4-SECUREBOOT-TPM.md`](../../docs/SESSION-S4-SECUREBOOT-TPM.md)
+  is the write-up.
+
+## Shared
+
+[`vmconsole.py`](vmconsole.py) holds the serial-console driving both harnesses
+use: an expect loop, character-at-a-time typing, and just enough terminal
+emulation to keep PowerShell alive on a line with nothing on the other end
+(docs/BUILD-NOTES.md #16).

@@ -789,7 +789,7 @@ in the shipped system.
 | L14 | Booting straight into Setup loses "try before you install" | keep both GRUB entries |
 | L15 | Intune's encryption check only recognises **dm-crypt**, so ZFS native encryption would report as unencrypted | **resolved (D3)**: `rpool` goes inside LUKS2 (§4.5). Cost: no per-dataset encryption, no raw encrypted `zfs send`, and mirrors need one container per disk |
 | L16 | Intune's "Allowed distributions" rule matches on `/etc/os-release`; branding OS/7 as its own `ID=` could make every device fail it | keep `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"`, brand only `NAME` / `PRETTY_NAME` (§4.6). **Not decided anywhere in this repo yet** |
-| L17 | LUKS unlock at boot needs a passphrase prompt unless TPM2 enrolment happens at install time | enrol TPM2 in the install's configure step (`systemd-cryptenroll`), keep a passphrase as recovery — and test that a TPM-less VM still boots |
+| L17 | LUKS unlock at boot needs a passphrase prompt unless TPM2 enrolment happens at install time | **Tested by S4 (2026-08-23), and bigger than it looked.** `systemd-cryptenroll` writes a valid LUKS2 token and **changes nothing at boot**: `cryptsetup-initramfs` copies no token handler and feeds `cryptsetup open` a passphrase on stdin, which skips token activation. Setup must also install an initramfs hook carrying `libcryptsetup-token-systemd-tpm2.so` *and the libtss2 libraries systemd dlopens* (BUILD-NOTES #20), plus a `local-top` script running before `cryptroot` that calls `cryptsetup open --token-only`. With that, auto-unlock works and a TPM-less machine still prompts. **New risk:** sealing to PCR 7 survives kernel updates but not a Secure Boot policy change — a shim/dbx update drops the fleet back to passphrases, and there is no recovery story yet |
 | L18 | **`bpool` may still trip the encryption check.** Microsoft exempts `/boot`, but `bpool` is an unencrypted fixed writable partition holding a ZFS *pool member*, not a directly mounted filesystem. Whether the agent maps it to `/boot` and exempts it is undocumented | verify in the first real enrolment test (Phase 6). If it fails: either move `/boot` into `rpool` and switch to ZFSBootMenu (D1 reopens), or carry a custom-compliance script. Do not assume it passes |
 | L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
 | L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4) |
@@ -824,7 +824,7 @@ UI to exist. **Gate: all four pass before Phase 1 starts.**
 | **S1** | Does the look actually work | Boot the existing arm64 ISO in QEMU with the palette + `fbcon=font:TER16x32` cmdline; paint one static mockup screen; `screendump` from the QEMU monitor | Field is exactly `#0057ad`, stripe exactly `#1289ff`, box glyphs render, arrows and F-keys decode |
 | **S2** | Does NativeAOT build in the OS/7 container | `dotnet publish -p:PublishAot=true` for both arches in `os7-build` | Two static binaries that run in the ISO |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | Hand-scripted bash, no UI: partition → `cryptsetup luksFormat` → `bpool` + `rpool` on `/dev/mapper/os7_root` → `unsquashfs` → `zgenhostid` → `crypttab` → chroot config → `update-initramfs` → `grub-install` → reboot | **PASS 2026-08-23 (arm64).** `installer/spikes/s3-zfs-luks.sh`, driven by `installer/spikes/run-s3.py`; findings in [../docs/SESSION-S3-ZFS-LUKS.md](../docs/SESSION-S3-ZFS-LUKS.md) |
-| **S4** | Does it survive Secure Boot, and does TPM2 unlock work | Repeat S3 under OVMF with Secure Boot on and Microsoft keys, plus a software TPM (`swtpm`) and `systemd-cryptenroll --tpm2-device=auto` | Boots with SB enabled; second boot needs no passphrase; a TPM-less VM still boots via passphrase |
+| **S4** | Does it survive Secure Boot, and does TPM2 unlock work | Repeat S3 under OVMF with Secure Boot on and Microsoft keys, plus a software TPM (`swtpm`) and `systemd-cryptenroll --tpm2-device=auto` | **PASS 2026-08-23 (arm64).** All three: SB enabled, second boot needs no passphrase, TPM-less VM still boots. `installer/spikes/s4-tpm-enroll.sh` + `run-s4.py`; findings in [../docs/SESSION-S4-SECUREBOOT-TPM.md](../docs/SESSION-S4-SECUREBOOT-TPM.md) |
 
 S3 was the one that mattered, and it **passed on 2026-08-23**: a VM asks for
 the passphrase and reaches a login prompt served from
@@ -842,8 +842,12 @@ Two corrections it forces on this document, both in §4.4/§5 territory:
   importing, so `cryptroot` always unlocks first.
 * **`root=ZFS=` must not be pinned in `GRUB_CMDLINE_LINUX`** — see L4 below.
 
-**S4 is now the natural next spike**, since it reuses S3's harness and layout.
-S1 and S2 remain independent. Phase 1 is still gated on all four.
+**S4 passed on 2026-08-23** and settles D1 on the platform it was decided
+for: `shim-signed` chains to Canonical's signed GRUB, the firmware accepts it
+against the Microsoft UEFI CA, and ZFS-on-LUKS root comes up underneath. TPM2
+auto-unlock works too — but **not** from `systemd-cryptenroll` alone. See L17.
+
+**S1 and S2 are what remain.** Phase 1 is still gated on all four.
 
 D3 made S3 harder than it was when this document was first written: the
 encryption layer is now part of the *first* spike rather than a later refinement.
