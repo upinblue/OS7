@@ -21,6 +21,23 @@ paid services.
 The ISO is a **live** image only. `os7-setup` does not exist yet — not a
 skeleton, not a stub.
 
+### The current ISO is S3-ready
+
+Built and verified 2026-08-23, 549 packages. Everything S3 needs is in it:
+
+- Setup tooling: `squashfs-tools`, `rsync`, `gdisk`, `dosfstools`, `efibootmgr`,
+  `shim-signed`, `kbd`, `console-setup`
+- D3 encryption: `cryptsetup`, `cryptsetup-initramfs`, `tpm2-tools`
+- D4 swap: `systemd-zram-generator`
+- D1 bootloader: `grub-efi-arm64-signed`
+- Correctly absent on arm64: `gnome-shell`, `calamares`, `microsoft-edge-stable`
+
+`cryptsetup-initramfs` is the one to check first if an installed system stops at
+an initramfs prompt: without it nothing unlocks `rpool` at boot.
+
+Rebuild it with `make build-arm64` if `out/os7-arm64.iso` is missing — takes
+roughly 20 minutes on Apple Silicon.
+
 ## 2. Do this first — spike S3
 
 `installer/SETUP-PLAN.md` §10 Phase 0 defines four spikes and says S3 gates
