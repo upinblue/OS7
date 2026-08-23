@@ -287,9 +287,12 @@ it (SETUP-PLAN §6.3 already makes this point about Setup):
 
 ```
 1.  zfs snapshot rpool/ROOT/<cur>@pre-<newver>   and the bpool BOOT dataset
+                  AND the rpool/DATA datasets    (the deliberate-rollback net, 4.4)
 2.  zfs clone   → rpool/ROOT/os7_<newver>_<stamp>
                   bpool/BOOT/os7_<newver>_<stamp>
-3.  mount the clone, bind /dev /proc /sys, chroot
+3.  ASSEMBLE the clone: mount it, then mount the rpool/DATA datasets into it
+    (/var/log, /var/lib/<service>, agent state — 4.4) so apt sees a whole /var,
+    then bind /dev /proc /sys and chroot
 4.  point sources.list at snapshot.ubuntu.com/<new stamp>
 5.  apt update && apt full-upgrade
 6.  reassert /etc/os-release  (§2.2 #2), write /usr/lib/os7/release.json
@@ -313,32 +316,56 @@ This is a direct consequence of D1 (GRUB forces `bpool`) and it does not exist
 under ZFSBootMenu. It is not a reason to reopen D1, but it is a reason for the BE
 primitives to treat the pair as one object and never expose the halves.
 
-### 4.4 `/var` — a problem the installer plan did not have to face
+### 4.4 `/var` — DECIDED (U6): split, not placed
 
-SETUP-PLAN §4.4 places `var` and `var/log` **as children of the boot
-environment**. For install that is correct and unremarkable. For updates it has a
-consequence nobody has written down yet:
+SETUP-PLAN §4.4 originally placed `var` and `var/log` **as children of the boot
+environment**. For install that is correct and unremarkable. For updates it had a
+consequence nobody had written down:
 
 > **A rollback rolls `/var` back with it.**
 
-`rpool/USERDATA` is correctly outside `ROOT`, so user files survive — the plan is
+`rpool/USERDATA` is correctly outside `ROOT`, so user files survive — that plan is
 explicit that getting this wrong "cannot be fixed after the fact". But service
 state lives in `/var/lib`. Rolling back a bad update on a server would silently
 revert a database, a container store, or anything else under `/var/lib/<service>`
 to its state at update time. On the headless product — which is the Azure Arc
 target, i.e. servers — that is data loss disguised as a safety feature.
 
-The distinction that resolves it:
+**Decided 2026-08-23.** The rule, which is *not* "system versus user data":
 
-| Path | Belongs to | Placement |
+> **A path belongs inside the boot environment if, and only if, rolling it back
+> makes the system more correct.** State that something outside this machine also
+> believes must stay outside, because the other side does not roll back.
+
+| Path | Placement | Why |
 |---|---|---|
-| `/var/lib/dpkg`, `/var/lib/apt`, `/var/cache` | the package state of *this* BE | **must stay inside the BE** — a shared dpkg database against a rolled-back root is incoherent |
-| `/var/lib/<service>`, `/srv` | the workload | **must be outside** the BE, under `rpool/DATA/…`, or rollback eats it |
-| `/var/log` | forensics | **should be outside** — the logs explaining why an update failed should survive rolling that update back |
+| `/var/lib/dpkg`, `/var/lib/apt`, `/var/cache` | **in** | The package database describes exactly the `/usr` that rolls with it. Shared, a rollback leaves dpkg claiming `libfoo 2.0` while `/usr` holds `1.0`. Non-negotiable. |
+| `/var/log`, `/var/spool`, `/var/tmp` | **out** | Forensics and in-flight work. The log explaining why an update failed must not vanish with the update. |
+| `/var/lib/<workload>`, `/srv` | **out** | The workload's data is not the release's property. |
+| `/var/lib/snapd` | **out** | `authd-msentraid` is a snap and snapd runs its own revision rollback; a BE rolling over the top is two systems fighting over one directory. |
+| **Management-agent state** — `authd`, `microsoft-identity-broker`, `intune-portal`, `azcmagent` | **out** | Entra, Intune and Arc hold the other end of a device identity: enrolment records, self-rotating certificates, compliance state. **The tenant has no rollback.** A machine returning from a rollback with a stale identity or an expired certificate is a tenant problem — worse than a device problem, because it is invisible from the device. |
+| `/var/lib/NetworkManager` | **out** | Practical: a rolled-back headless server with no network configuration is a site visit. |
 
-This needs a decision (U6) **before `os7-setup` writes its first dataset layout**,
-because it changes §4.4 of the installer plan and, like `USERDATA`, it is not
-retrofittable onto installed machines.
+The full table, the `canmount=off` container detail and the boot-path footgun
+(`ZFS_INITRD_ADDITIONAL_DATASETS`, now L21) are in the layout itself —
+[../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md) §4.4, which this decision
+rewrote.
+
+**Two things this forces on the update sequence:**
+
+* Out-of-BE datasets hang under `rpool/DATA`, **not** under `rpool/ROOT/<be>` with
+  a do-not-clone property. zsys used a property (`com.ubuntu.zsys:bootfs=no`) and
+  zsys is gone; OS/7 writes its own clone logic, and a dataset that is not a child
+  of the BE cannot be cloned into the next one by mistake. The hierarchy makes the
+  bug unrepresentable rather than merely discouraged.
+* **A cloned BE has to be assembled before it is usable** — §4.2 step 3. Mounting
+  the clone alone yields a `/var` with holes in it, and `apt` would run against it.
+
+**The honest cost:** a rollback restores the *system*, not the *world*. An update
+that migrates an on-disk data format leaves the old release facing new data, and
+no layout fixes that — it is what "keep the data" means. The `@pre-<version>`
+snapshot in step 1 therefore covers the `rpool/DATA` datasets too, so an operator
+*can* roll one back deliberately and individually. Automatically, never.
 
 ---
 
@@ -419,7 +446,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 | # | Limitation | Mitigation |
 |---|---|---|
 | UL1 | **A Secure Boot policy update breaks TPM2 unlock fleet-wide** and there is no recovery story (L17, §2.2 #1) | Escrow a recovery key at enrolment — into Entra, or an OS/7-managed store — and re-seal automatically after a policy change. Must be designed before any fleet ships. Nothing else in this document matters if a routine patch strands a customer at a passphrase prompt. |
-| UL2 | A rollback reverts `/var`, including service state, on the server product (§4.4) | U6: workload paths move outside the BE. Decide **before** `os7-setup` writes its first layout; not retrofittable. |
+| UL2 | A rollback reverts `/var`, including service state, on the server product | **RESOLVED 2026-08-23 by U6 (§4.4).** `/var` is split: package state in, everything a rollback should not un-say out to `rpool/DATA`. **Residual, and unfixable by any layout:** a rollback restores the system, not the world — an update that migrates an on-disk data format leaves the old release facing new data. The `@pre-<version>` snapshot covers `rpool/DATA` so that case is recoverable by hand, never automatically. |
 | UL3 | Pinning delays security patches relative to plain Ubuntu (§7) | Out-of-band hotfix channel on the Build field. Non-optional. |
 | UL4 | Microsoft components cannot be snapshot-pinned (§5 #3) | Version + SHA256 in the manifest, hook 0020 pattern. Accept that MS moves are release events. |
 | UL5 | `apt` remains usable and can silently invalidate the version number (§5 #1) | apt pinning + drift detection in `Get-OS7Version`. |
@@ -441,7 +468,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 | U3 | Where the version lives | **DECIDED 2026-08-23 — `IMAGE_ID` + `IMAGE_VERSION`** in `/etc/os-release`, `ID`/`ID_LIKE`/`VERSION_ID` untouched (§3.5). Follows from U2 having a value to carry, and it is what **closes D8** in [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md). |
 | U4 | Archive pinning | **DECIDED 2026-08-23 — `snapshot.ubuntu.com`**, one timestamp per release (§3.2). Verified available for resolute on both architectures. This is what makes U2's number describe a state rather than label one; without it the two decisions do not hold together. |
 | U5 | Release cadence | **Proposed: monthly `stable`**, plus an out-of-band hotfix channel on the Build field (§7). Needs a business decision, not a technical one. |
-| U6 | Is `/var` inside the boot environment | **OPEN, and the most urgent item here.** Recommend splitting: package state in, workload state out (§4.4). Changes SETUP-PLAN §4.4 and must be settled before Setup writes a layout. |
+| U6 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split (§4.4).** Package state in; logs, spool, workload data, snapd and management-agent state out to `rpool/DATA`. Deciding rule: a path belongs in the BE only if rolling it back makes the system *more correct* — anything a system outside this machine also believes stays out, because the tenant does not roll back. Rewrote SETUP-PLAN §4.4 and closed its D10. |
 | U7 | Does `apt` get pinned against OS/7-managed packages | **Recommend yes**, plus drift detection regardless (§5 #1). |
 | U8 | Recovery path for UL1 | **OPEN.** No proposal yet. Blocking for fleet deployment. |
 
@@ -504,7 +531,7 @@ folded into an in-flight build.
 | `../README.md`, "Locked decisions" → Updates | Gains the version scheme (**U2, locked**), the `IMAGE_ID`/`IMAGE_VERSION` identity (**U3, locked**), archive pinning (**U4, locked**) and the cadence model (U5, still a proposal). The one-line "curated release train over ZFS boot environments" is now specified. | **applied** |
 | `../README.md`, "Status" table | New row for the update train; the `powershell/OS7/` row points here for the format its stubs say they lack. | **applied** |
 | `../README.md`, "Open questions" | U6 (`/var` in the BE) and U8 (TPM2 recovery) added as questions 5 and 6. | **applied** |
-| `../installer/SETUP-PLAN.md` §4.4 | The `/var` hazard and the three-way split are recorded inline; the `<id>` example updated to the four-field version. **Layout changes when D10 lands.** | **applied** |
+| `../installer/SETUP-PLAN.md` §4.4 | **Layout rewritten** — `/var` split per U6/D10, out-of-BE paths moved to `rpool/DATA`, `canmount=off` containers, and the `ZFS_INITRD_ADDITIONAL_DATASETS` footgun recorded as L21. The `<id>` example updated to the four-field version. | **applied** |
 | `../installer/SETUP-PLAN.md` §9 | D8 **closed** (`IMAGE_ID`/`IMAGE_VERSION`, `ID`/`VERSION_ID` untouched, §3.5); **D10 opened** for the `/var` question — that plan's counterpart to U6. | **applied** |
 | `../installer/SETUP-PLAN.md` §8, L4 | The GRUB generator titles entries from the manifest, fixing the "reads Ubuntu 26.04 LTS" complaint. | **applied** |
 | `../installer/SETUP-PLAN.md` §6.3 | The shared BE primitives gain the paired-dataset constraint from §4.3. | **applied** |
@@ -532,6 +559,8 @@ marked as such above.
 | **`BUILD_ID` is the wrong field**: it identifies the original installation base and does not change during incremental updates | [os-release(5)](https://www.freedesktop.org/software/systemd/man/latest/os-release.html) |
 | **`IMAGE_ID` + `IMAGE_VERSION` are the right fields**: for systems built, shipped and updated as consistent images, and named alongside `VERSION_ID` as what changes when the image is replaced | same page |
 | `VARIANT` / `VARIANT_ID` are standard fields for edition (`server`, etc.) | same page |
+| The Ubuntu root-on-ZFS layout gives `/var/lib`, `/var/log`, `/var/spool`, `/var/lib/docker`, `/var/www`, `/srv` and `/usr/local` **separate datasets**, with `/var` and `/usr` as `canmount=off` containers — the granularity U6's split needs, and the precedent for it | [OpenZFS: Ubuntu 22.04 Root on ZFS](https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html) |
+| A boot-required directory split into its own dataset must be added to `ZFS_INITRD_ADDITIONAL_DATASETS` in `/etc/default/zfs`; `canmount=off` datasets are exempt — the basis for L21 | same page |
 
 Not verified, and deliberately left as spikes: whether the clone-update cycle
 boots (S5), whether TPM2 unlock survives it (S6), and whether two builds from one

@@ -19,10 +19,10 @@ This supersedes the Calamares decision in [../README.md](../README.md) and in
 **Sibling document, added 2026-08-23:**
 [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) covers
 what happens to a system *after* Setup has installed it — versioning, the update
-train, and rollback. It closes D8 (§9) and it raises one new decision that lands
-squarely in this plan's territory: **D10, whether `/var` belongs inside the boot
-environment** (§4.4). That one has to be settled before Setup writes its first
-dataset layout.
+train, and rollback. Thinking that through changed this plan twice: it closed D8
+(§9), and it found that the dataset layout in §4.4 was wrong in a way only
+updates expose — **D10, decided 2026-08-23, splits `/var`** instead of placing
+all of it inside the boot environment. §4.4 carries the revised layout.
 
 ---
 
@@ -476,41 +476,94 @@ nvme0n1
 ```
 
 Dataset layout — this is OS/7's design decision, not something a tool hands us,
-and it is what makes `Update-OS7` / `Restore-OS7` possible:
+and it is what makes `Update-OS7` / `Restore-OS7` possible. **Revised 2026-08-23
+by D10**, which split `/var`; the earlier drawing put all of `/var` inside the
+boot environment.
 
 ```
-bpool/BOOT/os7_<id>                  -> /boot
-rpool/ROOT/os7_<id>                  -> /            the boot environment
-rpool/ROOT/os7_<id>/var              -> /var
-rpool/ROOT/os7_<id>/var/log          -> /var/log
-rpool/USERDATA/<user>_<uuid>         -> /home/<user>  OUTSIDE ROOT — survives rollback
-rpool/USERDATA/root_<uuid>           -> /root
+bpool/BOOT/os7_<id>                  -> /boot          part of the BE
+rpool/ROOT/os7_<id>                  -> /              the boot environment
+rpool/ROOT/os7_<id>/var              -> /var           canmount=off, container only
+rpool/ROOT/os7_<id>/var/lib          -> /var/lib       canmount=off, container only
+rpool/ROOT/os7_<id>/var/lib/dpkg     -> /var/lib/dpkg  IN the BE — see below
+rpool/ROOT/os7_<id>/var/lib/apt      -> /var/lib/apt   IN the BE
+rpool/ROOT/os7_<id>/var/cache        -> /var/cache     IN the BE
+
+rpool/DATA/log                       -> /var/log       OUTSIDE ROOT — survives rollback
+rpool/DATA/spool                     -> /var/spool     OUTSIDE
+rpool/DATA/tmp                       -> /var/tmp       OUTSIDE
+rpool/DATA/srv                       -> /srv           OUTSIDE
+rpool/DATA/lib/<service>             -> /var/lib/<s>   OUTSIDE — workload + agents
+rpool/DATA/snapd                     -> /var/lib/snapd OUTSIDE
+
+rpool/USERDATA/<user>_<uuid>         -> /home/<user>   OUTSIDE ROOT
+rpool/USERDATA/root_<uuid>           -> /root          OUTSIDE ROOT
 ```
 
 The critical property: **`USERDATA` sits outside `ROOT`**, so rolling back a bad
 release does not roll back the user's files. Getting this wrong is the classic
 boot-environment mistake and it cannot be fixed after the fact.
 
-**The same argument applies to `/var`, and the layout above gets it wrong — D10,
-raised 2026-08-23.** `var` is drawn as a child of the boot environment, which is
-right for install and wrong for rollback: rolling back a bad update would also
-roll back `/var/lib/<service>` — a database, a container store, anything a
-workload owns. On the headless product, which is the server target, that is data
-loss wearing the costume of a safety feature. It is the `USERDATA` mistake in a
-second location, and it is equally unfixable after the fact.
+#### D10 — DECIDED 2026-08-23: `/var` is split, not placed
 
-It is a split rather than a move, because the two halves of `/var` want opposite
-things:
+The same argument applies to `/var`, and the first drawing got it wrong: rolling
+back a bad update would also have rolled back `/var/lib/<service>` — a database,
+a container store — on the headless product, which is the server target. That is
+the `USERDATA` mistake in a second location, and equally unfixable afterwards.
 
-| Path | Owned by | Placement |
+The rule that decides each path, and it is not "system vs. user":
+
+> **A path belongs inside the boot environment if, and only if, rolling it back
+> makes the system more correct.** State that something outside this machine also
+> believes must stay outside, because the other side does not roll back.
+
+Applied:
+
+| Path | Placement | Why |
 |---|---|---|
-| `/var/lib/dpkg`, `/var/lib/apt`, `/var/cache` | the package state of *this* BE | **inside** the BE — a shared dpkg database against a rolled-back root is incoherent |
-| `/var/lib/<service>`, `/srv` | the workload | **outside**, under `rpool/DATA/…` |
-| `/var/log` | forensics | **outside** — the logs explaining why an update failed should survive rolling that update back |
+| `/`, `/usr`, `/etc` | **in** | The system itself. `/etc` in particular: configuration belongs to the release that shipped it, and pulling it out would additionally require `ZFS_INITRD_ADDITIONAL_DATASETS` (see below). |
+| `/var/lib/dpkg`, `/var/lib/apt` | **in** | **Non-negotiable.** The package database describes exactly the `/usr` that rolls with it. Shared, a rollback leaves dpkg claiming `libfoo 2.0` while `/usr` holds `1.0`, and the next `apt install` builds on a false premise. |
+| `/var/cache` | **in** | Package cache; belongs to the same package state. Worthless to keep, harmless to roll. |
+| `/var/log` | **out** | The logs that explain why an update failed must not vanish with the update. Also the journal, which is evidence for compliance. |
+| `/var/lib/<workload>` — databases, containers, libvirt, `/var/www`, `/srv` | **out** | The workload's data is not the release's property. |
+| `/var/spool`, `/var/tmp` | **out** | In-flight work: mail, cron spool, print jobs. |
+| **`/var/lib/snapd`** | **out** | `authd-msentraid` is a snap, and snapd manages its own revisions and rollbacks. Rolling a BE over the top would be two rollback systems fighting over one directory. |
+| **Management-agent state** — `authd`'s cache, `microsoft-identity-broker`, `intune-portal`, `azcmagent` (`/var/opt/azcmagent`) | **out** | **The OS/7-specific half of this decision, and the reason the rule above is phrased the way it is.** Entra, Intune and Arc hold the other end of a device identity: enrolment records, certificates that rotate on their own schedule, compliance state. The tenant has no rollback. A machine that comes back from a rollback presenting a stale identity or an expired certificate is a tenant problem, not a device problem — and a much worse one, because it is invisible from the device. |
+| `/var/lib/NetworkManager` | **out** | Practical rather than principled: a rolled-back headless server that has lost its network configuration is a site visit. |
 
-Full reasoning in
+`/var` and `/var/lib` themselves are `canmount=off` containers, exactly as the
+OpenZFS Ubuntu root-on-ZFS layout does it — the directories live in the BE's root
+dataset and only the named children are separate datasets.
+
+**Two consequences the executor has to honour:**
+
+1. **Structure, not discipline.** The out-of-BE datasets hang under `rpool/DATA`,
+   *not* under `rpool/ROOT/<be>` with a "do not clone me" property. zsys used a
+   property (`com.ubuntu.zsys:bootfs=no`) and zsys is gone; OS/7 writes its own
+   clone logic, and a dataset that is not a child of the BE **cannot** be cloned
+   into the next one by mistake. Forgetting a property is a bug that ships; the
+   hierarchy makes the bug unrepresentable.
+2. **A cloned BE must be assembled, not just mounted.** `Update-OS7` mounts the
+   clone and then has to mount the `rpool/DATA` datasets into it before chrooting,
+   or `apt` runs against a `/var` with holes in it. Release plan §4.2, step 3.
+
+**The honest cost:** a rollback restores the *system*, not the *world*. If an
+update migrates an on-disk data format — a database engine major, a container
+store layout — rolling the system back leaves the old release facing new data,
+and no dataset layout can fix that. This is not a flaw in the split; it is what
+"keep the data" means. The mitigation is that the update sequence's `@pre-<version>`
+snapshot covers the `rpool/DATA` datasets too, so an operator *can* roll a data
+set back deliberately and individually. Automatically, never.
+
+**Boot-path footgun:** the OpenZFS guide notes that any directory required for
+booting that becomes its own dataset must be listed in
+`ZFS_INITRD_ADDITIONAL_DATASETS` in `/etc/default/zfs`; `canmount=off` datasets
+do not count. Nothing in the split above is needed at boot, so the list stays
+empty today — but it is the trap waiting for whoever later decides to separate
+`/etc`. Recorded as L21.
+
+Full reasoning and the update-time consequences:
 [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §4.4.
-**Decide D10 before writing the storage executor.**
 
 `<id>` naming: `os7_<release>_<yyyymmddHHMM>`, e.g. `os7_1.0.0.0_202608231430`.
 Pinned here because `Restore-OS7 -BootEnvironment` needs a scheme it can list
@@ -839,6 +892,7 @@ in the shipped system.
 | L18 | **`bpool` may still trip the encryption check.** Microsoft exempts `/boot`, but `bpool` is an unencrypted fixed writable partition holding a ZFS *pool member*, not a directly mounted filesystem. Whether the agent maps it to `/boot` and exempts it is undocumented | verify in the first real enrolment test (Phase 6). If it fails: either move `/boot` into `rpool` and switch to ZFSBootMenu (D1 reopens), or carry a custom-compliance script. Do not assume it passes |
 | L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
 | L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4) |
+| L21 | Any boot-required directory split into its own dataset must be listed in `ZFS_INITRD_ADDITIONAL_DATASETS` (`/etc/default/zfs`), or the system will not boot; `canmount=off` datasets are exempt | Nothing in the D10 split needs this — the list stays empty today. Recorded because it is the trap waiting for whoever later separates `/etc`, and the failure is at boot, not at install (§4.4) |
 
 ---
 
@@ -855,7 +909,7 @@ in the shipped system.
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3) |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
-| D10 | Is `/var` inside the boot environment | **OPEN, and urgent — raised 2026-08-23 by the release plan (its U6), see §4.4.** As drawn, a rollback reverts workload state under `/var/lib`. Recommend the split in §4.4: package state stays in, workload state and `/var/log` move out to `rpool/DATA/…`. **Must be decided before the storage executor writes a layout** — not retrofittable, exactly like `USERDATA` |
+| D10 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split, not placed (§4.4).** Package state (`dpkg`, `apt`, `cache`) stays inside the BE, because it describes the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and — the OS/7-specific part — the state of the agents that hold a device identity in Entra, Intune and Arc, because the tenant on the other end has no rollback. Out-of-BE datasets hang under `rpool/DATA` rather than carrying a do-not-clone property, so the mistake is structurally impossible rather than merely discouraged |
 
 ---
 
@@ -959,6 +1013,7 @@ belong in an installer log). `espeakup` accessibility. CI installs in QEMU.
 | `Dockerfile` | `dotnet-sdk-10.0` + `clang` + `zlib1g-dev` in the build container (pending S2), plus `otf2bdf` + `bdf2psf` for the console font (§2.5). |
 | `build/build.sh` (font) | New stage: fetch and hash-pin `FSEX302.ttf`, convert to `os7-fixedsys-8x16.psf` and `os7-fixedsys-16x32.psf`, assert coverage, stage into `includes.chroot/usr/share/consolefonts/`. |
 | `build/config/includes.chroot/etc/default/console-setup` | New: point the installed non-GUI console at the Fixedsys PSF. |
+| `installer/spikes/s3-zfs-luks.sh` | **Left as-is on purpose** — it records what S3 actually did, and S3 predates D10. The storage executor deliberately diverges from it: S3 creates `rpool/ROOT/$BE/var` and `/var/log` as BE children, which §4.4 now splits. Do not "fix" the spike; it is evidence, not a template. |
 | `powershell/OS7/OS7.psm1` | Gains the BE primitives Setup and `Update-OS7` share (as a *pair* of datasets, §6.3); `Restore-OS7 -BootEnvironment` gets the naming scheme from §4.4. The full cmdlet surface, and the on-disk format these stubs say they lack, are in [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §6. |
 
 Nothing here has been implemented and no file above has been modified by this
