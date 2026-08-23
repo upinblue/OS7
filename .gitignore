@@ -28,3 +28,7 @@ build/config/config/
 
 # --- QEMU x86 builder VM (scripts/build-amd64-vm.sh) -------------------------
 .vm-amd64/
+
+# Python bytecode from the spike harnesses
+__pycache__/
+*.pyc

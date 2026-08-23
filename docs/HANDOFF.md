@@ -110,10 +110,18 @@ run takes minutes. Move it into the Dockerfile when Phase 1 starts.
 
 ### The two open risks S4 leaves behind
 
-* **PCR 7 sealing has no recovery story.** Sealing survives kernel and initramfs
-  updates, but **not** a Secure Boot policy change — a shim or dbx update drops
-  every machine back to the passphrase prompt. On a managed fleet that is a
-  support event, and nothing here addresses it.
+* ~~**PCR 7 sealing has no recovery story.**~~ **Measured 2026-08-23 by S6**
+  ([SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md)). Sealing does
+  survive kernel and initramfs updates — PCR 7 came back byte-identical across a
+  from-scratch rebuild — and it does **not** survive a Secure Boot policy change,
+  as expected. What S4 could not know is that the failure is benign in shape:
+  `cryptsetup` names the cause, the passphrase path is intact, and one
+  `systemd-cryptenroll` against the new PCR 7 restores auto-unlock without
+  touching the initramfs. On a managed fleet a shim or dbx update is therefore
+  one bad morning, not a rebuild. **The remaining gap is the escrowed recovery
+  passphrase** that unattended re-enrolment needs — U8 in
+  [RELEASE-AND-UPDATE-PLAN.md](RELEASE-AND-UPDATE-PLAN.md), and a
+  key-management question rather than a boot one.
 * **L18 is still untouched.** Whether Intune's encryption check accepts the
   unencrypted `bpool` needs a real enrolment, not a VM.
 

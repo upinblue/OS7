@@ -69,7 +69,7 @@ hypothetical — all four follow from decisions already made in this repo.
 
 | # | Trigger | What breaks | Why it is OS/7's problem |
 |---|---|---|---|
-| 1 | `shim` or `dbx` update | **TPM2 auto-unlock, fleet-wide.** Sealing is against PCR 7, which measures Secure Boot policy. Kernel updates do not disturb it; a Secure Boot policy change does. Every machine falls back to a passphrase prompt at the next boot. | L17 in SETUP-PLAN records this and says there is *no recovery story yet*. A managed fleet that suddenly demands a passphrase nobody has is a support incident, not an inconvenience. This needs an answer before the first customer, not after. |
+| 1 | `shim` or `dbx` update | **TPM2 auto-unlock, fleet-wide.** Sealing is against PCR 7, which measures Secure Boot policy. Kernel updates do not disturb it; a Secure Boot policy change does. Every machine falls back to a passphrase prompt at the next boot. | **Measured 2026-08-23 by S6** ([SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md)), and it degrades better than assumed: the failure is *detectable* (`cryptsetup` names the cause), *survivable* (the passphrase path still works), and *repairable* by one `systemd-cryptenroll` against the new PCR 7. What remains is where the recovery key lives — U8, now a key-management question rather than a boot one. |
 | 2 | `base-files` upgrade | Overwrites `/etc/os-release`, taking the OS/7 branding **and the version number** with it (§3.5). | The file is a conffile owned by another package. Branding it is a modification dpkg will contest at every upgrade. Needs an idempotent reassert that runs after every BE update, not a one-time write at install. |
 | 3 | Any kernel update | Rebuilds the initramfs. OS/7's TPM2 token handler is a **local initramfs hook** from S4, not an archive package — it carries `libcryptsetup-token-systemd-tpm2.so` and the libtss2 libraries systemd dlopens. | It regenerates correctly *if* the hook is installed properly, and silently produces an unbootable-without-passphrase system if it is not. This is the thing S6 has to prove, because the failure is only visible at the next boot. |
 | 4 | `grub` update | Regenerates `grub.cfg` via `10_linux_zfs`, re-emitting the zsys-era *Revert* entries OS/7 has no `zsys` to serve, and re-titling entries from `PRETTY_NAME`. | L4. Cosmetic on its own, but it shares a mechanism with the `GRUB_CMDLINE_LINUX` hazard in the same note: one `root=ZFS=` is emitted per BE, and anything appended lands after it and wins. An update-time regeneration is exactly when that would be introduced by accident. |
@@ -445,7 +445,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 
 | # | Limitation | Mitigation |
 |---|---|---|
-| UL1 | **A Secure Boot policy update breaks TPM2 unlock fleet-wide** and there is no recovery story (L17, §2.2 #1) | Escrow a recovery key at enrolment — into Entra, or an OS/7-managed store — and re-seal automatically after a policy change. Must be designed before any fleet ships. Nothing else in this document matters if a routine patch strands a customer at a passphrase prompt. |
+| UL1 | **A Secure Boot policy update breaks TPM2 unlock fleet-wide** (L17, §2.2 #1) | **Characterised 2026-08-23 by S6.** The break is real — PCR 7 moves and the seal stops opening — but it is loud, non-fatal and one command from repaired. The mechanism for recovery is demonstrated; what is *not* built is the escrowed recovery key it needs to run unattended (U8). Until that exists, a policy change means every machine asks a human for a passphrase once. |
 | UL2 | A rollback reverts `/var`, including service state, on the server product | **RESOLVED 2026-08-23 by U6 (§4.4).** `/var` is split: package state in, everything a rollback should not un-say out to `rpool/DATA`. **Residual, and unfixable by any layout:** a rollback restores the system, not the world — an update that migrates an on-disk data format leaves the old release facing new data. The `@pre-<version>` snapshot covers `rpool/DATA` so that case is recoverable by hand, never automatically. |
 | UL3 | Pinning delays security patches relative to plain Ubuntu (§7) | Out-of-band hotfix channel on the Build field. Non-optional. |
 | UL4 | Microsoft components cannot be snapshot-pinned (§5 #3) | Version + SHA256 in the manifest, hook 0020 pattern. Accept that MS moves are release events. |
@@ -470,7 +470,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 | U5 | Release cadence | **Proposed: monthly `stable`**, plus an out-of-band hotfix channel on the Build field (§7). Needs a business decision, not a technical one. |
 | U6 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split (§4.4).** Package state in; logs, spool, workload data, snapd and management-agent state out to `rpool/DATA`. Deciding rule: a path belongs in the BE only if rolling it back makes the system *more correct* — anything a system outside this machine also believes stays out, because the tenant does not roll back. Rewrote SETUP-PLAN §4.4 and closed its D10. |
 | U7 | Does `apt` get pinned against OS/7-managed packages | **Recommend yes**, plus drift detection regardless (§5 #1). |
-| U8 | Recovery path for UL1 | **OPEN.** No proposal yet. Blocking for fleet deployment. |
+| U8 | Recovery path for UL1 | **OPEN, but reduced 2026-08-23 by S6.** Recovery works: detect the fallback (the error string is specific, and the token state is queryable), then re-enrol against the new PCR 7 — no reinstall, no initramfs work. **The remaining problem is key escrow**: unattended re-enrolment needs the existing passphrase, so something must hold it. Entra, an OS/7-managed store, or Intune's own escrow. A Microsoft-stack design question, no longer a boot question. |
 
 ---
 
@@ -485,10 +485,12 @@ and boots an arm64 system — the expensive part is built.
 | Spike | Question | Method | Done when |
 |---|---|---|---|
 | **S5** | Does the clone-update-activate-rollback cycle work at all | On the S3 target: snapshot + clone both BE datasets, chroot, `apt full-upgrade` against a pinned snapshot, `update-initramfs`, `update-grub`, activate, reboot; then `Restore-OS7` back | Boots into the new BE with the new kernel; rollback returns to the old BE; both remain bootable throughout |
-| **S6** | **Does TPM2 auto-unlock survive an update** | Same cycle on the S4 target, which has TPM2 enrolled. Then separately: mutate Secure Boot policy and observe PCR 7 | Auto-unlock still works after a kernel update; the policy-change failure is *characterised* rather than assumed. **This is the spike that matters** — UL1/U8 depend on its output |
+| **S6** | **Does TPM2 auto-unlock survive an update** | Six boots on a copy of the S4 target (disk + variable store + swtpm state): rebuild the initramfs and boot; swap the variable store to change Secure Boot policy and boot; re-enrol and boot again | **PASS 2026-08-23 (arm64).** Survives an initramfs rebuild with PCR 7 byte-identical; a policy change moves PCR 7 and breaks the seal *loudly and recoverably*; one `systemd-cryptenroll` restores it. `installer/spikes/run-s6.py` + `s6-update-cycle.sh`; findings in [SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md) |
 | **S7** | Is the version number true | Build the same release twice from the same snapshot; diff `dpkg --get-selections` and the manifest hash | Byte-identical selections. If not, the pinning model is incomplete and §3 needs revisiting before anything is shipped |
 
 **Gate: S5 and S7 pass, and S6's failure mode is characterised, before Phase 1.**
+**S6 is done** (2026-08-23) — its failure mode is characterised and its recovery
+demonstrated. S5 and S7 remain.
 
 ### Phase 1 — Release engineering (no runtime code)
 
@@ -561,6 +563,9 @@ marked as such above.
 | `VARIANT` / `VARIANT_ID` are standard fields for edition (`server`, etc.) | same page |
 | The Ubuntu root-on-ZFS layout gives `/var/lib`, `/var/log`, `/var/spool`, `/var/lib/docker`, `/var/www`, `/srv` and `/usr/local` **separate datasets**, with `/var` and `/usr` as `canmount=off` containers — the granularity U6's split needs, and the precedent for it | [OpenZFS: Ubuntu 22.04 Root on ZFS](https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html) |
 | A boot-required directory split into its own dataset must be added to `ZFS_INITRD_ADDITIONAL_DATASETS` in `/etc/default/zfs`; `canmount=off` datasets are exempt — the basis for L21 | same page |
+| **PCR 7 is unchanged by an initramfs rebuild**, byte-identical across the rebuild *and* across sessions — the same value S4 measured before it enrolled anything | S6, `installer/spikes/run-s6.py initramfs`; [SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md) |
+| **A Secure Boot policy change moves PCR 7 and the sealed key stops opening**, with `cryptsetup` naming the cause rather than failing silently, and the passphrase path intact | S6, `run-s6.py policy` |
+| **Re-enrolment against the new PCR 7 restores auto-unlock using only the existing passphrase** — new keyslot, untouched initramfs | S6, `run-s6.py recover` |
 
 Not verified, and deliberately left as spikes: whether the clone-update cycle
 boots (S5), whether TPM2 unlock survives it (S6), and whether two builds from one
