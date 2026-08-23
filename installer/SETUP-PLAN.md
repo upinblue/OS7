@@ -16,6 +16,14 @@ Short answers: **yes**, **yes with three unavoidable exceptions**, and
 This supersedes the Calamares decision in [../README.md](../README.md) and in
 [README.md](README.md) (this directory). See "What this changes" at the end.
 
+**Sibling document, added 2026-08-23:**
+[../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) covers
+what happens to a system *after* Setup has installed it — versioning, the update
+train, and rollback. It closes D8 (§9) and it raises one new decision that lands
+squarely in this plan's territory: **D10, whether `/var` belongs inside the boot
+environment** (§4.4). That one has to be settled before Setup writes its first
+dataset layout.
+
 ---
 
 ## 1. Verdict
@@ -483,9 +491,34 @@ The critical property: **`USERDATA` sits outside `ROOT`**, so rolling back a bad
 release does not roll back the user's files. Getting this wrong is the classic
 boot-environment mistake and it cannot be fixed after the fact.
 
-`<id>` naming: `os7_<release>_<yyyymmddHHMM>`, e.g. `os7_2026.08.1_202608221430`.
+**The same argument applies to `/var`, and the layout above gets it wrong — D10,
+raised 2026-08-23.** `var` is drawn as a child of the boot environment, which is
+right for install and wrong for rollback: rolling back a bad update would also
+roll back `/var/lib/<service>` — a database, a container store, anything a
+workload owns. On the headless product, which is the server target, that is data
+loss wearing the costume of a safety feature. It is the `USERDATA` mistake in a
+second location, and it is equally unfixable after the fact.
+
+It is a split rather than a move, because the two halves of `/var` want opposite
+things:
+
+| Path | Owned by | Placement |
+|---|---|---|
+| `/var/lib/dpkg`, `/var/lib/apt`, `/var/cache` | the package state of *this* BE | **inside** the BE — a shared dpkg database against a rolled-back root is incoherent |
+| `/var/lib/<service>`, `/srv` | the workload | **outside**, under `rpool/DATA/…` |
+| `/var/log` | forensics | **outside** — the logs explaining why an update failed should survive rolling that update back |
+
+Full reasoning in
+[../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §4.4.
+**Decide D10 before writing the storage executor.**
+
+`<id>` naming: `os7_<release>_<yyyymmddHHMM>`, e.g. `os7_1.0.0.0_202608231430`.
 Pinned here because `Restore-OS7 -BootEnvironment` needs a scheme it can list
 and sort, and the stub in `powershell/OS7/OS7.psm1` explicitly has none.
+`<release>` is the four-field OS/7 product version — the release plan §3.3
+defines it, and §3.5 puts the same value in `/etc/os-release` as
+`IMAGE_VERSION`. (The example previously read `os7_2026.08.1_…`, from before a
+version scheme existed.)
 
 ### 4.5 Encryption — DECIDED: LUKS2 under ZFS, not ZFS native (D3)
 
@@ -671,6 +704,14 @@ boot-environment creation, activation and rollback logic. **Setup needs the
 identical logic** to create the first boot environment. Writing it twice
 guarantees drift.
 
+The other side of that shared surface is now specified:
+[../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §4.2
+gives the update sequence, which is this plan's install sequence with a different
+root, and §4.3 adds a constraint Setup must honour too — **a boot environment is
+a *pair* of datasets** (`rpool/ROOT/<id>` and `bpool/BOOT/<id>`, one per pool,
+because D1 forces `bpool`). They are created, activated and destroyed together;
+the primitives must treat the pair as one object and never expose the halves.
+
 So: put it once, in PowerShell, in the OS7 module — `New-OS7BootEnvironment`,
 `Set-OS7BootEnvironment`, `New-OS7Storage` — and have the C# installer invoke
 `pwsh -NoProfile -File …` for those steps, consuming JSON on stdout. `pwsh` is
@@ -781,7 +822,7 @@ in the shipped system.
 | L1 | "ZFS only" cannot be literal: FAT32 ESP is mandatory | none possible; document it |
 | L2 | Secure Boot forces GRUB, which forces `bpool` | **accepted (D1)**; ZFSBootMenu stays behind a strategy interface for later (§5) |
 | L3 | Swap cannot live on ZFS | zram by default; optional plain partition for hibernation |
-| L4 | GRUB has no boot-environment awareness since `zsys` was dropped | **Softened by S3 (2026-08-23).** `grub-common` still ships `/etc/grub.d/10_linux_zfs`, `10_linux` defers to it, and it generated correct `rpool/ROOT/*` entries unassisted — so the generator may not need writing. Two caveats: it also emits zsys-era *Revert* entries OS/7 has no `zsys` to serve, and it titles the menu from `PRETTY_NAME`, so the entry reads "Ubuntu 26.04 LTS" (ties into D8/L16). **And a new hazard:** it emits one `root=ZFS=` per boot environment, so anything appended via `GRUB_CMDLINE_LINUX` lands after it and wins — pinning a dataset there makes every entry in the menu boot the same one |
+| L4 | GRUB has no boot-environment awareness since `zsys` was dropped | **Softened by S3 (2026-08-23).** `grub-common` still ships `/etc/grub.d/10_linux_zfs`, `10_linux` defers to it, and it generated correct `rpool/ROOT/*` entries unassisted — so the generator may not need writing. Two caveats: it also emits zsys-era *Revert* entries OS/7 has no `zsys` to serve, and it titles the menu from `PRETTY_NAME`, so the entry reads "Ubuntu 26.04 LTS" (ties into D8/L16). **And a new hazard:** it emits one `root=ZFS=` per boot environment, so anything appended via `GRUB_CMDLINE_LINUX` lands after it and wins — pinning a dataset there makes every entry in the menu boot the same one. **Partly addressed 2026-08-23:** the generator titles entries from the release manifest rather than `PRETTY_NAME`, so the menu reads the OS/7 version instead of "Ubuntu 26.04 LTS" (release plan §3.5) |
 | L5 | The palette can only be set on the kernel console | truecolor SGR fallback on serial/SSH |
 | L6 | White on `#1289ff` is 3.47 : 1, below WCAG AA | **resolved (D5)**: field darkened to `#0057ad` (7.07 : 1, AAA), `#1289ff` kept as the title stripe and progress fill; `F5` → `#003366` |
 | L7 | 80×25 is not guaranteed on UEFI | full-bleed chrome + 80-column body; `os7.setup.geometry=` to force |
@@ -793,7 +834,7 @@ in the shipped system.
 | L13 | `/etc/hostid` must agree between install time and the target initramfs or the pool will not import at boot | `zgenhostid` into the target *before* `update-initramfs`; classic ZFS-root footgun |
 | L14 | Booting straight into Setup loses "try before you install" | keep both GRUB entries |
 | L15 | Intune's encryption check only recognises **dm-crypt**, so ZFS native encryption would report as unencrypted | **resolved (D3)**: `rpool` goes inside LUKS2 (§4.5). Cost: no per-dataset encryption, no raw encrypted `zfs send`, and mirrors need one container per disk |
-| L16 | Intune's "Allowed distributions" rule matches on `/etc/os-release`; branding OS/7 as its own `ID=` could make every device fail it | keep `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"`, brand only `NAME` / `PRETTY_NAME` (§4.6). **Not decided anywhere in this repo yet** |
+| L16 | Intune's "Allowed distributions" rule matches on `/etc/os-release`; branding OS/7 as its own `ID=` could make every device fail it | keep `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"`, brand only `NAME` / `PRETTY_NAME` (§4.6). **RESOLVED 2026-08-23 (D8):** the product identity moves to `IMAGE_ID` / `IMAGE_VERSION`, so OS/7 is identifiable as itself without touching a field Intune matches on |
 | L17 | LUKS unlock at boot needs a passphrase prompt unless TPM2 enrolment happens at install time | **Tested by S4 (2026-08-23), and bigger than it looked.** `systemd-cryptenroll` writes a valid LUKS2 token and **changes nothing at boot**: `cryptsetup-initramfs` copies no token handler and feeds `cryptsetup open` a passphrase on stdin, which skips token activation. Setup must also install an initramfs hook carrying `libcryptsetup-token-systemd-tpm2.so` *and the libtss2 libraries systemd dlopens* (BUILD-NOTES #20), plus a `local-top` script running before `cryptroot` that calls `cryptsetup open --token-only`. With that, auto-unlock works and a TPM-less machine still prompts. **New risk:** sealing to PCR 7 survives kernel updates but not a Secure Boot policy change — a shim/dbx update drops the fleet back to passphrases, and there is no recovery story yet |
 | L18 | **`bpool` may still trip the encryption check.** Microsoft exempts `/boot`, but `bpool` is an unencrypted fixed writable partition holding a ZFS *pool member*, not a directly mounted filesystem. Whether the agent maps it to `/boot` and exempts it is undocumented | verify in the first real enrolment test (Phase 6). If it fails: either move `/boot` into `rpool` and switch to ZFSBootMenu (D1 reopens), or carry a custom-compliance script. Do not assume it passes |
 | L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
@@ -813,7 +854,8 @@ in the shipped system.
 | D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3) |
-| D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **New, raised by §4.6.** Recommend `ID=ubuntu` + branded `NAME`/`PRETTY_NAME`; needs a decision before the first Intune enrolment test |
+| D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
+| D10 | Is `/var` inside the boot environment | **OPEN, and urgent — raised 2026-08-23 by the release plan (its U6), see §4.4.** As drawn, a rollback reverts workload state under `/var/lib`. Recommend the split in §4.4: package state stays in, workload state and `/var/log` move out to `rpool/DATA/…`. **Must be decided before the storage executor writes a layout** — not retrofittable, exactly like `USERDATA` |
 
 ---
 
@@ -911,13 +953,13 @@ belong in an installer log). `espeakup` accessibility. CI installs in QEMU.
 | `installer/README.md` | Open problem #1 (arm64 has no install path) closes. Subiquity and the preinstalled-image options are no longer needed. **Problem #3 (encryption undecided) closes — LUKS2, see §4.5.** Problem #4 (Calamares branding) becomes moot; this plan replaces it. Only problem #2 (the `authd-msentraid` snap) is untouched and still blocking. |
 | `build/config/package-lists-amd64/os7-desktop.list.chroot` | Drop `calamares`. Its header rationale ("Calamares needs a running desktop, therefore GNOME ships in the live image on every architecture") is now stale — and was already inaccurate, since the file is amd64-only. |
 | `build/config/package-lists/os7-base.list.chroot` | Add the install-time tools from §7.1, including the `cryptsetup` family that D3 makes mandatory. |
-| Wherever `/etc/os-release` gets branded | Must not change `ID` / `VERSION_ID` without deciding D8 first — Intune's "Allowed distributions" rule reads them (§4.6). |
+| Wherever `/etc/os-release` gets branded | **D8 is decided (§9):** brand `NAME` / `PRETTY_NAME` / `HOME_URL`, add `IMAGE_ID` / `IMAGE_VERSION`, and leave `ID` / `ID_LIKE` / `VERSION_ID` alone — Intune's "Allowed distributions" rule reads them (§4.6). Re-assert after every update: the file is a `base-files` conffile. |
 | `build/config/auto/config` | `--bootappend-live` gains the palette/font parameters; the ISO grows an Install entry. |
 | `build/build.sh` | New stage: `dotnet publish` `os7-setup` into `includes.chroot/usr/lib/os7-setup/`. |
 | `Dockerfile` | `dotnet-sdk-10.0` + `clang` + `zlib1g-dev` in the build container (pending S2), plus `otf2bdf` + `bdf2psf` for the console font (§2.5). |
 | `build/build.sh` (font) | New stage: fetch and hash-pin `FSEX302.ttf`, convert to `os7-fixedsys-8x16.psf` and `os7-fixedsys-16x32.psf`, assert coverage, stage into `includes.chroot/usr/share/consolefonts/`. |
 | `build/config/includes.chroot/etc/default/console-setup` | New: point the installed non-GUI console at the Fixedsys PSF. |
-| `powershell/OS7/OS7.psm1` | Gains the BE primitives Setup and `Update-OS7` share; `Restore-OS7 -BootEnvironment` gets the naming scheme from §4.4. |
+| `powershell/OS7/OS7.psm1` | Gains the BE primitives Setup and `Update-OS7` share (as a *pair* of datasets, §6.3); `Restore-OS7 -BootEnvironment` gets the naming scheme from §4.4. The full cmdlet surface, and the on-disk format these stubs say they lack, are in [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §6. |
 
 Nothing here has been implemented and no file above has been modified by this
 plan. A build was running in another session while this was written; the changes
