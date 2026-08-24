@@ -7,12 +7,16 @@ namespace OS7.Setup.Screens;
 /// <summary>
 /// Screen 12 — Setup is complete. SETUP-PLAN §3, Win2k's restart prompt.
 ///
-/// It says what actually happened, not what it will eventually say. At Phase 2
-/// the disk has been partitioned, encrypted and given its pools and datasets —
-/// and there is no operating system on it, because copying the system, the
-/// accounts and the bootloader are Phase 3. A screen that read "Setup is
-/// complete" over a disk that cannot boot would be the single most expensive
-/// sentence in this installer.
+/// It says what actually happened, not what it will eventually say. Through
+/// Phase 2 that meant admitting there was no operating system on the disk; at
+/// Phase 3 there is one, it has an account, and the bootloader is installed — so
+/// this screen now offers a restart, which is the first time it honestly can.
+///
+/// The care that went into the Phase 2 wording is still the point: a screen
+/// reading "Setup is complete" over a disk that cannot boot would be the single
+/// most expensive sentence in this installer. It is only allowed to say it
+/// because BootloaderStep checked the menu resolves a boot environment and
+/// InitramfsStep checked the startup image can unlock and import.
 /// </summary>
 internal sealed class CompleteScreen : Screen
 {
@@ -34,7 +38,7 @@ internal sealed class CompleteScreen : Screen
         int width = Math.Min(70, f.BodyWidth - 10);
         StoragePlan s = _plan.Storage;
 
-        f.Box(5, left, width, 9);
+        f.Box(5, left, width, 11);
         // The version comes FIRST, and it is here as well as on the title row
         // because this is the screen someone reads when the install is over: it
         // is the record of what was put on this machine, and the boot
@@ -46,15 +50,15 @@ internal sealed class CompleteScreen : Screen
         f.Text(10, left + 3, $"Disk:         {s.Disk ?? "(none)"}");
         f.Text(11, left + 3, $"Encryption:   {(s.Encrypt ? "LUKS2 (passphrase set)" : "none")}");
         f.Text(12, left + 3, $"Swap:         {s.Swap}");
+        f.Text(13, left + 3, $"Computer:     {_plan.Account.Hostname}");
+        f.Text(14, left + 3, $"Account:      {_plan.Account.Username}"
+                             + (_plan.Mode == InstallMode.Gui ? "   (desktop)" : "   (headless)"));
 
-        // The half that has NOT happened, in the brand colour, because it is the
-        // sentence that stops someone rebooting into a disk with nothing on it.
-        f.Body(15, 5, "NO OPERATING SYSTEM HAS BEEN COPIED TO THIS DISK YET.", Slot.Brand);
-        f.Body(17, 5, "Setup is at Phase 2: the disk is partitioned, encrypted and carries");
-        f.Body(18, 5, "empty ZFS pools. Copying the system, creating accounts and installing");
-        f.Body(19, 5, "the bootloader are Phase 3, and this computer will not boot from it");
-        f.Body(20, 5, "until they exist.");
-        f.Body(22, 5, $"A log of this session is at {Log.Path}.");
+        f.Body(17, 5, "Remove the setup medium and press ENTER to restart.");
+        if (s.Encrypt)
+            f.Body(19, 5, "This computer will ask for the disk passphrase when it starts.",
+                   Slot.Brand);
+        f.Body(21, 5, $"A log of this session is at {Log.Path}.");
     }
 
     public override Transition Handle(KeyPress key) =>

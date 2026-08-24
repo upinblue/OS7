@@ -369,6 +369,7 @@ text — but it is why the screen list is longer than Win2k's text phase.
 | 7 | Computer name and administrator account | Win2k GUI phase, in text | `TAB` `ENTER` |
 | 8 | Install mode: GUI or Headless (amd64 only) | — | arrows, `ENTER` |
 | 9 | Network (headless: DHCP/static) | Win2k network settings | `TAB` `ENTER` |
+
 | 10 | Copying files | Win2k copy phase | — |
 | 11 | Configuring the system | Win2k "Setup is configuring..." | — |
 | 12 | Setup is complete | Win2k restart prompt | `ENTER` |
@@ -1240,11 +1241,24 @@ back** each time — `sgdisk -p`, `blkid`, `cryptsetup luksDump`, `zpool list`,
   repository, a log and a screenshot.
 
 ### Phase 3 — System configuration
+**DONE 2026-08-24** — a machine installed by Setup boots into OS/7, verified by
+`./installer/testing/run-phase3.py all` on a VM with no ISO attached. Findings in
+[../docs/SESSION-PHASE3-SYSTEM.md](../docs/SESSION-PHASE3-SYSTEM.md). Screen 9
+(network) is the one part not delivered — see below.
+
 `unsquashfs` with real progress; chroot configuration (locale, timezone,
 hostname, users, `zgenhostid`, `update-initramfs`); bootloader install and the
 `grub.d` BE generator; screens 7–11; the GUI/headless split (offline
 `apt purge` of the desktop for headless, `systemctl set-default multi-user.target`).
 *Deliverable:* a machine installed by Setup boots into OS/7.
+
+**Screen 9 is NOT in the Phase 3 delivery, and that is a decision.** DHCP is
+the default on a fresh Ubuntu install and a machine that boots can be configured
+from a shell; a machine that does not boot cannot be configured at all. So the
+deliverable — *a machine installed by Setup boots into OS/7* — does not depend on
+it, and it is the one screen of 7–11 still outstanding. It matters for the
+headless product (a rolled-back server with no network is a site visit, release
+plan §4.4), so it is owed, not dropped.
 
 **Scope decided 2026-08-24, three additions:**
 

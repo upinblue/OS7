@@ -32,8 +32,10 @@ fact.
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -75,6 +77,33 @@ emit sources.list.d    bash -c 'cat /mnt/sq/etc/apt/sources.list.d/*.sources 2>/
 emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
 emit setup.version     chroot /mnt/root /usr/lib/os7-setup/os7-setup --version
 emit setup.selftest    bash -c 'chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/lib/os7-setup/os7-setup --self-test | tail -3'
+
+# THE BASH THE INSTALLER GENERATES, CHECKED AS BASH.
+#
+# os7-setup builds shell scripts and runs them in a chroot on the target. They
+# are C# interpolated raw strings, so a brace in the shell collides with an
+# interpolation hole and a '$' can be eaten by a quoting layer - both of which
+# produce a script that COMPILES FINE and fails halfway through an install.
+#
+# One such bug shipped into an ISO on 2026-08-24: a /etc/shadow check whose '$'
+# the shell consumed, inverting it into "the password field is empty". It would
+# have failed every install, and it was found by reading the generated script.
+#
+# --dry-run writes every script it would run into the log, so this asks the
+# SHIPPED binary for them and runs `bash -n` over each - against the image's own
+# bash, which is the one that would have run them.
+cat > /tmp/p.json <<'PLAN'
+{"version":1,"intent":"Install","language":"en_US.UTF-8","keyboard":"us",
+ "timezone":"UTC","mode":"Headless",
+ "storage":{"disk":"/dev/disk/by-id/checkimage","layout":"single","efiMiB":512,
+            "bpoolGiB":2,"encrypt":true,"swap":"zram"},
+ "account":{"hostname":"checkimage","username":"checker","fullName":"Check"}}
+PLAN
+printf '%s' 'check-image-passphrase' > /tmp/p.pass
+printf '%s' 'check-image-password'   > /tmp/p.pw
+cp /tmp/p.json /tmp/p.pass /tmp/p.pw /mnt/root/tmp/ 2>/dev/null || true
+chroot /mnt/root /usr/lib/os7-setup/os7-setup --unattend /tmp/p.json     --passphrase-file /tmp/p.pass --password-file /tmp/p.pw --dry-run     >/dev/null 2>&1 || true
+emit setup.dryrun      bash -c 'cat /mnt/root/var/log/os7-setup/setup.log 2>/dev/null || true'
 emit volume            bash -c 'blkid -o value -s LABEL /iso/ISONAME'
 emit grub.cfg          bash -c 'cat /mnt/iso/boot/grub/grub.cfg 2>/dev/null | head -40'
 
@@ -107,6 +136,34 @@ def read_image(arch: str) -> dict[str, str]:
         elif key:
             sections[key].append(line)
     return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def generated_scripts(log: str) -> dict[str, list[str]]:
+    """Pull each chroot script out of a --dry-run log.
+
+    TargetRoot.Chroot logs "would chroot into <root> for: <what>" and then every
+    line of the script prefixed with "    | ". Parsed rather than regenerated,
+    so what is checked is what the SHIPPED binary would run.
+    """
+    scripts: dict[str, list[str]] = {}
+    name: str | None = None
+    cur: list[str] = []
+    for line in log.splitlines():
+        m = re.search(r"would chroot into \S+ for: (.+)$", line)
+        if m:
+            if name:
+                scripts[name] = cur
+            name, cur = m.group(1), []
+            continue
+        m = re.match(r"^.*INFO      \|(.*)$", line)
+        if m and name is not None:
+            cur.append(m.group(1))
+        elif name is not None and " INFO " in line:
+            scripts[name] = cur
+            name, cur = None, []
+    if name:
+        scripts[name] = cur
+    return scripts
 
 
 def main() -> None:
@@ -230,6 +287,26 @@ def main() -> None:
     st = img.get("setup.selftest", "")
     check("SELFTEST-DONE failures=0" in st, "os7-setup --self-test passes in the image",
           next((l for l in st.splitlines() if l.startswith("SELFTEST-DONE")), st[-120:]))
+
+    # -- the bash the installer generates -----------------------------------
+    scripts = generated_scripts(img.get("setup.dryrun", ""))
+    if not scripts:
+        check(False, "the installer's generated scripts could be read",
+              "--dry-run produced no chroot scripts")
+    else:
+        bad_scripts = []
+        for name, body in scripts.items():
+            text = "#!/bin/bash\nset -euo pipefail\n" + "\n".join(body) + "\n"
+            with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
+                fh.write(text)
+                path = fh.name
+            rc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+            os.unlink(path)
+            if rc.returncode != 0:
+                bad_scripts.append(f"{name}: {rc.stderr.strip().splitlines()[0]}")
+        check(not bad_scripts,
+              f"all {len(scripts)} generated chroot scripts are valid bash",
+              "; ".join(bad_scripts) if bad_scripts else ", ".join(scripts))
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

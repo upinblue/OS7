@@ -14,6 +14,13 @@ screens are walked and then the RESULT IS READ BACK OFF THE DEVICE:
     ./run-phase2.py all        all five                     (default)
     ./run-phase2.py reset      discard the VM state
 
+EVERY INVOCATION HERE PASSES `--storage-only`, and that is the harness's
+contract rather than an oversight. `--unattend` on its own now performs the WHOLE
+install - Phase 3 made that the default, because an unattended mode that does
+less than the interactive one is a mode nothing tests the same way. This file
+tests the storage executor, so it asks for exactly that; the full install and the
+boot that follows it belong to `run-phase3.py`.
+
 The VM gets a SECOND, BLANK disk. The live medium is the first one, which is
 also the point: L12 requires Setup to refuse its own boot medium, and a run with
 only one disk could not tell a correct refusal from a broken enumeration.
@@ -319,7 +326,7 @@ def phase_dryrun():
     ok = True
     try:
         write_plan(c)
-        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json "
+        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json --storage-only "
                       "--passphrase-file /tmp/pass --dry-run", "dry run")
         show(text, ("OS7-SETUP",))
         if "OS7-SETUP-DONE storage" in text:
@@ -348,7 +355,7 @@ def phase_unattend():
     ok = True
     try:
         write_plan(c)
-        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json "
+        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json --storage-only "
                       "--passphrase-file /tmp/pass", "unattended install", timeout=900)
         show(text, ("OS7-SETUP",))
         if "OS7-SETUP-DONE storage" not in text:
@@ -389,7 +396,7 @@ def phase_rollback():
     ok = True
     try:
         write_plan(c, disk="/dev/disk/by-id/virtio-does-not-exist")
-        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json "
+        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json --storage-only "
                       "--passphrase-file /tmp/pass", "failing install", timeout=300)
         show(text, ("OS7-SETUP", "command:", "output:"))
         if "OS7-SETUP-FAILED" in text:
@@ -454,7 +461,7 @@ def phase_existing(font):
     version = None
     try:
         write_plan(c)
-        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json "
+        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json --storage-only "
                       "--passphrase-file /tmp/pass", "unattended install", timeout=900)
         if "OS7-SETUP-DONE storage" not in text:
             print("      FAIL  could not create the fixture: the install did not finish")

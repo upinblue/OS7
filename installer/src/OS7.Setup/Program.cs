@@ -12,16 +12,25 @@ namespace OS7.Setup;
 ///     os7-setup                          run interactively on this terminal
 ///     os7-setup --unattend plan.json     run it from a file, no UI (§6.6)
 ///     os7-setup --passphrase-file f      where the disk passphrase comes from
+///     os7-setup --password-file f        where the account password comes from
+///     os7-setup --storage-only           prepare the disk and stop
 ///     os7-setup --dry-run                print every command instead of running it
 ///     os7-setup --print-plan             write the default plan as JSON and exit
 ///     os7-setup --self-test              check what fails silently, and exit
 ///     os7-setup --geometry 80x25         force the canvas size (§2.4)
 ///
-/// PHASE 2. The flow is Welcome -> Licence -> Regional -> Disk -> Layout ->
-/// Confirm -> (execute) -> Complete, and from the Confirm screen onwards IT
-/// WRITES TO A DISK. Screens 7-11 do not exist: no system is copied, no account
-/// is created and no bootloader is installed, so the result does not boot and
-/// Complete says so.
+/// PHASE 3. The flow is Welcome -> Licence -> Regional -> Disk -> Layout ->
+/// Confirm -> Account -> Mode -> (install) -> Complete. Screen 6 is the gate and
+/// screen 10 is where the writing starts, so the disk is still untouched while
+/// the account is typed.
+///
+/// THE RESULT BOOTS. The system is copied, an account exists, the initramfs can
+/// unlock and import, and the bootloader menu resolves a boot environment - each
+/// of those checked by the step that did it, because "the installer said it
+/// worked" is the class of evidence this project has been bitten by repeatedly.
+///
+/// Screen 9 (network) is not here: DHCP is the default and a machine that boots
+/// can be configured. It is the one screen of 7-11 still outstanding.
 /// </summary>
 internal static class Program
 {
@@ -140,8 +149,31 @@ internal static class Program
                 Log.Info($"passphrase read from {o.PassphraseFile} "
                          + $"({plan.Storage.Passphrase.Length} characters)");
             }
+            if (o.PasswordFile is not null)
+            {
+                // A SECOND FILE, not a second field in the same one. The disk
+                // passphrase and the account password are different secrets with
+                // different consequences - losing the first loses the data,
+                // losing the second loses a login - and a fleet that rotates one
+                // should not have to rewrite the other.
+                plan.Account.Password = File.ReadAllText(o.PasswordFile).TrimEnd('\r', '\n');
+                Log.Info($"account password read from {o.PasswordFile} "
+                         + $"({plan.Account.Password.Length} characters)");
+            }
 
-            if (!plan.Validate(out List<string> problems))
+            // `--storage-only` stops before the account exists, so demanding one
+            // would refuse a plan that is complete for what it is being asked to
+            // do. Same argument as a screen validating only what it collected.
+            var problems = new List<string>();
+            if (o.StorageOnly)
+            {
+                plan.Storage.Validate(problems);
+            }
+            else if (!plan.Validate(out problems))
+            {
+                // filled by Validate
+            }
+            if (problems.Count > 0)
             {
                 foreach (string p in problems) Console.Error.WriteLine($"os7-setup: {p}");
                 Log.Error("unattended plan is not valid: " + string.Join("; ", problems));
@@ -150,10 +182,22 @@ internal static class Program
 
             Log.Info($"unattended{(o.DryRun ? " (dry run)" : "")}: {plan.ToJson().ReplaceLineEndings(" ")}");
             var executor = new Executor(o.DryRun);
-            executor.Run(StorageSteps.For(plan),
+            var target = TargetRoot.Install;
+
+            // `--storage-only` exists for the harness that predates Phase 3 and
+            // for anyone who wants the disk prepared without a system on it. The
+            // DEFAULT is the whole install, because an installer whose unattended
+            // mode does less than its interactive mode is an installer whose
+            // unattended mode is not tested by the same thing (§6.6).
+            List<IStep> steps = o.StorageOnly
+                ? StorageSteps.For(plan)
+                : SystemSteps.Everything(plan, target);
+
+            executor.Run(steps,
                          (step, done, total) =>
                              Console.Out.WriteLine($"OS7-SETUP [{done}/{total}] {step}"));
-            Console.Out.WriteLine("OS7-SETUP-DONE storage");
+            Console.Out.WriteLine(o.StorageOnly ? "OS7-SETUP-DONE storage"
+                                                : "OS7-SETUP-DONE install");
             return 0;
         }
         catch (StepException ex)
@@ -387,6 +431,55 @@ internal static class Program
                   $"boot environment '{be}' -> {want ?? "not an OS/7 name"}",
                   ExistingInstalls.VersionOf(be) ?? "null");
 
+        // ---------------------------------------------------------------------
+        // Screen 7's rules, checked HERE rather than left to `useradd`.
+        //
+        // useradd runs inside the chroot, six steps and several minutes after
+        // the screen that could have said "that is not a valid user name" - and
+        // by then the disk has been partitioned. These are the checks that keep
+        // a typo from costing an install.
+        foreach ((string name, bool ok) in new[]
+                 {
+                     ("os7", true), ("bastian", true), ("a_b-c9", true), ("_svc", true),
+                     ("", false), ("Root", false), ("9lives", false), ("has space", false),
+                     ("dot.ted", false), ("ünlaut", false), ("toolongtoolongtoolongtoolongtoolong", false),
+                 })
+            Check(AccountPlan.IsValidUsername(name) == ok,
+                  $"user name '{name}' is {(ok ? "valid" : "refused")}");
+
+        foreach ((string host, bool ok) in new[]
+                 {
+                     ("os7", true), ("build-01", true), ("a", true),
+                     ("", false), ("-lead", false), ("trail-", false),
+                     ("under_score", false), ("dot.ted", false),
+                 })
+            Check(AccountPlan.IsValidHostname(host) == ok,
+                  $"computer name '{host}' is {(ok ? "valid" : "refused")}");
+
+        // Reserved names get through the syntax check and must still be refused.
+        var taken = new InstallPlan { Account = { Username = "root", Password = "longenough" } };
+        var why3 = new List<string>();
+        taken.Account.Validate(why3);
+        Check(why3.Any(w => w.Contains("already uses")),
+              "a name the system already uses is refused", string.Join("; ", why3));
+
+        // And the account password must never reach the plan file, for the same
+        // reason the disk passphrase must not (§6.6).
+        var secret2 = new InstallPlan
+        {
+            Storage = { Disk = "/dev/disk/by-id/x" },
+            Account = { Username = "os7", Password = "hunter2hunter2" },
+        };
+        Check(!secret2.ToJson().Contains("hunter2"),
+              "the account password is not serialised into the plan");
+
+        // The GUI/headless question is amd64's alone: arm64 ships no desktop, so
+        // a screen offering the choice would offer something that is not there.
+        Check(ModeScreen.Applies == (System.Runtime.InteropServices.RuntimeInformation
+                  .OSArchitecture != System.Runtime.InteropServices.Architecture.Arm64),
+              "screen 8 is offered only where there is a desktop to choose",
+              ModeScreen.Applies ? "offered" : "skipped (arm64 is server-only)");
+
         Check(SystemLists.Languages.Length > 0, "languages", $"{SystemLists.Languages.Length}");
         Check(SystemLists.Keyboards.Length > 0, "keyboard layouts", $"{SystemLists.Keyboards.Length}");
         Check(SystemLists.Timezones.Length > 0, "timezones", $"{SystemLists.Timezones.Length}");
@@ -404,6 +497,7 @@ internal static class Program
             {
                 new WelcomeScreen(p2), new LicenceScreen(p2), new RegionalScreen(p2),
                 new DiskScreen(p2), new LayoutScreen(p2, disk), new ConfirmScreen(p2, disk),
+                new AccountScreen(p2), new ModeScreen(p2),
                 new CompleteScreen(p2), ErrorScreen.ForCommand(
                     "Setup could not import the pool.",
                     "zpool import -f -N -R /target rpool",
@@ -438,6 +532,8 @@ internal static class Program
 
           --unattend <plan.json>     run from a plan file, without the UI
           --passphrase-file <path>   the disk passphrase (never in the plan file)
+          --password-file <path>     the account password (never in the plan file)
+          --storage-only             prepare the disk and stop; do not install a system
           --dry-run                  print every command instead of running it
           --geometry <cols>x<rows>   force the canvas size (SETUP-PLAN §2.4)
           --print-plan               write the install plan as JSON and exit
@@ -445,7 +541,8 @@ internal static class Program
           --version                  the OS/7 release on this medium
           --help                     this message
 
-        Phase 2: from the Confirm screen onwards this WRITES TO A DISK.
+        Phase 3: from screen 10 onwards this WRITES TO A DISK, and the result
+        boots.
         """;
 
     private readonly struct Options
@@ -458,6 +555,8 @@ internal static class Program
         public string? Geometry { get; init; }
         public string? Unattend { get; init; }
         public string? PassphraseFile { get; init; }
+        public string? PasswordFile { get; init; }
+        public bool StorageOnly { get; init; }
         public string? Error { get; init; }
 
         public static Options Parse(string[] args)
@@ -465,6 +564,8 @@ internal static class Program
             bool help = false, print = false, self = false, dryRun = false;
             bool version = false;
             string? geometry = null, unattend = null, passphraseFile = null;
+            string? passwordFile = null;
+            bool storageOnly = false;
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i])
@@ -474,6 +575,12 @@ internal static class Program
                     case "--print-plan": print = true; break;
                     case "--self-test": self = true; break;
                     case "--dry-run": dryRun = true; break;
+                    case "--storage-only": storageOnly = true; break;
+                    case "--password-file":
+                        if (++i >= args.Length)
+                            return new Options { Error = "--password-file needs a path" };
+                        passwordFile = args[i];
+                        break;
                     case "--unattend":
                         if (++i >= args.Length)
                             return new Options { Error = "--unattend needs a plan file" };
@@ -495,11 +602,14 @@ internal static class Program
             }
             if (passphraseFile is not null && unattend is null)
                 return new Options { Error = "--passphrase-file only means something with --unattend" };
+            if (passwordFile is not null && unattend is null)
+                return new Options { Error = "--password-file only means something with --unattend" };
             return new Options
             {
                 Help = help, Version = version, PrintPlan = print,
                 SelfTest = self, Geometry = geometry,
                 DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,
+                PasswordFile = passwordFile, StorageOnly = storageOnly,
             };
         }
     }

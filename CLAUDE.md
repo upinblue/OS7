@@ -41,6 +41,7 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 
 ./installer/testing/check-image.py        # ask a built ISO what it is - no boot
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
+./installer/testing/run-phase3.py all     # install, then BOOT THE DISK ALONE
 ./installer/spikes/run-s1.py all          # the look: palette, font, glyphs, keys
 ./installer/spikes/run-s3.py all          # install to a disk and boot from it
 ./installer/spikes/run-s4.py all          # Secure Boot + TPM2 unlock (budget 1h)
@@ -100,8 +101,11 @@ diagnostic. So is a log line. Ask the thing itself.
 done and what it taught. Do not "fix" a spike to match a later decision —
 `s3-zfs-luks.sh` predates D10 and is meant to.
 
-**Non-destructive until the phase says otherwise.** `os7-setup` is at Phase 1 and
-opens no block device. Screen 12 says so on the screen.
+**`os7-setup` installs a machine that boots** (Phase 3, 2026-08-24). From screen
+10 onwards it writes to the disk, and screen 6 is the gate before that. The
+proof is `run-phase3.py boot`: a VM with **no ISO attached**, starting the disk
+Setup installed. Any claim about the installer that has not been through that is
+a claim about code, not about a computer.
 
 ---
 

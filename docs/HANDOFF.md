@@ -24,7 +24,7 @@ decides what, the commands that work, and the traps that cost the most.
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
-| `os7-setup` | **Phases 1 and 2 done.** Boots from the ISO's *Install OS/7* entry, runs on tty1, and **writes to a disk**: partition table, ESP, LUKS2 container, both pools and the §4.4 datasets. No OS on it yet — that is Phase 3. See [SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md) and [SESSION-PHASE2-STORAGE.md](SESSION-PHASE2-STORAGE.md). |
+| `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS.** `run-phase3.py all` installs unattended and then starts the disk with no ISO attached: LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs` on the command line. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md). Screen 9 (network) is the one part of 7–11 not delivered. |
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 
@@ -65,6 +65,25 @@ not `initramfs-tools`, not `grub.d/10_linux_zfs`. Without it the machine drops
 to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
+
+**Phase 4 — Authenticity and polish**, or **screen 9**, or the release plan's
+**S5**. Phase 3 is done (below); what it leaves is:
+
+* **Screen 9, the network screen.** Deliberately not in Phase 3: DHCP is the
+  default and a machine that boots can be configured, while one that does not
+  cannot. It matters for the headless product — a server that comes up with no
+  network is a site visit.
+* **TPM2 enrolment has never actually enrolled.** The code is written and the
+  initramfs pieces are S4's, but every Phase 3 run so far was on a VM with no
+  TPM, so the step took its "no TPM on this machine" path. `run-s4.py` shows how
+  to attach `swtpm`; until that is done, the enrolment path is written and
+  unproven.
+* **The GUI half of screen 8 has never run**, because no amd64 ISO has ever been
+  built. `InstallModeStep`'s desktop-removal branch is in the same position.
+* **U8** — the escrowed recovery passphrase — is still open, and still on the
+  layout screen where the operator can see it.
+
+### What Phase 3 was (done 2026-08-24)
 
 **Phase 3 — System configuration.** SETUP-PLAN §10: `unsquashfs` with real
 progress; chroot configuration (locale, timezone, hostname, users,

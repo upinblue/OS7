@@ -67,7 +67,11 @@ internal sealed class ConfirmScreen : Screen
                 return Transition.To(ErrorScreen.ForPlan(problems));
             }
             Log.Warn($"CONFIRMED: formatting {_disk.Name} ({_disk.StablePath})");
-            return Transition.To(new ExecuteScreen(_plan));
+            // Screen 7 next, NOT the executor. §3's numbering puts the
+            // destructive confirmation at 6 and the account at 7, and the
+            // writing does not begin until 10 - so this screen is the gate, and
+            // the disk is still untouched while the account is typed.
+            return Transition.To(new AccountScreen(_plan));
         }
         if (key.Key == Key.Escape) return Transition.Back;
         return Transition.Stay;

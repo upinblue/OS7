@@ -109,6 +109,59 @@ internal sealed class Executor
     /// partitions yet.</summary>
     public string TryExec(string exe, params string[] args) => Exec(exe, args, allowFailure: true);
 
+    /// <summary>
+    /// Run a command with a SECRET on its standard input.
+    ///
+    /// Two things a normal Exec cannot do, and both matter for exactly one
+    /// caller — turning a passphrase into a crypt hash:
+    ///
+    ///   * the secret never reaches argv, so it is not in `ps` output on a
+    ///     machine that may have somebody watching over the operator's shoulder;
+    ///   * the secret never reaches the log, which `Exec` writes the whole
+    ///     command line to, and which Setup offers to export to removable media.
+    ///
+    /// The command line IS logged. Knowing that `openssl passwd -6 -stdin` ran
+    /// is what makes the log readable; knowing what went into it is not.
+    /// </summary>
+    public string ExecSecret(string exe, string secret, params string[] args)
+    {
+        string line = $"{exe} {string.Join(' ', args)} <secret on stdin>";
+        if (_dryRun)
+        {
+            Log.Info($"would run: {line}");
+            return "";
+        }
+        Log.Info($"run: {line}");
+        try
+        {
+            var psi = new ProcessStartInfo(exe)
+            {
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (string a in args) psi.ArgumentList.Add(a);
+
+            using Process? p = Process.Start(psi)
+                ?? throw new StepException($"{exe} did not start", line, "");
+            p.StandardInput.Write(secret);
+            p.StandardInput.Close();
+            string outText = p.StandardOutput.ReadToEnd();
+            string errText = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            if (p.ExitCode != 0)
+                throw new StepException(
+                    $"Setup could not complete a step: {exe} exited {p.ExitCode}.",
+                    line, Tail(errText.Length > 0 ? errText : outText));
+            return outText;
+        }
+        catch (StepException) { throw; }
+        catch (Exception ex)
+        {
+            throw new StepException($"Setup could not run {exe}.", line, ex.Message);
+        }
+    }
+
     private string Exec(string exe, string[] args, bool allowFailure)
     {
         string line = $"{exe} {string.Join(' ', args)}";

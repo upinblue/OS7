@@ -1223,3 +1223,92 @@ everything the tool that built it was configured with. Check the artefact, not
 the configuration — `blkid -o value -s LABEL image.iso` costs nothing.
 `installer/testing/check-image.py` does this and four other things the build
 cannot check from inside itself.
+
+## 41. The VM harnesses test the ISO's os7-setup, not the source tree's
+
+Cost one VM cycle on 2026-08-24, the first time Phase 3 was run.
+
+`run-phase3.py` failed with "the install did not finish". The serial log said:
+
+```
+os7-setup: unknown option '--password-file'
+...
+Phase 2: from the Confirm screen onwards this WRITES TO A DISK.
+```
+
+The harness was passing a Phase 3 option to a **Phase 2 binary**. `os7-setup` is
+compiled by `build/build.sh` and baked into the squashfs; the VM boots the ISO,
+so it runs whatever was current when that ISO was built. Editing
+`installer/src/OS7.Setup/` changes nothing a harness can see until
+`make build-arm64` runs again.
+
+Obvious once stated, and easy to lose because the OTHER loop is so much faster:
+
+```bash
+# seconds - and tests the SOURCE
+docker run --rm --platform linux/arm64 -v "$PWD":/work os7-build:arm64 bash -c \
+  'cd /work/installer/src/OS7.Setup && dotnet publish -c Release -r linux-arm64 \
+   -p:PublishAot=true -o /tmp/pub && /tmp/pub/os7-setup --self-test'
+
+# ~25 minutes - and is what run-phase1/2/3 actually run
+make build-arm64
+```
+
+The tell is in the usage text the failure prints: it says which phase the binary
+thinks it is. `os7-setup --version` on the medium answers the same question for
+the release.
+
+`run-phase3.py` now prints the last 25 lines the guest produced on any failed
+install, and names this specific cause when it sees `unknown option` or a usage
+block. A harness that reports only its verdict makes you read a serial log by
+hand to find a one-line answer.
+
+## 42. `bpool` mounts INSIDE `rpool`, so it must be exported first
+
+Found on 2026-08-24 by the first Phase 3 install, which reported success.
+
+The teardown ran `zpool export rpool` and then `zpool export bpool`. `bpool` is
+mounted at `<target>/boot` — **inside rpool's tree** — so rpool cannot export
+while it is there. The result:
+
+```
+OS7-SETUP-DONE install
+      FAIL  a pool is still imported after the install finished
+rpool
+```
+
+All fourteen steps ran, the installer reported a finished install, and rpool was
+still imported. `zpool export` had returned non-zero into a `TryExec` that
+ignores failure, so nothing said so.
+
+**Export `bpool` before `rpool`.** Spike S3's step 10 does, and everything else
+in that step is there for a reason too:
+
+```
+sync
+umount "$MNT/boot/efi"
+umount -R "$MNT"
+zfs umount -a
+zpool export bpool
+zpool export rpool
+cryptsetup close os7_root
+```
+
+Two things worth carrying beyond the ordering:
+
+* **It recovers, and that is not the same as being correct.** The installed
+  system carries the same `/etc/hostid` the pools were created with (L13), so it
+  imports them at boot regardless — the machine booted perfectly well with rpool
+  left imported. An unclean export is a pool ZFS has to decide about at boot
+  rather than simply open, and a check that only asked "does it boot" would never
+  have found this.
+* **`zpool export` failing into a `TryExec` is silent by construction.** The
+  step now asks `zpool list` afterwards and logs an error if anything is left,
+  which is the same shape as every other check in this repository: ask the thing
+  itself, do not read the exit code of the command that was supposed to change it.
+
+When it still will not export, S3's diagnostic is the one worth copying: print
+what is still mounted below the target AND which processes have a cwd or root
+inside it. "Pool is busy" names no culprit, and the two candidates need different
+fixes — and `-f` does not help against a mount held in another namespace, which
+is what the chroot's `unshare` exists to avoid (#18).

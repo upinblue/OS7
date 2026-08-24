@@ -36,6 +36,9 @@ internal sealed class InstallPlan
 
     public StoragePlan Storage { get; set; } = new();
 
+    /// <summary>Screen 7 — the computer's name and its first account. Phase 3.</summary>
+    public AccountPlan Account { get; set; } = new();
+
     /// <summary>
     /// Everything wrong with the WHOLE plan, in one pass.
     ///
@@ -56,6 +59,7 @@ internal sealed class InstallPlan
         problems = new List<string>();
         ValidateRegional(problems);
         Storage.Validate(problems);
+        Account.Validate(problems);
         return problems.Count == 0;
     }
 
@@ -168,3 +172,86 @@ internal sealed class StoragePlan
                              UseStringEnumConverter = true)]
 [JsonSerializable(typeof(InstallPlan))]
 internal partial class PlanJson : JsonSerializerContext;
+
+/// <summary>
+/// Screen 7 — the computer's name, and the account that will run it.
+///
+/// SETUP-PLAN §3: Win2k asked for these in its GUI phase and OS/7 has no GUI
+/// phase, so they are collected in text. NT 3.x did the same and it is not a
+/// problem; it is only why the screen list is longer than Win2k's text phase.
+/// </summary>
+internal sealed class AccountPlan
+{
+    /// <summary>The machine's name. Goes to /etc/hostname and /etc/hosts.</summary>
+    public string Hostname { get; set; } = "os7";
+
+    /// <summary>The first account. In `sudo`, because otherwise nobody can
+    /// administer the machine and the only other account is root.</summary>
+    public string Username { get; set; } = "";
+
+    /// <summary>For GECOS. Optional, and blank is not an error.</summary>
+    public string FullName { get; set; } = "";
+
+    /// <summary>
+    /// NEVER SERIALISED, for the same reason the disk passphrase is not
+    /// (§6.6): the plan is a file that goes into a repository, a log and a
+    /// screenshot. `--unattend` takes it from `--password-file`, a separate
+    /// artefact with its own handling.
+    /// </summary>
+    [JsonIgnore]
+    public string? Password { get; set; }
+
+    /// <summary>
+    /// What a Linux account name may be, and it is checked here rather than
+    /// left to `useradd` because `useradd` fails INSIDE THE CHROOT — six steps
+    /// and several minutes after the screen that could have said so.
+    ///
+    /// The rule is `useradd`'s own (NAME_REGEX in login.defs): start with a
+    /// lower-case letter or underscore, then lower-case letters, digits,
+    /// underscore or hyphen, and no trailing `$` because that form is for
+    /// machine accounts.
+    /// </summary>
+    public static bool IsValidUsername(string name) =>
+        name.Length is > 0 and <= 32
+        && (char.IsAsciiLetterLower(name[0]) || name[0] == '_')
+        && name.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c)
+                         || c == '_' || c == '-');
+
+    /// <summary>
+    /// RFC 1123 host label: letters, digits and hyphens, not starting or ending
+    /// with one. Checked for the same reason as the username, plus one more —
+    /// an invalid hostname does not stop the install, it produces a machine
+    /// whose `/etc/hosts` does not resolve its own name and whose sudo pauses
+    /// for ten seconds on every command.
+    /// </summary>
+    public static bool IsValidHostname(string name) =>
+        name.Length is > 0 and <= 63
+        && char.IsAsciiLetterOrDigit(name[0]) && char.IsAsciiLetterOrDigit(name[^1])
+        && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    /// <summary>
+    /// Reserved names — accounts the base system already owns.
+    ///
+    /// `useradd root` fails in the chroot with "user 'root' already exists",
+    /// which is correct and arrives far too late. The full list is whatever is
+    /// in the image's /etc/passwd; these are the ones somebody actually types.
+    /// </summary>
+    private static readonly string[] Taken =
+        { "root", "daemon", "bin", "sys", "sync", "man", "lp", "mail", "news",
+          "proxy", "www-data", "backup", "list", "irc", "nobody", "systemd-network",
+          "messagebus", "sshd", "ubuntu", "admin", "adm" };
+
+    public void Validate(List<string> problems)
+    {
+        if (!IsValidHostname(Hostname))
+            problems.Add($"'{Hostname}' is not a valid computer name");
+        if (string.IsNullOrEmpty(Username))
+            problems.Add("no user account was named");
+        else if (!IsValidUsername(Username))
+            problems.Add($"'{Username}' is not a valid user name");
+        else if (Taken.Contains(Username))
+            problems.Add($"'{Username}' is a name the system already uses");
+        if (string.IsNullOrEmpty(Password))
+            problems.Add("the account has no password");
+    }
+}

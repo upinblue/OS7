@@ -42,6 +42,24 @@ internal sealed class TextBox
     public void Clear() => _text.Clear();
 
     /// <summary>
+    /// Put text in without going through the key decoder.
+    ///
+    /// For pre-filling a field from the plan — a screen returned to with ESC, or
+    /// an `--unattend` plan being edited interactively. Truncated to MaxLength
+    /// and stripped of control characters, so a plan file cannot put something
+    /// into a field that a person could not have typed there.
+    /// </summary>
+    public void Set(string value)
+    {
+        _text.Clear();
+        foreach (char c in value)
+        {
+            if (char.IsControl(c) || _text.Length >= MaxLength) continue;
+            _text.Append(c);
+        }
+    }
+
+    /// <summary>
     /// Draw the field. Shows a fixed-width run of blocks for a masked value, so
     /// the LENGTH is visible - which is what tells someone their keystrokes are
     /// arriving - without the content being.

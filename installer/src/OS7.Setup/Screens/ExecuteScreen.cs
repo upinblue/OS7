@@ -6,8 +6,16 @@ using OS7.Setup.Tui;
 namespace OS7.Setup.Screens;
 
 /// <summary>
-/// The storage executor, running, with a progress bar. Modelled on §3.1's
-/// screen 10 — Phase 3 turns this into the real file-copy screen.
+/// Screens 10 and 11 — the install, running, with a progress bar.
+///
+/// ONE SCREEN OBJECT FOR TWO NUMBERED SCREENS, and the reason is mechanical
+/// rather than a shortcut. §3.1 draws "Copying files" and "Configuring the
+/// system" separately, and they ARE separate to look at — the first has a
+/// filename scrolling under the bar and the second does not. But they are one
+/// Executor run on one worker thread, and a second Screen object would have to
+/// attach to a thread already in flight and hand the rollback list between them.
+/// The heading and the detail line follow the step instead, so the two mockups
+/// both appear and neither is a separate machine.
 ///
 /// The work runs on a BACKGROUND THREAD and the screen only reads a snapshot of
 /// where it has got to. That is not concurrency for its own sake: the flow's
@@ -40,12 +48,18 @@ internal sealed class ExecuteScreen : Screen
     /// </summary>
     public static bool DryRun { get; set; }
 
+    private readonly TargetRoot _target;
+
     public ExecuteScreen(InstallPlan plan)
     {
         _plan = plan;
-        _steps = StorageSteps.For(plan);
+        _target = TargetRoot.Install;
+        // Phase 2's storage AND Phase 3's system, as ONE list on ONE executor.
+        // Two runs would each roll back only their own half, and the half left
+        // behind is the one holding the disk (SystemSteps.Everything).
+        _steps = SystemSteps.Everything(plan, _target);
         _executor = new Executor(DryRun);
-        _worker = new Thread(Work) { IsBackground = true, Name = "os7-storage" };
+        _worker = new Thread(Work) { IsBackground = true, Name = "os7-install" };
         _worker.Start();
     }
 
@@ -58,17 +72,17 @@ internal sealed class ExecuteScreen : Screen
                 lock (_gate) { _current = step; _done = done; }
             });
             lock (_gate) { _finished = true; _done = _steps.Count; }
-            Log.Info("storage: done");
+            Log.Info("install: done");
         }
         catch (StepException ex)
         {
             lock (_gate) { _failure = ex; _finished = true; }
-            Log.Error($"storage failed: {ex.Message}");
+            Log.Error($"install failed: {ex.Message}");
         }
         catch (Exception ex)
         {
             lock (_gate) { _crash = ex; _finished = true; }
-            Log.Error($"storage crashed: {ex}");
+            Log.Error($"install crashed: {ex}");
         }
     }
 
@@ -83,14 +97,36 @@ internal sealed class ExecuteScreen : Screen
         bool finished;
         lock (_gate) { current = _current; done = _done; finished = _finished; }
 
-        f.Body(6, 11, _plan.Storage.Encrypt
-            ? "Setup is preparing and encrypting the disk."
-            : "Setup is preparing the disk.");
+        // WHICH SCREEN THIS IS, decided by the step that is running. The copy
+        // is the long one and the one §3.1 gives its own mockup to; everything
+        // after it is "configuring".
+        bool copying = _steps.Count > done && _steps[Math.Min(done, _steps.Count - 1)]
+                       is UnsquashfsStep;
+        f.Body(6, 11, copying
+            ? "Setup is copying files to the OS/7 boot environment."
+            : finished ? "Setup is finishing."
+            : "Setup is configuring the system.");
 
         int barLeft = f.Left + 11;
         const int barWidth = 52;
         f.Box(9, barLeft, barWidth, 3);
-        int percent = _steps.Count == 0 ? 100 : done * 100 / _steps.Count;
+
+        // The copy gets its OWN percentage, from unsquashfs's own output.
+        //
+        // Counting steps would have this bar sit at one twelfth for the several
+        // minutes the copy takes, which is the interval during which somebody
+        // decides the installer has hung. UnsquashfsStep publishes what it has
+        // written; this reads it and scales it into that step's slice of the
+        // whole, so the bar never goes backwards.
+        int percent;
+        if (_steps.Count == 0) percent = 100;
+        else if (copying)
+        {
+            int slice = 100 / _steps.Count;
+            percent = done * 100 / _steps.Count + slice * UnsquashfsStep.Percent / 100;
+        }
+        else percent = done * 100 / _steps.Count;
+        percent = Math.Clamp(percent, 0, 100);
         int filled = (barWidth - 2) * percent / 100;
         for (int i = 0; i < barWidth - 2; i++)
         {
@@ -104,7 +140,19 @@ internal sealed class ExecuteScreen : Screen
         f.Text(12, barLeft + (barWidth - pct.Length) / 2, pct);
 
         f.Body(14, 11, finished ? "Finishing…" : current + "…");
-        f.Body(16, 11, "Do not turn off the computer.", Slot.Brand);
+
+        // §3.1's screen 10 has the file being written under the bar. It is not
+        // decoration: it is the only thing on the screen that moves while a
+        // multi-minute copy runs, and a still screen is a hung screen.
+        if (copying)
+        {
+            string file = UnsquashfsStep.Current;
+            int room = Math.Min(58, f.BodyWidth - 22);
+            if (file.Length > room) file = "…" + file[^(room - 1)..];
+            f.Body(15, 11, ("Copying:  " + file).PadRight(Math.Max(0, room + 10)));
+        }
+
+        f.Body(17, 11, "Do not turn off the computer.", Slot.Brand);
     }
 
     /// <summary>
