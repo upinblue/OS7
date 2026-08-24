@@ -15,7 +15,7 @@ It is **not** aimed at desktop consumers. Two primary targets, chosen at install
 
 ## Status
 
-This repository is freshly scaffolded. Nothing here is a working build yet — treat everything below as documented intent, not implemented reality. Read this table before assuming any command in this repo actually works.
+The arm64 ISO builds, boots, installs itself to a ZFS-on-LUKS disk under Secure Boot, and comes up in OS/7's own colours and console font. `os7-setup` itself is not written yet, and amd64 is unvalidated. Read this table before assuming any command in this repo actually works.
 
 | Component | Status |
 |---|---|
@@ -23,13 +23,15 @@ This repository is freshly scaffolded. Nothing here is a working build yet — t
 | `build/config/auto/config` (live-build config) | **validated** — `lb config` passes and an arm64 ISO builds from it; still has no package lists, hooks or includes |
 | `powershell/OS7/` module | stub — function signatures only, no logic. The on-disk format, transport and ZFS layout its stubs say they lack are now designed: [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
 | Updates / release train | not started — **designed**: [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md). Version scheme, product identity, archive pinning and the `/var` split are **locked** (U2–U4, U6); the update mechanism (U1) and cadence (U5) are recommendations; U8 is open question 5 below |
-| Installer (`os7-setup`) | not started — **designed and decided**: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) |
-| `os7-setup` toolchain (NativeAOT) | **works on both arches** — spike S2: 3.2–3.4 MB native binary, no .NET runtime needed at run time. `os7-build` still needs the SDK added: [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md) |
+| Installer (`os7-setup`) | not started — **designed, decided, and now unblocked**: all four Phase 0 spikes have passed, so [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) Phase 1 is the next code to write |
+| `os7-setup` toolchain (NativeAOT) | **works on both arches** — spike S2: 3.2–3.4 MB native binary, no .NET runtime needed at run time. The SDK is now in the build container: [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md) |
 | Installing to a disk | **works on arm64** — the install sequence is proven end to end by spike S3, ahead of any Setup code: [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md) |
 | Secure Boot + TPM2 unlock | **works on arm64** — spike S4: boots against the Microsoft UEFI CA, TPM2 auto-unlock, TPM-less fallback intact: [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md) |
 | TPM2 unlock across updates | **holds on arm64** — spike S6: survives an initramfs rebuild with PCR 7 unchanged; a Secure Boot policy change breaks it *detectably and recoverably*, and one re-enrolment restores it: [docs/SESSION-S6-UPDATE-CYCLE.md](docs/SESSION-S6-UPDATE-CYCLE.md) |
 | `.devcontainer` / VS Code dev environment | stub, untested |
 | CI (`.github/workflows`) | stub — never run; now the only way to build amd64 (see [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) #12) |
+| Text-mode look (palette, font, keys) | **works on arm64** — spike S1: the field measures exactly `#0057ad` and the stripe exactly `#1289ff` on a real framebuffer, 126 test-card cells match the console font bitmap-for-bitmap, and all 16 arrow/F-keys decode. It also found that Ubuntu's `setvtrgb.service` silently replaces a palette set on the kernel command line: [docs/SESSION-S1-LOOK.md](docs/SESSION-S1-LOOK.md) |
+| Console font (Fixedsys Excelsior → PSF) | **built, asserted and shipped** — `build/lib/build-console-font.sh` converts the pinned TTF at build time and fails the build if a glyph the UI draws is missing, blank, or has been collapsed onto another shape |
 | Bootable ISO | **arm64: builds and boots** to a live session (bare Ubuntu, no OS/7 content yet). amd64: blocked on Apple Silicon, needs a native runner |
 
 ## Locked decisions
@@ -74,6 +76,7 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
 - **Console font: [Fixedsys Excelsior](https://github.com/kika/fixedsys)** (decided 2026-08-22) — the default font for `os7-setup` **and** for the installed system in **non-GUI mode**. Public domain / CC0, so it ships inside the ISO with no obligation. It is a deliberate simulation of the 8×16 bitmap font DOS and Windows used, drawn to be rendered without antialiasing at 16 px, which is what makes the text-mode look reproduce rather than approximate.
   - The console cannot read TTF, so the image build converts it to **PSF** (`otf2bdf` → `bdf2psf`) and ships two sizes: 8×16 and a pixel-doubled 16×32 for modern panels. Toolchain lives in the build container, not in the image.
   - **Pinned**, fetched at build time rather than vendored, the same shape as PowerShell in hook 0020: `v3.09.10` / `FSEX302.ttf` / 580 724 bytes / SHA256 `842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899`.
+  - **Built and verified since 2026-08-24** by `build/lib/build-console-font.sh`. Two things the conversion had to be taught, both found by spike S1 and neither visible in a coverage count: `bdf2psf`'s stock equivalences hand `═` the glyph of `─` and collapse the whole double-line box, and the font draws 15 pixels of ink in a 16-pixel cell, which leaves a one-pixel gap at every cell boundary and makes every vertical box border dashed.
   - **Verified 2026-08-22:** its cmap carries Box Drawing `U+2500–257F` complete (128/128) and Block Elements `U+2580–259F` complete (32/32). That was the real risk — upstream advertises only the windows-125x codepages, which contain no box-drawing characters, and the entire installer UI is built from them.
   - PSF caps at 512 glyphs against the font's 6 193 codepoints, so the shipped subset is Latin-focused (English + German). Does **not** apply to the GNOME desktop.
 - **Dev environment:** VS Code Dev Container wrapping the Docker-based build container; `.vscode/tasks.json` wires up `docker build`, `lb config`, `make build-amd64` / `make build-arm64`. Note that the *native* architecture is the fast one on any given machine — see "Building" below; on Apple Silicon the amd64 ISO is built in a QEMU x86 VM instead of under Docker emulation.
@@ -81,7 +84,8 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
 - **Installer: `os7-setup`** (decided 2026-08-22, replacing Calamares) — an OS/7-authored, keyboard-driven **text-mode** installer written in C#/.NET and published as a NativeAOT binary, styled after MS-DOS 6.22 Setup and the Windows 2000 text-mode Setup phase. Field colour `#0057ad` (up in blue `#1289ff` darkened to WCAG AAA against white text), with `#1289ff` as the title stripe and progress fill on every screen.
   - **One installer serves both architectures**, which is why Calamares went: it is a Qt GUI application and could never have installed the desktop-less arm64 image. Subiquity is no longer needed either.
   - Nothing is implemented yet. Design, limitations, decisions and the phased plan — including the spikes that must pass before any installer code is written: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
-  - **Spikes S2, S3 and S4 passed 2026-08-23:** `os7-setup` publishes as a NativeAOT binary on both architectures (3.2–3.4 MB, no .NET runtime needed at run time) — [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md).
+  - **Phase 0 is complete.** S2, S3 and S4 passed 2026-08-23, S1 on 2026-08-24, so the gate on writing installer code is open. `os7-setup` publishes as a NativeAOT binary on both architectures (3.2–3.4 MB, no .NET runtime needed at run time) — [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md).
+  - **The look is measured, not asserted** — [docs/SESSION-S1-LOOK.md](docs/SESSION-S1-LOOK.md). Field `#0057ad` and stripe `#1289ff` exact on a framebuffer; the box-drawing and block glyphs verified against the font pixel for pixel; every arrow and F-key decoded. The palette ships as `/etc/vtrgb`, **not** on the kernel command line: Ubuntu's `setvtrgb.service` replaces that before the console is ever displayed.
   - **Storage and boot:** the install sequence Setup's storage step will drive is written and proven end to end on arm64, and the installed system boots under Secure Boot with TPM2 auto-unlock — [installer/spikes/](installer/spikes/), [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md), [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md).
 
 ## Microsoft technology scope (v1 draft)

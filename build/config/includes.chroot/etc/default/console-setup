@@ -1,0 +1,35 @@
+# OS/7 — console font for the installed system in non-GUI mode.
+#
+# Decision D9 (installer/SETUP-PLAN.md §2.3): Fixedsys Excelsior, for os7-setup
+# AND for the installed console. The PSFs beside this file are built from the
+# pinned TTF by build/lib/build-console-font.sh; the toolchain that makes them
+# lives in the build container and never ships here.
+#
+# WHY FONT= AND NOT FONTFACE/FONTSIZE: setupcon composes a filename out of
+# CODESET+FONTFACE+FONTSIZE and would go looking for a Debian-named font that
+# does not exist. FONT= is taken verbatim (setupcon line ~642), which is what a
+# font from outside the distribution needs.
+#
+# WHY 16x32 IS THE DEFAULT: 8x16 on a 1920x1080 panel is a 240x67 grid - legible
+# only in the sense that the pixels are there. The 16x32 is the same font pixel-
+# doubled (§2.4), so it is the same design, twice the size, and gives 120x33.
+# os7-fixedsys-8x16.psf.gz is installed alongside for small framebuffers and for
+# serial/rescue use; swap the name below to switch.
+#
+# console-setup applies this FROM THE INITRAMFS (FRAMEBUFFER=y), i.e. before the
+# root filesystem is mounted, so only the earliest boot frames use the kernel's
+# built-in font. That gap is L20 and it is a few frames wide.
+
+ACTIVE_CONSOLES="/dev/tty[1-6]"
+
+CHARMAP="UTF-8"
+
+# Deliberately empty: FONT below supersedes them. Leaving FONTFACE="Fixed"
+# behind would make setupcon try to be helpful on top of an explicit choice.
+CODESET=
+FONTFACE=
+FONTSIZE=
+
+FONT="os7-fixedsys-16x32.psf.gz"
+
+VIDEOMODE=

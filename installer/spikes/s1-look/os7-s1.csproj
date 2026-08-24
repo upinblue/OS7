@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OS/7 — Phase 0 spike S1. Paints the SETUP-PLAN §3.1 mockups on a real Linux
+    VT and decodes real keypresses, so that the palette (D5), the console font
+    (D9) and the input layer (§6.4) are answered by measurement rather than by
+    reading manual pages.
+
+    It is a SPIKE. The renderer here is deliberately the smallest thing that can
+    produce a faithful frame - no damage tracking, no screen stack, no error
+    handling worth the name. What survives is the finding, not the code.
+    installer/spikes/README.md says why that rule exists.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>os7-s1</AssemblyName>
+    <RootNamespace>OS7.Spike.Look</RootNamespace>
+
+    <PublishAot>true</PublishAot>
+
+    <!-- BUILD-NOTES #22: LibraryImport's generated marshalling is unsafe, and
+         termios needs a `fixed byte c_cc[32]` because LibraryImport marshals
+         blittable types only. Both of those need this. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Same reasoning as S2: L9 wants English + German, and turning
+         globalization off would make that impossible while looking like a win. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+</Project>

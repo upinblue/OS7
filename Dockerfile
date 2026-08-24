@@ -48,6 +48,20 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 	zstd \
 	xz-utils \
 	lz4 \
+	`# Console font toolchain (SETUP-PLAN 2.5). FSEX302.ttf is a TTF and the` \
+	`# Linux console reads PSF only, so the conversion is a BUILD step:` \
+	`# otf2bdf rasterises the outlines at 16 px, bdf2psf packs the subset.` \
+	`# It lives here and never in the image - see build/lib/build-console-font.sh.` \
+	otf2bdf \
+	bdf2psf \
+	`# os7-setup is NativeAOT C# (SETUP-PLAN 6.1). The exact list spike S2` \
+	`# established: the SDK, and the linker toolchain ILCompiler shells out to.` \
+	`# docs/SESSION-S2-NATIVEAOT.md.` \
+	dotnet-sdk-10.0 \
+	clang \
+	zlib1g-dev \
+	libc6-dev \
+	binutils \
 	&& if [ "${TARGETARCH}" = "arm64" ]; then \
 		apt-get install --no-install-recommends -y grub-efi-arm64-bin; \
 	else \

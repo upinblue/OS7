@@ -564,3 +564,224 @@ what GNU tar does during debootstrap; ordinary compilation is unaffected.
 
 Consequence: `os7-setup` can be built and iterated for **both** architectures
 locally, long before an amd64 ISO exists. Phase 1 is not blocked by #12.
+
+## 24. `otf2bdf` exits non-zero on Fixedsys Excelsior while producing a correct BDF
+
+Found in spike S1 ([SESSION-S1-LOOK.md](SESSION-S1-LOOK.md)) while building the
+console font (SETUP-PLAN §2.5).
+
+```
+otf2bdf -p 16 -r 72 -n -o out.bdf FSEX302.ttf   ; echo $?
+8
+```
+
+The BDF is **complete and correct**: 6 192 glyphs declared, 6 192 written, the
+file ends with `ENDFONT`, and the glyphs the UI draws are byte-for-byte what the
+outlines say they should be. Exit 8 comes back at every point size tried — 8,
+12, 15, 16, 17, 24, 32 — and the same command on Liberation fonts returns 0. Not
+root-caused; the failure is specific to this font, not to the size or the flags.
+
+`set -e` in a build script turns that into a build that stops for no reason.
+Suppressing it and moving on turns it into a build that never notices a real
+truncation. `build/lib/build-console-font.sh` does neither: it ignores the status
+and asserts the artefact — declared `CHARS` equals the blocks actually written,
+the file is terminated, and `psf.py verify` then requires every glyph the UI
+draws to be present and non-blank.
+
+The rule this is an instance of is already in this file: **a diagnostic must be
+checked against the thing it claims to check.** An exit code is a diagnostic.
+
+## 25. `setvtrgb.service` silently replaces the console palette set on the kernel command line
+
+Found in spike S1. This is the one that would have cost a Phase 1 session.
+
+SETUP-PLAN §2.1 sets the OS/7 palette with `vt.default_red/grn/blu` on the
+Install entry — "from the first kernel frame". Ubuntu ships `setvtrgb.service`
+**enabled** in `sysinit.target.wants`:
+
+```
+ExecStart=/sbin/setvtrgb /etc/vtrgb          # -> /etc/console-setup/vtrgb
+```
+
+It runs at ~11.8 s. `fbcon: Taking over console` happens at ~14.0 s. So the
+command-line palette is replaced **before anything is ever displayed with it** —
+there is no window in which it is visible, and no error anywhere.
+
+What it looks like when you hit it: the screen comes up in colours that are
+obviously *a* palette rather than the default VGA one, so the natural conclusion
+is "the parameters are wrong" and the natural next step is to fiddle with them.
+`/sys/module/vt/parameters/default_red` shows the replaced values, not the
+command line's, which makes it look as though the kernel never took them.
+
+The fix is a file, not a parameter: ship OS/7's palette as `/etc/vtrgb`. It is
+also the better mechanism — one file serves Setup and the installed console
+(SETUP-PLAN D6), and `setvtrgb` accepts a legible hex form:
+
+```
+#000000
+#AA0000
+...       16 lines of #RRGGBB
+```
+
+To see what the kernel parameters alone do, boot with
+`systemd.mask=setvtrgb.service`.
+
+**Related, same session:** `vt.color=0x4f` is accepted, reads back correctly from
+`/sys/module/vt/parameters/color`, and has no observable effect on the default
+attribute — four different values all produced palette index 1. Do not rely on
+it; paint every cell explicitly.
+
+**Also related:** on a truecolor framebuffer, changing the palette does **not**
+retint pixels already drawn — each cell was resolved to RGB when it was written.
+A palette switch is a palette switch *and* a full repaint.
+
+## 26. `bdf2psf`'s stock equivalences collapse the double-line box onto the single-line one
+
+Found in spike S1.
+
+`bdf2psf` takes an equivalents file listing codepoints that may share one PSF
+position. `/usr/share/bdf2psf/standard.equivalents` states its own rule: *when
+the source font supports several symbols from a class, the last supported symbol
+is used.* Line 217 is
+
+```
+U+2550 U+254D U+254C ... U+2501 U+2500
+```
+
+so `U+2550 ═` is given the glyph of `U+2500 ─`. Built that way,
+`╔═╦═╗╠╬╣╚╩╝║` renders **byte-identical** to `┌─┬─┐├┼┤└┴┘│`.
+
+The file exists for fonts that lack the rarer glyph and can only approximate it.
+Fixedsys Excelsior has the real ones — `U+2550` is `FF 00 FF`, two rules — so
+applying it is pure loss.
+
+**No coverage check can see this.** The codepoint *is* mapped, to the wrong
+picture, so every count comes back 128/128. The only guard is not creating the
+problem: `build/lib/psf.py` drops any equivalence class touching a codepoint OS/7
+requires, and `psf.py verify` asserts nine pairs of shapes that must stay
+distinct.
+
+## 27. Fixedsys Excelsior draws 15 pixels of ink in a 16-pixel cell
+
+Found in spike S1. Read out of `FSEX302.ttf` in font units (`unitsPerEm` 160,
+so 10 units = 1 pixel):
+
+```
+hhea      ascender 130, descender -30     ->  a 16 px line
+U+2588 █  y -30 .. 120                    ->  15 px of ink
+U+2580 ▀  y  40 .. 120    U+2584 ▄  y -30 .. 50
+```
+
+The em is 16 and the ink is 15, so **the top row of every cell is empty**. The
+font is right about itself — Windows' Fixedsys is an 8×15 face — and wrong for a
+console, where the cell *is* the character.
+
+Left alone, every vertical box border comes out dashed with a one-pixel gap at
+each cell boundary, and a progress bar never touches the top of its row. On the
+pixel-doubled 16×32 it is a two-pixel gap.
+
+`psf.py fillcell` closes it, only inside Box Drawing and Block Elements:
+
+```
+row1 == row2  ->  row0 := row1      a stroke or fill continuing upward
+row1 == row3  ->  row0 := row2      a two-row shading pattern
+otherwise     ->  leave it alone
+```
+
+Everything that must not grow is a no-op under that rule — `┌` and `▄` have an
+empty row 1, so the first case copies empty onto empty — and letters are out of
+range entirely, which matters: `Ä` has its diaeresis in row 1 and would otherwise
+have gained a third row of dots.
+
+**Also:** the font is not monospaced across its cmap. 4 230 glyphs advance 8 px,
+1 575 advance more, 346 advance 0, so `otf2bdf` reports `SPACING "P"` with
+`AVERAGE_WIDTH 77` and `bdf2psf` refuses the file: *"the width is not integer
+number."* `psf.py fixedwidth` drops everything that is not exactly one cell wide.
+That is not a workaround for the message — a 16-pixel glyph has nowhere to go in
+an 8-pixel cell, and keeping it hands `bdf2psf` something to truncate.
+
+## 28. `hdiutil makehybrid` keeps only ONE dot per filename
+
+Found in spike S1, and it costs a boot cycle every time.
+
+The spike harnesses build their payload volume with
+
+```
+hdiutil makehybrid -iso -joliet -default-volume-name OS7S1 -o payload.iso stage/
+```
+
+`os7-fixedsys-16x32.psf.gz` arrives in the guest as **`os7-fixedsys-16x32psf.gz`**.
+The rest of the name survives; only the extra dot is dropped. `setfont` then says
+
+```
+setfont: ERROR ... Unable to find file: /mnt/fonts/os7-fixedsys-16x32.psf.gz
+```
+
+about a path that is right in every listing on the host.
+
+Keep payload filenames to a single dot. `run-s1.py` decompresses the fonts onto
+the volume for exactly this reason, and its `ready` step prints the directory
+rather than only reporting "mounted" — the mangled name is visible there and
+nowhere else.
+
+## 29. .NET's `Console` input stream cannot be used for raw-mode key reading
+
+Found in spike S1, and it lands on `Native/` in SETUP-PLAN §6.5.
+
+With the terminal put into raw mode by `tcsetattr` and input read through
+
+```csharp
+using var stdin = Console.OpenStandardInput();
+int b = stdin.ReadByte();
+```
+
+the reader returned **exactly one byte and then reported end of input**, on a tty
+that was open and had keys arriving. .NET's console stream carries its own
+terminal handling and applies termios settings of its own; a raw-mode reader
+sitting on top of a layer that also wants to configure the terminal is not raw.
+
+Read with `read(2)` through `LibraryImport` instead, and retry on `EINTR`.
+§6.2 already puts key decoding on `DllImport("libc")` — this is the reason.
+
+**And drain the queue before the first read.** Whatever was typed before the
+screen appeared was not aimed at what is on it. S1 found a stray LF sitting in
+the queue at start-up and spending itself on the first expected keypress, which
+shifted every comparison after it by one. Drain with `VMIN=0`/`VTIME=0`, then set
+`VMIN=1` and start.
+
+
+## 30. On the Linux console, a bright foreground leaves BOLD set — and the next colour inherits it
+
+Found in spike S1, on the one screen where it could be found: the progress bar.
+
+`ESC[90m`–`ESC[97m` are not "colour 8-15". On the Linux console they are
+**"colour n−90, AND bold"**, and the bold half is *sticky*. A later `ESC[36m`
+sets colour 6, inherits the bold, and the console renders palette entry **6+8 =
+14**:
+
+```
+asked for  #1289ff   palette entry 6    (up in blue)
+got        #55ffff   palette entry 14   (bright cyan)
+```
+
+The renderer emitted `ESC[97m` for white body text — which is correct — and then
+`ESC[36m` for the bar fill. Everything on screen looked right except the one
+element that used a low-numbered colour as a **foreground**.
+
+Emit the intensity explicitly on every colour change, never inherit it:
+
+```
+fg 8-15  ->  ESC[1;3<fg-8>m
+fg 0-7   ->  ESC[22;3<fg>m
+```
+
+**Why no check caught it, and what does now.** The frame-level assertion asked
+whether `#1289ff` appeared anywhere — it did, in the title stripe, on every
+screen. The glyph comparison passed too, because it compares *shapes* and the
+shape was a correct full block. The check that catches it looks at the bar's own
+rectangle and requires every pixel in it to be the field colour or the brand
+colour. Colour assertions have to be **regional**; "the right colour is present"
+is not a statement about anything.
+
+The progress bar is the only place in SETUP-PLAN §3.1 where the brand blue is a
+foreground rather than a background, so this had exactly one place to show up.

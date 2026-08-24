@@ -1,0 +1,637 @@
+#!/usr/bin/env python3
+"""
+PSF console fonts — the three jobs SETUP-PLAN §2.5 needs and no more.
+
+    psf.py symbols    <out.set>             write the OS/7 symbol set for bdf2psf
+    psf.py fixedwidth <in.bdf> <out.bdf> 8  keep only cell-width glyphs
+    psf.py fillcell   <psf>                 close the 15-in-16 seam, in place
+    psf.py double     <in.psf> <out.psf>    8x16 -> 16x32 (SETUP-PLAN §2.4)
+    psf.py verify     <psf> [<psf> ...]     assert coverage; the L19 guard
+    psf.py render     <psf> <text>          draw text as ASCII art, for eyeballing
+
+Why this exists as code rather than as a line in a shell script: L19 says the
+PSF cap is 512 glyphs against Fixedsys Excelsior's 6 192 codepoints, so the
+subset is a *decision*, and the decision has to be checked against the artefact
+that ships. `symbols` and `verify` read the same table below, which is what
+keeps the two from drifting.
+
+No dependencies. It runs in the build container and on the host.
+"""
+import struct
+import sys
+
+
+# ---------------------------------------------------------------------------
+# What OS/7's console font must contain.
+#
+# REQUIRED is load-bearing: the build FAILS if any of it is missing, because
+# the Setup UI is drawn out of it (SETUP-PLAN §3.1) and a missing box-drawing
+# glyph is a hole in every screen. Each block below was read out of FSEX302.ttf
+# on 2026-08-22 and found complete — this is the guard that keeps it true.
+#
+# WANTED is best-effort: included when the font has it, reported when it does
+# not. §2.3 records Arrows and Geometric Shapes as only *partially* covered, so
+# demanding them would fail the build over decoration.
+# ---------------------------------------------------------------------------
+REQUIRED = [
+    ("ASCII printable",     [(0x0020, 0x007E)]),
+    ("Latin-1 Supplement",  [(0x00A0, 0x00FF)]),   # German umlauts and ß live here
+    ("Box Drawing",         [(0x2500, 0x257F)]),   # the entire UI is made of these
+    ("Block Elements",      [(0x2580, 0x259F)]),   # progress bar fill, shading
+    ("Bullet",              [0x2022]),             # the list marker in §3.1 screen 1
+]
+
+WANTED = [
+    ("cp1252 letters",      [0x0152, 0x0153, 0x0160, 0x0161, 0x0178, 0x017D, 0x017E,
+                             0x0192, 0x02C6, 0x02DC]),
+    ("Punctuation",         [0x2010, 0x2013, 0x2014, 0x2018, 0x2019, 0x201A,
+                             0x201C, 0x201D, 0x201E, 0x2020, 0x2021, 0x2026,
+                             0x2030, 0x2039, 0x203A, 0x203C]),
+    ("Currency / marks",    [0x20AC, 0x2122]),
+    ("Arrows",              [(0x2190, 0x2195), 0x21A8, 0x21B5]),
+    ("Geometric Shapes",    [0x25A0, 0x25AC, 0x25B2, 0x25BA, 0x25BC, 0x25C4,
+                             0x25CB, 0x25CF, 0x25D8, 0x25D9]),
+    ("CP437 symbols",       [0x263A, 0x263B, 0x263C, 0x2640, 0x2642,
+                             0x2660, 0x2663, 0x2665, 0x2666, 0x266A, 0x266B]),
+]
+
+PSF_MAX_GLYPHS = 512
+
+# Pairs that must not end up sharing a bitmap.
+#
+# Coverage counting cannot see this failure: an equivalence class maps the
+# codepoint to a position, so it counts as present while carrying the wrong
+# picture. That is how the whole double-line box vanished on the first build
+# (see filter_equivalents), and the only way it stays fixed is a check that
+# looks at pixels rather than at the table. One pair per distinction the UI
+# actually depends on.
+DISTINCT = [
+    (0x2500, 0x2550, "single vs. double horizontal"),
+    (0x2502, 0x2551, "single vs. double vertical"),
+    (0x250C, 0x2554, "single vs. double top-left corner"),
+    (0x2518, 0x255D, "single vs. double bottom-right corner"),
+    (0x251C, 0x2560, "single vs. double left tee"),
+    (0x253C, 0x256C, "single vs. double cross"),
+    (0x2588, 0x2593, "full block vs. dark shade"),
+    (0x2591, 0x2592, "light shade vs. medium shade"),
+    (0x2580, 0x2584, "upper half vs. lower half block"),
+]
+
+
+def expand(spec):
+    """[(lo, hi) | cp] -> a flat, ordered list of codepoints."""
+    out = []
+    for item in spec:
+        if isinstance(item, tuple):
+            out.extend(range(item[0], item[1] + 1))
+        else:
+            out.append(item)
+    return out
+
+
+def required_codepoints():
+    return [cp for _, spec in REQUIRED for cp in expand(spec)]
+
+
+def wanted_codepoints():
+    return [cp for _, spec in WANTED for cp in expand(spec)]
+
+
+# ---------------------------------------------------------------------------
+# bdf2psf symbol set
+#
+# Format (see /usr/share/bdf2psf/ascii.set): one `U+xxxx` per line, `#` comments.
+# bdf2psf takes several such files and gives earlier ones precedence, so the
+# order here is the priority order when 512 positions run out. Required first,
+# wanted after; the caller appends `:useful.set` to fill whatever is left.
+# ---------------------------------------------------------------------------
+def write_symbols(path):
+    seen = set()
+    n = 0
+    with open(path, "w") as f:
+        f.write("# OS/7 console font symbol set — GENERATED by build/lib/psf.py.\n")
+        f.write("# Do not edit: the table it comes from is REQUIRED/WANTED in that file,\n")
+        f.write("# and `psf.py verify` asserts the built PSF against the same table.\n")
+        for title, groups in (("REQUIRED", REQUIRED), ("WANTED", WANTED)):
+            f.write(f"\n#\n# ---- {title} ----\n#\n")
+            for name, spec in groups:
+                f.write(f"\n# {name}\n")
+                for cp in expand(spec):
+                    if cp in seen:
+                        continue
+                    seen.add(cp)
+                    f.write(f"U+{cp:04x}\n")
+                    n += 1
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Equivalences — filtered, because the stock file silently downgrades OS/7's UI.
+#
+# bdf2psf's standard.equivalents declares classes of codepoints that may share
+# one PSF position, and its own header states the rule: "when the source font
+# supports several symbols from a class, THE LAST SUPPORTED SYMBOL IS USED."
+# It exists for fonts that lack the rarer glyph and can only approximate it.
+#
+# Fixedsys Excelsior does not lack them. It carries a real U+2550 (FF 00 FF —
+# two rules) and a real U+2554. But standard.equivalents line 217 ends its class
+# with U+2500, so bdf2psf hands U+2550 the SINGLE horizontal and the double-line
+# box in SETUP-PLAN §2.3's glyph list renders as a single-line box. Verified by
+# rendering the built PSF on 2026-08-24: `╔═╦═╗╠╬╣╚╩╝║` came out byte-identical
+# to `┌─┬─┐├┼┤└┴┘│`.
+#
+# Nothing downstream could have caught it. Coverage checks pass — the codepoint
+# IS mapped, to the wrong glyph — so the only guard is not creating the problem.
+#
+# So: drop any class that touches a codepoint OS/7 requires, and keep the rest
+# for the space they save. Positions are not scarce here (§ the 512 cap), and
+# fidelity on the glyphs the UI is drawn from is the whole point of D9.
+# ---------------------------------------------------------------------------
+def filter_equivalents(src, dst):
+    protect = set(required_codepoints())
+    kept = dropped = 0
+    with open(src) as fin, open(dst, "w") as fout:
+        fout.write("# GENERATED by build/lib/psf.py from bdf2psf's standard.equivalents.\n")
+        fout.write("# Classes touching an OS/7 REQUIRED codepoint are removed - see the\n")
+        fout.write("# comment on filter_equivalents(). Do not substitute the stock file.\n")
+        for line in fin:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                fout.write(line)
+                continue
+            cps = {int(t[2:], 16) for t in s.split() if t.startswith("U+")}
+            if cps & protect:
+                dropped += 1
+                fout.write(f"# OS/7: class dropped (protects {fmt_cps(sorted(cps & protect), 4)}): {s}\n")
+            else:
+                kept += 1
+                fout.write(line)
+    return kept, dropped
+
+
+# ---------------------------------------------------------------------------
+# BDF -> BDF: keep only glyphs that fit the console cell.
+#
+# Fixedsys Excelsior is not monospaced across its whole cmap. 4 230 of its 6 192
+# glyphs advance 8 pixels, but 1 575 are wider (CJK and friends at 11 or 16) and
+# 346 advance 0. otf2bdf therefore reports the font as SPACING "P" with
+# AVERAGE_WIDTH 77, and bdf2psf refuses it outright:
+#
+#     bdf2psf: the width is not integer number.
+#
+# because it derives the cell width as AVERAGE_WIDTH / 10 and 77 does not divide.
+#
+# Dropping the wide glyphs is not a workaround for that message. A PSF *is* a
+# fixed cell grid: a 16-pixel-wide glyph has nowhere to go in an 8-pixel cell,
+# and keeping it would hand bdf2psf something to truncate — half a glyph on
+# screen, which is worse than an absent one. Measured 2026-08-24: all 352
+# REQUIRED codepoints advance exactly 8, so nothing the UI draws is lost here.
+# ---------------------------------------------------------------------------
+def fixedwidth(src, dst, width):
+    kept, dropped, header = [], [], []
+    block, in_glyph = [], False
+    total = 0
+
+    with open(src, "r", errors="replace") as f:
+        for line in f:
+            if line.startswith("STARTCHAR"):
+                in_glyph, block = True, [line]
+                continue
+            if not in_glyph:
+                header.append(line)
+                continue
+            block.append(line)
+            if line.startswith("ENDCHAR"):
+                total += 1
+                (kept if _advance(block) == width else dropped).append(block)
+                in_glyph, block = False, []
+
+    with open(dst, "w") as f:
+        for line in header:
+            if line.startswith("ENDFONT"):
+                continue
+            if line.startswith("FONTBOUNDINGBOX"):
+                # Height stays as otf2bdf measured it; bdf2psf reads the cell
+                # height from FONT_ASCENT + FONT_DESCENT anyway, and narrowing
+                # the declared box to the cell is what makes this file honest.
+                parts = line.split()
+                f.write(f"FONTBOUNDINGBOX {width} {parts[2]} 0 {parts[4]}\n")
+            elif line.startswith("AVERAGE_WIDTH"):
+                f.write(f"AVERAGE_WIDTH {width * 10}\n")   # BDF units are 1/10 px
+            elif line.startswith("SPACING"):
+                f.write('SPACING "C"\n')                   # character cell
+            elif line.startswith("CHARS "):
+                f.write(f"CHARS {len(kept)}\n")
+            else:
+                f.write(line)
+        for block in kept:
+            f.writelines(block)
+        f.write("ENDFONT\n")
+
+    return total, len(kept), _encodings(dropped)
+
+
+def _advance(block):
+    for line in block:
+        if line.startswith("DWIDTH "):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _encodings(blocks):
+    out = []
+    for b in blocks:
+        for line in b:
+            if line.startswith("ENCODING "):
+                try:
+                    out.append(int(line.split()[1]))
+                except (IndexError, ValueError):
+                    pass
+                break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Reading a PSF
+# ---------------------------------------------------------------------------
+PSF1_MAGIC = b"\x36\x04"
+PSF2_MAGIC = b"\x72\xb5\x4a\x86"
+PSF1_MODE512 = 0x01
+PSF1_MODEHASTAB = 0x02
+PSF2_HAS_UNICODE = 0x01
+
+
+class Font:
+    def __init__(self, path):
+        with open(path, "rb") as f:
+            self.raw = f.read()
+        self.path = path
+        if self.raw[:4] == PSF2_MAGIC:
+            self._read_psf2()
+        elif self.raw[:2] == PSF1_MAGIC:
+            self._read_psf1()
+        else:
+            raise SystemExit(f"{path}: not a PSF font (magic {self.raw[:4]!r})")
+
+    def _read_psf2(self):
+        (ver, self.headersize, self.flags, self.length,
+         self.charsize, self.height, self.width) = struct.unpack_from("<7I", self.raw, 4)
+        if ver != 0:
+            raise SystemExit(f"{self.path}: PSF2 version {ver} is not supported")
+        self.version = 2
+        self.glyphs = self.raw[self.headersize:self.headersize + self.length * self.charsize]
+        rest = self.raw[self.headersize + self.length * self.charsize:]
+        self.table = self._parse_table2(rest) if (self.flags & PSF2_HAS_UNICODE) else {}
+
+    def _read_psf1(self):
+        mode, self.charsize = self.raw[2], self.raw[3]
+        self.version = 1
+        self.headersize = 4
+        self.width, self.height = 8, self.charsize
+        self.length = 512 if (mode & PSF1_MODE512) else 256
+        self.flags = PSF2_HAS_UNICODE if (mode & PSF1_MODEHASTAB) else 0
+        self.glyphs = self.raw[4:4 + self.length * self.charsize]
+        rest = self.raw[4 + self.length * self.charsize:]
+        self.table = self._parse_table1(rest) if (mode & PSF1_MODEHASTAB) else {}
+
+    def _parse_table2(self, blob):
+        """PSF2: per glyph, UTF-8 codepoints, 0xFE before each sequence, 0xFF ends."""
+        table, glyph, cur = {}, 0, bytearray()
+        i, in_seq = 0, False
+        while i < len(blob) and glyph < self.length:
+            b = blob[i]
+            if b == 0xFF:
+                self._flush(table, glyph, cur, in_seq)
+                glyph += 1
+                cur, in_seq = bytearray(), False
+            elif b == 0xFE:
+                self._flush(table, glyph, cur, in_seq)
+                cur, in_seq = bytearray(), True   # a multi-codepoint sequence; ignored
+            else:
+                cur.append(b)
+            i += 1
+        return table
+
+    @staticmethod
+    def _flush(table, glyph, cur, in_seq):
+        if in_seq or not cur:
+            return
+        for ch in cur.decode("utf-8", "replace"):
+            table.setdefault(ord(ch), glyph)
+
+    def _parse_table1(self, blob):
+        table, glyph = {}, 0
+        i = 0
+        skipping = False
+        while i + 1 < len(blob) and glyph < self.length:
+            v = struct.unpack_from("<H", blob, i)[0]
+            i += 2
+            if v == 0xFFFF:
+                glyph += 1
+                skipping = False
+            elif v == 0xFFFE:
+                skipping = True
+            elif not skipping:
+                table.setdefault(v, glyph)
+        return table
+
+    def glyph_bytes(self, glyph):
+        return bytes(self.glyphs[glyph * self.charsize:(glyph + 1) * self.charsize])
+
+    def bitmap(self, glyph):
+        """[row][col] booleans."""
+        stride = (self.width + 7) // 8
+        off = glyph * self.charsize
+        rows = []
+        for r in range(self.height):
+            bits = []
+            for c in range(self.width):
+                byte = self.glyphs[off + r * stride + (c // 8)]
+                bits.append(bool(byte & (0x80 >> (c % 8))))
+            rows.append(bits)
+        return rows
+
+    def describe(self):
+        return (f"PSF{self.version}  {self.width}x{self.height}  "
+                f"{self.length} glyphs  {self.charsize} B/glyph  "
+                f"{len(self.table)} codepoints mapped")
+
+
+# ---------------------------------------------------------------------------
+# Close the seam: Fixedsys Excelsior draws 15 pixels of ink in a 16-pixel cell.
+#
+# Measured out of FSEX302.ttf on 2026-08-24, in font units (unitsPerEm 160, so
+# 10 units = 1 pixel):
+#
+#     hhea      ascender 130, descender -30       -> a 16 px line
+#     U+2588 █  y -30 .. 120                      -> 15 px of ink
+#     U+2580 ▀  y  40 .. 120    U+2584 ▄  y -30 .. 50
+#
+# The em is 16 px and the ink is 15, so the TOP ROW OF EVERY CELL IS EMPTY. The
+# font is right about itself — Windows' Fixedsys is an 8x15 face — and wrong for
+# a console, where the cell IS the character. Left alone it means a one-pixel
+# gap at every cell boundary: the vertical borders of every box in Setup come
+# out dashed, and a progress bar never touches the top of its row. That is a
+# visible failure of what D9 was chosen to achieve (SETUP-PLAN §2.3: reproduce
+# the reference, not approximate it), so it is closed here rather than accepted.
+#
+# The operation is deliberately timid, and only inside Box Drawing and Block
+# Elements — the ranges whose glyphs are meant to tile:
+#
+#     row1 == row2  ->  row0 := row1     a stroke or fill continuing upward
+#     row1 == row3  ->  row0 := row2     a two-row shading pattern
+#     otherwise     ->  leave it alone
+#
+# Everything that must not grow falls into the third case or is a no-op: `┌`
+# and `▄` have an empty row 1, so the first rule copies empty onto empty. Letters
+# are out of range entirely — `Ä` has its diaeresis in row 1 and would otherwise
+# have gained a third row of dots.
+# ---------------------------------------------------------------------------
+FILL_RANGES = [(0x2500, 0x257F), (0x2580, 0x259F)]
+
+# The seam assertion. Left column: an upward stroke, so row 0 MUST have ink.
+# Right column: no upward stroke, so row 0 must stay empty — the same operation
+# that closes the seam would, if it were sloppy, weld these to the cell above.
+#                 │       ║       █       ▀       ┘       └
+SEAM_INK   = [0x2502, 0x2551, 0x2588, 0x2580, 0x2518, 0x2514,
+#                 ┴       ├       ┤       ┼       ╚       ╬
+              0x2534, 0x251C, 0x2524, 0x253C, 0x255A, 0x256C]
+#                 ┌       ┐       ┬       ╔       ╗       ╦       ▄
+SEAM_CLEAR = [0x250C, 0x2510, 0x252C, 0x2554, 0x2557, 0x2566, 0x2584]
+
+
+def in_fill_range(cp):
+    return any(lo <= cp <= hi for lo, hi in FILL_RANGES)
+
+
+def fill_cell(path):
+    """Rewrite `path` in place. Returns the number of glyphs changed."""
+    f = Font(path)
+    stride = (f.width + 7) // 8
+    glyphs = bytearray(f.glyphs)
+    targets = {f.table[cp] for cp in f.table if in_fill_range(cp)}
+    changed = 0
+
+    for g in sorted(targets):
+        base = g * f.charsize
+        def row(i):
+            return bytes(glyphs[base + i * stride: base + (i + 1) * stride])
+        if f.height < 4:
+            continue
+        if row(1) == row(2):
+            new = row(1)
+        elif row(1) == row(3):
+            new = row(2)
+        else:
+            continue
+        if new == row(0):
+            continue
+        glyphs[base: base + stride] = new
+        changed += 1
+
+    with open(path, "r+b") as fh:
+        fh.seek(f.headersize)
+        fh.write(glyphs)
+    return changed
+
+
+def check_seam(f):
+    """Return a list of complaints. Empty means the tiling is continuous."""
+    bad = []
+    for cp in SEAM_INK:
+        if cp in f.table and not any(f.bitmap(f.table[cp])[0]):
+            bad.append(f"U+{cp:04X} has an empty top row but connects upward")
+    for cp in SEAM_CLEAR:
+        if cp in f.table and any(f.bitmap(f.table[cp])[0]):
+            bad.append(f"U+{cp:04X} has ink in its top row but must not connect upward")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# 8x16 -> 16x32
+#
+# SETUP-PLAN §2.4: "duplicate each bit horizontally, each row vertically", which
+# needs no redraw because the source is already a pixel grid. The unicode table
+# is copied verbatim — doubling changes shape, never meaning.
+# ---------------------------------------------------------------------------
+def double(src_path, dst_path):
+    f = Font(src_path)
+    if f.width != 8:
+        raise SystemExit(f"{src_path}: doubling expects an 8-pixel-wide font, got {f.width}")
+    stride = 1
+    out = bytearray()
+    for g in range(f.length):
+        off = g * f.charsize
+        for r in range(f.height):
+            b = f.glyphs[off + r * stride]
+            wide = 0
+            for i in range(8):
+                if b & (0x80 >> i):
+                    wide |= 0x03 << (14 - 2 * i)
+            row = struct.pack(">H", wide)
+            out += row + row                    # each source row becomes two
+
+    charsize = f.height * 2 * 2                 # (height x2) rows, 2 bytes each
+    header = struct.pack("<4s7I", PSF2_MAGIC, 0, 32, PSF2_HAS_UNICODE if f.table else 0,
+                         f.length, charsize, f.height * 2, 16)
+    blob = bytearray(header) + out
+    if f.table:
+        blob += encode_table(f.table, f.length)
+    with open(dst_path, "wb") as fh:
+        fh.write(blob)
+    return Font(dst_path)
+
+
+def encode_table(table, length):
+    """Rebuild a PSF2 unicode table from {codepoint: glyph}."""
+    per = [[] for _ in range(length)]
+    for cp, g in sorted(table.items()):
+        if g < length:
+            per[g].append(cp)
+    out = bytearray()
+    for cps in per:
+        for cp in cps:
+            out += chr(cp).encode("utf-8")
+        out.append(0xFF)
+    return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# The L19 guard
+# ---------------------------------------------------------------------------
+def verify(paths, expect=None):
+    """expect = (width, height) when the caller knows what the file should be."""
+    ok = True
+    for i, path in enumerate(paths):
+        f = Font(path)
+        print(f"  {path}")
+        print(f"    {f.describe()}")
+
+        if f.length > PSF_MAX_GLYPHS:
+            print(f"    FAIL  {f.length} glyphs — the console driver caps at {PSF_MAX_GLYPHS}")
+            ok = False
+        if not f.table:
+            print("    FAIL  no unicode table — setfont would map by position, not by codepoint")
+            ok = False
+        if expect and expect[i] != (f.width, f.height):
+            print(f"    FAIL  expected {expect[i][0]}x{expect[i][1]}, got {f.width}x{f.height}")
+            ok = False
+
+        # Blank glyphs are how a "present" codepoint silently becomes a hole:
+        # bdf2psf assigns a position even when the BDF glyph is empty.
+        blank = {cp for cp in required_codepoints()
+                 if cp in f.table and cp != 0x20 and cp != 0xA0
+                 and not any(any(row) for row in f.bitmap(f.table[cp]))}
+
+        for name, spec in REQUIRED:
+            cps = expand(spec)
+            missing = [cp for cp in cps if cp not in f.table]
+            hollow = [cp for cp in cps if cp in blank]
+            if missing or hollow:
+                ok = False
+                if missing:
+                    print(f"    FAIL  {name}: {len(cps) - len(missing)}/{len(cps)} — "
+                          f"missing {fmt_cps(missing)}")
+                if hollow:
+                    print(f"    FAIL  {name}: present but BLANK: {fmt_cps(hollow)}")
+            else:
+                print(f"    ok    {name}: {len(cps)}/{len(cps)}")
+
+        for name, spec in WANTED:
+            cps = expand(spec)
+            missing = [cp for cp in cps if cp not in f.table]
+            mark = "ok   " if not missing else "note "
+            print(f"    {mark} {name}: {len(cps) - len(missing)}/{len(cps)}"
+                  + (f" — absent: {fmt_cps(missing)}" if missing else ""))
+
+        seam = check_seam(f)
+        if seam:
+            ok = False
+            for line in seam:
+                print(f"    FAIL  seam: {line}")
+        else:
+            print(f"    ok    cell tiling continuous "
+                  f"({len(SEAM_INK)} joins, {len(SEAM_CLEAR)} non-joins)")
+
+        collisions = []
+        for a, b, why in DISTINCT:
+            if a not in f.table or b not in f.table:
+                continue          # already reported as missing above
+            if f.glyph_bytes(f.table[a]) == f.glyph_bytes(f.table[b]):
+                collisions.append(f"U+{a:04X}/U+{b:04X} ({why})")
+        if collisions:
+            ok = False
+            print(f"    FAIL  identical bitmaps where the shapes must differ: "
+                  f"{', '.join(collisions)}")
+            print("          an equivalences file collapsed them; see filter_equivalents()")
+        else:
+            print(f"    ok    {len(DISTINCT)} shape distinctions held")
+    return ok
+
+
+def fmt_cps(cps, limit=12):
+    s = " ".join(f"U+{c:04X}" for c in cps[:limit])
+    return s + (f" (+{len(cps) - limit} more)" if len(cps) > limit else "")
+
+
+def render(path, text):
+    """Draw text with the font itself. The cheapest possible look at a glyph —
+    and the only check that does not depend on a running console."""
+    f = Font(path)
+    glyphs = [f.bitmap(f.table[ord(ch)]) for ch in text if ord(ch) in f.table]
+    missing = [ch for ch in text if ord(ch) not in f.table]
+    if missing:
+        print(f"(not in font: {' '.join(f'U+{ord(c):04X}' for c in missing)})")
+    for r in range(f.height):
+        print("".join("#" if bit else "." for g in glyphs for bit in g[r]))
+
+
+def main(argv):
+    if len(argv) < 2:
+        raise SystemExit(__doc__)
+    cmd = argv[1]
+    if cmd == "symbols":
+        n = write_symbols(argv[2])
+        print(f"    {n} codepoints -> {argv[2]}")
+    elif cmd == "equivalents":
+        kept, dropped = filter_equivalents(argv[2], argv[3])
+        print(f"    {kept} equivalence classes kept, {dropped} dropped to protect "
+              f"REQUIRED glyphs -> {argv[3]}")
+    elif cmd == "fixedwidth":
+        width = int(argv[4]) if len(argv) > 4 else 8
+        total, kept, dropped = fixedwidth(argv[2], argv[3], width)
+        print(f"    {kept}/{total} glyphs advance {width}px; dropped {total - kept}")
+        gone = set(dropped)
+        hit_req = [cp for cp in required_codepoints() if cp in gone]
+        hit_want = [cp for cp in wanted_codepoints() if cp in gone]
+        if hit_req:
+            # Would mean the console cannot render part of the Setup UI at all.
+            # Louder than a note, because no downstream step can recover it.
+            print(f"    FAIL  REQUIRED codepoints are wider than the cell: {fmt_cps(hit_req)}")
+            raise SystemExit(1)
+        if hit_want:
+            print(f"    note  wider than the cell, so unavailable to a PSF: {fmt_cps(hit_want)}")
+    elif cmd == "fillcell":
+        n = fill_cell(argv[2])
+        print(f"    closed the 15-in-16 seam on {n} glyph(s)")
+    elif cmd == "double":
+        f = double(argv[2], argv[3])
+        print(f"    doubled -> {argv[3]}  ({f.describe()})")
+    elif cmd == "verify":
+        exp = None
+        if "--expect" in argv:
+            i = argv.index("--expect")
+            exp = [tuple(int(x) for x in p.split("x")) for p in argv[i + 1].split(",")]
+            argv = argv[:i] + argv[i + 2:]
+        raise SystemExit(0 if verify(argv[2:], exp) else 1)
+    elif cmd == "render":
+        render(argv[2], argv[3])
+    else:
+        raise SystemExit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

@@ -29,6 +29,12 @@ build/config/config/
 # --- QEMU x86 builder VM (scripts/build-amd64-vm.sh) -------------------------
 .vm-amd64/
 
+# --- .NET build state --------------------------------------------------------
+# `dotnet publish` leaves these beside the project. The published binary itself
+# goes to out/, which is already ignored.
+installer/**/bin/
+installer/**/obj/
+
 # Python bytecode from the spike harnesses
 __pycache__/
 *.pyc

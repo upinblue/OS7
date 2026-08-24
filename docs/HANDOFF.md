@@ -1,6 +1,6 @@
 # OS/7 — handoff
 
-**Written 2026-08-23.** State of the repo and the next steps, in order.
+**Written 2026-08-24.** State of the repo and the next steps, in order.
 Everything here runs **locally on an Apple Silicon Mac**. No cloud, no CI, no
 paid services.
 
@@ -14,17 +14,29 @@ paid services.
 | That ISO boots | **Yes.** UEFI → GRUB → casper → systemd → login prompt, in QEMU. |
 | **Installing to a disk** | **Works on arm64, proven end to end.** ZFS-on-LUKS root, installed from the live ISO and booted from the disk alone. See [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md). |
 | **Secure Boot + TPM2** | **Works on arm64.** Boots with SB enabled against the Microsoft UEFI CA; TPM2 auto-unlock works and a TPM-less machine still prompts. See [SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md). |
-| **NativeAOT for `os7-setup`** | **Works on both arches.** 3.2–3.4 MB static-ish ELF, zero warnings, runs in the ISO with .NET deleted. See [SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md). |
+| **NativeAOT for `os7-setup`** | **Works on both arches.** 3.2–3.4 MB static-ish ELF, zero warnings, runs in the ISO with .NET deleted. See [SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md). The SDK is now in the Dockerfile. |
+| **The text-mode look** | **Works on arm64, measured.** Field exactly `#0057ad`, stripe exactly `#1289ff`, 126 test-card cells matching the console font pixel for pixel, all 16 arrow/F-keys decoding, 80×25 at 1280×800. See [SESSION-S1-LOOK.md](SESSION-S1-LOOK.md). |
+| **The console font** | **Built by the ISO build.** `build/lib/build-console-font.sh` converts the pinned Fixedsys Excelsior TTF to two PSFs, asserts coverage *and shape*, and stages them with a matching `/etc/default/console-setup`. |
 | PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all three functions (they are stubs that throw by design). `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
 | `os7-setup` | **Does not exist yet** — not a skeleton, not a stub. |
 
-### S3 is done — the gate is open
+### Phase 0 is done — the gate is open
 
-`installer/SETUP-PLAN.md` §10 Phase 0 said S3 gated everything, because the repo
-had never installed OS/7 to a disk by any means. It has now:
+`installer/SETUP-PLAN.md` §10 gates every line of installer code on four spikes.
+All four have passed:
+
+| | | |
+|---|---|---|
+| **S1** | does the look actually work | `./installer/spikes/run-s1.py all` — [SESSION-S1-LOOK.md](SESSION-S1-LOOK.md) |
+| **S2** | does NativeAOT build here | `./installer/spikes/run-s2.sh all` — [SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md) |
+| **S3** | does a ZFS-on-LUKS root boot | `./installer/spikes/run-s3.py all` — [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md) |
+| **S4** | Secure Boot and TPM2 unlock | `./installer/spikes/run-s4.py all` — [SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md) |
+
+S3 was the one that mattered most, because the repo had never installed OS/7 to
+a disk by any means. It has now:
 
 ```bash
 ./installer/spikes/run-s3.py all
@@ -49,39 +61,59 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-Phase 0 has **one spike left — S1** — and SETUP-PLAN gates Phase 1 on all four.
-S2, S3 and S4 are done.
+**All four Phase 0 spikes have passed. Phase 1 — the `os7-setup` skeleton — is
+what to write next**, and SETUP-PLAN §10 describes it: the TUI layer, screens
+1–3 and 12, the error screen and logging, strictly non-destructive. Deliverable:
+you can walk the whole flow in a VM and it looks right.
 
-**S1: does the look actually work.** Boot the arm64 ISO with the palette and
-`fbcon=font:TER16x32`, paint one static mockup screen, and `screendump` from the
-QEMU monitor. Pass = the field is exactly `#0057ad`, the stripe exactly
-`#1289ff`, box glyphs render, and arrows/F-keys decode.
+Three things are already sitting there for it, so Phase 1 does not start from
+zero:
 
-It is the only spike that needs a **framebuffer**: S3 and S4 deliberately run
-with `-display none`, so `run-s3.py`/`run-s4.py` give you the console driving
-(`installer/spikes/vmconsole.py`) but not the display. New work is
-`-device virtio-gpu-pci`, a QMP or monitor socket, and `screendump`.
+* **The build container has the .NET SDK.** `dotnet-sdk-10.0 clang zlib1g-dev
+  libc6-dev binutils` are in the Dockerfile, plus `otf2bdf` and `bdf2psf` for the
+  font. `installer/spikes/run-s1.py build` shows the publish invocation that
+  works.
+* **The console font is a real build stage**, not a plan. `build/build.sh` calls
+  `build/lib/build-console-font.sh` and fails the build if a glyph the UI draws
+  is missing, blank, or has been collapsed onto another shape.
+* **The key table is measured, not guessed.**
+  `installer/spikes/s1-look/Tui/Keys.cs` holds what the Linux console actually
+  emitted for all 16 keys tested, and `Native/Termios.cs` holds a raw-mode reader
+  that works — including the two things that stop it working (below).
 
-Two things S2 already de-risks for it: the AOT binary can be built for either
-arch on this machine, and `ioctl(TIOCGWINSZ)` / `tcgetattr` resolve — their
-behaviour on a real VT is precisely what S1 has to show.
+### The four things S1 changed about what Phase 1 has to do
 
-**Then Phase 1** — the `os7-setup` skeleton, strictly non-destructive.
+* **The palette ships as `/etc/vtrgb`, not on the kernel command line.**
+  Ubuntu enables `setvtrgb.service`, which replaces the whole palette from
+  `/etc/vtrgb` at ~11.8 s — before `fbcon` takes the console over at ~14.0 s. So
+  the command-line palette is never displayed, and nothing reports an error.
+  BUILD-NOTES #25. The two palette files **are** in the image, at
+  `/usr/share/os7/`, generated by `build/lib/palette.py`; Setup applies one of
+  them itself at start-up. Wiring `/etc/vtrgb` at them is **D6** and is still
+  open — that decides whether the *installed* console stays blue.
+* **`vt.color=0x4f` does nothing.** Drop it from the Install entry. Setup must
+  set an explicit foreground and background on every cell, which the renderer
+  does anyway — but "blue before Setup paints" needs the §2.6 unit, not a kernel
+  parameter.
+* **`F5` is a palette switch AND a full repaint.** A truecolor framebuffer
+  resolves each cell to RGB when it is written; changing the palette leaves the
+  screen alone.
+* **Read keys with `read(2)`, not `Console.OpenStandardInput()`**, and drain the
+  input queue before the first read. BUILD-NOTES #29.
+* **Set SGR intensity explicitly on every colour change.** `ESC[90m`–`ESC[97m`
+  mean "colour n−90 *and bold*" and the bold is sticky, so a later `ESC[36m`
+  renders palette entry 14 instead of 6. BUILD-NOTES #30 — and note *how* it was
+  found: a colour assertion has to be about a **region**, because "the right
+  colour appears somewhere in the frame" was true the whole time it was wrong.
 
-### Before Phase 1: the build container needs .NET
-
-`os7-build` has no SDK today. S2 established the exact list:
-
-```
-dotnet-sdk-10.0  clang  zlib1g-dev  libc6-dev  binutils
-```
-
-The Dockerfile is deliberately **unchanged** — nothing in the repo builds C#
-yet, and an SDK would make every ISO build heavier for no current benefit.
-`installer/spikes/s2-nativeaot.sh` installs the list itself, which is why an S2
-run takes minutes. Move it into the Dockerfile when Phase 1 starts.
+**And one thing Phase 1 owes that S1 deliberately did not test:** the bare `ESC`
+key. A lone ESC is the prefix of every sequence in the table, so a reader blocks
+on it. After ESC, switch to `VMIN=0`/`VTIME=1` and treat "nothing within ~100 ms"
+as Escape. §3.1 screen 2 offers `ESC`, so this is not optional.
 
 ### What S2, S3 and S4 changed about what Setup has to do
+
+(S1's are above, because they change Phase 1 rather than Phase 2.)
 
 * **`boot=zfs` is mandatory** on the kernel command line and nothing generates
   it. BUILD-NOTES #15.
@@ -211,6 +243,23 @@ Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
   `fixed` buffer, not a `byte[]`.
 - **#23 — amd64 .NET builds work under emulation** even though amd64 ISO builds
   do not. Do not generalise #12 into "nothing amd64 builds here".
+- **#24 — `otf2bdf` exits 8 on Fixedsys** at every point size while writing a
+  perfectly correct BDF. Assert the artefact, not the status.
+- **#25 — `setvtrgb.service` replaces the console palette** set on the kernel
+  command line, before the console is ever displayed and without an error. It is
+  the single most expensive trap in this list, because the symptom — a screen in
+  *a* palette that is not yours — points straight at the parameters.
+- **#26 — `bdf2psf`'s stock equivalences hand `═` the glyph of `─`** and collapse
+  the entire double-line box onto the single-line one. No coverage check can see
+  it: the codepoint is mapped, to the wrong picture.
+- **#27 — Fixedsys draws 15 pixels of ink in a 16-pixel cell**, so every vertical
+  box border comes out dashed until the seam is closed. It is also not
+  monospaced across its cmap, which `bdf2psf` refuses outright.
+- **#28 — `hdiutil makehybrid` keeps only one dot per filename.**
+  `x.psf.gz` arrives in the guest as `xpsf.gz`, and the error names the path you
+  asked for.
+- **#29 — .NET's `Console` input stream cannot be used for raw-mode reading.**
+  It returned one byte and then reported end of input on an open tty.
 - **`pwsh --version` is not a health check.** The banner, `Import-Module` by
   path and `Get-Command` are compiled into the binary and succeed while the
   whole on-disk module tree is unusable.
@@ -286,6 +335,10 @@ build/config/hooks-amd64/         amd64-only hooks
 build/lib/arm64-efi-remaster.sh   arm64 has no live-build bootloader; this fixes it
 powershell/OS7/                   the OS7 module - ONE source of truth, staged by build.sh
 installer/SETUP-PLAN.md           the installer design and decisions. Authoritative.
+build/lib/build-console-font.sh   Fixedsys TTF -> two PSFs, asserted (S1)
+build/lib/psf.py                  the subset table, the fixes and the guard
+build/config/includes.chroot/     files copied verbatim into the image
+installer/spikes/s1-look/         the S1 painter: renderer, key table, termios
 installer/spikes/s2-nativeaot/    the NativeAOT smoke-test project (S2)
 installer/spikes/s3-zfs-luks.sh   the proven install sequence (S3)
 installer/spikes/s4-tpm-enroll.sh TPM2 enrolment + the initramfs pieces (S4)
@@ -293,9 +346,12 @@ installer/spikes/run-s2.sh        S2: build in the container, run in the ISO
 installer/spikes/run-s3.py        QEMU harness for S3
 installer/spikes/run-s4.py        QEMU harness for S4 (Secure Boot + swtpm)
 installer/spikes/vmconsole.py     serial-console driving, shared by both
+docs/SESSION-S1-LOOK.md           what S1 measured, and the three plan corrections
 docs/SESSION-S2-NATIVEAOT.md      what S2 proved, and what the container still needs
 docs/SESSION-S3-ZFS-LUKS.md       what S3 proved, and the nine things it depends on
 docs/SESSION-S4-SECUREBOOT-TPM.md what S4 proved, and what it deliberately does not
 docs/BUILD-NOTES.md               every trap found so far. Read before debugging.
+installer/spikes/run-s1.py        QEMU harness for S1 (framebuffer + QMP)
+.vm/s1/shots/                     S1 screendumps, as PNGs
 .vm/s3/, .vm/s4/, .vm/firmware/   VM state, serial logs, AAVMF (all gitignored)
 ```

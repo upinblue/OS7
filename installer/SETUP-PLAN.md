@@ -1,7 +1,12 @@
 # OS/7 Setup — text-mode installer plan
 
-**Status: plan only. Nothing below is implemented.** This document answers three
-questions asked on 2026-08-22 and turns the answers into a phased plan:
+**Status: Phase 0 complete, Phase 1 not started.** The four spikes this plan
+gates itself on — S1, S2, S3, S4 — have all passed, and two pieces of the plan
+have become working parts of the repository along the way: the console font
+pipeline (§2.5) and the palette (§2.1). `os7-setup` itself does not exist yet.
+
+This document answers three questions asked on 2026-08-22 and turns the answers
+into a phased plan:
 
 1. Can OS/7's installer look like MS-DOS 6.22 Setup / the Windows 2000
    text-mode ("non-GUI") Setup phase, in up in blue blue `#1289ff`?
@@ -31,7 +36,7 @@ all of it inside the boot environment. §4.4 carries the revised layout.
 | Question | Answer |
 |---|---|
 | DOS / Win2000-text-phase look on a Linux console | **Yes**, and more faithfully than expected — the Linux VT palette is programmable, so an exact brand colour is a literal palette entry, not an approximation. |
-| Exact brand colour | **Yes on the kernel console** (`vt.default_red/grn/blu`, `setvtrgb`). **No over serial/SSH** unless the client does truecolor — there we fall back. Note D5: the *field* is `#0057ad`, a darkened `#1289ff`, because white text on `#1289ff` is only 3.47 : 1 (§2.2). `#1289ff` is the title stripe on every screen. |
+| Exact brand colour | **Yes on the kernel console, measured exact** (via `setvtrgb` and `/etc/vtrgb`; *not* via the kernel command line — §2.1). **No over serial/SSH** unless the client does truecolor — there we fall back. Note D5: the *field* is `#0057ad`, a darkened `#1289ff`, because white text on `#1289ff` is only 3.47 : 1 (§2.2). `#1289ff` is the title stripe on every screen. |
 | Can text mode do partitioning | **Yes.** Partitioning is `sgdisk` + `zpool create`; a GUI adds nothing a keyboard-driven list can't do. Windows NT/2000 did exactly this in text mode. |
 | ZFS as the only filesystem | **Almost.** A FAT32 EFI System Partition is mandatory (UEFI firmware spec). With zram swap, it is the only non-ZFS *filesystem* on disk — but encryption adds a **LUKS2 container underneath** `rpool` (D3, §4.5), which is a block layer rather than a filesystem, and a `bpool` for GRUB (D1, §5), which is still ZFS. |
 | Written in C# / .NET | **Yes** for UI, flow, state, logging and orchestration. **No** for the storage primitives — there are no libzfs/libblkid bindings for .NET, so Setup drives `zpool`/`zfs`/`sgdisk` as processes. Calamares does the same thing; this is not a downgrade. |
@@ -60,8 +65,31 @@ both needed:
 
 | When | Mechanism |
 |---|---|
-| From the first kernel frame | Kernel cmdline `vt.default_red=`, `vt.default_grn=`, `vt.default_blu=` (16 comma-separated 0–255 values each) plus `vt.color=0x4f` (background 4 = our blue, foreground 15 = bright white). Set on the **Install OS/7** GRUB entry only, so the live-desktop entry keeps normal colours. |
-| At runtime, e.g. to switch to high-contrast | `setvtrgb <file>` from `kbd` — 3 lines of 16 comma-separated values (R, G, B). |
+| **On every boot, and the one that works** | Ship the palette as **`/etc/vtrgb`**. Ubuntu already enables `setvtrgb.service` in `sysinit.target.wants`, which runs `/sbin/setvtrgb /etc/vtrgb` before the console is displayed. `setvtrgb` accepts a legible hex form — 16 lines of `#RRGGBB` — so the palette is reviewable in a diff. |
+| At runtime, e.g. to switch to high-contrast | `setvtrgb <file>` from `kbd`, **plus a full repaint** — see below. |
+| ~~From the first kernel frame~~ | ~~Kernel cmdline `vt.default_red/grn/blu` plus `vt.color=0x4f`~~ — **measured useless on Ubuntu, S1 2026-08-24.** |
+
+**Corrected by S1** ([../docs/SESSION-S1-LOOK.md](../docs/SESSION-S1-LOOK.md)),
+because the original table above had the priority backwards:
+
+* **The kernel command line does not survive userspace.** `setvtrgb.service`
+  ships enabled and replaces the whole palette from `/etc/vtrgb` at ~11.8 s;
+  `fbcon` takes the console over at ~14.0 s. There is no window in which the
+  command-line palette is ever displayed, and nothing reports an error. Proven
+  both ways: with `systemd.mask=setvtrgb.service` the command line gives exactly
+  `#0057ad`; stock, it gives Ubuntu's `#006fb8`. BUILD-NOTES #25.
+* **`vt.color=0x4f` does nothing.** It is accepted and reads back correctly from
+  `/sys/module/vt/parameters/color`, and four different values all left the
+  default attribute on palette index 1. Setup must set an explicit foreground and
+  background on every cell — which the renderer does by construction — and
+  "blue before Setup paints" needs the §2.6 unit rather than a kernel parameter.
+* **A palette change does not retint pixels already drawn.** The framebuffer is
+  truecolor, so each cell was resolved to RGB when it was written. `F5` is a
+  palette switch **and** a full redraw.
+
+The colours themselves are exact. Measured off the framebuffer, every pixel of
+1 280×800: index 4 `#0057ad`, index 6 `#1289ff`, index 7 `#c0c0c0`, index 0
+`#000000`, high-contrast `#003366`.
 
 Palette (**decided, D5**; slots 1,2,3,5 keep their defaults so kernel messages
 still look normal):
@@ -170,7 +198,10 @@ grid with no shaping engine. The conversion discards them either way.
 * **Two sizes get built**, because 8×16 is unreadable on a modern panel — at
   1920×1080 it gives a 240×67 grid. Pixel-doubling the PSF to **16×32** is a
   mechanical transform (duplicate each bit horizontally, each row vertically)
-  and needs no redraw. Setup picks by framebuffer height; the installed console
+  and needs no redraw. **Confirmed by S1**: at 1280×800 the 16×32 font gives
+  exactly `Console: switching to colour frame buffer device 80x25`, and
+  `ioctl(TIOCGWINSZ)` agrees, so the reference geometry is real and the layout
+  rule has a number to work from at run time. Setup picks by framebuffer height; the installed console
   gets the same treatment.
 * **fbcon handles 16-wide fonts** — the kernel's own `TER16x32` is proof.
 * **80×25 is not obtainable everywhere.** UEFI hands us whatever GOP mode the
@@ -194,11 +225,36 @@ grid with no shaping engine. The conversion discards them either way.
 A build-time step, not a runtime one. It belongs in the **build container**, so
 no font toolchain ships in the image:
 
+**BUILT AND WORKING since 2026-08-24** —
+[`build/lib/build-console-font.sh`](../build/lib/build-console-font.sh) and
+[`build/lib/psf.py`](../build/lib/psf.py), run by `build/build.sh` and staged
+into `includes.chroot/usr/share/consolefonts/`. The pipeline is two steps longer
+than the sketch below, and both additions are mandatory rather than tidying:
+
 ```
-FSEX302.ttf  --otf2bdf -p 16-->  fixedsys-16.bdf
-             --bdf2psf + symbol set-->  os7-fixedsys-8x16.psf
-             --pixel-double-->  os7-fixedsys-16x32.psf
+FSEX302.ttf --otf2bdf -p 16 -r 72 -n--> fixedsys-16.bdf
+            --psf.py fixedwidth 8-----> only the cell-width glyphs
+            --bdf2psf + FILTERED equivalents + generated symbol set--> 8x16 PSF
+            --psf.py fillcell---------> the 15-in-16 seam closed
+            --psf.py double-----------> 16x32 PSF
+            --psf.py verify-----------> or the build stops
 ```
+
+* **`fixedwidth`** — Fixedsys is not monospaced across its cmap. 4 230 glyphs
+  advance 8 px, 1 575 advance more and 346 advance 0, so `otf2bdf` reports
+  `SPACING "P"` with `AVERAGE_WIDTH 77` and `bdf2psf` refuses the file outright:
+  *"the width is not integer number."* Dropping the wide glyphs is not a
+  workaround for that message — a 16-pixel glyph has nowhere to go in an 8-pixel
+  cell, and keeping it hands `bdf2psf` something to truncate. All 352 required
+  codepoints advance exactly 8.
+* **`fillcell`** — the font draws 15 pixels of ink in a 16-pixel cell (`hhea`
+  ascender 130, descender −30, `U+2588` spanning y −30…120 at 10 units/px), so
+  the top row of every cell is empty and every vertical box border comes out
+  dashed. BUILD-NOTES #27.
+* **The equivalents file is filtered, not the stock one.**
+  `standard.equivalents` line 217 gives `U+2550 ═` the glyph of `U+2500 ─`, and
+  the whole double-line box collapses onto the single-line one. No coverage check
+  can see it — the codepoint is mapped, to the wrong picture. BUILD-NOTES #26.
 
 `bdf2psf` is the Debian tool `console-setup` itself uses, so this is the
 supported path rather than a bespoke one.
@@ -242,11 +298,25 @@ Three things this step must do, and a fourth it must never skip:
    UI uses. Greek and Cyrillic do not fit alongside that, which is consistent
    with L9 (English and German for v1).
 3. **Emit the Unicode table** so `setfont` maps codepoints, not raw byte values.
-4. **Assert the result.** Decode the produced PSF's Unicode table and fail the
-   build if any required codepoint is missing. This is [docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md)
-   #13's habit applied to fonts: never conclude a step worked because it exited
-   0 — check for its effect. A silently under-subsetted font produces an
-   installer drawn in `?` characters, and the build would not notice.
+4. **Assert the result.** `psf.py verify` decodes the produced PSF's Unicode
+   table and fails the build on a missing codepoint — and on three things a
+   missing-codepoint check alone would pass:
+
+   * a codepoint that is **present but blank**;
+   * two shapes that must differ and do not (nine pairs, e.g. `U+2500`/`U+2550`)
+     — this is what caught the equivalences;
+   * a cell join that does not reach the top row, or a non-join that does — this
+     is what catches a regression in `fillcell`.
+
+   [docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md) #13's habit applied to fonts:
+   never conclude a step worked because it exited 0. Especially here — `otf2bdf`
+   exits **8** on this font at every size while producing a perfectly correct
+   BDF, so the exit code is not usable at all (BUILD-NOTES #24).
+
+   **Measured 2026-08-24:** 409 codepoints requested, 434 mapped into 512
+   positions, every REQUIRED block complete — ASCII 95/95, Latin-1 96/96, Box
+   Drawing 128/128, Block Elements 32/32. Nine decorative extras are absent, six
+   of them because they are 16 pixels wide in this font and a PSF cell is 8.
 
 **Optional, not required by the decision:** dropping `FSEX302.ttf` into
 `/usr/share/fonts/truetype/fixedsys-excelsior/` costs 580 KB and makes the same
@@ -780,7 +850,12 @@ aesthetic and fighting it to reach a pixel-faithful Win2k layout costs more than
 writing the renderer. The renderer we need is small and fully specified:
 
 * an 80×N `Cell[,]` buffer (rune + fg + bg), diffed against the previous frame,
-  flushed as one `write(2)`
+  flushed as one `write(2)`. **Emit SGR intensity explicitly on every colour
+  change** — `ESC[22;3xm` for indices 0–7 and `ESC[1;3xm` for 8–15. The bright
+  sequences `ESC[90m`–`ESC[97m` mean "colour n−90 *and bold*" on the Linux
+  console and the bold is sticky, so a later `ESC[36m` renders palette entry 14
+  rather than 6. S1 hit exactly that on the progress bar, which is the only
+  element in §3.1 that uses the brand blue as a foreground (BUILD-NOTES #30)
 * raw mode via `tcsetattr`, `SIGWINCH` handling, guaranteed restore on exit,
   crash and signal
 * a hand-written escape-sequence decoder for arrows / F-keys / PgUp / PgDn.
@@ -789,6 +864,31 @@ writing the renderer. The renderer we need is small and fully specified:
   gaps around F-keys under `TERM=linux`.
 
 Estimated 700–900 lines. Everything above it is screens and steps.
+
+**Confirmed by S1 (2026-08-24)**, with the raw bytes rather than by reasoning.
+The Linux console splits its function keys across two encodings:
+
+```
+F1 ESC[[A   F2 ESC[[B   F3 ESC[[C   F5 ESC[[E      a form no other terminal emits
+F8 ESC[19~  F10 ESC[21~                            the DEC/xterm form, F6 upwards
+```
+
+`F3=Quit` and `F5=Advanced` are on the Linux-only side, i.e. exactly the keys a
+terminfo layer with gaps would get wrong. All 16 keys tested decoded correctly;
+the table is checked at start-up for the property the reader depends on — no
+sequence is a proper prefix of another. `installer/spikes/s1-look/Tui/Keys.cs` is
+the measured version to start Phase 1 from.
+
+Two things the input path needs and this list omitted:
+
+* **`read(2)` through `LibraryImport`, not `Console.OpenStandardInput()`.** .NET's
+  console stream applies termios settings of its own; with it in the path a
+  raw-mode reader returned one byte and then reported end of input on an open tty
+  (BUILD-NOTES #29).
+* **A timer for the bare `ESC` key.** A lone ESC is the prefix of every sequence
+  in the table, so a reader blocks on it until the next key arrives. After ESC,
+  switch to `VMIN=0`/`VTIME=1` and treat "nothing within ~100 ms" as Escape. §3.1
+  screen 2 offers `ESC`; S1 did not test it and Phase 1 owes it.
 
 ### 6.5 Proposed source layout
 
@@ -834,10 +934,15 @@ strictly afterwards, from that object alone. Consequences, all free:
 * The Install entry carries the palette, font and quiet parameters:
 
   ```
-  boot=casper fbcon=font:TER16x32 plymouth.enable=0 quiet loglevel=0 \
-  vt.color=0x4f vt.default_red=... vt.default_grn=... vt.default_blu=... \
-  os7.setup=1
+  boot=casper fbcon=font:TER16x32 plymouth.enable=0 quiet loglevel=0 os7.setup=1
   ```
+
+  **Shorter than it was, because S1 measured the rest as useless.**
+  `vt.default_red/grn/blu` is replaced by `setvtrgb.service` before the console
+  is ever displayed, and `vt.color=0x4f` has no observable effect on the default
+  attribute at all. The palette comes from `/etc/vtrgb` instead — one file, on
+  every boot, for Setup and the installed console alike. §2.1 and BUILD-NOTES
+  #25.
 
 * A systemd unit runs `os7-setup` on `tty1` (`StandardInput=tty`,
   `TTYPath=/dev/tty1`, `TTYReset=yes`, `TTYVHangup=yes`), with `getty@tty1`
@@ -849,6 +954,12 @@ strictly afterwards, from that object alone. Consequences, all free:
 ### 7.1 Packages the ISO still needs
 
 None of these are in the lists today; all are needed at install time:
+
+**Done since 2026-08-24:** `build/config/package-lists/os7-base.list.chroot`
+carries the list below, and the console font itself is built by
+`build/lib/build-console-font.sh` and staged with a matching
+`/etc/default/console-setup`. `build.sh` fails if either half is missing — a
+system with the fonts and no config boots in the Debian default and says nothing.
 
 `squashfs-tools` (or `rsync`), `gdisk`, `dosfstools`, `efibootmgr`,
 `grub-efi-amd64-signed` / `grub-efi-arm64-signed`, `shim-signed`, `kbd`,
@@ -890,8 +1001,9 @@ in the shipped system.
 | L16 | Intune's "Allowed distributions" rule matches on `/etc/os-release`; branding OS/7 as its own `ID=` could make every device fail it | keep `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"`, brand only `NAME` / `PRETTY_NAME` (§4.6). **RESOLVED 2026-08-23 (D8):** the product identity moves to `IMAGE_ID` / `IMAGE_VERSION`, so OS/7 is identifiable as itself without touching a field Intune matches on |
 | L17 | LUKS unlock at boot needs a passphrase prompt unless TPM2 enrolment happens at install time | **Tested by S4 (2026-08-23), and bigger than it looked.** `systemd-cryptenroll` writes a valid LUKS2 token and **changes nothing at boot**: `cryptsetup-initramfs` copies no token handler and feeds `cryptsetup open` a passphrase on stdin, which skips token activation. Setup must also install an initramfs hook carrying `libcryptsetup-token-systemd-tpm2.so` *and the libtss2 libraries systemd dlopens* (BUILD-NOTES #20), plus a `local-top` script running before `cryptroot` that calls `cryptsetup open --token-only`. With that, auto-unlock works and a TPM-less machine still prompts. **New risk, now measured — S6 (2026-08-23):** sealing to PCR 7 survives kernel and initramfs updates (PCR 7 came back byte-identical across a from-scratch rebuild, and the hook survived with it) but **not** a Secure Boot policy change — a shim/dbx update drops the fleet back to passphrases. S6 characterised that failure and it is better than feared: `cryptsetup` names the cause instead of failing silently, the passphrase path is intact, and one `systemd-cryptenroll` re-seal against the new PCR 7 restores auto-unlock without touching the initramfs. What is still missing is the escrowed recovery key that would let that run unattended — tracked as U8 in [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md). Evidence: [../docs/SESSION-S6-UPDATE-CYCLE.md](../docs/SESSION-S6-UPDATE-CYCLE.md) |
 | L18 | **`bpool` may still trip the encryption check.** Microsoft exempts `/boot`, but `bpool` is an unencrypted fixed writable partition holding a ZFS *pool member*, not a directly mounted filesystem. Whether the agent maps it to `/boot` and exempts it is undocumented | verify in the first real enrolment test (Phase 6). If it fails: either move `/boot` into `rpool` and switch to ZFSBootMenu (D1 reopens), or carry a custom-compliance script. Do not assume it passes |
-| L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | subset to ASCII + Latin-1 + Latin Extended-A (German) + Box Drawing + Block Elements + UI punctuation, and **assert** the result at build time (§2.5). Greek and Cyrillic do not fit — consistent with L9 |
-| L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4) |
+| L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | **RESOLVED by S1 (2026-08-24), and it was never close to binding.** 409 codepoints requested, 434 mapped into 512 positions, every required block complete (ASCII 95/95, Latin-1 96/96, Box Drawing 128/128, Block Elements 32/32). Latin Extended-A turned out unnecessary: German is entirely inside Latin-1, so only the cp1252 extras are carried. **The real risks were not the cap** — `bdf2psf`'s stock equivalences silently replaced the double-line box with the single-line one, and the font draws 15 px of ink in a 16-px cell so every vertical border came out dashed. Both are fixed in the pipeline and both are now asserted; neither was visible in a coverage count. BUILD-NOTES #26 and #27 |
+| L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4). **S1 note:** the same is true of the palette and for the same reason, except that there the gap is not a few frames — `setvtrgb.service` runs *before* fbcon takes the console over, so nothing is ever displayed in the pre-userspace palette at all (BUILD-NOTES #25) |
+| L22 | **A palette change does not retint pixels already drawn.** The framebuffer is truecolor, so every cell was resolved to RGB when it was written | `F5` is a palette switch **and** a full redraw. Free on a palettised framebuffer, which is why it is easy to miss; measured 2026-08-24 |
 | L21 | Any boot-required directory split into its own dataset must be listed in `ZFS_INITRD_ADDITIONAL_DATASETS` (`/etc/default/zfs`), or the system will not boot; `canmount=off` datasets are exempt | Nothing in the D10 split needs this — the list stays empty today. Recorded because it is the trap waiting for whoever later separates `/etc`, and the failure is at boot, not at install (§4.4) |
 
 ---
@@ -904,8 +1016,8 @@ in the shipped system.
 | D2 | UEFI only, or BIOS as well | **UEFI only for v1** (recommendation, unchallenged) |
 | D3 | Encryption: ZFS native or LUKS | **DECIDED 2026-08-22 — LUKS2 under ZFS.** Forced by Microsoft's documented dm-crypt-only detection (§4.5) |
 | D4 | Swap: zram only, or offer a partition | **zram default**, partition opt-in for hibernation |
-| D5 | Field colour vs. white-text contrast | **DECIDED 2026-08-22 — field `#0057ad`** (`#1289ff` darkened along its own hue, 7.07 : 1, WCAG AAA); `#1289ff` becomes the full-width title stripe and the progress fill; `F5` → `#003366` (§2.2) |
-| D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty |
+| D5 | Field colour vs. white-text contrast | **DECIDED 2026-08-22 — field `#0057ad`** (`#1289ff` darkened along its own hue, 7.07 : 1, WCAG AAA); `#1289ff` becomes the full-width title stripe and the progress fill; `F5` → `#003366` (§2.2). **Confirmed on a framebuffer 2026-08-24:** every pixel of 1 280×800 carried the exact value, for all four slots and for the high-contrast field. Ratios recomputed from the measured pixels are 7.08 : 1 and 12.61 : 1 |
+| D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty. **S1 gave it a mechanism and made it free:** the palette has to be shipped as `/etc/vtrgb` for Setup to work at all (§2.1), Ubuntu already enables `setvtrgb.service` to apply it, and that same file is what the installed console reads. Keeping the palette is now the default outcome and *removing* it would be the extra work |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3) |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
@@ -922,7 +1034,7 @@ UI to exist. **Gate: all four pass before Phase 1 starts.**
 
 | Spike | Question | Method | Done when |
 |---|---|---|---|
-| **S1** | Does the look actually work | Boot the existing arm64 ISO in QEMU with the palette + `fbcon=font:TER16x32` cmdline; paint one static mockup screen; `screendump` from the QEMU monitor | Field is exactly `#0057ad`, stripe exactly `#1289ff`, box glyphs render, arrows and F-keys decode |
+| **S1** | Does the look actually work | Boot the arm64 ISO under `virtio-gpu-pci`, build and load the Fixedsys PSF, paint the §3.1 mockups from a NativeAOT painter, `screendump` over QMP and inject keypresses as qcodes | **PASS 2026-08-24 (arm64).** All four criteria measured, not eyeballed: the field is exactly `#0057ad` and the stripe exactly `#1289ff`; 126 cells match the font bitmap-for-bitmap; all 16 keys decode. `installer/spikes/s1-look/` + `run-s1.py`; findings in [../docs/SESSION-S1-LOOK.md](../docs/SESSION-S1-LOOK.md) |
 | **S2** | Does NativeAOT build in the OS/7 container | `dotnet publish -p:PublishAot=true` for both arches in `os7-build` | **PASS 2026-08-23.** Both arches, zero warnings, 3.2–3.4 MB; the arm64 binary runs in the ISO *with .NET deleted from it*. `installer/spikes/s2-nativeaot/` + `run-s2.sh`; findings in [../docs/SESSION-S2-NATIVEAOT.md](../docs/SESSION-S2-NATIVEAOT.md) |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | Hand-scripted bash, no UI: partition → `cryptsetup luksFormat` → `bpool` + `rpool` on `/dev/mapper/os7_root` → `unsquashfs` → `zgenhostid` → `crypttab` → chroot config → `update-initramfs` → `grub-install` → reboot | **PASS 2026-08-23 (arm64).** `installer/spikes/s3-zfs-luks.sh`, driven by `installer/spikes/run-s3.py`; findings in [../docs/SESSION-S3-ZFS-LUKS.md](../docs/SESSION-S3-ZFS-LUKS.md) |
 | **S4** | Does it survive Secure Boot, and does TPM2 unlock work | Repeat S3 under OVMF with Secure Boot on and Microsoft keys, plus a software TPM (`swtpm`) and `systemd-cryptenroll --tpm2-device=auto` | **PASS 2026-08-23 (arm64).** All three: SB enabled, second boot needs no passphrase, TPM-less VM still boots. `installer/spikes/s4-tpm-enroll.sh` + `run-s4.py`; findings in [../docs/SESSION-S4-SECUREBOOT-TPM.md](../docs/SESSION-S4-SECUREBOOT-TPM.md) |
@@ -953,7 +1065,15 @@ both architectures, and the binary runs in the ISO without .NET present. Note
 that the amd64 binary builds fine on an Apple Silicon host even though the amd64
 *ISO* cannot (BUILD-NOTES #23), so Phase 1 is not blocked by that.
 
-**S1 is the only spike left.** Phase 1 is still gated on all four.
+**S1 passed on 2026-08-24**, and with it **Phase 0 is closed and Phase 1 is
+unblocked.** It also corrected this document in three
+places, all of which are folded in above and below: §2.1's palette mechanism does
+not survive Ubuntu's userspace, §2.5's font pipeline was missing two mandatory
+steps, and §7's `vt.color=0x4f` does nothing at all.
+
+Two things S1 hands Phase 1 rather than merely clearing: the console font is
+built, asserted and staged into the image by `build/build.sh`, and the key table
+in `installer/spikes/s1-look/Tui/Keys.cs` is the measured one.
 
 D3 made S3 harder than it was when this document was first written: the
 encryption layer is now part of the *first* spike rather than a later refinement.
@@ -1010,9 +1130,11 @@ belong in an installer log). `espeakup` accessibility. CI installs in QEMU.
 | Wherever `/etc/os-release` gets branded | **D8 is decided (§9):** brand `NAME` / `PRETTY_NAME` / `HOME_URL`, add `IMAGE_ID` / `IMAGE_VERSION`, and leave `ID` / `ID_LIKE` / `VERSION_ID` alone — Intune's "Allowed distributions" rule reads them (§4.6). Re-assert after every update: the file is a `base-files` conffile. |
 | `build/config/auto/config` | `--bootappend-live` gains the palette/font parameters; the ISO grows an Install entry. |
 | `build/build.sh` | New stage: `dotnet publish` `os7-setup` into `includes.chroot/usr/lib/os7-setup/`. |
-| `Dockerfile` | `dotnet-sdk-10.0` + `clang` + `zlib1g-dev` in the build container (pending S2), plus `otf2bdf` + `bdf2psf` for the console font (§2.5). |
-| `build/build.sh` (font) | New stage: fetch and hash-pin `FSEX302.ttf`, convert to `os7-fixedsys-8x16.psf` and `os7-fixedsys-16x32.psf`, assert coverage, stage into `includes.chroot/usr/share/consolefonts/`. |
-| `build/config/includes.chroot/etc/default/console-setup` | New: point the installed non-GUI console at the Fixedsys PSF. |
+| `Dockerfile` | **DONE 2026-08-24.** `dotnet-sdk-10.0` + `clang` + `zlib1g-dev` + `libc6-dev` + `binutils` (the list S2 established), plus `otf2bdf` + `bdf2psf` for the console font (§2.5). |
+| `build/build.sh` (font) | **DONE 2026-08-24.** Calls `build/lib/build-console-font.sh`, which fetches and hash-pins `FSEX302.ttf`, converts to `os7-fixedsys-8x16.psf` and `os7-fixedsys-16x32.psf`, asserts coverage and shape, and stages into `includes.chroot/usr/share/consolefonts/`. The build fails if either PSF or the `console-setup` include is missing. |
+| `build/config/includes.chroot/etc/default/console-setup` | **DONE 2026-08-24.** `FONT="os7-fixedsys-16x32.psf.gz"` — set through `FONT=` rather than `FONTFACE`/`FONTSIZE`, because setupcon composes a Debian-named filename out of the latter and would go looking for a font that does not exist. |
+| `build/config/includes.chroot/usr/share/os7/palette-*.vtrgb` | **DONE 2026-08-24.** Generated by `build/lib/palette.py`, which also re-checks D5's contrast ratios on every build. Setup applies one of them itself at start-up, because the kernel command line is dead here (§2.1). |
+| `/etc/vtrgb` | **Deliberately not wired, because that is D6.** Pointing it at `/usr/share/os7/palette-default.vtrgb` makes the *installed* console keep the palette; Ubuntu's already-enabled `setvtrgb.service` does the rest. Alternatives-managed, so install it as an alternative rather than overwriting the symlink. |
 | `installer/spikes/s3-zfs-luks.sh` | **Left as-is on purpose** — it records what S3 actually did, and S3 predates D10. The storage executor deliberately diverges from it: S3 creates `rpool/ROOT/$BE/var` and `/var/log` as BE children, which §4.4 now splits. Do not "fix" the spike; it is evidence, not a template. |
 | `powershell/OS7/OS7.psm1` | Gains the BE primitives Setup and `Update-OS7` share (as a *pair* of datasets, §6.3); `Restore-OS7 -BootEnvironment` gets the naming scheme from §4.4. The full cmdlet surface, and the on-disk format these stubs say they lack, are in [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §6. |
 
@@ -1029,7 +1151,7 @@ remembered. What was *not* checked is marked as a spike in Phase 0.
 
 | Claim | Source |
 |---|---|
-| Linux VT palette is programmable per-slot; `setvtrgb` takes 3×16 decimal values; `vt.default_red/grn/blu` and `vt.color` are kernel parameters | [setvtrgb(8)](https://www.man7.org/linux//man-pages/man8/setvtrgb.8.html), [Ubuntu setvtrgb(1)](https://manpages.ubuntu.com/manpages/focal/man1/setvtrgb.1.html), [kernel-parameters vt options](https://nv-tegra.nvidia.com/r/plugins/gitiles/linux-2.6/+/55ff9780e7cedc9168dab4d42483c70011c53ace%5E%21/Documentation/kernel-parameters.txt) |
+| Linux VT palette is programmable per-slot; `setvtrgb` takes 3×16 decimal values (or 16 `#RRGGBB` lines); `vt.default_red/grn/blu` and `vt.color` are kernel parameters — **but on Ubuntu the first is overwritten by `setvtrgb.service` before anything is displayed and the second has no effect at all, measured 2026-08-24** | [setvtrgb(8)](https://www.man7.org/linux//man-pages/man8/setvtrgb.8.html), [Ubuntu setvtrgb(1)](https://manpages.ubuntu.com/manpages/focal/man1/setvtrgb.1.html), [kernel-parameters vt options](https://nv-tegra.nvidia.com/r/plugins/gitiles/linux-2.6/+/55ff9780e7cedc9168dab4d42483c70011c53ace%5E%21/Documentation/kernel-parameters.txt) |
 | fbcon accepts 24-bit SGR but degrades it to its 16-colour palette (and only 8 backgrounds) | [Terminal.Gui #48 truecolor discussion](https://github.com/gui-cs/Terminal.Gui/issues/48) |
 | Ubuntu kernels enable `CONFIG_FONT_TER16x32`, usable via `fbcon=font:TER16x32` | [LP #1819881](https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1819881), [Ubuntu Discourse: HiDPI kernel font](https://discourse.ubuntu.com/t/high-dpi-kernel-font-for-tty-consoles/10439) |
 | Secure Boot chain is Microsoft-signed `shim-signed` → Canonical-signed `grub-efi-*-signed`; ZFS root installs use `bpool`, which must be named `bpool`; GRUB opens pools read-only so only read-only-compatible features count | [OpenZFS Ubuntu 22.04 Root on ZFS](https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html), [Ubuntu Secure Boot docs](https://documentation.ubuntu.com/security/security-features/platform-protections/secure-boot/) |

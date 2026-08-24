@@ -115,6 +115,59 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Console font (SETUP-PLAN §2.5, decision D9).
+#
+# Fixedsys Excelsior ships as a TTF; the Linux console reads PSF. The conversion
+# is a BUILD step so that otf2bdf and bdf2psf stay in the container and never
+# reach the image - the image gets two .psf.gz files and nothing else.
+#
+# Not a hook, deliberately. A hook runs inside the chroot, where it would have
+# to install the toolchain into the image and then remove it, and where a
+# failure is easy to miss (trap #13). Here it is an ordinary step that either
+# produces the files or stops the build.
+#
+# The fetch is cached in the container-local WORK tree, so a rebuild in the same
+# container does not re-download and an offline rebuild works.
+# ---------------------------------------------------------------------------
+CONSOLEFONT_DST="${WORK}/config/includes.chroot/usr/share/consolefonts"
+mkdir -p "${CONSOLEFONT_DST}"
+"${HERE}/lib/build-console-font.sh" "${CONSOLEFONT_DST}" "${WORK}/cache/fonts"
+
+for required in os7-fixedsys-8x16.psf.gz os7-fixedsys-16x32.psf.gz; do
+	if [[ ! -s "${CONSOLEFONT_DST}/${required}" ]]; then
+		echo "!!! console font step produced no ${required}" >&2
+		exit 1
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# Console palette (SETUP-PLAN §2.1, decision D5).
+#
+# Generated rather than checked in, because the same sixteen values are needed
+# by the image, by the S1 harness and by anything that later wants the kernel
+# form - and four hand-maintained copies of a decision drift.
+#
+# Staged to /usr/share/os7/ and NOT to /etc/vtrgb. The difference is D6, which is
+# still open: Setup applies the palette itself when it starts (it has to, since
+# the kernel command line is dead here - BUILD-NOTES #25), and whether the
+# INSTALLED console keeps it afterwards is a separate decision. Symlinking
+# /etc/vtrgb at these files is the one-line change that makes it so.
+# ---------------------------------------------------------------------------
+echo ">>> Console palette"
+python3 "${HERE}/lib/palette.py" verify
+python3 "${HERE}/lib/palette.py" write \
+	"${WORK}/config/includes.chroot/usr/share/os7"
+
+# /etc/default/console-setup names these files. If the include is missing the
+# system still boots, with the wrong font and no sign that anything is wrong -
+# so check the pair here rather than discovering it on a screenshot.
+if [[ ! -f "${WORK}/config/includes.chroot/etc/default/console-setup" ]]; then
+	echo "!!! consolefonts staged but /etc/default/console-setup is not -" >&2
+	echo "!!! the installed console would silently keep the Debian default." >&2
+	exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # GUARD: live-build 3.0 globs hooks at config/hooks/*.chroot - FLAT. The older
 # Debian live-build layout (config/hooks/normal/) does NOT match, and when it
 # does not match live-build prints "Begin executing hooks..." and silently runs

@@ -8,10 +8,53 @@ code.
 
 | Spike | Question | State |
 |---|---|---|
-| S1 | Does the look actually work | not started |
+| **S1** | **Does the look actually work** | **PASS 2026-08-24 (arm64)** |
 | **S2** | **Does NativeAOT build in the `os7-build` container** | **PASS 2026-08-23 (both arches)** |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | **PASS 2026-08-23 (arm64)** |
 | **S4** | **Does it survive Secure Boot, and does TPM2 unlock work** | **PASS 2026-08-23 (arm64)** |
+
+## S1
+
+```bash
+./run-s1.py font       build the console font and assert its coverage and shapes
+./run-s1.py build      publish the NativeAOT painter for arm64
+./run-s1.py palette    is the field exactly #0057ad          (two boots)
+./run-s1.py mockup     the font, the glyphs and the §3.1 screens
+./run-s1.py keys       press arrows and F-keys, check what decoded
+./run-s1.py all        all five, in order    (~20 min, five boots)
+./run-s1.py reset      discard the VM state
+```
+
+Needs `out/os7-arm64.iso` and `qemu-system-aarch64`. Screendumps land in
+`../../.vm/s1/shots/` as PNGs; the VM state and serial logs are beside them.
+
+The only spike that needs a **framebuffer** — S3, S4 and S6 all run with
+`-display none` because nothing they prove is visible. So it adds three things
+the others have no use for: `virtio-gpu-pci` (a display with no window, whose
+default 1280x800 is exactly the 80x25 reference geometry), screendumps over
+**QMP**, and keypresses injected over QMP as qcodes to a USB keyboard, so they
+travel the real path — HID, the kernel keymap, the VT's XLATE translation — and
+arrive as the bytes a person's keypress would produce.
+
+It also boots the kernel and initrd out of the ISO directly rather than through
+GRUB, purely so each phase can set its own command line. `palette` needs two
+boots and the reason is the finding: one of them masks `setvtrgb.service`.
+
+- [`s1-look/`](s1-look) is the painter — NativeAOT C#. Throwaway like the rest:
+  no damage tracking, no screen stack, no error handling. What survives is what
+  it *measured* — the key table in `Tui/Keys.cs` is the one the Linux console
+  actually produced, and `Native/Termios.cs` records two things Phase 1 would
+  otherwise rediscover (read with `read(2)`, and drain the queue first).
+- [`s1-look.sh`](s1-look.sh) runs **inside** the live session. Every subcommand
+  ends by echoing a marker, because a marker the harness typed is a marker the
+  shell will echo back (docs/BUILD-NOTES.md #16).
+- [`run-s1.py`](run-s1.py) runs on the **host**: builds the payload, drives the
+  console, takes the screendumps and compares them against the font.
+- [`../../docs/SESSION-S1-LOOK.md`](../../docs/SESSION-S1-LOOK.md) is the write-up.
+
+The console font is **not** part of the spike — it is a real build stage in
+[`../../build/lib/build-console-font.sh`](../../build/lib/build-console-font.sh),
+and `./run-s1.py font` just runs it.
 
 ## S3
 
