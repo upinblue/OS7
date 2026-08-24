@@ -335,9 +335,28 @@ class Lab:
         The names carry the kernel version, so they are globbed rather than
         guessed - and exactly one of each is required, because two kernels on the
         medium would mean the choice was being made silently.
+
+        RE-EXTRACTED WHENEVER THE ISO IS NEWER, and the mtime is the whole point
+        rather than a nicety. casper matches the medium by UUID: the initrd
+        carries /conf/uuid.conf and the medium carries .disk/casper-uuid-<kver>,
+        and a build writes a fresh pair every time. Cached files from the
+        PREVIOUS ISO therefore boot a kernel of the right version against a
+        medium it will not accept, and casper says "Unable to find a medium
+        containing a live file system" - which reads as a broken ISO and is not.
+        Measured 2026-08-24: initrd 3dafea6c-…, medium 5c231671-…, fifteen
+        minutes of a walk that was testing nothing.
         """
-        if os.path.exists(self.kernel) and os.path.exists(self.initrd):
+        fresh = (os.path.exists(self.kernel) and os.path.exists(self.initrd)
+                 and os.path.getmtime(self.kernel) >= os.path.getmtime(self.iso)
+                 and os.path.getmtime(self.initrd) >= os.path.getmtime(self.iso))
+        if fresh:
             return
+        if os.path.exists(self.kernel) or os.path.exists(self.initrd):
+            print("    the ISO is newer than the extracted boot files; re-extracting")
+            for f in (self.kernel, self.initrd):
+                if os.path.exists(f):
+                    os.chmod(f, 0o644)
+                    os.remove(f)
         print("    extracting the kernel and initrd from the ISO …")
         run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
             "-v", f"{os.path.dirname(self.iso)}:/iso:ro", "-v", f"{self.dir}:/vm",
