@@ -20,7 +20,7 @@ decides what, the commands that work, and the traps that cost the most.
 | **NativeAOT for `os7-setup`** | **Works on both arches.** 3.2–3.4 MB static-ish ELF, zero warnings, runs in the ISO with .NET deleted. See [SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md). The SDK is now in the Dockerfile. |
 | **The text-mode look** | **Works on arm64, measured.** Field exactly `#0057ad`, stripe exactly `#1289ff`, 126 test-card cells matching the console font pixel for pixel, all 16 arrow/F-keys decoding, 80×25 at 1280×800. See [SESSION-S1-LOOK.md](SESSION-S1-LOOK.md). |
 | **The console font** | **Built by the ISO build.** `build/lib/build-console-font.sh` converts the pinned Fixedsys Excelsior TTF to two PSFs, asserts coverage *and shape*, and stages them with a matching `/etc/default/console-setup`. |
-| PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all three functions (they are stubs that throw by design). `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
+| PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all five functions — `New-OS7Storage` and `New-OS7BootEnvironmentName` are real and are what `os7-setup` calls; the other three still throw by design. `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
@@ -69,6 +69,21 @@ progress; chroot configuration (locale, timezone, hostname, users,
 `zgenhostid`, `update-initramfs`); bootloader install and the `grub.d` boot-
 environment generator; screens 7–11; the GUI/headless split.
 *Deliverable: a machine installed by Setup boots into OS/7.*
+
+**Where it starts.** Phase 2 leaves the pools created with `-R /target` and the
+boot environment mounted, so Phase 3 begins on a mounted, empty
+`rpool/ROOT/os7_<release>_<stamp>` at `/target`. The first step is
+`unsquashfs` of `/cdrom/casper/filesystem.squashfs` into it; the last is
+`grub-install` and a menu that lists the boot environment.
+`installer/spikes/s3-zfs-luks.sh` did all of it once, by hand, and booted — its
+steps 6 onwards are the sequence to be a front-end over, exactly as steps 1–5
+were for Phase 2.
+
+**How to know it worked.** Extend `installer/testing/run-phase2.py` rather than
+starting a new harness: it already installs, and the check Phase 3 needs is the
+one Phase 2 could not make — **reboot the VM from the disk alone and reach a
+login prompt.** `installer/spikes/run-s3.py`'s `boot` phase is that check, and
+it is where to copy it from.
 
 That is the phase where the disk Phase 2 prepares becomes a system, so the
 things to carry into it are the ones that decide whether it boots:
@@ -154,7 +169,7 @@ Full detail in the two session documents. The ones that will bite again:
   a `local-top` script that runs before `cryptroot`. BUILD-NOTES #19 and #20;
   `installer/spikes/s4-tpm-enroll.sh` is the working version.
 
-### The two open risks S4 leaves behind
+### The two open risks S4 and S6 leave behind
 
 * ~~**PCR 7 sealing has no recovery story.**~~ **Measured 2026-08-23 by S6**
   ([SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md)). Sealing does
@@ -337,19 +352,28 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
 
 ## 6. Open items not decided anywhere
 
-- **The live ISO and the setup ISO are currently the same image.** SETUP-PLAN §7
-  has Setup running from the live medium. If they are meant to diverge, that
-  needs deciding before Phase 1.
+- **The live ISO and the setup ISO are the same image, and that now looks
+  settled rather than undecided.** One medium carries two GRUB entries — *Install
+  OS/7* (which sets `os7.setup=1` and `systemd.wants=os7-setup.service`) and a
+  plain live session — and `run-phase1.py live` is the regression test that the
+  second one stays a live session. Nothing has argued for two images since.
 - **dash-to-panel / ArcMenu have no GNOME 50 build** in the resolute archive, so
   the "familiar desktop" goal is unmet on amd64. Hook 0070 logs the gap.
   Options are in BUILD-NOTES.
-- **D8/L16 — `/etc/os-release` identity.** Still undecided, and S3 gave it a
-  second face: the GRUB menu entry is titled from `PRETTY_NAME` and currently
-  reads "Ubuntu 26.04 LTS".
+- **D8/L16 — `/etc/os-release` identity.** D8 is *decided* (`IMAGE_ID` /
+  `IMAGE_VERSION`, leaving `ID` alone for Intune) but **nothing writes it yet**,
+  so the GRUB menu entry is still titled from `PRETTY_NAME` and reads "Ubuntu
+  26.04 LTS". It belongs to Phase 3, which is the phase that configures the
+  installed system.
 - **`/var` mounts via `zfs-mount.service`, not `zfs-mount-generator`.** It
-  works, and the datasets all landed on their real mountpoints with no altroot
-  leakage — but there is no `zfs-list.cache`, so ordering under load has not
-  been tested.
+  worked in S3, and the datasets all landed on their real mountpoints with no
+  altroot leakage — but there is no `zfs-list.cache`, so ordering under load has
+  not been tested. Phase 2 created many more `rpool/DATA` datasets than S3 did,
+  which makes this more worth checking, not less.
+- **No TPM2 enrolment in the installer.** Spikes S4 and S6 proved it works and
+  what it costs; `os7-setup` does not do it. It needs the initramfs pieces from
+  `installer/spikes/s4-tpm-enroll.sh` (BUILD-NOTES #19, #20) and belongs with
+  Phase 3's initramfs step.
 
 ## 7. Repo orientation
 

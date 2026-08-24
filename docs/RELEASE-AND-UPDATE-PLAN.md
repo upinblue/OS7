@@ -15,7 +15,7 @@ and **yes — but only if the package set is pinned, otherwise the number is a
 label rather than a state.**
 
 This is the document [../powershell/OS7/OS7.psm1](../powershell/OS7/OS7.psm1)
-is missing: its three stubs throw `NotImplementedException` and say in their own
+is missing: its stubs throw `NotImplementedException` and say in their own
 help that no on-disk format, transport or ZFS layout is defined. This defines
 them. It also closes D8 from
 [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md) as a side effect (§3.5)

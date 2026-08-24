@@ -6,12 +6,18 @@ and none of it should grow into it** — no UI, no error handling worth the name
 no rollback. What survives a spike is its *sequence* and what it taught, not its
 code.
 
+S6 is here too, although it comes from
+[`../../docs/RELEASE-AND-UPDATE-PLAN.md`](../../docs/RELEASE-AND-UPDATE-PLAN.md)
+§10 rather than from SETUP-PLAN Phase 0 — it is the same kind of thing and it
+shares the harness.
+
 | Spike | Question | State |
 |---|---|---|
 | **S1** | **Does the look actually work** | **PASS 2026-08-24 (arm64)** |
 | **S2** | **Does NativeAOT build in the `os7-build` container** | **PASS 2026-08-23 (both arches)** |
 | **S3** | **Does a ZFS-on-LUKS root install boot at all** | **PASS 2026-08-23 (arm64)** |
 | **S4** | **Does it survive Secure Boot, and does TPM2 unlock work** | **PASS 2026-08-23 (arm64)** |
+| **S6** | **Does TPM2 unlock survive the update cycle** | **PASS 2026-08-23 (arm64)** |
 
 ## S1
 
@@ -108,6 +114,23 @@ The work itself takes seconds.
   actually get used at boot — which is the part nobody tells you about.
 - [`run-s4.py`](run-s4.py) drives QEMU with `AAVMF_CODE.secboot.fd` and `swtpm`.
 - [`../../docs/SESSION-S4-SECUREBOOT-TPM.md`](../../docs/SESSION-S4-SECUREBOOT-TPM.md)
+  is the write-up.
+
+## S6
+
+```bash
+./run-s6.py all       six boots on a COPY of the S4 state, including its swtpm
+./run-s6.py reset     discard S6 state
+```
+
+Asks what S4 admitted it had not shown: does the TPM2 seal survive an update,
+what does a Secure Boot policy change do to it, and is that repairable.
+
+- [`s6-update-cycle.sh`](s6-update-cycle.sh) runs **inside** the installed system.
+- [`run-s6.py`](run-s6.py) drives it, and copies the swtpm state directory as
+  well as the disk — the sealed key lives in the TPM, so a disk-only copy would
+  have tested nothing.
+- [`../../docs/SESSION-S6-UPDATE-CYCLE.md`](../../docs/SESSION-S6-UPDATE-CYCLE.md)
   is the write-up.
 
 ## S2

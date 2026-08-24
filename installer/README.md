@@ -1,118 +1,79 @@
-# OS/7 installer — Calamares + ZFS
+# installer/
 
-> **SUPERSEDED 2026-08-22 by [SETUP-PLAN.md](SETUP-PLAN.md).**
->
-> The installer is now planned as **`os7-setup`** — an OS/7-authored,
-> keyboard-driven **text-mode** installer in C#/.NET, styled after MS-DOS 6.22
-> Setup and the Windows 2000 text-mode Setup phase, in up in blue blue
-> `#1289ff`. It serves **both** architectures, which closes open problem #1
-> below (arm64 had no install path because Calamares is a Qt GUI app), and
-> removes the need for Subiquity.
->
-> Read [SETUP-PLAN.md](SETUP-PLAN.md) first. It also **closes open problem #3
-> below (encryption): LUKS2 under ZFS**, because Intune's compliance check only
-> recognises dm-crypt. The Calamares material below is kept for its **ZFS** and
-> **Entra** findings — open problem #2 (the `authd-msentraid` snap) is untouched
-> and still blocking. Only the Calamares-specific parts are obsolete.
+`os7-setup` — OS/7's own keyboard-driven text-mode installer, in C#/.NET,
+styled after MS-DOS 6.22 Setup and the Windows 2000 text-mode Setup phase.
 
-**Status: not started.** No Calamares configuration exists yet. What follows is
-what has been *established* about the problem, so the next pass doesn't
-re-derive it.
+**[SETUP-PLAN.md](SETUP-PLAN.md) is the design and it is authoritative.** Screen
+inventory, decisions D1–D10, limitations L1–L22 and the phase plan all live
+there; this file only says what is in this directory and how to run it.
 
-## What is now known (verified 2026-08-22)
+## Where things are
 
-The single biggest unknown in README Open Question #3 — whether Calamares can
-even do ZFS on 26.04 — is answered, and favourably:
+```
+SETUP-PLAN.md     the design. Read it before changing anything here.
+src/OS7.Setup/    the installer
+  Tui/            Frame, Terminal, Input, Geometry, Theme, Widgets/
+  Screens/        one file per §3 screen, plus SetupFlow
+  Model/          InstallPlan (source-generated JSON), Disks, SystemLists
+  Steps/          the executor and the storage steps
+  Native/         Termios, Ioctl, Poll, Tty — LibraryImport into libc
+  Diagnostics/    the log: a file, and a ring in memory for the error screen
+assets/           os7-setup.service
+spikes/           Phase 0. Evidence of what worked, NOT templates — see its README
+testing/          the VM harness: vmconsole (serial), vmscreen (framebuffer,
+                  QMP, reading the screen back through the console font),
+                  run-phase1.py, run-phase2.py
+```
 
-| Fact | Detail |
-|---|---|
-| Calamares is in `resolute` | `calamares 3.3.14-0ubuntu25`, both architectures |
-| Ubuntu maintains settings for it | `calamares-settings-ubuntu 1:26.04.12` published for resolute |
-| **It ships a ZFS module** | `modules/zfs/libcalamares_job_zfs.so` + `modules/zfshostid/` in the packaged build |
-| ZFS itself is safe to target | [docs/SESSION-0-ZFS-VALIDATION.md](../docs/SESSION-0-ZFS-VALIDATION.md) |
+The ZFS layer is deliberately **not** here: pool and dataset creation live in
+`New-OS7Storage` in [`../powershell/OS7/`](../powershell/OS7/), because
+`Update-OS7` needs the identical logic and the hierarchy it creates cannot be
+corrected after the fact (SETUP-PLAN §6.3, §4.4).
 
-So this is an *integration* job against packaged, distro-supported components —
-not a port, and not a build-from-source exercise. That is a much smaller risk
-than the README assumed.
+## State
 
-Calamares is already installed into the live image by
-`build/config/package-lists/os7-desktop.list.chroot`.
+Phase 0 (four spikes) and Phases 1 and 2 are done. `os7-setup` boots from the
+ISO's *Install OS/7* entry, walks Welcome → Licence → Regional → Disk → Layout →
+Confirm, and **writes to the disk**: partition table, ESP, LUKS2 container, both
+ZFS pools and the §4.4 datasets.
 
-## What the installer still has to do
+**The result does not boot yet.** Copying the system, creating accounts and
+installing the bootloader are Phase 3. Screen 12 says so on the screen.
 
-1. **Install to a ZFS root**, laid out so `Update-OS7` / `Restore-OS7` can
-   create and activate boot environments. The `zfs` module handles pool and
-   dataset creation; the boot-environment *layout* is OS/7's design decision and
-   is not something Calamares will decide for you.
-2. **Ask GUI vs. headless at setup time** — **x86_64 only**, since arm64 has
-   no GUI to offer:
-   - **GUI** → keep GNOME, keep the Microsoft desktop stack, Intune enrollment.
-   - **Headless** → remove the desktop packages, onboard to Azure Arc instead.
+## Running it
 
-   Because the x86_64 ISO ships one shared package base, headless is a
-   **removal** step after unpacking, not a different image. Calamares' `packages`
-   module can do this via a `try_remove` operation driven by the user's choice.
+```bash
+./testing/run-phase1.py all      # the flow, read back through the console font
+./testing/run-phase2.py all      # installs four ways, then reads the DISK back
+```
 
-   On arm64 there is no question to ask: it is always headless.
-3. **Onboard the management agent.** `azcmagent` is installed by hook 0040 but
-   deliberately left un-onboarded and disabled — onboarding needs tenant
-   credentials and is per-machine, so it belongs here.
+Building and self-testing without an ISO:
 
-## Open problems, in order of how much they hurt
+```bash
+docker run --rm --platform linux/arm64 -v "$PWD/..":/work os7-build:arm64 bash -c \
+  'cd /work/installer/src/OS7.Setup && dotnet publish -c Release -r linux-arm64 \
+   -p:PublishAot=true -o /tmp/pub && /tmp/pub/os7-setup --self-test'
+```
 
-### 1. arm64 has no install path yet — Calamares cannot serve it
+`--self-test` checks what has no visible symptom until a screen is already on a
+console — the key table, both fonts and palettes, the licence text, the plan
+model, the system lists, and every screen rendering off-screen. Hook 0080 runs
+it **inside the chroot during the ISO build**, so a missing PSF or an invalid
+plan model fails the build rather than a boot.
 
-**Decided 2026-08-22: arm64 is server-only, no GUI target.** That closes the
-old question (an arm64 GUI could never have been Intune-enrolled anyway — no
-arm64 Linux Edge, and `intune-portal` / `microsoft-identity-broker` are
-x86_64-only) but opens a new one.
+## What is still open here
 
-Calamares is a Qt **GUI** application. The arm64 image ships no desktop, so
-Calamares cannot run there at all. The README's Calamares decision therefore
-covers **x86_64 only**, and arm64 needs its own install path. Options:
+**`authd-msentraid` is not in the archive.** `authd` is, but its Entra broker is
+a Canonical-verified **snap** (0.4.1, both architectures) — the root README's
+"no PPA needed" is right and its "in the archive" is not. Seeding a snap into a
+live-build image is its own unsolved task (`snap download` + `snap ack` into
+`/var/lib/snapd/seed` plus a seed manifest, none of which plain live-build
+supports). Until it is solved **no OS/7 build can log in with Entra ID**, which
+is a headline feature. It is not an installer problem — it is an image problem —
+but it was found here and it is tracked as open question 4 in the root
+[README.md](../README.md).
 
-1. **Subiquity autoinstall.** Ubuntu's server installer, text-based, and it
-   already understands ZFS root via `storage: layout: {name: zfs}`. Note the
-   June-2026 session had a draft profile for exactly this — dropped when
-   Calamares was locked in, but now relevant again *for arm64 specifically*.
-   Best fit for bare-metal servers.
-2. **Ship arm64 as a preinstalled disk image** (raw/qcow2) rather than an
-   installer ISO, the way ARM server and edge estates are usually provisioned.
-   Cheapest to build, but no bare-metal install story.
-3. **A scripted console installer.** Full control, but it means owning
-   partitioning, ZFS layout and bootloader code that Subiquity already has.
-
-(1) for bare metal and (2) alongside it for cloud/edge is the combination that
-covers the realistic arm64 deployment shapes. Nothing is built yet.
-
-### 2. Entra ID login is not in the image yet
-
-`authd` is in the archive, but its Entra broker **`authd-msentraid` is not** —
-it is a Canonical-verified **snap** (0.4.1, both architectures). The root README
-says it is in the archive with no PPA needed; the "no PPA" half is right, the
-"archive" half is not.
-
-Seeding a snap into a live-build image is its own unsolved task
-(`snap download` + `snap ack` into `/var/lib/snapd/seed` plus a seed manifest,
-none of which plain live-build supports). It was deferred rather than half-done.
-Until it is solved, **no OS/7 build can actually log in with Entra ID**, which
-is a headline feature.
-
-### 3. Encryption is undecided
-
-ZFS native encryption vs. LUKS underneath. This interacts with Intune
-disk-encryption compliance reporting on managed amd64 desktops — confirm what
-Intune actually detects before choosing.
-
-### 4. Calamares branding
-
-Untouched. README wants a classic/retro identity in up in blue Orange `#ff6912`
-for branding surfaces — note that this explicitly does **not** extend to the
-GNOME desktop itself.
-
-## Prerequisite reading
-
-- [docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md) — build system findings,
-  including why amd64 cannot currently be built on Apple Silicon.
-- [docs/SESSION-0-ZFS-VALIDATION.md](../docs/SESSION-0-ZFS-VALIDATION.md) — the
-  ZFS risk assessment this all rests on.
+**Onboarding is deliberately not done at install time.** `azcmagent` is in the
+image (hook 0040) and left un-onboarded and disabled: onboarding needs tenant
+credentials, which do not belong in an installer log. SETUP-PLAN Phase 6 collects
+the intent at install and executes it on first boot.

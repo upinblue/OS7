@@ -10,7 +10,7 @@ namespace OS7.Setup.Screens;
 ///
 /// The text is read from disk, not compiled in. Two reasons and both are about
 /// honesty: the licence a user agrees to has to be the file the image actually
-/// ships, and root README open question 4 ("License — this README currently
+/// ships, and root README open question 5 ("License — this README currently
 /// assumes MIT ... Confirm before the first public commit") is not settled, so
 /// baking a licence into the installer binary would settle it by accident.
 /// </summary>

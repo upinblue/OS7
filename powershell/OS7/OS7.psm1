@@ -337,9 +337,11 @@ function Update-OS7 {
 		    standalone 'apt upgrade powershell' — so the system stays atomically
 		    rollback-safe.
 
-		Blocked on Open Question #1 (ZFS on the Linux 7.0 kernel): there is no
-		point implementing boot-environment plumbing until ZFS root is confirmed
-		safe to build on.
+		NO LONGER BLOCKED ON ZFS. Open Question #1 (ZFS on the Linux 7.0 kernel)
+		was resolved on 2026-08-22, spike S3 installed a bootable ZFS-on-LUKS
+		root on 2026-08-23, and New-OS7Storage above now creates the layout this
+		function has to clone. What is missing is the release train it applies:
+		installer/SETUP-PLAN.md Phase 6 is where these stop being stubs.
 
 	.PARAMETER WhatIf
 		STUB. Should report the pending release without applying it.
@@ -351,7 +353,7 @@ function Update-OS7 {
 	param()
 
 	throw [System.NotImplementedException]::new(
-		'Update-OS7 is a stub. Blocked on ZFS boot-environment validation — see README.md Open Question #1.')
+		'Update-OS7 is a stub. The ZFS layer it needs exists (New-OS7Storage); the release train does not. See installer/SETUP-PLAN.md Phase 6.')
 }
 
 function Restore-OS7 {
@@ -364,7 +366,9 @@ function Restore-OS7 {
 		boot environment created by Update-OS7 and make it the active one, so a
 		bad release is recoverable without reinstalling.
 
-		Blocked on the same ZFS validation as Update-OS7.
+		Not blocked on ZFS any more — see Update-OS7. The naming scheme it needs
+		in order to LIST and SORT boot environments now exists as
+		New-OS7BootEnvironmentName (SETUP-PLAN §4.4).
 
 	.PARAMETER BootEnvironment
 		STUB. Name of the boot environment to activate. No naming scheme defined.
@@ -379,7 +383,7 @@ function Restore-OS7 {
 	)
 
 	throw [System.NotImplementedException]::new(
-		'Restore-OS7 is a stub. Blocked on ZFS boot-environment validation — see README.md Open Question #1.')
+		'Restore-OS7 is a stub. The boot-environment naming scheme exists (New-OS7BootEnvironmentName); the activation logic does not. See installer/SETUP-PLAN.md Phase 6.')
 }
 
 Export-ModuleMember -Function New-OS7Storage, New-OS7BootEnvironmentName,
