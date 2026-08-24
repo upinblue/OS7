@@ -41,7 +41,7 @@ internal sealed class RegionalScreen : Screen
         f.Body(3, 5, "Setup will use the following regional settings:");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         f.Box(5, left, width, 7);
         Row(f, 6, left, width, Setting.Language, "Language:", Describe(SystemLists.Languages, _plan.Language));
         Row(f, 7, left, width, Setting.Keyboard, "Keyboard:", Describe(SystemLists.Keyboards, _plan.Keyboard));
@@ -81,7 +81,7 @@ internal sealed class RegionalScreen : Screen
         };
         f.Body(3, 5, $"Select a {what}, then press ENTER.");
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         _picker!.Draw(f, 5, left, width);
         f.Text(6 + _picker.Height, left,
                $"{_picker.Selected + 1} of {_picker.Items.Count}", Slot.Brand);

@@ -63,7 +63,7 @@ internal sealed class AccountScreen : Screen
         f.Body(3, 5, "Setup needs a name for this computer and an account to administer it.");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         int fieldWidth = Math.Min(40, width - 22);
 
         f.Box(5, left, width, 13);

@@ -35,7 +35,7 @@ internal sealed class CompleteScreen : Screen
         f.Body(3, 5, "Setup has prepared this computer as follows.");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         StoragePlan s = _plan.Storage;
 
         f.Box(5, left, width, 11);

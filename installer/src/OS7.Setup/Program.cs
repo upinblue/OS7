@@ -396,7 +396,7 @@ internal static class Program
         {
             // §2.4's reference geometry, which is what §3.1 is drawn at.
             const int cols = 80;
-            int box = DiskScreen.BoxWidth(cols);
+            int box = Frame.BoxWidthFor(cols);
             int room = SelectionList.TextWidth(box);
 
             // The whole 80-column row, borders included, so a failure prints what
@@ -420,8 +420,14 @@ internal static class Program
                     Partitions: parts, Blocker: blocker,
                     PartitionLabels: Array.Empty<(string, string)>(), Os7Layout: os7);
 
-            Check(box == 70 && room == 66,
-                  "screen 4's box is 70 columns and gives a row 66", $"box {box}, row {room}");
+            // §3.1 draws the box at columns 5..76. Screens position content from
+            // its LEFT edge, so this is the check that its right edge is where
+            // the mockup puts it, and that the rows are sized to what is inside.
+            var geometry = new Frame(cols, 25);
+            Check(box == 72 && room == 68 && geometry.Left + 5 == 5
+                  && geometry.Left + 5 + box - 1 == 76,
+                  "screen 4's box spans columns 5..76 and gives a row 68",
+                  $"box {box} at {geometry.Left + 5}..{geometry.Left + 5 + box - 1}, row {room}");
 
             // Every last-column string screen 4 can produce, INCLUDING the two
             // that do not appear in .vm/phase2's screendumps because that VM has
@@ -588,6 +594,26 @@ internal static class Program
                     "zpool import -f -N -R /target rpool",
                     "cannot import 'rpool': pool was previously in use from another system"),
             };
+            // WHERE THE BOX ENDS, on every screen that draws one, read out of
+            // the cell buffer. §3.1 draws it at columns 5..76 and nine screens
+            // draw it; they used to do so from nine copies of the same literal,
+            // and a screen that quietly kept the old one would look right on its
+            // own and wrong beside the screen before it. ExecuteScreen's
+            // progress bar is §3.1's one deliberately narrower box and is not in
+            // this list.
+            (int Left, int Right)? BoxEdges(Frame f)
+            {
+                for (int r = 0; r < f.Rows; r++)
+                    for (int c = 0; c < f.Cols; c++)
+                        if (f[r, c].Rune == '┌')
+                        {
+                            for (int c2 = c + 1; c2 < f.Cols; c2++)
+                                if (f[r, c2].Rune == '┐') return (c, c2);
+                            return (c, -1);
+                        }
+                return null;
+            }
+
             foreach (Screen s in screens)
             {
                 var f = new Frame(80, 25);
@@ -595,6 +621,11 @@ internal static class Program
                 f.Chrome(s.Title, s.Status, Release.Current.TitleBar);
                 s.Draw(f);
                 string rendered = f.Render();
+                (int Left, int Right)? edges = BoxEdges(f);
+                if (edges is { } e)
+                    Check(e.Left == 5 && e.Right == 76,
+                          $"{s.GetType().Name}'s box spans columns 5..76",
+                          $"{e.Left}..{e.Right}");
                 Check(rendered.Length > 0, $"screen renders: {s.GetType().Name}",
                       $"{rendered.Length} bytes");
             }

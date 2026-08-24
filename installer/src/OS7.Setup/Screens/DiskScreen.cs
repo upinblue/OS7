@@ -46,21 +46,17 @@ internal sealed class DiskScreen : Screen
 
     private int _visible;
 
-    /// <summary>The box width the rows were last built for. See <see cref="BoxWidth"/>.</summary>
-    private int _width = BoxWidth(80);
-
     /// <summary>
-    /// How wide the selection box is — asked in ONE place, because two callers
-    /// have to agree about it.
+    /// The box width the rows were last built for.
     ///
     /// Draw decides how much room the box has on the screen; Build decides how
     /// much text goes in its rows. They did not agree: Build passed a literal
     /// 66, which was the row width of the box Draw happened to draw. Nothing
     /// checks that, and nothing complains — an over-long row is simply cut — so
     /// the disagreement surfaced as the right-hand column of screen 4 losing its
-    /// last character.
+    /// last character. Both now ask <see cref="Frame.BoxWidthFor"/>.
     /// </summary>
-    internal static int BoxWidth(int cols) => Math.Min(70, Frame.BodyWidthFor(cols) - 10);
+    private int _width = Frame.BoxWidthFor(80);
 
     private SelectionList Build(int rows, int width, int selected)
     {
@@ -84,7 +80,7 @@ internal sealed class DiskScreen : Screen
     public override void Layout(int cols, int rows)
     {
         int visible = Math.Clamp(rows - 13, 3, Math.Max(3, _disks.Count));
-        int width = BoxWidth(cols);
+        int width = Frame.BoxWidthFor(cols);
         // The WIDTH is watched as well as the height. The rows are cut to fit
         // the box, so a console that changes width and does not change height —
         // which is what loading a different console font does — would otherwise
@@ -103,7 +99,7 @@ internal sealed class DiskScreen : Screen
         f.Body(5, 5, "Use the UP and DOWN ARROW keys to select a disk, then press ENTER.");
 
         int left = f.Left + 5;
-        _list.Draw(f, 7, left, BoxWidth(f.Cols));
+        _list.Draw(f, 7, left, f.BoxWidth);
 
         int after = 7 + _list.Height + 1;
         // The warning goes UNDER the list and above the keys, which is where

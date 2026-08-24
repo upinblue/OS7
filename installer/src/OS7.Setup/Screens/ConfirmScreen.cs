@@ -31,7 +31,7 @@ internal sealed class ConfirmScreen : Screen
         f.Body(3, 5, "Setup is about to write to the disk below.");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         f.Box(5, left, width, 5);
         f.Text(6, left + 3, $"{_disk.Name}   {_disk.Model}");
         f.Text(7, left + 3, $"{_disk.Size}   "

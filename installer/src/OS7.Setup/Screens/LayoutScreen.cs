@@ -48,7 +48,7 @@ internal sealed class LayoutScreen : Screen
         f.Body(3, 5, "Setup will use the following storage settings:");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         StoragePlan s = _plan.Storage;
 
         long rest = _disk.Bytes - (long)s.EfiMiB * 1024 * 1024 - (long)s.BpoolGiB * 1024 * 1024 * 1024;
@@ -77,7 +77,7 @@ internal sealed class LayoutScreen : Screen
         f.Body(3, 5, _second ? "Type the passphrase again to confirm it."
                              : "Type a passphrase for the encrypted disk.");
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
 
         f.Box(6, left, width, 3);
         (_second ? _again : _pass).Draw(f, 7, left + 1, width - 2, focused: true);

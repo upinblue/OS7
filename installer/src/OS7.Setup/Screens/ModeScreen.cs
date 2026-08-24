@@ -59,7 +59,7 @@ internal sealed class ModeScreen : Screen
         f.Body(5, 5, "Use the UP and DOWN ARROW keys to select, then press ENTER.");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         _list.Draw(f, 7, left, width);
 
         f.Body(12, 5, "Desktop installs GNOME from this medium. It is the only mode");

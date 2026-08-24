@@ -34,6 +34,25 @@ internal sealed class Frame
     /// </summary>
     public static int BodyWidthFor(int cols) => Math.Min(80, Math.Max(1, cols));
 
+    /// <summary>
+    /// The box §3.1 draws on every screen that has one.
+    ///
+    /// The mockups put it at COLUMNS 5..76 of the 80-column body — five columns
+    /// of margin on the left, three on the right, 72 wide — and both of the
+    /// boxes §3.1 draws full-size (screen 4's disk list, screen 5's settings)
+    /// are drawn at exactly that. Screens position their content from the box's
+    /// left edge, `Left + 5`, so this is only ever the right-hand end of it.
+    ///
+    /// One place, because every screen that has a box wrote the number itself,
+    /// and a number written once per screen is a number that drifts. All of them
+    /// said 70, which is where the drawing and the screen had come apart: §3.1
+    /// ends the box at column 76 and the code ended it at 74.
+    /// </summary>
+    public static int BoxWidthFor(int cols) => Math.Min(72, BodyWidthFor(cols) - 8);
+
+    /// <summary>The §3.1 box width for this frame. See <see cref="BoxWidthFor"/>.</summary>
+    public int BoxWidth => BoxWidthFor(Cols);
+
     private readonly Cell[] _cells;
 
     public Frame(int cols, int rows)

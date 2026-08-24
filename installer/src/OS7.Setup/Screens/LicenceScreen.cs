@@ -50,7 +50,7 @@ internal sealed class LicenceScreen : Screen
         f.Body(3, 5, "OS/7 Licence Agreement");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
+        int width = f.BoxWidth;
         f.Box(4, left, width, _visible + 2);
         for (int i = 0; i < _visible; i++)
         {
