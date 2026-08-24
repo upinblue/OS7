@@ -48,4 +48,16 @@ internal abstract class Screen
     /// need it.
     /// </summary>
     public virtual void Layout(int cols, int rows) { }
+
+    /// <summary>
+    /// True for a screen that changes on its own — one watching work happen on
+    /// another thread.
+    ///
+    /// The input loop already wakes every 200 ms whether or not a key arrived
+    /// (Input.Read's idle tick, which exists for a different reason entirely).
+    /// A screen that opts in gets redrawn on those ticks and gets Handle called
+    /// with Key.None, so "the work finished" can move the flow on without
+    /// anybody pressing anything.
+    /// </summary>
+    public virtual bool Ticks => false;
 }

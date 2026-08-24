@@ -1,11 +1,13 @@
 # OS/7 Setup — text-mode installer plan
 
-**Status: Phase 0 complete, Phase 1 complete, Phase 2 next.** The four spikes
+**Status: Phase 0, 1 and 2 complete. Phase 3 next.** The four spikes
 this plan gates itself on — S1, S2, S3, S4 — have all passed, and `os7-setup`
 now exists: [src/OS7.Setup/](src/OS7.Setup/), running from the ISO's *Install
-OS/7* entry on tty1, walking Welcome → Licence → Regional → Complete. It is
-**strictly non-destructive** and says so on its last screen. Findings:
-[../docs/SESSION-PHASE1-SETUP.md](../docs/SESSION-PHASE1-SETUP.md).
+OS/7* entry on tty1, and it **writes to a disk** — partition table, ESP, LUKS2
+container, both pools and the §4.4 dataset hierarchy. There is no operating
+system on the result yet; that is Phase 3, and screen 12 says so.
+Findings: [../docs/SESSION-PHASE1-SETUP.md](../docs/SESSION-PHASE1-SETUP.md)
+and [../docs/SESSION-PHASE2-STORAGE.md](../docs/SESSION-PHASE2-STORAGE.md).
 
 This document answers three questions asked on 2026-08-22 and turns the answers
 into a phased plan:
@@ -1134,9 +1136,33 @@ know, in [../docs/SESSION-PHASE1-SETUP.md](../docs/SESSION-PHASE1-SETUP.md):
   quietly substituting for.
 
 ### Phase 2 — Storage
-Disk enumeration and the plan model; screens 4–6; the executor for
-partition + pool + dataset creation, driven by S3's proven sequence;
-`--unattend` and `--dry-run`. Failure rolls back **only** what Setup created.
+**DONE 2026-08-24.** Disk enumeration and the plan model; screens 4–6; the
+executor for partition + pool + dataset creation, driven by S3's proven
+sequence; `--unattend` and `--dry-run`. Failure rolls back only what Setup
+created.
+
+`./installer/testing/run-phase2.py all` runs it four ways and **reads the disk
+back** each time — `sgdisk -p`, `blkid`, `cryptsetup luksDump`, `zpool list`,
+`zfs list` — rather than trusting the installer's own log. Findings in
+[../docs/SESSION-PHASE2-STORAGE.md](../docs/SESSION-PHASE2-STORAGE.md):
+
+* **The ZFS layer is `New-OS7Storage` in the OS7 PowerShell module**, exactly as
+  §6.3 asks, because `Update-OS7` needs the identical logic and the hierarchy it
+  creates cannot be corrected after the fact. Setup calls it out-of-process and
+  reads one JSON object off stdout.
+* **A screen validates what IT collected, never the whole plan.** §6.6 has the
+  screens filling the plan in one at a time, so the plan is incomplete for most
+  of the flow by design — screen 3 calling the whole-plan check produced an
+  error screen reading "no disk selected" three screens before the disk screen.
+  The full check runs in exactly two places: `--unattend`, and the Confirm
+  screen the moment before anything is written.
+* **`--dry-run` runs nothing**, including the parts that only read. The first
+  version still started `pwsh` to ask for a boot-environment name, which makes
+  the option fail on a machine where the real run would have worked and turns
+  its promise into "almost nothing".
+* **The passphrase is never in the plan file** — `[JsonIgnore]`, with
+  `--passphrase-file` as a separate artefact. A plan file goes into a
+  repository, a log and a screenshot.
 
 ### Phase 3 — System configuration
 `unsquashfs` with real progress; chroot configuration (locale, timezone,

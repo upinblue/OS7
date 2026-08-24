@@ -5,16 +5,20 @@
 # =============================================================================
 @{
 	RootModule        = 'OS7.psm1'
-	ModuleVersion     = '0.0.0'
+	ModuleVersion     = '0.1.0'
 	GUID              = 'aa3b48e6-1eda-49ca-b4e6-0267ae494fb4'
 	Author            = 'up in blue GmbH'
 	CompanyName       = 'up in blue GmbH'
 	Copyright         = '(c) 2026 up in blue GmbH. MIT licensed.'
-	Description       = 'OS/7 system management: curated release train over ZFS boot environments. STUB — function signatures only, no implementation.'
+	Description       = 'OS/7 system management: curated release train over ZFS boot environments. The ZFS layer (New-OS7Storage) is implemented; Set-OS7Mode/Update-OS7/Restore-OS7 are still stubs.'
 
 	PowerShellVersion = '7.0'
 
-	FunctionsToExport = @('Set-OS7Mode', 'Update-OS7', 'Restore-OS7')
+	FunctionsToExport = @(
+		# Implemented — the ZFS layer os7-setup and Update-OS7 share (SETUP-PLAN §6.3)
+		'New-OS7Storage', 'New-OS7BootEnvironmentName',
+		# Stubs — the command surface README.md documents
+		'Set-OS7Mode', 'Update-OS7', 'Restore-OS7')
 	CmdletsToExport   = @()
 	VariablesToExport = @()
 	AliasesToExport   = @()

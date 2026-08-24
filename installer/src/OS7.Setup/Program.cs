@@ -1,6 +1,7 @@
 using OS7.Setup.Diagnostics;
 using OS7.Setup.Model;
 using OS7.Setup.Screens;
+using OS7.Setup.Steps;
 using OS7.Setup.Tui;
 
 namespace OS7.Setup;
@@ -8,14 +9,19 @@ namespace OS7.Setup;
 /// <summary>
 /// os7-setup — OS/7's text-mode installer. installer/SETUP-PLAN.md is the design.
 ///
-///     os7-setup                    run interactively on this terminal
-///     os7-setup --print-plan       write the default plan as JSON and exit
-///     os7-setup --self-test        check the things that fail silently, and exit
-///     os7-setup --geometry 80x25   force the canvas size (§2.4)
+///     os7-setup                          run interactively on this terminal
+///     os7-setup --unattend plan.json     run it from a file, no UI (§6.6)
+///     os7-setup --passphrase-file f      where the disk passphrase comes from
+///     os7-setup --dry-run                print every command instead of running it
+///     os7-setup --print-plan             write the default plan as JSON and exit
+///     os7-setup --self-test              check what fails silently, and exit
+///     os7-setup --geometry 80x25         force the canvas size (§2.4)
 ///
-/// PHASE 1, AND STRICTLY NON-DESTRUCTIVE. Nothing here opens a block device.
-/// Screens 4-11 do not exist, so the flow is Welcome -> Licence -> Regional ->
-/// Complete, and Complete says in as many words that no disk was touched.
+/// PHASE 2. The flow is Welcome -> Licence -> Regional -> Disk -> Layout ->
+/// Confirm -> (execute) -> Complete, and from the Confirm screen onwards IT
+/// WRITES TO A DISK. Screens 7-11 do not exist: no system is copied, no account
+/// is created and no bootloader is installed, so the result does not boot and
+/// Complete says so.
 /// </summary>
 internal static class Program
 {
@@ -42,12 +48,15 @@ internal static class Program
         }
 
         if (options.SelfTest) return SelfTest();
+        if (options.Unattend is not null) return Unattended(options);
 
         try
         {
             Geometry geometry = Geometry.FromCommandLine(options.Geometry);
             using Terminal terminal = Terminal.Acquire(geometry);
             var plan = new InstallPlan();
+            if (options.DryRun) Log.Warn("--dry-run: no command will actually be run");
+            ExecuteScreen.DryRun = options.DryRun;
             var flow = new SetupFlow(terminal, new WelcomeScreen(plan));
 
             FlowResult result = flow.Run();
@@ -71,6 +80,73 @@ internal static class Program
         finally
         {
             Log.Close();
+        }
+    }
+
+    /// <summary>
+    /// `--unattend plan.json` — §6.6's whole point.
+    ///
+    /// The interactive screens exist only to fill in an InstallPlan, and
+    /// execution happens strictly afterwards from that object alone. So the
+    /// unattended path is not a parallel implementation: it loads the same
+    /// object, validates it with the same code, and runs the same steps. If
+    /// those two ever diverge, one of them is wrong and it will be this one.
+    ///
+    /// THE PASSPHRASE IS NOT IN THE PLAN and never will be — a plan file goes
+    /// into a repository, a log and a screenshot. `--passphrase-file` is a
+    /// separate artefact, read once and not kept.
+    /// </summary>
+    private static int Unattended(Options o)
+    {
+        try
+        {
+            string json = File.ReadAllText(o.Unattend!);
+            InstallPlan? plan = InstallPlan.FromJson(json);
+            if (plan is null)
+            {
+                Console.Error.WriteLine($"os7-setup: {o.Unattend} is not an install plan");
+                return 2;
+            }
+
+            if (o.PassphraseFile is not null)
+            {
+                // TrimEnd on newlines only: a passphrase may legitimately begin
+                // or end with a space, and an editor will have appended a
+                // newline that was never part of it.
+                plan.Storage.Passphrase = File.ReadAllText(o.PassphraseFile).TrimEnd('\r', '\n');
+                Log.Info($"passphrase read from {o.PassphraseFile} "
+                         + $"({plan.Storage.Passphrase.Length} characters)");
+            }
+
+            if (!plan.Validate(out List<string> problems))
+            {
+                foreach (string p in problems) Console.Error.WriteLine($"os7-setup: {p}");
+                Log.Error("unattended plan is not valid: " + string.Join("; ", problems));
+                return 2;
+            }
+
+            Log.Info($"unattended{(o.DryRun ? " (dry run)" : "")}: {plan.ToJson().ReplaceLineEndings(" ")}");
+            var executor = new Executor(o.DryRun);
+            executor.Run(StorageSteps.For(plan),
+                         (step, done, total) =>
+                             Console.Out.WriteLine($"OS7-SETUP [{done}/{total}] {step}"));
+            Console.Out.WriteLine("OS7-SETUP-DONE storage");
+            return 0;
+        }
+        catch (StepException ex)
+        {
+            // The same three facts the error screen would have shown, because a
+            // CI log is the error screen when there is no screen.
+            Console.Error.WriteLine($"OS7-SETUP-FAILED {ex.Message}");
+            Console.Error.WriteLine($"  command: {ex.Command}");
+            Console.Error.WriteLine($"  output:  {ex.Output.ReplaceLineEndings(" | ")}");
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"OS7-SETUP-FAILED {ex.GetType().Name}: {ex.Message}");
+            Log.Error($"unattended: {ex}");
+            return 3;
         }
     }
 
@@ -124,6 +200,32 @@ internal static class Program
         Check(back is not null && back.Timezone == "Europe/Berlin" && back.Intent == Intent.Repair,
               "install plan round-trips through JSON");
 
+        // The plan must REFUSE an empty storage half. This is the check that
+        // keeps --unattend from partitioning something because a field was
+        // missing rather than because it was chosen.
+        var empty = new InstallPlan();
+        bool refused = !empty.Validate(out List<string> why);
+        Check(refused && why.Any(w => w.Contains("disk")),
+              "an empty plan is refused", string.Join("; ", why));
+
+        var encrypted = new InstallPlan
+        {
+            Storage = { Disk = "/dev/disk/by-id/x", Encrypt = true },
+        };
+        Check(!encrypted.Validate(out List<string> why2)
+              && why2.Any(w => w.Contains("passphrase")),
+              "encryption without a passphrase is refused", string.Join("; ", why2));
+
+        // And the passphrase must never reach the plan file. §6.6 makes that
+        // file something a person keeps; this is the check that keeps the secret
+        // out of it.
+        var secret = new InstallPlan
+        {
+            Storage = { Disk = "/dev/disk/by-id/x", Passphrase = "correct horse battery" },
+        };
+        Check(!secret.ToJson().Contains("correct horse"),
+              "the passphrase is not serialised into the plan");
+
         Check(SystemLists.Languages.Length > 0, "languages", $"{SystemLists.Languages.Length}");
         Check(SystemLists.Keyboards.Length > 0, "keyboard layouts", $"{SystemLists.Keyboards.Length}");
         Check(SystemLists.Timezones.Length > 0, "timezones", $"{SystemLists.Timezones.Length}");
@@ -134,9 +236,12 @@ internal static class Program
         try
         {
             var p2 = new InstallPlan();
+            var disk = new Disk("/dev/sdz", "/dev/disk/by-id/scsi-selftest", "sdz",
+                                953_000_000_000L, "SELFTEST", "0", "gpt", 3, null);
             Screen[] screens =
             {
                 new WelcomeScreen(p2), new LicenceScreen(p2), new RegionalScreen(p2),
+                new DiskScreen(p2), new LayoutScreen(p2, disk), new ConfirmScreen(p2, disk),
                 new CompleteScreen(p2), ErrorScreen.ForCommand(
                     "Setup could not import the pool.",
                     "zpool import -f -N -R /target rpool",
@@ -165,12 +270,15 @@ internal static class Program
     private const string Usage = """
         Usage: os7-setup [options]
 
+          --unattend <plan.json>     run from a plan file, without the UI
+          --passphrase-file <path>   the disk passphrase (never in the plan file)
+          --dry-run                  print every command instead of running it
           --geometry <cols>x<rows>   force the canvas size (SETUP-PLAN §2.4)
           --print-plan               write the install plan as JSON and exit
           --self-test                check fonts, palettes, lists and screens
           --help                     this message
 
-        Phase 1: strictly non-destructive. No disk is opened.
+        Phase 2: from the Confirm screen onwards this WRITES TO A DISK.
         """;
 
     private readonly struct Options
@@ -178,13 +286,16 @@ internal static class Program
         public bool Help { get; init; }
         public bool PrintPlan { get; init; }
         public bool SelfTest { get; init; }
+        public bool DryRun { get; init; }
         public string? Geometry { get; init; }
+        public string? Unattend { get; init; }
+        public string? PassphraseFile { get; init; }
         public string? Error { get; init; }
 
         public static Options Parse(string[] args)
         {
-            bool help = false, print = false, self = false;
-            string? geometry = null;
+            bool help = false, print = false, self = false, dryRun = false;
+            string? geometry = null, unattend = null, passphraseFile = null;
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i])
@@ -192,6 +303,17 @@ internal static class Program
                     case "--help" or "-h": help = true; break;
                     case "--print-plan": print = true; break;
                     case "--self-test": self = true; break;
+                    case "--dry-run": dryRun = true; break;
+                    case "--unattend":
+                        if (++i >= args.Length)
+                            return new Options { Error = "--unattend needs a plan file" };
+                        unattend = args[i];
+                        break;
+                    case "--passphrase-file":
+                        if (++i >= args.Length)
+                            return new Options { Error = "--passphrase-file needs a path" };
+                        passphraseFile = args[i];
+                        break;
                     case "--geometry":
                         if (++i >= args.Length)
                             return new Options { Error = "--geometry needs <cols>x<rows>" };
@@ -201,9 +323,12 @@ internal static class Program
                         return new Options { Error = $"unknown option '{args[i]}'" };
                 }
             }
+            if (passphraseFile is not null && unattend is null)
+                return new Options { Error = "--passphrase-file only means something with --unattend" };
             return new Options
             {
                 Help = help, PrintPlan = print, SelfTest = self, Geometry = geometry,
+                DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,
             };
         }
     }

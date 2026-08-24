@@ -108,8 +108,22 @@ class Qmp:
             time.sleep(0.1)
         raise SystemExit(f"screendump produced nothing at {path}")
 
-    def send_key(self, qcode):
-        self.cmd("send-key", keys=[{"type": "qcode", "data": qcode}])
+    def send_key(self, qcode, hold_ms=20):
+        """Press and release one key.
+
+        HOLD TIME IS SET EXPLICITLY, and the default is the reason. QEMU holds a
+        key for 100 ms unless told otherwise, so keys sent closer together than
+        that OVERLAP — and a USB HID keyboard cannot report two independent
+        presses at once, so all but one are lost. Typing a passphrase at 80 ms a
+        key produced a field with one character in it and a Setup correctly
+        complaining that it was too short.
+
+        20 ms is longer than one USB frame and shorter than any sensible gap
+        between two calls, so a caller that sleeps at all gets clean keystrokes.
+        """
+        self.cmd("send-key",
+                 keys=[{"type": "qcode", "data": qcode}],
+                 **{"hold-time": hold_ms})
 
     def close(self):
         try:
@@ -263,9 +277,18 @@ class Lab:
     MEM = "4096"
     CPUS = "4"
 
-    def __init__(self, name, iso=None):
+    def __init__(self, name, iso=None, target_gb=0, iso_as_disk=False):
         self.name = name
+        self.target_gb = target_gb
+        # How the live medium is attached. As a CD it is `type=rom` to lsblk and
+        # an installer skips it without thinking; as a block device it is a
+        # DISK, and refusing it is L12's actual requirement. Real installs are
+        # from USB, so the block device is the faithful shape - and the only one
+        # in which "the setup medium is listed and never selectable" can be
+        # tested at all.
+        self.iso_as_disk = iso_as_disk
         self.dir = os.path.join(REPO, ".vm", name)
+        self.target = os.path.join(self.dir, "target.qcow2")
         self.shots = os.path.join(self.dir, "shots")
         self.iso = iso or os.path.join(REPO, "out", "os7-arm64.iso")
         self.kernel = os.path.join(self.dir, "vmlinuz")
@@ -290,6 +313,15 @@ class Lab:
             else:
                 raise SystemExit("no EDK2 vars template found")
         self.extract_boot_files()
+        if self.target_gb:
+            # A blank disk for the guest to install onto. Recreated from scratch
+            # on every prepare(): a run that starts on a disk the previous run
+            # left half-partitioned is not testing what it thinks it is.
+            if os.path.exists(self.target):
+                os.remove(self.target)
+            run("qemu-img", "create", "-f", "qcow2", self.target, f"{self.target_gb}G",
+                stdout=subprocess.DEVNULL)
+            print(f"    target   {self.target} ({self.target_gb}G, blank)")
         if payload_dir is not None:
             self.build_payload(payload_dir)
 
@@ -354,11 +386,27 @@ class Lab:
             "-display", "none", "-monitor", "none", "-serial", "stdio",
             "-qmp", f"unix:{self.qmpsock},server,nowait",
             "-kernel", self.kernel, "-initrd", self.initrd, "-append", cmdline,
-            "-cdrom", self.iso,
         ]
+        if self.iso_as_disk:
+            # FIRST, so it enumerates before the target: the disk screen lists
+            # in kernel-name order and the medium has to be the one the harness
+            # lands on. casper finds /casper/filesystem.squashfs by scanning
+            # block devices, so a raw ISO on virtio-blk boots exactly as a USB
+            # stick does.
+            args += ["-drive", f"if=none,id=live,file={self.iso},format=raw,readonly=on",
+                     "-device", "virtio-blk-pci,drive=live,serial=os7live"]
+        else:
+            args += ["-cdrom", self.iso]
         if payload and os.path.exists(self.payload):
             args += ["-drive", f"if=none,id=payload,file={self.payload},format=raw,readonly=on",
                      "-device", "virtio-blk-pci,drive=payload"]
+        if self.target_gb and os.path.exists(self.target):
+            # serial= so the guest gets a /dev/disk/by-id/virtio-<serial> entry.
+            # os7-setup stores a by-id path in the plan (§6.6, L12), and a target
+            # with no stable name would exercise the fallback instead of the
+            # thing being built.
+            args += ["-drive", f"if=none,id=target,file={self.target},format=qcow2",
+                     "-device", "virtio-blk-pci,drive=target,serial=os7target"]
         return args
 
     def boot(self, cmdline, label, login=True, payload=True):

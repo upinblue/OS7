@@ -24,7 +24,7 @@ decides what, the commands that work, and the traps that cost the most.
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
-| `os7-setup` | **Phase 1 done.** Boots from the ISO's *Install OS/7* entry, runs on tty1, walks Welcome → Licence → Regional → Complete. **Nothing opens a block device.** See [SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md). |
+| `os7-setup` | **Phases 1 and 2 done.** Boots from the ISO's *Install OS/7* entry, runs on tty1, and **writes to a disk**: partition table, ESP, LUKS2 container, both pools and the §4.4 datasets. No OS on it yet — that is Phase 3. See [SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md) and [SESSION-PHASE2-STORAGE.md](SESSION-PHASE2-STORAGE.md). |
 
 ### Phase 0 is done — the gate is open
 
@@ -64,61 +64,66 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-**Phase 2 — Storage.** SETUP-PLAN §10: disk enumeration and the plan model,
-screens 4–6, the executor for partition + pool + dataset creation driven by S3's
-proven sequence, and `--unattend` / `--dry-run`. Failure rolls back **only** what
-Setup created.
+**Phase 3 — System configuration.** SETUP-PLAN §10: `unsquashfs` with real
+progress; chroot configuration (locale, timezone, hostname, users,
+`zgenhostid`, `update-initramfs`); bootloader install and the `grub.d` boot-
+environment generator; screens 7–11; the GUI/headless split.
+*Deliverable: a machine installed by Setup boots into OS/7.*
 
-Two things make it less of a leap than it looks:
+That is the phase where the disk Phase 2 prepares becomes a system, so the
+things to carry into it are the ones that decide whether it boots:
 
-* **The sequence already exists and is proven.**
-  [`installer/spikes/s3-zfs-luks.sh`](../installer/spikes/s3-zfs-luks.sh)
-  partitions, encrypts, creates both pools and the §4.4 datasets, unpacks,
-  configures and installs GRUB — and the result boots. The storage executor is
-  meant to be a front-end over exactly that, not a re-derivation. **Do not "fix"
-  the spike to match §4.4's revised layout**: it predates D10 and it is evidence,
-  not a template (§11).
-* **The plan model is the seam.** §6.6: screens only edit `InstallPlan`, and
-  execution happens strictly afterwards from that object alone. Phase 1 built the
-  regional half with source-generated JSON; the storage half goes beside it, and
-  `--unattend` falls out.
+* **`boot=zfs` is mandatory** on the kernel command line and nothing generates
+  it. Without it the machine drops to an initramfs prompt. BUILD-NOTES #15.
+* **Never pin `root=ZFS=` in `GRUB_CMDLINE_LINUX`.** `10_linux_zfs` emits one
+  per boot environment and anything appended there wins, so every menu entry
+  would boot the same dataset.
+* **Copy the live system's `/etc/hostid` into the target.** Phase 2 generated it
+  *before* creating the pools, which is the only safe order (L13) — Phase 3 owes
+  the other half, and it must happen before `update-initramfs`.
+* **Setup cannot set a password through PAM in the chroot**, and the squashfs
+  has no users at all. BUILD-NOTES #17.
+* **Do the chroot's bind mounts inside `unshare --mount --propagation
+  private`**, or the pool will not export. BUILD-NOTES #18.
+* **A cloned or fresh BE must be ASSEMBLED, not just mounted**: the
+  `rpool/DATA` datasets have to be mounted into it before chrooting, or `apt`
+  runs against a `/var` with holes in it (§4.4, release plan §4.2 step 3).
+* **TPM2 enrolment is more than `systemd-cryptenroll`.** It writes a valid token
+  and changes nothing at boot; Setup must also install an initramfs hook
+  carrying the token handler *and the libtss2 libraries systemd dlopens*, plus a
+  `local-top` script that runs before `cryptroot`. BUILD-NOTES #19 and #20;
+  `installer/spikes/s4-tpm-enroll.sh` is the working version.
 
-### What Phase 1 leaves for whoever picks this up
+### What Phases 1 and 2 leave for whoever picks this up
 
 * **`os7-setup --self-test` is the first thing to run** when anything looks
-  wrong. It checks what has no visible symptom — the key table, both fonts and
-  palettes, the licence text, the JSON round trip, the system lists, and every
-  screen rendering off-screen — and hook 0080 runs it inside the chroot at BUILD
-  time, so a missing PSF fails the ISO build rather than a boot.
-* **`./installer/testing/run-phase1.py all`** walks the whole flow in a VM in one
-  boot and checks each screen by reading it back through the console font. Keep
-  it passing; it is the only thing standing between a screen and "it looked
-  fine".
-* **The debts Phase 1 did not pay**, all Phase 4 or later: `F1` help, an `F3`
-  quit confirmation, the log-export target picker (F2 writes to a fixed path
-  today), and the 24-bit SGR serial surface (§2.7). `Terminal` already forks on
-  the surface; only the renderer half is missing.
+  wrong. Hook 0080 runs it inside the chroot at BUILD time, so a missing PSF or
+  an invalid plan model fails the ISO build rather than a boot.
+* **The two harnesses are the contract.** `run-phase1.py all` walks the flow and
+  reads every screen back through the console font; `run-phase2.py all` installs
+  four different ways and reads the DISK back with `sgdisk`, `cryptsetup
+  luksDump`, `zpool` and `zfs`. Keep both passing.
+* **The ZFS layer is in the OS7 PowerShell module**, not in C# — §6.3, because
+  `Update-OS7` needs the identical logic. Phase 3's boot-environment work
+  belongs beside `New-OS7Storage`, not in the installer.
+* **Debts, all Phase 4 or later:** `F1` help, an `F3` quit confirmation, the
+  log-export target picker, and the 24-bit SGR serial surface (§2.7).
 
-### The four things Phase 1 measured
+### What Phases 1 and 2 measured
 
-Full detail in [SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md); the ones that
-will bite again:
+Full detail in the two session documents. The ones that will bite again:
 
-* **The console is not the same object for the whole boot.** fbcon takes it over
-  seconds in and discards the font and palette Setup applied. There is no systemd
-  unit to order against, so Setup re-takes the console whenever its grid is not
-  what its font should give. BUILD-NOTES #31.
-* **`setfont` exiting 0 does not mean the font loaded.** Check the geometry.
-* **`SIGWINCH` does not break a blocking `read`** (.NET uses `SA_RESTART`), and
-  neither does a bare `ESC`. Both want `poll(2)` with a deadline — and `poll`
-  rather than `VMIN`/`VTIME`, because only `poll` tells an idle user from a
-  hangup. BUILD-NOTES #32.
+* **fbcon defers taking the console over** and completes it only when something
+  *writes* to it; until then `KDFONTOP` returns ENOSYS. `fbcon=nodefer`, and
+  `setfont` exiting 0 does not mean the font loaded. BUILD-NOTES #31.
+* **`SIGWINCH` does not break a blocking `read`** and neither does `ESC`. Use
+  `poll(2)`, not `VMIN`/`VTIME`. BUILD-NOTES #32.
 * **`Conflicts=` is resolved when systemd BUILDS the transaction; `Condition…=`
-  when the job RUNS.** An enabled unit whose condition later fails has already
-  conflicted its target away — which is how a missing `WantedBy` presented as
-  "the console does not support fonts". BUILD-NOTES #33.
-* **A codepoint the installer draws belongs in `psf.py`'s REQUIRED set.** WANTED
-  means "if the font has it", and `bdf2psf` substitutes silently when it does not.
+  when the job RUNS.** Start a cmdline-gated unit with `systemd.wants=`, never
+  with `[Install]`. BUILD-NOTES #33.
+* **A screen validates what it collected, never the whole plan.** §6.6 has the
+  plan incomplete for most of the flow by design.
+* **Ask the disk, not the log.** Every Phase 2 check reads the device back.
 
 ### What S2, S3 and S4 changed about what Setup has to do
 
@@ -277,6 +282,12 @@ Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
   `SA_RESTART`) and neither will `ESC`. Use `poll(2)`, not `VMIN`/`VTIME`.
 - **#33 — `Conflicts=` is transaction-time, `Condition…=` is run-time.** Start a
   cmdline-gated unit with `systemd.wants=`, never with `[Install]`.
+- **#34 — QEMU's `send-key` holds a key for 100 ms by default**, so keys sent
+  faster overlap and all but one are lost. Set `hold-time` and leave more than
+  that between calls.
+- **#35 — `-cdrom` makes the live medium a ROM device**, invisible to an
+  installer's disk list — so "the setup medium is refused" cannot be tested with
+  it. Attach the ISO as a block device, which is also how a USB install looks.
 - **`pwsh --version` is not a health check.** The banner, `Import-Module` by
   path and `Get-Command` are compiled into the binary and succeed while the
   whole on-disk module tree is unusable.
@@ -354,7 +365,8 @@ powershell/OS7/                   the OS7 module - ONE source of truth, staged b
 installer/SETUP-PLAN.md           the installer design and decisions. Authoritative.
 installer/src/OS7.Setup/          os7-setup itself. SETUP-PLAN is its design.
 installer/assets/                 the systemd unit
-installer/testing/                the VM harness: vmconsole, vmscreen, run-phase1
+installer/testing/                the VM harness: vmconsole, vmscreen,
+                                  run-phase1, run-phase2
 build/lib/build-console-font.sh   Fixedsys TTF -> two PSFs, asserted (S1)
 build/lib/psf.py                  the subset table, the fixes and the guard
 build/config/includes.chroot/     files copied verbatim into the image
@@ -366,6 +378,7 @@ installer/spikes/run-s2.sh        S2: build in the container, run in the ISO
 installer/spikes/run-s3.py        QEMU harness for S3
 installer/spikes/run-s4.py        QEMU harness for S4 (Secure Boot + swtpm)
 installer/spikes/vmconsole.py     serial-console driving, shared by both
+docs/SESSION-PHASE2-STORAGE.md    what Phase 2 built, and how the disk is checked
 docs/SESSION-PHASE1-SETUP.md      what Phase 1 built, and the four things it found
 docs/SESSION-S1-LOOK.md           what S1 measured, and the three plan corrections
 docs/SESSION-S2-NATIVEAOT.md      what S2 proved, and what the container still needs

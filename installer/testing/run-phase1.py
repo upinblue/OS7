@@ -7,7 +7,7 @@ looks right". "Looks right" is not a result, so this walks it and measures:
 
     ./run-phase1.py live      does the LIVE entry leave the machine alone
     ./run-phase1.py boot      does the Install entry start Setup on tty1
-    ./run-phase1.py walk      Welcome -> Licence -> Regional -> Complete
+    ./run-phase1.py walk      Welcome -> Licence -> Regional -> (screen 4)
     ./run-phase1.py contrast  F5 switches to the high-contrast field
     ./run-phase1.py all       all three, in one boot     (default)
     ./run-phase1.py reset     discard the VM state
@@ -365,14 +365,17 @@ def phase_walk(c, q, font):
     time.sleep(0.5)
     q.send_key("ret")
     time.sleep(2.0)
-    w, h, rgb = lab.shoot(q, "09-complete")
-    ok &= expect_text(w, h, rgb, font, "Setup has collected the settings",
-                      "screen 12 is Complete")
-    ok &= expect_text(w, h, rgb, font, "Europe/", "the chosen time zone is on the summary")
-    # The sentence that stops someone concluding a machine was installed. Drawn
-    # in the brand colour, so it is read in the brand colour.
-    ok &= expect_text(w, h, rgb, font, "NOTHING HAS BEEN WRITTEN TO ANY DISK",
-                      "Complete says nothing was written", fg=BRAND)
+    w, h, rgb = lab.shoot(q, "09-next-screen")
+
+    # THIS IS WHERE PHASE 1's SCOPE ENDS. Accepting the regional settings used to
+    # go straight to screen 12; since Phase 2 it goes to screen 4, and everything
+    # from there on - the disk list, the layout, the confirmation, the executor -
+    # belongs to run-phase2.py, which can also read the resulting DISK back.
+    # Asserting it here would be a second, weaker copy of that.
+    ok &= expect_text(w, h, rgb, font, "install OS/7 on the disk",
+                      "the flow continues into the storage screens")
+    ok &= expect_text(w, h, rgb, font, "will be destroyed",
+                      "and warns before it does")
 
     # ---- the log, as independent evidence --------------------------------
     c.drop()

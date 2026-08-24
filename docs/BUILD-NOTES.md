@@ -912,3 +912,61 @@ kernel's module defaults** — i.e. whatever `setvtrgb.service` put there, i.e.
 Ubuntu's. The screen went back to Ubuntu's colours a moment after Setup painted
 it in OS/7's. `Conflicts=` happens before `ExecStart`, so there is nothing to
 race.
+
+## 34. QEMU's `send-key` holds each key for 100 ms, so keys sent faster overlap and vanish
+
+Found in Phase 2 ([SESSION-PHASE2-STORAGE.md](SESSION-PHASE2-STORAGE.md)) while
+typing a passphrase into `os7-setup` from the harness.
+
+`send-key` presses and releases; the release is `hold-time` milliseconds later
+and **the default is 100**. Two calls closer together than that overlap, and a
+USB HID keyboard cannot report two independent presses at once — so all but one
+are lost.
+
+The symptom is not a dropped key, it is a nearly empty field:
+
+```
+13 characters sent at 20 ms apart  ->  1 character on screen
+13 characters sent at 80 ms apart  ->  1 character on screen
+```
+
+and Setup correctly complaining that the passphrase is too short. It reads as an
+input bug in the product, which is where an hour goes.
+
+Set the hold time and then leave more than that between calls:
+
+```python
+q.cmd("send-key", keys=[{"type": "qcode", "data": ch}], **{"hold-time": 20})
+time.sleep(0.12)
+```
+
+**The conclusion is the opposite of the usual one.** The product does not need
+to accept 50 keystrokes a second — nobody types that fast, and a console that
+kept up with it would be solving a problem OS/7 does not have. The harness is
+what was wrong.
+
+## 35. `-cdrom` makes the live medium invisible to an installer's disk list
+
+Found in Phase 2. It matters because it makes a safety test pass for the wrong
+reason.
+
+L12 requires Setup to list its own boot medium and never let it be selected.
+With the ISO attached as `-cdrom`, `lsblk` reports it as `type="rom"` — and an
+installer that (correctly) only offers `type="disk"` never sees it at all. The
+refusal is untestable, and a harness asserting "the medium is refused" against
+that VM is asserting something that cannot fail.
+
+Attach the ISO as a block device instead:
+
+```
+-drive if=none,id=live,file=os7-arm64.iso,format=raw,readonly=on
+-device virtio-blk-pci,drive=live,serial=os7live
+```
+
+casper finds `/casper/filesystem.squashfs` by scanning block devices, so a raw
+ISO on virtio-blk boots exactly as a USB stick does — **which is also the shape
+a real install has.** Almost nobody installs from an optical drive any more, so
+the CD was the unrealistic case as well as the untestable one.
+
+Order the `-device` lines so the medium enumerates first, and the harness lands
+on it without having to know which name it got.

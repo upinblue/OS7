@@ -7,14 +7,12 @@ namespace OS7.Setup.Screens;
 /// <summary>
 /// Screen 12 — Setup is complete. SETUP-PLAN §3, Win2k's restart prompt.
 ///
-/// Phase 1 is STRICTLY NON-DESTRUCTIVE, so this screen says what actually
-/// happened rather than what it will eventually say. That distinction is the
-/// whole point: a skeleton that claims to have installed something is worse
-/// than no skeleton, and the deliverable for this phase is "you can walk the
-/// whole flow in a VM and it looks right" — not "it looks finished".
-///
-/// The plan is printed to the log on the way in, which makes the walk verifiable
-/// from a serial console without reading pixels.
+/// It says what actually happened, not what it will eventually say. At Phase 2
+/// the disk has been partitioned, encrypted and given its pools and datasets —
+/// and there is no operating system on it, because copying the system, the
+/// accounts and the bootloader are Phase 3. A screen that read "Setup is
+/// complete" over a disk that cannot boot would be the single most expensive
+/// sentence in this installer.
 /// </summary>
 internal sealed class CompleteScreen : Screen
 {
@@ -30,23 +28,28 @@ internal sealed class CompleteScreen : Screen
 
     public override void Draw(Frame f)
     {
-        f.Body(3, 5, "Setup has collected the settings below.");
+        f.Body(3, 5, "Setup has prepared this computer as follows.");
 
         int left = f.Left + 5;
         int width = Math.Min(70, f.BodyWidth - 10);
-        f.Box(5, left, width, 6);
-        f.Text(6, left + 3, $"Intent:      {_plan.Intent}");
-        f.Text(7, left + 3, $"Language:    {_plan.Language}");
-        f.Text(8, left + 3, $"Keyboard:    {_plan.Keyboard}");
-        f.Text(9, left + 3, $"Time zone:   {_plan.Timezone}");
+        StoragePlan s = _plan.Storage;
 
-        // Stated in the brand colour and in the plainest words available. This
-        // is the sentence that stops someone concluding a machine was installed.
-        f.Body(12, 5, "NOTHING HAS BEEN WRITTEN TO ANY DISK.", Slot.Brand);
-        f.Body(14, 5, "This is the Phase 1 skeleton of OS/7 Setup. Storage, accounts and");
-        f.Body(15, 5, "the bootloader are not implemented yet, so no partition was created");
-        f.Body(16, 5, "and no data was changed.");
-        f.Body(18, 5, $"A log of this session is at {Log.Path}.");
+        f.Box(5, left, width, 8);
+        f.Text(6, left + 3, $"Language:    {_plan.Language}");
+        f.Text(7, left + 3, $"Keyboard:    {_plan.Keyboard}");
+        f.Text(8, left + 3, $"Time zone:   {_plan.Timezone}");
+        f.Text(9, left + 3, $"Disk:        {s.Disk ?? "(none)"}");
+        f.Text(10, left + 3, $"Encryption:  {(s.Encrypt ? "LUKS2 (passphrase set)" : "none")}");
+        f.Text(11, left + 3, $"Swap:        {s.Swap}");
+
+        // The half that has NOT happened, in the brand colour, because it is the
+        // sentence that stops someone rebooting into a disk with nothing on it.
+        f.Body(14, 5, "NO OPERATING SYSTEM HAS BEEN COPIED TO THIS DISK YET.", Slot.Brand);
+        f.Body(16, 5, "Setup is at Phase 2: the disk is partitioned, encrypted and carries");
+        f.Body(17, 5, "empty ZFS pools. Copying the system, creating accounts and installing");
+        f.Body(18, 5, "the bootloader are Phase 3, and this computer will not boot from it");
+        f.Body(19, 5, "until they exist.");
+        f.Body(21, 5, $"A log of this session is at {Log.Path}.");
     }
 
     public override Transition Handle(KeyPress key) =>

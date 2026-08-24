@@ -107,18 +107,21 @@ internal sealed class RegionalScreen : Screen
                 return Transition.Redraw;
 
             case Key.Enter when _row == Setting.Accept:
-                if (!_plan.Validate(out List<string> problems))
+                // ValidateRegional, not Validate: this screen owns three fields
+                // and the plan is deliberately incomplete until screens 4-6 have
+                // run. Calling the whole-plan check here produced an error screen
+                // reading "no disk selected" three screens before the disk screen.
+                if (!_plan.ValidateRegional(out List<string> problems))
                 {
                     // Should be unreachable - every field starts valid and the
                     // picker only ever stores a value from the list. Checked
                     // anyway, because §6.6 makes the plan the single thing
-                    // execution reads, and an invalid plan reaching Phase 2
-                    // would be found by a partitioner.
+                    // execution reads.
                     Log.Error("regional settings are incomplete: " + string.Join("; ", problems));
                     return Transition.To(ErrorScreen.ForPlan(problems));
                 }
                 Log.Info($"regional: {_plan.Language} / {_plan.Keyboard} / {_plan.Timezone}");
-                return Transition.To(new CompleteScreen(_plan));
+                return Transition.To(new DiskScreen(_plan));
 
             case Key.Enter:
                 OpenPicker(_row);

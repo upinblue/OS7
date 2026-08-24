@@ -54,9 +54,15 @@ internal sealed class SetupFlow
 
             KeyPress key = _terminal.Input.Read();
 
-            // An idle tick. Round again so the console gets re-checked - which
-            // is the whole reason the read has a deadline (Terminal.Retake).
-            if (key.Key == Key.None) continue;
+            // An idle tick. Normally: round again, so the console gets
+            // re-checked - which is the whole reason the read has a deadline
+            // (Terminal.Retake). For a screen that watches work happening
+            // elsewhere, the tick IS the event, so it is passed through.
+            if (key.Key == Key.None)
+            {
+                if (!screen.Ticks) continue;
+                dirty = true;
+            }
 
             if (key.Key == Key.Eof)
             {
