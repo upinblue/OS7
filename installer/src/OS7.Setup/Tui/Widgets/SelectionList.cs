@@ -76,11 +76,26 @@ internal sealed class SelectionList
         Top = Math.Clamp(Top, 0, Math.Max(0, Items.Count - _visible));
     }
 
+    /// <summary>
+    /// How many columns a row's TEXT gets inside a box `width` wide: two borders
+    /// and one column of padding on each side.
+    ///
+    /// Exposed because a caller that builds its rows in columns — screen 4 lays
+    /// its disks out that way — has to size them to the room the box really has.
+    /// DiskScreen passed a literal 66, which was this number for the box it drew
+    /// and would have stopped being it the moment either end of the arithmetic
+    /// moved. Nothing would have said so: `Draw` cuts an over-long row without
+    /// complaining, so the only symptom is the right-hand end of a row quietly
+    /// losing characters.
+    /// </summary>
+    public static int TextWidth(int boxWidth) => Math.Max(0, boxWidth - 4);
+
     /// <summary>Draw the box and its rows. `row`/`col` are the box's top left.</summary>
     public void Draw(Frame f, int row, int col, int width)
     {
         f.Box(row, col, width, _visible + 2);
         int inner = width - 2;
+        int room = TextWidth(width);
         for (int i = 0; i < _visible; i++)
         {
             int index = Top + i;
@@ -90,7 +105,7 @@ internal sealed class SelectionList
             f.Fill(row + 1 + i, col + 1, inner, ' ', fg, bg);
             if (index >= Items.Count) continue;
             string text = Items[index];
-            if (text.Length > inner - 2) text = text[..(inner - 2)];
+            if (text.Length > room) text = text[..room];
             f.Text(row + 1 + i, col + 2, text, fg, bg);
         }
 

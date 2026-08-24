@@ -20,8 +20,19 @@ internal sealed class Frame
     public int Cols { get; }
     public int Rows { get; }
 
-    public int BodyWidth => Math.Min(80, Cols);
+    public int BodyWidth => BodyWidthFor(Cols);
     public int Left => (Cols - BodyWidth) / 2;
+
+    /// <summary>
+    /// The §2.4 cap, as a function of a console width rather than of a frame.
+    ///
+    /// A screen that has to size a widget before there is a frame to measure —
+    /// Screen.Layout is handed raw terminal columns — must get the same answer
+    /// as the frame it will later be drawn into. Two copies of `Math.Min(80, …)`
+    /// is one copy too many for a number that decides where every box on every
+    /// screen ends.
+    /// </summary>
+    public static int BodyWidthFor(int cols) => Math.Min(80, Math.Max(1, cols));
 
     private readonly Cell[] _cells;
 

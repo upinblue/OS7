@@ -3,6 +3,7 @@ using OS7.Setup.Model;
 using OS7.Setup.Screens;
 using OS7.Setup.Steps;
 using OS7.Setup.Tui;
+using OS7.Setup.Tui.Widgets;
 
 namespace OS7.Setup;
 
@@ -375,6 +376,90 @@ internal static class Program
             Check(TitleRow(fit).Contains(stamp) && !TitleRow(tight).Contains(stamp),
                   $"the version appears at {exact} columns and not at {exact - 1}",
                   $"[{TitleRow(fit)}] / [{TitleRow(tight)}]");
+        }
+
+        // ---------------------------------------------------------------------
+        // Screen 4's rows, DRAWN AND READ BACK rather than measured.
+        //
+        // The bug this replaces was three numbers that had to agree and did not:
+        // the box DiskScreen draws, the row width it built its labels for, and
+        // §3.1's column arithmetic inside Describe. Every one of them was a
+        // literal, none of them was checked against the others, and the symptom
+        // was that `-- SETUP MEDIUM --` came out `-- SETUP MEDIUM -` — a marker
+        // L12 requires, rendered as what looks like a typo.
+        //
+        // So this does not re-do the arithmetic; re-doing it is how the numbers
+        // got out of step. It builds a row the way screen 4 builds one, draws it
+        // through the widget screen 4 draws it through, at the box width screen
+        // 4 asks for, and reads the cells back. Anything that eats a character
+        // between Describe and the glass fails here.
+        {
+            // §2.4's reference geometry, which is what §3.1 is drawn at.
+            const int cols = 80;
+            int box = DiskScreen.BoxWidth(cols);
+            int room = SelectionList.TextWidth(box);
+
+            // The whole 80-column row, borders included, so a failure prints what
+            // is actually on the screen; and the row's TEXT span on its own, so
+            // "drawn whole" is asked of the text and not of the box around it.
+            (string Row, string Text) RowOnScreen(Disk d)
+            {
+                var frame = new Frame(cols, 25);
+                int left = frame.Left + 5;
+                new SelectionList(new[] { d.Describe(room) }, 1).Draw(frame, 7, left, box);
+                var sb = new System.Text.StringBuilder(frame.Cols);
+                for (int c = 0; c < frame.Cols; c++) sb.Append(frame[8, c].Rune);
+                string row = sb.ToString();
+                return (row.TrimEnd(), row.Substring(left + 2, room).TrimEnd());
+            }
+
+            Disk Probe(string name, long bytes, string model, Refusal? blocker,
+                       string ptType = "", int parts = 0, bool os7 = false) =>
+                new(Path: "/dev/" + name, StablePath: "/dev/disk/by-id/" + name, Name: name,
+                    Bytes: bytes, Model: model, Serial: "", PartitionTable: ptType,
+                    Partitions: parts, Blocker: blocker,
+                    PartitionLabels: Array.Empty<(string, string)>(), Os7Layout: os7);
+
+            Check(box == 70 && room == 66,
+                  "screen 4's box is 70 columns and gives a row 66", $"box {box}, row {room}");
+
+            // Every last-column string screen 4 can produce, INCLUDING the two
+            // that do not appear in .vm/phase2's screendumps because that VM has
+            // neither a small disk nor a mounted one.
+            foreach ((string what, Disk disk) in new (string, Disk)[]
+                     {
+                         ("-- SETUP MEDIUM --", Probe("vda", 2_147_483_648, "", new Refusal("setup medium"))),
+                         ("-- READ-ONLY --", Probe("sr0", 900_000_000_000, "QEMU DVD-ROM", new Refusal("read-only"))),
+                         ("-- IN USE --", Probe("sda", 900_000_000_000, "ATA WDC WD10EZEX-08W",
+                                                new Refusal("in use", "in use at /var/lib/docker"))),
+                         ("-- TOO SMALL --", Probe("sdb", 8_000_000_000, "SanDisk Cruzer Blade",
+                                                  new Refusal("too small", "too small (needs 16 GB)"))),
+                         ("OS/7 installation", Probe("vdb", 25_769_803_776, "", null, "gpt", 3, os7: true)),
+                         ("empty", Probe("sdc", 900_000_000_000, "ATA WDC WD10EZEX-08W", null)),
+                         // 128 is the GPT limit, so this is the longest this
+                         // column can get without a refusal in it.
+                         ("GPT, 128 partitions", Probe("nvme0n1", 953_000_000_000,
+                                                       "SAMSUNG MZVL21T0HCLR-00B", null, "gpt", 128)),
+                     })
+            {
+                (string row, string text) = RowOnScreen(disk);
+                Check(text.EndsWith(what, StringComparison.Ordinal),
+                      $"screen 4 draws '{what}' whole", $"[{row}]");
+            }
+
+            // And the column positions, on the §3.1 mockup's OWN disk, so the
+            // numbers are checked against the drawing rather than against this
+            // code's opinion of it. The name lands at 7 rather than the mockup's
+            // 8 because the widget pads by one column where the mockup pads by
+            // two; what §3.1 pins is the spacing INSIDE the row, and that is
+            // 10 / 25 / 9 / 3.
+            string mock = RowOnScreen(Probe("nvme0n1", 953_000_000_000,
+                                            "SAMSUNG MZVL21T0HCLR-00B", null, "gpt", 3)).Row;
+            Check(mock.IndexOf("nvme0n1", StringComparison.Ordinal) == 7
+                  && mock.IndexOf("SAMSUNG", StringComparison.Ordinal) == 17
+                  && mock.IndexOf("953 GB", StringComparison.Ordinal) == 45
+                  && mock.IndexOf("GPT, 3 partitions", StringComparison.Ordinal) == 54,
+                  "the §3.1 columns land where §3.1 draws them", $"[{mock}]");
         }
 
         // The plan has to survive a round trip through source-generated JSON.

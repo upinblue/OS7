@@ -6,6 +6,25 @@ using OS7.Setup.Diagnostics;
 namespace OS7.Setup.Model;
 
 /// <summary>
+/// Why a disk cannot be used, in the two lengths screen 4 needs it in.
+///
+/// `Marker` is what goes in the row's last column, where §3.1 draws it as
+/// `-- SETUP MEDIUM --` and where there are nineteen columns. `Detail` is what
+/// goes on the line under the list when ENTER is pressed on the disk, where
+/// there is the whole body width and room to name the mount point or the number
+/// of GB. Keeping them apart is what stops the column being the place a
+/// sentence gets cut off: `-- TOO SMALL (NEEDS 16 GB) --` is twenty-nine
+/// columns and had seventeen.
+/// </summary>
+internal sealed record Refusal(string Marker, string Detail)
+{
+    /// <summary>A refusal with nothing more to say than its marker.</summary>
+    public Refusal(string both) : this(both, both) { }
+
+    public override string ToString() => Detail;
+}
+
+/// <summary>
 /// One block device Setup might install to — and, when it may not, why.
 ///
 /// `Blocker` being non-null is the whole safety model of screen 4: a disk that
@@ -23,7 +42,7 @@ internal sealed record Disk(
     string Serial,
     string PartitionTable,
     int Partitions,
-    string? Blocker,
+    Refusal? Blocker,
     IReadOnlyList<(string Path, string Label)> PartitionLabels,
     bool Os7Layout)
 {
@@ -34,6 +53,19 @@ internal sealed record Disk(
         ? $"{Bytes / 1e12:0.##} TB"
         : $"{Bytes / 1e9:0.##} GB";
 
+    // §3.1's column layout, in columns, read off the mockup rather than chosen.
+    // In screen 4's box the name starts the row; the model column runs to where
+    // the size column's right-aligned nine begin; three columns of gap separate
+    // that from the last column. 10 + 25 + 9 + 3 = 47 fixed columns, and what
+    // the row has left over belongs to the last one.
+    //
+    // THE MODEL COLUMN WAS 27 WHERE §3.1 SAYS 25, and the two extra columns came
+    // straight out of the last one. `-- SETUP MEDIUM --` is eighteen columns and
+    // had seventeen, so it rendered `-- SETUP MEDIUM -` and read as a typo
+    // rather than as the marker L12 requires. Measured, not inferred, off
+    // .vm/phase2/shots/31-existing-named.png.
+    private const int NameColumn = 10, ModelColumn = 25, SizeColumn = 9, GapColumns = 3;
+
     /// <summary>What screen 4 puts in the box, in the §3.1 column layout.</summary>
     public string Describe(int width)
     {
@@ -42,14 +74,33 @@ internal sealed record Disk(
         // the distinction is the one that matters before ENTER is pressed. The
         // VERSION is not here: reading it costs an import, and screen 4 lists
         // every disk on the machine (DiskScreen.Handle probes the one chosen).
-        string what = Blocker is not null ? $"-- {Blocker.ToUpperInvariant()} --"
+        string what = Blocker is not null ? $"-- {Blocker.Marker.ToUpperInvariant()} --"
             : Os7Layout ? "OS/7 installation"
             : PartitionTable.Length == 0 ? "empty"
             : $"{PartitionTable.ToUpperInvariant()}, {Partitions} partition{(Partitions == 1 ? "" : "s")}";
         string model = Model.Length > 0 ? Model : "(no model)";
+
+        // When the row will not fit — a console narrower than 80, a device name
+        // longer than its column — THE MODEL GIVES WAY and the last column does
+        // not. The model is the decoration: the name identifies the disk and the
+        // last column carries the one fact that has to be read before ENTER is
+        // pressed. Cutting the row's right-hand end takes the characters from
+        // exactly the wrong place.
+        //
+        // The clamp at ModelColumn is what keeps the columns lined up: at 80
+        // columns every row Setup can produce leaves more than 25 spare, so
+        // every row gets §3.1's 25 and the size column lands in one place.
+        int taken = Math.Max(NameColumn, Name.Length) + SizeColumn + GapColumns + what.Length;
+        int modelColumn = Math.Clamp(width - taken, 0, ModelColumn);
+
         // Columns rather than a sentence, because the eye scans a list of disks
-        // by column and §3.1's mockup is drawn that way.
-        string s = $"{Name,-10}{Truncate(model, 26),-27}{Size,9}   {what}";
+        // by column and §3.1's mockup is drawn that way. One column of the model
+        // field is gap, so a model of exactly its width never touches the size.
+        string s = Name.PadRight(NameColumn)
+                   + Truncate(model, Math.Max(0, modelColumn - 1)).PadRight(modelColumn)
+                   + Size.PadLeft(SizeColumn)
+                   + new string(' ', GapColumns)
+                   + what;
         return s.Length > width ? s[..width] : s;
     }
 
@@ -96,7 +147,7 @@ internal static class Disks
             if (d.Name.StartsWith("zram", StringComparison.Ordinal) ||
                 d.Name.StartsWith("ram", StringComparison.Ordinal)) continue;
 
-            string? blocker = Blocked(d);
+            Refusal? blocker = Blocked(d);
             int parts = d.Children?.Count(c => c.Type == "part") ?? 0;
 
             var labels = new List<(string, string)>();
@@ -123,13 +174,13 @@ internal static class Disks
         disks.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
         foreach (Disk d in disks)
             Log.Info($"disk {d.Name} {d.Size} {d.Model} "
-                     + (d.Blocker is null ? "selectable" : $"BLOCKED: {d.Blocker}")
+                     + (d.Blocker is null ? "selectable" : $"BLOCKED: {d.Blocker.Detail}")
                      + (d.Os7Layout ? " CARRIES AN OS/7 LAYOUT" : "")
                      + $" [{d.StablePath}]");
         return disks;
     }
 
-    private static string? Blocked(LsblkDevice d)
+    private static Refusal? Blocked(LsblkDevice d)
     {
         // THE MEDIUM CHECK COMES FIRST, and the order is the point rather than a
         // preference. A boot medium is often also read-only — an ISO attached
@@ -138,19 +189,25 @@ internal static class Disks
         // is writable, so the read-only check would not fire and the medium
         // check is the only thing standing between Setup and eating the
         // installer it is running from (L12).
-        if (Mounted(d, MediumMounts)) return "setup medium";
+        if (Mounted(d, MediumMounts)) return new Refusal("setup medium");
 
-        if (d.ReadOnly == true) return "read-only";
+        if (d.ReadOnly == true) return new Refusal("read-only");
 
         // Anything else that is mounted. Not necessarily fatal in principle, but
         // an installer that partitions a disk out from under a mounted
         // filesystem is an installer that corrupts whatever was using it, and
         // "unmount it yourself first" is an instruction a person can act on.
+        //
+        // The mount point is DETAIL and not marker, as the size floor below it
+        // is: a path is as long as it is, and `-- IN USE AT /VAR/LIB/DOCKER --`
+        // fits in no column at all. The row says which of the four refusals this
+        // is; the line under the list, on ENTER, says the rest.
         string? mount = AnyMount(d);
-        if (mount is not null) return $"in use at {mount}";
+        if (mount is not null) return new Refusal("in use", $"in use at {mount}");
 
         if ((d.Size ?? 0) < MinimumBytes)
-            return $"too small (needs {MinimumBytes / 1_000_000_000} GB)";
+            return new Refusal("too small",
+                               $"too small (needs {MinimumBytes / 1_000_000_000} GB)");
 
         return null;
     }

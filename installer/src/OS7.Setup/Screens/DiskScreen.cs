@@ -40,15 +40,33 @@ internal sealed class DiskScreen : Screen
         _visible = 10;
         // Start on the plan's disk when there is one - an --unattend plan
         // replayed interactively, or a step back from screen 5.
-        _list = Build(_visible, Math.Max(0, _disks.FindIndex(d => d.StablePath == _plan.Storage.Disk)));
+        _list = Build(_visible, _width,
+                      Math.Max(0, _disks.FindIndex(d => d.StablePath == _plan.Storage.Disk)));
     }
 
     private int _visible;
 
-    private SelectionList Build(int rows, int selected)
+    /// <summary>The box width the rows were last built for. See <see cref="BoxWidth"/>.</summary>
+    private int _width = BoxWidth(80);
+
+    /// <summary>
+    /// How wide the selection box is — asked in ONE place, because two callers
+    /// have to agree about it.
+    ///
+    /// Draw decides how much room the box has on the screen; Build decides how
+    /// much text goes in its rows. They did not agree: Build passed a literal
+    /// 66, which was the row width of the box Draw happened to draw. Nothing
+    /// checks that, and nothing complains — an over-long row is simply cut — so
+    /// the disagreement surfaced as the right-hand column of screen 4 losing its
+    /// last character.
+    /// </summary>
+    internal static int BoxWidth(int cols) => Math.Min(70, Frame.BodyWidthFor(cols) - 10);
+
+    private SelectionList Build(int rows, int width, int selected)
     {
+        int room = SelectionList.TextWidth(width);
         var labels = new List<string>();
-        foreach (Disk d in _disks) labels.Add(d.Describe(66));
+        foreach (Disk d in _disks) labels.Add(d.Describe(room));
         if (labels.Count == 0) labels.Add("(no disks found)");
         return new SelectionList(labels, rows, selected);
     }
@@ -66,9 +84,15 @@ internal sealed class DiskScreen : Screen
     public override void Layout(int cols, int rows)
     {
         int visible = Math.Clamp(rows - 13, 3, Math.Max(3, _disks.Count));
-        if (visible == _visible) return;
+        int width = BoxWidth(cols);
+        // The WIDTH is watched as well as the height. The rows are cut to fit
+        // the box, so a console that changes width and does not change height —
+        // which is what loading a different console font does — would otherwise
+        // leave every row built for the width before it.
+        if (visible == _visible && width == _width) return;
         _visible = visible;
-        _list = Build(visible, _list.Selected);
+        _width = width;
+        _list = Build(visible, width, _list.Selected);
     }
 
     public override string Status => "ENTER=Select   ESC=Back   F3=Quit";
@@ -79,8 +103,7 @@ internal sealed class DiskScreen : Screen
         f.Body(5, 5, "Use the UP and DOWN ARROW keys to select a disk, then press ENTER.");
 
         int left = f.Left + 5;
-        int width = Math.Min(70, f.BodyWidth - 10);
-        _list.Draw(f, 7, left, width);
+        _list.Draw(f, 7, left, BoxWidth(f.Cols));
 
         int after = 7 + _list.Height + 1;
         // The warning goes UNDER the list and above the keys, which is where
@@ -99,8 +122,10 @@ internal sealed class DiskScreen : Screen
                 {
                     // Refused with the reason, not ignored. A key that appears to
                     // do nothing is indistinguishable from a hung installer.
-                    _note = $"{chosen.Name} cannot be used: {chosen.Blocker}.";
-                    Log.Info($"refused {chosen.Name}: {chosen.Blocker}");
+                    // The DETAIL, not the marker: this is the line with room for
+                    // the mount point the row's last column could not carry.
+                    _note = $"{chosen.Name} cannot be used: {chosen.Blocker!.Detail}.";
+                    Log.Info($"refused {chosen.Name}: {chosen.Blocker.Detail}");
                     return Transition.Redraw;
                 }
 
