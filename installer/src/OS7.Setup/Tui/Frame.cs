@@ -67,11 +67,30 @@ internal sealed class Frame
     /// so and it is not a stylistic preference: the double-rule glyph occupies
     /// three rows of a sixteen-row cell, so drawn as characters the "stripe"
     /// would be mostly field colour with two thin lines in it.
+    ///
+    /// <paramref name="right"/> is the release, right-aligned on the title row.
+    /// It is chrome and not a screen's business for the same reason the title is
+    /// — it must be identical everywhere, and the one question every support
+    /// call opens with is which version this is. Whichever screen a photograph
+    /// was taken of, the answer is in it.
     /// </summary>
-    public void Chrome(string title, string status)
+    public void Chrome(string title, string status, string? right = null)
     {
         Fill(0, 0, Cols, ' ', Slot.White, Slot.Field);
         Text(0, 1, title, Slot.White, Slot.Field);
+
+        // Dropped rather than truncated or wrapped when it will not fit. UEFI
+        // hands out whatever GOP mode the firmware likes (§2.4) and a narrow
+        // console is a real case; a half-printed version number is worse than
+        // none, because it still reads as a version number. Two columns of gap,
+        // so the two never touch and look like one string.
+        if (!string.IsNullOrEmpty(right))
+        {
+            int col = Cols - 1 - right.Length;
+            if (col >= 1 + title.Length + 2)
+                Text(0, col, right, Slot.White, Slot.Field);
+        }
+
         Fill(1, 0, Cols, ' ', Slot.White, Slot.Brand);
         Fill(Rows - 1, 0, Cols, ' ', Slot.Black, Slot.Grey);
         Text(Rows - 1, 1, status, Slot.Black, Slot.Grey);

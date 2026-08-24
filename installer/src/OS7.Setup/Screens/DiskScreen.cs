@@ -21,6 +21,18 @@ internal sealed class DiskScreen : Screen
     private SelectionList _list;
     private string? _note;
 
+    /// <summary>
+    /// The disk whose existing installation has been named to the operator and
+    /// is one more ENTER away from being erased. Held per DISK NAME rather than
+    /// as a bool, so that arrowing away to another disk and back asks again —
+    /// a confirmation that survives changing what is being confirmed is not a
+    /// confirmation.
+    /// </summary>
+    private string? _confirming;
+
+    /// <summary>What the probe found, kept so the log can say what was replaced.</summary>
+    private ExistingInstall? _existing;
+
     public DiskScreen(InstallPlan plan)
     {
         _plan = plan;
@@ -91,8 +103,36 @@ internal sealed class DiskScreen : Screen
                     Log.Info($"refused {chosen.Name}: {chosen.Blocker}");
                     return Transition.Redraw;
                 }
+
+                // An OS/7 already on this disk gets NAMED before it is destroyed,
+                // and destroying it takes a second, deliberate ENTER.
+                //
+                // This is where the upgrade path will attach (SETUP-PLAN §3,
+                // screen 1's R=Repair, Phase 6): the question "install beside the
+                // existing boot environment instead of over it" can only be asked
+                // once Setup knows there IS one and which version it is. So the
+                // probe is written now and the offer is not - an offer Setup
+                // cannot honour would be worse than no offer.
+                //
+                // Deliberately NOT done during enumeration: the probe imports a
+                // pool, and screen 4 lists every disk on the machine. Paying that
+                // for the one disk somebody chose is seconds; paying it for all
+                // of them, before anyone has chosen anything, is a screen that
+                // takes a minute to appear.
+                if (chosen.Os7Layout && _confirming != chosen.Name)
+                {
+                    _confirming = chosen.Name;
+                    _existing = ExistingInstalls.Probe(chosen);
+                    string found = _existing?.Describe() ?? "an OS/7 layout";
+                    _note = $"{chosen.Name} already carries {found}. "
+                            + "Press ENTER again to erase it.";
+                    Log.Warn($"{chosen.Name} carries an existing install: {found}");
+                    return Transition.Redraw;
+                }
+
                 _plan.Storage.Disk = chosen.StablePath;
-                Log.Info($"target disk: {chosen.Name} ({chosen.StablePath}), {chosen.Size}");
+                Log.Info($"target disk: {chosen.Name} ({chosen.StablePath}), {chosen.Size}"
+                         + (_existing is not null ? $"; replacing {_existing.Describe()}" : ""));
                 return Transition.To(new LayoutScreen(_plan, chosen));
 
             case Key.Enter:
@@ -103,7 +143,18 @@ internal sealed class DiskScreen : Screen
                 return Transition.Back;
 
             default:
-                return _list.Handle(key) ? Transition.Redraw : Transition.Stay;
+                if (!_list.Handle(key)) return Transition.Stay;
+                // Moving the highlight retracts both the confirmation and the
+                // note, so the screen never shows a finding about one disk while
+                // a different one is selected.
+                if (_disks.Count > 0 && _confirming is not null
+                    && _confirming != _disks[_list.Selected].Name)
+                {
+                    _confirming = null;
+                    _existing = null;
+                    _note = null;
+                }
+                return Transition.Redraw;
         }
     }
 }

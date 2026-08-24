@@ -33,6 +33,33 @@ WORK="${1:?work dir required}"
 OUT_ISO="${2:?output iso path required}"
 BIN="${WORK}/binary"
 
+# THE VOLUME ID IS SET HERE AND NOWHERE ELSE ON arm64.
+#
+# auto/config passes `--iso-volume "OS7-<version>-<arch>"` and on arm64 it has NO
+# EFFECT: this script does not modify live-build's ISO, it builds a NEW one with
+# xorriso (harvested fix 7, because live-build emits no arm64 bootloader). Every
+# ISO9660 property live-build was told about is therefore discarded here, and the
+# hardcoded volid that used to be on the xorriso line silently won over the flag.
+# amd64 keeps live-build's ISO, so there the flag does work — the two
+# architectures disagreed about a value that looked like one setting.
+#
+# Found by reading the label off a finished image with `blkid`: `lb config` had
+# recorded LB_ISO_VOLUME="OS7-1.0.0.32-arm64" and the ISO said "OS7-arm64".
+#
+# DERIVED FROM THE OUTPUT FILENAME, not from a second environment variable.
+# build.sh already names the artefact OS7-<version>-<arch>.iso, so the basename
+# without its extension IS the volume id — which means the label on the medium
+# and the name of the file can never disagree, and there is no new variable for
+# a future caller to forget to set.
+#
+# ISO9660 volume IDs are capped at 32 characters; "OS7-1.0.0.32-arm64" is 18.
+# The cut is here rather than left to xorriso, so an over-long id is visibly
+# truncated instead of silently rejected.
+OS7_ISO_VOLID="$(basename "${OUT_ISO}")"
+OS7_ISO_VOLID="${OS7_ISO_VOLID%.iso}"
+OS7_ISO_VOLID="${OS7_ISO_VOLID:0:32}"
+[ -n "${OS7_ISO_VOLID}" ] || OS7_ISO_VOLID="OS7-arm64"
+
 cd "${WORK}"
 
 [ -d "${BIN}/casper" ] || { echo "!!! ${BIN}/casper missing — live-build did not produce a live tree" >&2; exit 1; }
@@ -124,7 +151,7 @@ echo ">>> arm64 EFI: re-mastering bootable ISO -> ${OUT_ISO}"
 rm -f "${OUT_ISO}"
 xorriso -as mkisofs \
     -iso-level 3 -full-iso9660-filenames \
-    -volid "OS7-arm64" \
+    -volid "${OS7_ISO_VOLID}" \
     -J -joliet-long -rational-rock \
     -e boot/grub/efiboot.img -no-emul-boot \
     -append_partition 2 0xef "${EFIIMG}" \

@@ -374,7 +374,7 @@ function Restore-OS7 {
 		STUB. Name of the boot environment to activate. No naming scheme defined.
 
 	.EXAMPLE
-		Restore-OS7 -BootEnvironment os7-2026.08.1
+		Restore-OS7 -BootEnvironment os7_1.0.0.31_202608231430
 	#>
 	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 	param(

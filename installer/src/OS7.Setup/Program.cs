@@ -36,7 +36,30 @@ internal static class Program
         }
         if (options.Help) { Console.Out.WriteLine(Usage); return 0; }
 
+        if (options.Version)
+        {
+            // Before the log is opened and before anything touches a terminal:
+            // `os7-setup --version` has to work on the tty2 rescue shell of a
+            // machine where the thing being diagnosed is Setup itself.
+            Release r = Release.Current;
+            Console.Out.WriteLine(r.Display);
+            if (r.Known)
+            {
+                Console.Out.WriteLine($"base:     Ubuntu {r.BaseRelease ?? "?"}");
+                Console.Out.WriteLine($"archive:  {r.ArchiveSnapshot ?? "not pinned"}");
+                if (!r.Reproducible)
+                    Console.Out.WriteLine("source:   not a clean tree - this build is not reproducible");
+            }
+            else
+            {
+                Console.Out.WriteLine($"no release manifest at {Release.Path}");
+            }
+            return 0;
+        }
+
         Log.Info($"os7-setup starting ({string.Join(' ', args)})");
+        Log.Info($"release: {Release.Current.Display} "
+                 + $"(manifest {(Release.Current.Known ? Release.Path : "absent")})");
 
         if (options.PrintPlan)
         {
@@ -160,7 +183,7 @@ internal static class Program
     /// </summary>
     private static int SelfTest()
     {
-        int bad = 0;
+        int bad = 0, absent = 0;
         void Check(bool ok, string what, string detail = "")
         {
             Console.Out.WriteLine($"SELFTEST {(ok ? "ok  " : "FAIL")} {what}"
@@ -168,12 +191,32 @@ internal static class Program
             if (!ok) bad++;
         }
 
+        // A check on a FILE THE IMAGE PROVIDES rather than on this binary's own
+        // logic. Both are fatal — hook 0080 runs this inside the chroot and a
+        // missing palette or manifest has to fail the ISO build. But the two
+        // failures mean completely different things to whoever is reading, and
+        // the difference is invisible from the exit code alone:
+        //
+        //   in the image   a missing file is a broken build
+        //   outside it     it is Tuesday. `dotnet publish` into /tmp and run this
+        //                  and NONE of these files exist, because they belong to
+        //                  the image, not to the compiler.
+        //
+        // So they are counted separately and the summary says so. Without that,
+        // a developer building the binary alone sees eleven failures and has no
+        // way to tell which ones are theirs.
+        void CheckImage(bool ok, string what, string detail = "")
+        {
+            Check(ok, what, detail);
+            if (!ok) absent++;
+        }
+
         List<string> conflicts = Input.PrefixConflicts();
         Check(conflicts.Count == 0, "key table unambiguous",
               conflicts.Count == 0 ? "" : string.Join("; ", conflicts));
 
         foreach (Palette p in new[] { Palette.Default, Palette.HighContrast })
-            Check(File.Exists(Themes.PaletteFile(p)), $"palette {p}", Themes.PaletteFile(p));
+            CheckImage(File.Exists(Themes.PaletteFile(p)), $"palette {p}", Themes.PaletteFile(p));
 
         // Both fonts, and the rule that picks between them. The (1280, 800) case
         // has to come out 16x32: that is the reference geometry, and getting it
@@ -186,11 +229,109 @@ internal static class Program
         {
             ConsoleFont f = Themes.PickFont(w, h);
             (int cols, int rows) = f.GridOn(w, h);
-            Check(File.Exists(f.Path) && f.Path.Contains(want) && cols >= 80 && rows >= 25,
+            CheckImage(File.Exists(f.Path) && f.Path.Contains(want) && cols >= 80 && rows >= 25,
                   $"console font for {w}x{h} is {want} -> {cols}x{rows}", f.Path);
         }
 
-        Check(File.Exists(LicenceScreen.Path), "licence text", LicenceScreen.Path);
+        CheckImage(File.Exists(LicenceScreen.Path), "licence text", LicenceScreen.Path);
+
+        // ---------------------------------------------------------------------
+        // The release manifest.
+        //
+        // This runs inside the chroot during the ISO build (hook 0080), AFTER
+        // hook 0075 has written the manifest — the hooks are numbered that way
+        // on purpose. So a build in which the version never got written fails
+        // HERE, rather than shipping an ISO whose every screen reads
+        // "Version unknown" and whose boot environments are named 0.0.0.0.
+        //
+        // It is also the check that keeps the two halves of the version story
+        // together: the same file this reads is the one the OS7 module reads to
+        // name a boot environment, so Setup's title bar and the dataset on the
+        // disk cannot end up quoting different numbers.
+        Release release = Release.Current;
+        CheckImage(release.Known, "release manifest", release.Known ? Release.Path
+                                                               : $"{Release.Path} is missing");
+        CheckImage(release.Version != "0.0.0.0",
+              "the release has a version", release.Version);
+        CheckImage(release.ArchiveSnapshot is not null,
+              "the archive is pinned", release.ArchiveSnapshot ?? "no archive_snapshot in the manifest");
+
+        // The reader must survive a manifest it does not like without taking an
+        // install with it — metadata is not worth refusing to partition a disk
+        // over. Checked with real files rather than reasoned about, because
+        // "returns Unknown on bad input" is exactly the kind of claim that is
+        // true until the first NullReferenceException.
+        string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                            $"os7-selftest-{Environment.ProcessId}.json");
+        try
+        {
+            File.WriteAllText(tmp, "{\"version\":\"9.9.9.9\",\"channel\":\"preview\","
+                                   + "\"reproducible\":true,\"base\":{\"release\":\"26.04\","
+                                   + "\"archive_snapshot\":\"20260824T000000Z\"}}");
+            Release good = Release.Load(tmp);
+            Check(good.Known && good.Version == "9.9.9.9" && good.Channel == "preview"
+                  && good.ArchiveSnapshot == "20260824T000000Z",
+                  "a manifest round-trips through the reader", good.Short);
+
+            File.WriteAllText(tmp, "{ this is not json");
+            Check(!Release.Load(tmp).Known, "a corrupt manifest reads as unknown");
+
+            File.WriteAllText(tmp, "{}");
+            Check(!Release.Load(tmp).Known, "a manifest with no version reads as unknown");
+
+            Check(!Release.Load("/nonexistent/release.json").Known,
+                  "a missing manifest reads as unknown");
+        }
+        finally { try { File.Delete(tmp); } catch { /* a temp file, not a result */ } }
+
+        // The title row has to hold both strings at the reference geometry, and
+        // drop the version rather than mangle it when it cannot.
+        //
+        // Read out of the CELL BUFFER, not out of Render(). Render() emits
+        // cursor-positioning and SGR escapes and no newlines at all, so
+        // `Render().Split('\n')[0]` is the whole screen and any length test on it
+        // measures escape sequences. That was this check's first version, and it
+        // failed a correct 80-column title row - a diagnostic that did not check
+        // the thing it claimed to.
+        string TitleRow(Frame frame)
+        {
+            var sb = new System.Text.StringBuilder(frame.Cols);
+            for (int c = 0; c < frame.Cols; c++) sb.Append(frame[0, c].Rune);
+            return sb.ToString();
+        }
+        {
+            var f = new Frame(80, 25);
+            f.Chrome("OS/7 Setup", "ENTER=Continue", release.TitleBar);
+            string row = TitleRow(f);
+            Check(row.Length == 80
+                  && row.StartsWith(" OS/7 Setup")
+                  && row.EndsWith(release.TitleBar + " "),
+                  "the title row carries the version, right-aligned, at 80 columns",
+                  $"[{row}]");
+
+            // A half-printed version number still reads as a version number, so
+            // too narrow must mean absent rather than truncated.
+            var narrow = new Frame(24, 25);
+            narrow.Chrome("OS/7 Setup", "", "Version 1.0.0.32 (development)");
+            string narrowRow = TitleRow(narrow);
+            Check(narrowRow.Contains("OS/7 Setup") && !narrowRow.Contains("Version")
+                  && !narrowRow.Contains("1.0.0"),
+                  "a narrow title row drops the version instead of truncating it",
+                  $"[{narrowRow}]");
+
+            // The boundary: exactly wide enough, and one column short of it.
+            // " OS/7 Setup" is 11 columns, then two of gap, then the string, then
+            // the one column of right margin the title row keeps.
+            const string stamp = "Version 9.9.9.9";
+            int exact = 1 + "OS/7 Setup".Length + 2 + stamp.Length + 1;
+            var fit = new Frame(exact, 25);
+            fit.Chrome("OS/7 Setup", "", stamp);
+            var tight = new Frame(exact - 1, 25);
+            tight.Chrome("OS/7 Setup", "", stamp);
+            Check(TitleRow(fit).Contains(stamp) && !TitleRow(tight).Contains(stamp),
+                  $"the version appears at {exact} columns and not at {exact - 1}",
+                  $"[{TitleRow(fit)}] / [{TitleRow(tight)}]");
+        }
 
         // The plan has to survive a round trip through source-generated JSON.
         // Under NativeAOT the reflection serialiser is trimmed away, so this is
@@ -226,6 +367,26 @@ internal static class Program
         Check(!secret.ToJson().Contains("correct horse"),
               "the passphrase is not serialised into the plan");
 
+        // Reading a version out of a boot-environment name — the ONLY way the
+        // version of an already-installed OS/7 can be known, because the release
+        // manifest itself lives on the encrypted rpool while the BE name lives in
+        // the unencrypted bpool (§4.2, D3). The parser and the writer are on
+        // opposite sides of an install, so the round trip is checked against the
+        // scheme §4.4 pins rather than against an example.
+        foreach ((string be, string? want) in new (string, string?)[]
+                 {
+                     ("os7_1.0.0.32_202608241419", "1.0.0.32"),
+                     ("os7_0.0.0.0_202601010000",  "0.0.0.0"),
+                     ("os7_1.0.0.32_20260824",     null),   // stamp too short
+                     ("os7_1.0.0.32_notadate12",   null),   // stamp not digits
+                     ("ubuntu_1_202608241419",     null),   // not ours
+                     ("os7_202608241419",          null),   // no release field
+                     ("",                          null),
+                 })
+            Check(ExistingInstalls.VersionOf(be) == want,
+                  $"boot environment '{be}' -> {want ?? "not an OS/7 name"}",
+                  ExistingInstalls.VersionOf(be) ?? "null");
+
         Check(SystemLists.Languages.Length > 0, "languages", $"{SystemLists.Languages.Length}");
         Check(SystemLists.Keyboards.Length > 0, "keyboard layouts", $"{SystemLists.Keyboards.Length}");
         Check(SystemLists.Timezones.Length > 0, "timezones", $"{SystemLists.Timezones.Length}");
@@ -237,7 +398,8 @@ internal static class Program
         {
             var p2 = new InstallPlan();
             var disk = new Disk("/dev/sdz", "/dev/disk/by-id/scsi-selftest", "sdz",
-                                953_000_000_000L, "SELFTEST", "0", "gpt", 3, null);
+                                953_000_000_000L, "SELFTEST", "0", "gpt", 3, null,
+                                Array.Empty<(string, string)>(), Os7Layout: false);
             Screen[] screens =
             {
                 new WelcomeScreen(p2), new LicenceScreen(p2), new RegionalScreen(p2),
@@ -251,7 +413,7 @@ internal static class Program
             {
                 var f = new Frame(80, 25);
                 s.Layout(80, 25);
-                f.Chrome(s.Title, s.Status);
+                f.Chrome(s.Title, s.Status, Release.Current.TitleBar);
                 s.Draw(f);
                 string rendered = f.Render();
                 Check(rendered.Length > 0, $"screen renders: {s.GetType().Name}",
@@ -263,7 +425,11 @@ internal static class Program
             Check(false, "screens render", ex.Message);
         }
 
-        Console.Out.WriteLine($"SELFTEST-DONE failures={bad}");
+        Console.Out.WriteLine($"SELFTEST-DONE failures={bad} image-files-absent={absent}");
+        if (bad > 0 && bad == absent)
+            Console.Out.WriteLine("SELFTEST-NOTE every failure is an image file that is "
+                                  + "not there. Outside an OS/7 image that is expected; "
+                                  + "inside one it is a broken build.");
         return bad == 0 ? 0 : 1;
     }
 
@@ -276,6 +442,7 @@ internal static class Program
           --geometry <cols>x<rows>   force the canvas size (SETUP-PLAN §2.4)
           --print-plan               write the install plan as JSON and exit
           --self-test                check fonts, palettes, lists and screens
+          --version                  the OS/7 release on this medium
           --help                     this message
 
         Phase 2: from the Confirm screen onwards this WRITES TO A DISK.
@@ -284,6 +451,7 @@ internal static class Program
     private readonly struct Options
     {
         public bool Help { get; init; }
+        public bool Version { get; init; }
         public bool PrintPlan { get; init; }
         public bool SelfTest { get; init; }
         public bool DryRun { get; init; }
@@ -295,12 +463,14 @@ internal static class Program
         public static Options Parse(string[] args)
         {
             bool help = false, print = false, self = false, dryRun = false;
+            bool version = false;
             string? geometry = null, unattend = null, passphraseFile = null;
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i])
                 {
                     case "--help" or "-h": help = true; break;
+                    case "--version" or "-V": version = true; break;
                     case "--print-plan": print = true; break;
                     case "--self-test": self = true; break;
                     case "--dry-run": dryRun = true; break;
@@ -327,7 +497,8 @@ internal static class Program
                 return new Options { Error = "--passphrase-file only means something with --unattend" };
             return new Options
             {
-                Help = help, PrintPlan = print, SelfTest = self, Geometry = geometry,
+                Help = help, Version = version, PrintPlan = print,
+                SelfTest = self, Geometry = geometry,
                 DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,
             };
         }

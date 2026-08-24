@@ -179,16 +179,48 @@ tar -C "${REPO}" -cf - \
 	--exclude=.git --exclude=out --exclude=.vm --exclude=.vm-amd64 . \
 	| ssh "${SSH_OPTS[@]}" builder@127.0.0.1 'tar -C ~/os7 -xf -'
 
+# The tar above excludes .git, so the VM has no repository to ask. Compute the
+# source facts HERE, where the repository is, and hand them to build.sh - which
+# accepts them precisely for this path. Without it every amd64 ISO would carry
+# BUILD=0 and reproducible=false for a reason that has nothing to do with the
+# build (docs/RELEASE-AND-UPDATE-PLAN.md §3.3).
+GIT_COMMIT="$(git -C "${REPO}" rev-parse --short=12 HEAD)"
+GIT_COUNT="$(git -C "${REPO}" rev-list --count HEAD)"
+if [[ -n "$(git -C "${REPO}" status --porcelain)" ]]; then GIT_DIRTY=true; else GIT_DIRTY=false; fi
+log "source: ${GIT_COMMIT}, build ${GIT_COUNT}$( [[ "${GIT_DIRTY}" = true ]] && echo ' (DIRTY)' )"
+
 log "running the build in the VM (hours under TCG)"
 ssh "${SSH_OPTS[@]}" builder@127.0.0.1 \
-	'set -e; mkdir -p ~/out; sudo OS7_OUT_DIR=/home/builder/out bash ~/os7/build/build.sh amd64'
+	"set -e; mkdir -p ~/out; sudo \
+	   OS7_OUT_DIR=/home/builder/out \
+	   OS7_VERSION_BUILD='${GIT_COUNT}' \
+	   OS7_GIT_COMMIT='${GIT_COMMIT}' \
+	   OS7_GIT_DIRTY='${GIT_DIRTY}' \
+	   bash ~/os7/build/build.sh amd64"
 
-log "copying the ISO back"
-scp "${SSH_OPTS[@]}" builder@127.0.0.1:/home/builder/out/os7-amd64.iso "${OUT_DIR}/os7-amd64.iso"
+# The VERSIONED artefacts, and the manifests beside them - not just the stable
+# symlink. Two builds of one release are compared by diffing their manifests
+# (spike S7), and an amd64 build that brought back only the ISO could not take
+# part in that.
+log "copying the ISO and its manifest back"
+scp "${SSH_OPTS[@]}" \
+	"builder@127.0.0.1:/home/builder/out/OS7-*-amd64.iso" \
+	"builder@127.0.0.1:/home/builder/out/OS7-*-amd64.release.json" \
+	"builder@127.0.0.1:/home/builder/out/OS7-*-amd64.packages.manifest" \
+	"${OUT_DIR}/"
+
+# Recreate the stable name the harnesses open by. build.sh makes it in the VM,
+# and scp resolves symlinks rather than copying them.
+VERSIONED="$(ls -1t "${OUT_DIR}"/OS7-*-amd64.iso 2>/dev/null | head -n1 || true)"
+if [[ -z "${VERSIONED}" ]]; then
+	log "no OS7-*-amd64.iso came back - the build did not produce one"
+	exit 1
+fi
+ln -sfn "$(basename "${VERSIONED}")" "${OUT_DIR}/os7-amd64.iso"
 
 log "shutting the VM down"
 ssh "${SSH_OPTS[@]}" builder@127.0.0.1 'sudo poweroff' 2>/dev/null || true
 sleep 5
 
-log "done: ${OUT_DIR}/os7-amd64.iso"
-ls -lh "${OUT_DIR}/os7-amd64.iso"
+log "done: ${VERSIONED}"
+ls -lh "${VERSIONED}" "${OUT_DIR}/os7-amd64.iso"

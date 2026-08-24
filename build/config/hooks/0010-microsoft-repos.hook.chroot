@@ -24,7 +24,18 @@
 # Keys are scoped per-repo via Signed-By rather than dumped into one keyring, so
 # neither key can authenticate a repo it does not actually sign.
 
+#
+# The two fingerprints are pinned in build/config/os7-release.conf, with every
+# other component version and hash the release fixes.
+
 set -euo pipefail
+
+[ -r /usr/lib/os7/release.conf ] || {
+	echo "OS/7 hook 0010: /usr/lib/os7/release.conf missing - build.sh did not stage the pin" >&2
+	exit 1
+}
+# shellcheck source=/dev/null
+. /usr/lib/os7/release.conf
 
 ARCH="$(dpkg --print-architecture)"
 echo "OS/7 hook 0010: adding Microsoft repositories (arch=${ARCH})"
@@ -51,9 +62,9 @@ fetch_key() {
 }
 
 fetch_key microsoft-2025.asc /usr/share/keyrings/microsoft-2025.gpg \
-	AA86F75E427A19DD33346403EE4D7792F748182B
+	"${OS7_MSKEY_2025_FPR}"
 fetch_key microsoft.asc      /usr/share/keyrings/microsoft-legacy.gpg \
-	BC528686B50D79E339D3721CEB3E94ADBE1229CF
+	"${OS7_MSKEY_LEGACY_FPR}"
 
 # --- prod/resolute: azcmagent (both arches), intune-portal + identity broker
 # --- (amd64 only). Native 26.04 suite - no cross-release pinning needed.

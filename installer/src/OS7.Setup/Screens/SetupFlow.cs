@@ -1,4 +1,5 @@
 using OS7.Setup.Diagnostics;
+using OS7.Setup.Model;
 using OS7.Setup.Tui;
 
 namespace OS7.Setup.Screens;
@@ -46,7 +47,10 @@ internal sealed class SetupFlow
             {
                 screen.Layout(_terminal.Cols, _terminal.Rows);
                 var frame = new Frame(_terminal.Cols, _terminal.Rows);
-                frame.Chrome(screen.Title, screen.Status);
+                // The release is read here and never by a screen. It is chrome:
+                // identical on every screen, and not something a screen may get
+                // right or wrong on its own.
+                frame.Chrome(screen.Title, screen.Status, Release.Current.TitleBar);
                 screen.Draw(frame);
                 _terminal.Show(frame);
                 dirty = false;

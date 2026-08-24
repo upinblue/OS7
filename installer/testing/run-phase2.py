@@ -10,7 +10,8 @@ screens are walked and then the RESULT IS READ BACK OFF THE DEVICE:
     ./run-phase2.py unattend   --unattend for real, then verify the disk
     ./run-phase2.py walk       drive screens 4-6 by hand, then verify the disk
     ./run-phase2.py rollback   make a step fail; check nothing is left behind
-    ./run-phase2.py all        all four                     (default)
+    ./run-phase2.py existing   install, then point Setup at that same disk again
+    ./run-phase2.py all        all five                     (default)
     ./run-phase2.py reset      discard the VM state
 
 The VM gets a SECOND, BLANK disk. The live medium is the first one, which is
@@ -23,6 +24,14 @@ the screens it drives: `sgdisk -p`, `cryptsetup luksDump`, `zpool list` and
 SETUP-PLAN §4.4. Not "the installer said it worked" — the installer says that
 into its own log, which is exactly the class of evidence this project has been
 bitten by four times.
+
+`existing` is the odd one out and the newest: every other phase starts from a
+blank disk, so none of them meets the case a real machine is usually in — an
+OS/7 is already installed. It creates that fixture itself with one unattended
+run, reboots, and then checks that Setup RECOGNISES it, READS ITS VERSION OFF
+THE DISK, and requires a second deliberate ENTER before erasing it. That is also
+the only round trip the version number gets: written into a dataset name by one
+boot, read back by a different mechanism in the next.
 """
 import os
 import subprocess
@@ -226,6 +235,48 @@ def verify_disk(c, encrypted=True):
     # /var/lib/dpkg is inside the BE, and that one is non-negotiable: the
     # package database describes exactly the /usr that rolls with it.
     be = [l.strip() for l in text.splitlines() if l.strip().startswith("rpool/ROOT/os7_")]
+
+    # -- THE VERSION REACHED THE DISK --------------------------------------
+    #
+    # This is the load-bearing check for the whole release-identity chain, and
+    # it is here rather than in a build hook because here is the only place all
+    # of it is real: build hook 0075 wrote the manifest, the OS7 module read it,
+    # os7-setup asked the module for a name, and ZFS created a dataset with that
+    # name on an actual disk. Every earlier check in that chain verifies a step;
+    # this one verifies the RESULT.
+    #
+    # The version comes from the guest's own manifest rather than from a string
+    # in this harness — the same argument run-phase1.fetch_release makes. A
+    # harness that carries the expected version passes until somebody forgets to
+    # edit it.
+    manifest = ask(c, "cat /usr/lib/os7/release.json", "release manifest")
+    version = None
+    for raw in manifest.splitlines():
+        stripped = raw.strip().rstrip(",")
+        # The FIRST "version" key, which json.dump writes before any nested one.
+        if stripped.startswith('"version"'):
+            version = stripped.split(":", 1)[1].strip().strip('"')
+            break
+
+    if not version:
+        print("      FAIL  the live medium has no version in /usr/lib/os7/release.json")
+        print(f"            manifest read as: {manifest[:200]!r}")
+        ok = False
+    elif not be:
+        print("      FAIL  there is no rpool/ROOT/os7_* boot environment to check")
+        ok = False
+    else:
+        # os7_<release>_<stamp>; the dataset is rpool/ROOT/<that>.
+        named = [l for l in be if f"/os7_{version}_" in l + "_"]
+        if named:
+            print(f"      ok    the boot environment carries version {version}: "
+                  f"{named[0].split('/')[-1] if named[0].count('/') == 2 else named[0]}")
+        else:
+            print(f"      FAIL  no boot environment is named after version {version}")
+            print(f"            the disk holds: {[l for l in be if l.count('/') == 2][:3]}")
+            print("            0.0.0.0 here means the module did not read the manifest")
+            ok = False
+
     if any(l.endswith("/var/lib/dpkg") for l in be):
         print("      ok    /var/lib/dpkg is inside the boot environment")
     else:
@@ -366,6 +417,150 @@ def phase_rollback():
             ok = False
         else:
             print("      ok    no pool was left behind")
+        return ok
+    finally:
+        q.close()
+        c.close()
+
+
+def phase_existing(font):
+    """Setup, pointed at a disk that ALREADY carries an OS/7 installation.
+
+    Every other phase here starts from a blank disk (`lab.prepare()` recreates
+    the qcow2), so nothing else in this harness ever exercises the one case a
+    real machine is usually in: **there is already an OS/7 on it.**
+
+    Two things are under test and only the second is about safety:
+
+      1. `ExistingInstalls.Probe` — screen 4 imports the existing `bpool`
+         READ-ONLY, reads the boot-environment names out of it, and reports the
+         version. That path is written against `zpool(8)` and had never been run
+         against a disk this installer made. This is where the argument becomes
+         evidence.
+      2. Erasing an installation takes a SECOND, deliberate ENTER, and the first
+         one names what it found.
+
+    It is also the only check that the version SURVIVES a round trip: the number
+    the installer wrote into a dataset name in the first boot is read back off
+    the disk, by a different mechanism, in the second.
+
+    Done in one phase and two boots rather than two phases, because the disk the
+    first boot leaves behind IS the fixture the second needs.
+    """
+    print("\n  existing — Setup meets an OS/7 that is already there")
+
+    # -- boot one: put an OS/7 on the disk, unattended (no UI, no keypresses) --
+    c, q = lab.boot(LIVE_CMDLINE, "existing-install")
+    version = None
+    try:
+        write_plan(c)
+        text = ask(c, "sudo os7-setup --unattend /tmp/plan.json "
+                      "--passphrase-file /tmp/pass", "unattended install", timeout=900)
+        if "OS7-SETUP-DONE storage" not in text:
+            print("      FAIL  could not create the fixture: the install did not finish")
+            show(text, ("FAILED", "command:", "output:"))
+            return False
+
+        manifest = ask(c, "cat /usr/lib/os7/release.json", "release manifest")
+        for raw in manifest.splitlines():
+            stripped = raw.strip().rstrip(",")
+            if stripped.startswith('"version"'):
+                version = stripped.split(":", 1)[1].strip().strip('"')
+                break
+
+        # Export, or the second boot finds the pools "in use from another
+        # system" and the probe measures that instead of what it came for.
+        c.drop()
+        c.send("sudo sh -c 'zpool export rpool bpool && printf \'EXP%s\\n\' OK "
+               "|| printf \'EXP%s\\n\' BAD'")
+        c.expect(r"EXP(OK|BAD)", 180, "export")
+        if "EXPOK" not in c.text():
+            print("      FAIL  the fixture pools would not export")
+            return False
+        print(f"      ok    fixture: a disk carrying OS/7 {version}")
+    finally:
+        q.close()
+        c.close()
+
+    if not version:
+        print("      FAIL  the live medium has no version to compare against")
+        return False
+
+    # -- boot two: run Setup interactively and look at screen 4 ---------------
+    c, q = lab.boot(CMDLINE, "existing-detect")
+    ok = True
+    try:
+        def shoot(name, pause=1.5):
+            time.sleep(pause)
+            return lab.shoot(q, name)
+
+        def on_screen(w, h, rgb, needle, what, fg=(255, 255, 255)):
+            rows, cols = h // font.height, w // font.width
+            for row in range(rows):
+                if needle in read_text(w, h, rgb, font, row, 0, cols, fg).rstrip():
+                    print(f"      ok    {what}")
+                    return True
+            print(f"      FAIL  {what}: '{needle}' is not on the screen in {hexc(fg)}")
+            return False
+
+        # Welcome -> Licence -> Regional -> Disk, as phase_walk does.
+        for key, pause in (("ret", 1.5), ("f8", 1.5)):
+            q.send_key(key)
+            time.sleep(pause)
+        for _ in range(3):
+            q.send_key("down")
+        time.sleep(0.5)
+        q.send_key("ret")
+        w, h, rgb = shoot("30-disk-existing", 2.0)
+        ok &= on_screen(w, h, rgb, "install OS/7 on the disk", "screen 4 is Select a disk")
+
+        # The cheap tier: the LIST says so, from partition labels alone.
+        ok &= on_screen(w, h, rgb, "OS/7 installation",
+                        "the list marks the disk as carrying OS/7")
+
+        # Past the setup medium to the target, then ENTER.
+        q.send_key("down")
+        time.sleep(0.5)
+        q.send_key("ret")
+
+        # POLLED, not slept.
+        #
+        # ENTER here runs the probe: import bpool read-only, list its boot
+        # environments, export it. That is seconds rather than frames, and how
+        # many seconds depends on the VM. A fixed sleep would be a coin toss
+        # between a flaky failure and a slow harness, and the failure would read
+        # as "Setup did not detect the installation" — which is a wrong answer,
+        # not a slow one.
+        needle = f"already carries OS/7 {version}"
+        deadline = time.time() + 90
+        w = h = rgb = None
+        while True:
+            w, h, rgb = shoot("31-existing-named", 2.0)
+            rows, cols = h // font.height, w // font.width
+            if any(needle in read_text(w, h, rgb, font, r, 0, cols, BRAND).rstrip()
+                   for r in range(rows)):
+                break
+            if time.time() > deadline:
+                print(f"      FAIL  screen 4 never named the installed version "
+                      f"({version}) within 90s")
+                # What it DID say, so the failure is diagnosable from the log
+                # rather than only from the screendump.
+                for r in range(rows):
+                    line = read_text(w, h, rgb, font, r, 0, cols, BRAND).rstrip()
+                    if line:
+                        print(f"            brand row {r}: {line}")
+                return False
+
+        print(f"      ok    screen 4 names the installed version ({version})")
+        ok &= on_screen(w, h, rgb, "Press ENTER again",
+                        "erasing it needs a second ENTER", fg=BRAND)
+
+        # And the second ENTER does move on — a confirmation that cannot be
+        # confirmed is a dead end, not a safeguard.
+        q.send_key("ret")
+        w, h, rgb = shoot("32-existing-confirmed", 2.5)
+        ok &= on_screen(w, h, rgb, "storage settings",
+                        "a second ENTER continues to screen 5")
         return ok
     finally:
         q.close()
@@ -529,6 +724,9 @@ def main():
     if what in ("all", "walk"):
         lab.prepare()
         results["walk"] = phase_walk(font)
+    if what in ("all", "existing"):
+        lab.prepare()
+        results["existing"] = phase_existing(font)
 
     if not results:
         raise SystemExit(__doc__)

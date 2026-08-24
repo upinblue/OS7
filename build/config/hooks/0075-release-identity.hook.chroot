@@ -1,0 +1,417 @@
+#!/bin/bash
+# OS/7 — the release identity: /etc/os-release branding, and the manifest.
+#
+# This is the hook that turns the pin (docs/RELEASE-AND-UPDATE-PLAN.md §3) into
+# something the finished image carries. It runs LAST, because everything it
+# records has to already be installed for it to be measurable.
+#
+# It does two jobs and they are deliberately in one hook: the branded
+# IMAGE_VERSION in /etc/os-release and the "version" in release.json are the
+# same number, and two hooks writing it from one file is two chances to disagree.
+#
+# INPUTS (staged by build/build.sh):
+#   /usr/lib/os7/release.conf   the pin - what was ASKED FOR
+#   /usr/lib/os7/build.conf     version, timestamp, git provenance
+#
+# OUTPUTS:
+#   /usr/lib/os-release             branded per §3.5 (/etc/os-release is a
+#                                   symlink to it on Ubuntu)
+#   /usr/lib/os7/packages.manifest  every package and its version, sorted
+#   /usr/lib/os7/release.json       the bill of materials - what was OBTAINED
+
+set -euo pipefail
+
+echo "OS/7 hook 0075: release identity"
+
+for conf in /usr/lib/os7/release.conf /usr/lib/os7/build.conf; do
+	[ -r "${conf}" ] || {
+		echo "OS/7 hook 0075: ${conf} missing - build.sh did not stage the pin" >&2
+		exit 1
+	}
+done
+
+# `set -a` so everything sourced is EXPORTED. The python blocks below read their
+# inputs from the environment rather than by interpolation, which is what keeps a
+# value containing a quote from rewriting the program that is supposed to escape
+# it.
+set -a
+# shellcheck source=/dev/null
+. /usr/lib/os7/release.conf
+# shellcheck source=/dev/null
+. /usr/lib/os7/build.conf
+set +a
+
+ARCH="$(dpkg --print-architecture)"
+echo "OS/7 hook 0075:   OS/7 ${OS7_VERSION} (${OS7_CHANNEL}), ${ARCH}"
+
+# ---------------------------------------------------------------------------
+# 1. /etc/os-release (§3.5, and D8 in installer/SETUP-PLAN.md §9)
+#
+# THE FIELDS THAT MUST NOT BE TOUCHED: ID, ID_LIKE, VERSION_ID.
+#
+# Intune's "Allowed distributions" compliance rule matches on them. Branding
+# ID=os7 would make every OS/7 device fail a policy written for Ubuntu 26.04,
+# and README makes Intune's constraints outrank OS/7's preferences wherever the
+# two collide. So the product identity goes somewhere else entirely.
+#
+# IMAGE_ID + IMAGE_VERSION are that somewhere, and they are the correct fields
+# rather than merely free ones. os-release(5) defines BUILD_ID as identifying
+# the image originally used as the INSTALLATION BASE and says explicitly that it
+# does not change during incremental updates - the opposite of what is wanted.
+# IMAGE_ID/IMAGE_VERSION are defined for systems "prepared, built, shipped and
+# updated as comprehensive, consistent" units, which is exactly the OS/7 release
+# train.
+#
+# NOTE: /etc/os-release on Ubuntu is a symlink to ../usr/lib/os-release, and
+# base-files owns that file as a CONFFILE. So an `apt` run that reinstalls
+# base-files can revert this, which is why the update sequence re-asserts it
+# (release plan §4.2 step 6). Writing through the symlink here would work today
+# and break silently the day the symlink goes away; write the real file.
+# ---------------------------------------------------------------------------
+OSREL=/usr/lib/os-release
+[ -f "${OSREL}" ] || { echo "OS/7 hook 0075: ${OSREL} does not exist" >&2; exit 1; }
+
+# VARIANT describes what this IMAGE can be, not what an installed machine chose.
+#   arm64  Server, permanently - it is a server-only product (README) and ships
+#          no desktop at all, so this can never be anything else.
+#   amd64  GUI, because the image carries GNOME. A headless install purges it,
+#          and SETUP-PLAN Phase 3 rewrites this field on the target accordingly.
+# Phase 3 owning the rewrite is the point of setting it here: it changes an
+# existing field rather than inventing one on a system it is halfway through
+# building.
+if [ "${ARCH}" = "arm64" ]; then
+	OS7_VARIANT="Server"; OS7_VARIANT_ID="server"
+else
+	OS7_VARIANT="GUI";    OS7_VARIANT_ID="gui"
+fi
+export OS7_VARIANT OS7_VARIANT_ID
+
+python3 - "${OSREL}" <<'PY'
+import os, sys
+
+path = sys.argv[1]
+env  = os.environ
+
+def quote(value):
+    """os-release(5) values are shell-quoted. ALWAYS double quotes, never the
+    single quotes shlex.quote would pick: os-release is meant to be sourced by
+    `.`, and every other line in the file Ubuntu ships is double-quoted. A file
+    mixing both styles still parses, but it invites a reader that strips only
+    one of them - which is a bug this hook's own readback check had before it
+    was written to source the file instead of scraping it."""
+    escaped = value.replace("\\", "\\\\")
+    for ch in '"$`':
+        escaped = escaped.replace(ch, "\\" + ch)
+    return f'"{escaped}"'
+
+# The branded fields, in the order they should appear if they are new.
+brand = {
+    "NAME":          "OS/7",
+    "PRETTY_NAME":   f"OS/7 {env['OS7_VERSION']}",
+    "HOME_URL":      "https://github.com/upinblue/OS7",
+    "IMAGE_ID":      "os7",
+    "IMAGE_VERSION": env["OS7_VERSION"],
+    "VARIANT":       env["OS7_VARIANT"],
+    "VARIANT_ID":    env["OS7_VARIANT_ID"],
+}
+
+# Untouchable. Named here so that adding a field to `brand` above can never
+# silently capture one of them.
+protected = {"ID", "ID_LIKE", "VERSION_ID"}
+assert not (protected & brand.keys()), "hook 0075 tried to brand an Intune-matched field"
+
+lines, seen = [], set()
+with open(path, encoding="utf-8") as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        key = line.split("=", 1)[0].strip() if "=" in line else None
+        if key in brand:
+            lines.append(f"{key}={quote(brand[key])}")
+            seen.add(key)
+        else:
+            lines.append(line)
+
+for key, value in brand.items():
+    if key not in seen:
+        lines.append(f"{key}={quote(value)}")
+
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+
+# Read it BACK, through the symlink an ordinary program would use, and check the
+# fields that matter in both directions - the branded ones changed, and the
+# Intune-matched ones did not. A hook that writes a file and does not re-read it
+# is the shape of every expensive bug in docs/BUILD-NOTES.md.
+# SOURCE it, do not scrape it. os-release(5) defines the file as shell-compatible
+# and every real consumer reads it with `.`; a sed-and-strip-quotes reader agrees
+# with that right up to the first value that is quoted differently, and then
+# disagrees silently. In a subshell, because sourcing it here would overwrite
+# this script's own NAME and VERSION_ID.
+osrel_get() { ( . /etc/os-release; eval "printf '%s' \"\${$1-}\"" ); }
+
+for pair in "IMAGE_ID=os7" "IMAGE_VERSION=${OS7_VERSION}" "NAME=OS/7"; do
+	key="${pair%%=*}"; want="${pair#*=}"; got="$(osrel_get "${key}")"
+	if [ "${got}" != "${want}" ]; then
+		echo "OS/7 hook 0075: /etc/os-release ${key} is '${got}', expected '${want}'" >&2
+		exit 1
+	fi
+done
+
+for pair in "ID=ubuntu" "VERSION_ID=26.04"; do
+	key="${pair%%=*}"; want="${pair#*=}"; got="$(osrel_get "${key}")"
+	if [ "${got}" != "${want}" ]; then
+		echo "OS/7 hook 0075: ${key} is '${got}', expected '${want}' - Intune's" >&2
+		echo "OS/7 hook 0075: 'Allowed distributions' rule reads this field." >&2
+		exit 1
+	fi
+done
+echo "OS/7 hook 0075:   os-release branded (IMAGE_VERSION=${OS7_VERSION}, ID left as ubuntu)"
+
+# ---------------------------------------------------------------------------
+# 2. The package manifest.
+#
+# §3.4 specifies `dpkg --get-selections`. THIS WRITES VERSIONS AS WELL, and the
+# difference is not cosmetic: selections record package NAMES and an install
+# state, so two systems holding linux-image 7.0.0-28 and 7.0.0-31 produce
+# byte-identical selections. §5 exists to catch exactly that - an admin typing
+# `apt upgrade` behind the release train's back - and against selections alone
+# the check cannot see it.
+#
+# So the manifest is `package<TAB>version<TAB>architecture`, sorted. It is a
+# strict superset of the selections list, and it makes both things the plan
+# wants it for actually work: drift detection (§5) and comparing two builds of
+# the same release (spike S7).
+# ---------------------------------------------------------------------------
+MANIFEST=/usr/lib/os7/packages.manifest
+dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' \
+	| LC_ALL=C sort > "${MANIFEST}"
+chmod 0644 "${MANIFEST}"
+MANIFEST_SHA="$(sha256sum "${MANIFEST}" | cut -d' ' -f1)"
+echo "OS/7 hook 0075:   ${MANIFEST}: $(wc -l < "${MANIFEST}") packages, sha256 ${MANIFEST_SHA:0:16}…"
+
+# ---------------------------------------------------------------------------
+# 3. The bill of materials.
+#
+# Everything here is MEASURED from the image except the three things that
+# cannot be: the version and git provenance (build.conf), the archive snapshot
+# (release.conf), and the .NET SDK (not in the image - os7-setup is NativeAOT).
+#
+# Where a pinned value and a measured value both exist, BOTH are recorded. A pin
+# says what was asked for and a measurement says what arrived; collapsing them
+# into one field would throw away the only evidence that they agreed.
+# ---------------------------------------------------------------------------
+pkgver() { dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true; }
+
+# The kernel by the name `uname -r` will report, taken from the artefact rather
+# than from the meta-package version - linux-generic's version and the kernel
+# ABI string are different things and only one of them appears in a bug report.
+KERNEL_RELEASE="$(ls -1 /boot/vmlinuz-* 2>/dev/null | LC_ALL=C sort -V | tail -n1 | sed 's|.*/vmlinuz-||')"
+[ -n "${KERNEL_RELEASE}" ] || {
+	echo "OS/7 hook 0075: no kernel in /boot - the image cannot boot" >&2
+	exit 1
+}
+
+ZFS_VERSION="$(pkgver zfsutils-linux)"
+AUTHD_VERSION="$(pkgver authd)"
+AZCMAGENT_VERSION="$(pkgver azcmagent)"
+INTUNE_VERSION="$(pkgver intune-portal)"
+
+# The PowerShell hash the pin asserted for THIS architecture. Recorded rather
+# than re-computed: the tarball is gone by now, and what matters in the manifest
+# is which hash the build verified against, not a hash of the unpacked tree.
+case "${ARCH}" in
+	amd64) PWSH_SHA="${OS7_PWSH_SHA256_x64}"   ;;
+	arm64) PWSH_SHA="${OS7_PWSH_SHA256_arm64}" ;;
+	*)     PWSH_SHA=""                          ;;
+esac
+
+SETUP_BIN=/usr/lib/os7-setup/os7-setup
+SETUP_SHA="$(sha256sum "${SETUP_BIN}" 2>/dev/null | cut -d' ' -f1 || true)"
+
+MODULE_PSD1=/usr/local/share/powershell/Modules/OS7/OS7.psd1
+MODULE_VERSION="$(sed -n "s/.*ModuleVersion[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "${MODULE_PSD1}" 2>/dev/null | head -n1)"
+if [ "${MODULE_VERSION}" != "${OS7_VERSION}" ]; then
+	echo "OS/7 hook 0075: OS7 module is ${MODULE_VERSION:-<unset>}, product is ${OS7_VERSION}" >&2
+	echo "OS/7 hook 0075: build.sh stamps the staged .psd1 - it did not take." >&2
+	exit 1
+fi
+
+# PowerShell: the pin says 7.6.5, the binary is asked what it thinks it is.
+# `pwsh --version` is not a health check (hook 0020 explains why at length) but
+# it is a perfectly good VERSION check, which is all it is used for here.
+PWSH_MEASURED="$(/usr/bin/pwsh --version 2>/dev/null | sed 's/^PowerShell //' || true)"
+if [ -n "${PWSH_MEASURED}" ] && [ "${PWSH_MEASURED}" != "${OS7_PWSH_VERSION}" ]; then
+	echo "OS/7 hook 0075: PowerShell reports ${PWSH_MEASURED}, pin says ${OS7_PWSH_VERSION}" >&2
+	exit 1
+fi
+
+RELEASE_JSON=/usr/lib/os7/release.json
+export KERNEL_RELEASE ZFS_VERSION AUTHD_VERSION AZCMAGENT_VERSION INTUNE_VERSION
+export PWSH_SHA SETUP_SHA MODULE_VERSION MANIFEST_SHA
+
+python3 - "${RELEASE_JSON}" <<'PY'
+import json, os, sys
+
+env = os.environ
+def v(name):
+    """A dpkg version that came back empty means the package is not installed."""
+    return env.get(name) or None
+
+dirty = env["OS7_GIT_DIRTY"] == "true"
+
+doc = {
+    "version":      env["OS7_VERSION"],
+    "channel":      env["OS7_CHANNEL"],
+    "built":        env["OS7_BUILT"],
+    "architecture": env["OS7_BUILD_ARCH"],
+
+    # Whether this build can be reproduced from the recorded inputs alone.
+    # False when the source tree was dirty: the archive is pinned, but the OS/7
+    # half of the product then came from a state no commit names. Recorded
+    # rather than warned about once, because the warning scrolls past and the
+    # ISO outlives it.
+    "reproducible": not dirty,
+    "source": {
+        "commit": env["OS7_GIT_COMMIT"],
+        "dirty":  dirty,
+    },
+
+    "base": {
+        "distribution":     "ubuntu",
+        "release":          env["OS7_UBUNTU_RELEASE"],
+        "codename":         env["OS7_DISTRIBUTION"],
+        "archive_snapshot": env["OS7_ARCHIVE_SNAPSHOT"],
+        "archive_base":     env["OS7_ARCHIVE_BASE"],
+    },
+
+    "components": {
+        "kernel":     env["KERNEL_RELEASE"],
+        "zfs":        v("ZFS_VERSION"),
+        "powershell": {
+            "version": env["OS7_PWSH_VERSION"],
+            "sha256":  env["PWSH_SHA"],
+        },
+        # Not in the image to measure - os7-setup is NativeAOT and the image
+        # ships no .NET runtime (spike S2). This is the SDK that COMPILED it.
+        "dotnet_sdk": env["OS7_DOTNET_SDK"],
+        "os7_setup":  {
+            "version": env["OS7_VERSION"],
+            "sha256":  env["SETUP_SHA"] or None,
+        },
+        "os7_module": env["MODULE_VERSION"],
+        "authd":      v("AUTHD_VERSION"),
+        # Root README open question 4: authd-msentraid is a Canonical snap and
+        # seeding a snap into a live-build image is unsolved. Recorded as absent
+        # WITH ITS REASON, because a null here otherwise reads as an oversight
+        # and this is a known, headline gap.
+        "authd_msentraid": {
+            "present": False,
+            "reason": "snap seeding into live-build is unsolved; see README open question 4",
+        },
+    },
+
+    "microsoft": {
+        "azcmagent":     v("AZCMAGENT_VERSION"),
+        "intune_portal": v("INTUNE_VERSION"),
+    },
+
+    "packages_manifest": "sha256:" + env["MANIFEST_SHA"],
+}
+
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2, sort_keys=False)
+    fh.write("\n")
+PY
+
+chmod 0644 "${RELEASE_JSON}"
+
+# Read it back and check the one field everything downstream depends on. The
+# boot-environment name, the GRUB menu title and Setup's title bar are all
+# derived from this file; a release.json that parses and holds the wrong version
+# would put a wrong number in all three without failing anything.
+GOT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "${RELEASE_JSON}")"
+if [ "${GOT}" != "${OS7_VERSION}" ]; then
+	echo "OS/7 hook 0075: ${RELEASE_JSON} says version ${GOT}, expected ${OS7_VERSION}" >&2
+	exit 1
+fi
+
+# The module is what actually composes boot-environment names (SETUP-PLAN §6.3),
+# and it reads this file. Asking IT is the check that matters, because a
+# manifest the module cannot use is a manifest that does not exist as far as the
+# installed system is concerned.
+#
+# Import BY PATH: PowerShell's module discovery is broken under chroot(2)
+# (BUILD-NOTES #14), so Import-Module by NAME cannot work here and its failure
+# would look like a broken manifest.
+# Establish that the interpreter and the module are THERE before asking them
+# anything. Without this, a missing pwsh and a module that ignores the manifest
+# produce the same empty string, and the error below would confidently name the
+# wrong cause - which is the failure mode BUILD-NOTES keeps recording.
+[ -x /usr/bin/pwsh ] || {
+	echo "OS/7 hook 0075: /usr/bin/pwsh is missing - hook 0020 should have installed it." >&2
+	exit 1
+}
+[ -f "${MODULE_PSD1}" ] || {
+	echo "OS/7 hook 0075: ${MODULE_PSD1} is missing - build.sh should have staged it." >&2
+	exit 1
+}
+
+# Keep the WHOLE transcript, not just the last line. The first attempt kept
+# `tail -n1` and the note it printed read "…verify that the path is correct and
+# try again" - the tail of PowerShell's command-not-found message, with the
+# sentence naming the command scrolled off. That sent the next reader after an
+# import problem that was not there (BUILD-NOTES #38). ANSI is stripped because
+# pwsh colours its errors and the escapes land in the build log.
+BE_OUT="$(/usr/bin/pwsh -NoLogo -NoProfile -Command \
+	"Import-Module '${MODULE_PSD1}' -Force; New-OS7BootEnvironmentName" 2>&1 \
+	| tr -d '\r' | sed -e 's/\x1b\[[0-9;]*m//g' || true)"
+BE_NAME="$(printf '%s\n' "${BE_OUT}" | grep -E '^os7_' | tail -n1 || true)"
+
+# THREE OUTCOMES, NOT TWO, and the middle one is why this is not a plain
+# assertion (BUILD-NOTES #38).
+#
+#   the right name    the whole chain works: manifest -> module -> BE name.
+#   the WRONG name    fatal. The module ran and answered with a version that is
+#                     not this release, so every install would create a dataset
+#                     named after the wrong one.
+#   NO name           a NOTE, not a failure. PowerShell under chroot(2) has a
+#                     documented history of failing for reasons that have
+#                     nothing to do with the manifest (#14, #20's RNG problem),
+#                     and a build-time convenience must not be able to fail an
+#                     ISO over a build-time limitation.
+#
+# Collapsing "cannot tell" into "wrong" would make this hook report a broken
+# image for a working one. The load-bearing check that the version reaches the
+# DISK is installer/testing/run-phase2.py, on a booted system.
+case "${BE_NAME}" in
+	os7_${OS7_VERSION}_*)
+		echo "OS/7 hook 0075:   boot environments will be named ${BE_NAME}"
+		;;
+	os7_*_*)
+		echo "OS/7 hook 0075: New-OS7BootEnvironmentName returned '${BE_NAME}'," >&2
+		echo "OS/7 hook 0075: expected os7_${OS7_VERSION}_<stamp>. The module ran and" >&2
+		echo "OS/7 hook 0075: answered with a DIFFERENT version, so it is not reading" >&2
+		echo "OS/7 hook 0075: ${RELEASE_JSON} - every install would name its boot" >&2
+		echo "OS/7 hook 0075: environment after the wrong release." >&2
+		echo "OS/7 hook 0075: The manifest reads:" >&2
+		sed -n '1,4p' "${RELEASE_JSON}" >&2
+		exit 1
+		;;
+	*)
+		echo "OS/7 hook 0075:   NOTE: the module produced no boot-environment name."
+		echo "OS/7 hook 0075:   NOTE: this is EXPECTED at build time - hook 0060 can import"
+		echo "OS/7 hook 0075:   NOTE: the module by path and list its functions, but CALLING"
+		echo "OS/7 hook 0075:   NOTE: one fails: New-OS7BootEnvironmentName needs Get-Content"
+		echo "OS/7 hook 0075:   NOTE: and ConvertFrom-Json, which have to be autoloaded by"
+		echo "OS/7 hook 0075:   NOTE: name out of \$PSHOME/Modules - the lookup #14 mangles."
+		echo "OS/7 hook 0075:   NOTE: BUILD-NOTES #38 has the whole distinction."
+		echo "OS/7 hook 0075:   NOTE: pwsh said, in full:"
+		printf '%s\n' "${BE_OUT:-<nothing>}" | sed 's/^/OS\/7 hook 0075:   NOTE:   | /'
+		echo "OS/7 hook 0075:   NOTE: The manifest itself is verified above. That the version"
+		echo "OS/7 hook 0075:   NOTE: reaches the DISK is checked by run-phase2.py on a booted"
+		echo "OS/7 hook 0075:   NOTE: system, which is where it counts and where this works."
+		;;
+esac
+
+echo "OS/7 hook 0075: done"

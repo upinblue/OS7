@@ -13,13 +13,27 @@
 #   * The .deb could not be used on resolute even if it existed for arm64: its
 #     Depends list ends at libicu74, and resolute ships libicu78.
 #
-# Bump PWSH_VERSION and both hashes together when the release train moves.
+# THE PIN NOW LIVES IN build/config/os7-release.conf, not here.
+#
+# This hook is the one place in the repo that already did release engineering
+# correctly - pin a version, assert a hash, refuse anything else - and
+# docs/RELEASE-AND-UPDATE-PLAN.md §3.4 made it the model for every other
+# component. Having made it the model, leaving its own pin hardcoded here would
+# mean the release file described the release except for the one component whose
+# handling it was copied from. Bump the version and both hashes there.
 
 set -euo pipefail
 
-PWSH_VERSION="7.6.5"
-SHA256_x64="b34ab3b19acac1d3d4d0d3cfdb02acf62f457b0b6a962ff008132033f7566844"
-SHA256_arm64="ed4084f215d8bce2edd23aa7cb1f1e7b0818e41363a635a22065d2701b6141df"
+[ -r /usr/lib/os7/release.conf ] || {
+	echo "OS/7 hook 0020: /usr/lib/os7/release.conf missing - build.sh did not stage the pin" >&2
+	exit 1
+}
+# shellcheck source=/dev/null
+. /usr/lib/os7/release.conf
+
+PWSH_VERSION="${OS7_PWSH_VERSION}"
+SHA256_x64="${OS7_PWSH_SHA256_x64}"
+SHA256_arm64="${OS7_PWSH_SHA256_arm64}"
 
 ARCH="$(dpkg --print-architecture)"
 case "${ARCH}" in

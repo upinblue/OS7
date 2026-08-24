@@ -31,6 +31,30 @@ internal sealed class WelcomeScreen : Screen
         f.Body(10, 7, "• To repair or extend an existing OS/7 installation, press R.");
         f.Body(12, 7, "• To quit Setup without installing OS/7, press F3.");
         if (_note is not null) f.Body(15, 5, _note, Slot.Brand);
+
+        // The identity, in full, on the first screen — the title row carries the
+        // number on every screen but only this one has room to say what is under
+        // it. Which archive snapshot the base came from is the difference
+        // between "OS/7 1.0.0.32" naming a product and naming a STATE
+        // (RELEASE-AND-UPDATE-PLAN §3.1), and it is the second thing a support
+        // case needs after the version itself.
+        Release r = Release.Current;
+        f.Body(17, 5, r.Display);
+        if (r.Known)
+        {
+            string based = r.BaseRelease is null ? "" : $"Ubuntu {r.BaseRelease} base";
+            string pin   = r.ArchiveSnapshot is null
+                ? "archive not pinned"
+                : $"archive {r.ArchiveSnapshot}";
+            f.Body(18, 5, based.Length > 0 ? $"{based}, {pin}" : pin);
+
+            // Said on the screen and not only in the log. A build whose source
+            // could not be identified may still be perfectly good, but two of
+            // them can carry one number and different bits - so the one place it
+            // must not be quiet is the screen somebody photographs for a ticket.
+            if (!r.Reproducible)
+                f.Body(19, 5, "This build was not made from a clean source tree.", Slot.Brand);
+        }
     }
 
     public override Transition Handle(KeyPress key)

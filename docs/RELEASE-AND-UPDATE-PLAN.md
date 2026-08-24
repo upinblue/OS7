@@ -486,17 +486,50 @@ and boots an arm64 system — the expensive part is built.
 |---|---|---|---|
 | **S5** | Does the clone-update-activate-rollback cycle work at all | On the S3 target: snapshot + clone both BE datasets, chroot, `apt full-upgrade` against a pinned snapshot, `update-initramfs`, `update-grub`, activate, reboot; then `Restore-OS7` back | Boots into the new BE with the new kernel; rollback returns to the old BE; both remain bootable throughout |
 | **S6** | **Does TPM2 auto-unlock survive an update** | Six boots on a copy of the S4 target (disk + variable store + swtpm state): rebuild the initramfs and boot; swap the variable store to change Secure Boot policy and boot; re-enrol and boot again | **PASS 2026-08-23 (arm64).** Survives an initramfs rebuild with PCR 7 byte-identical; a policy change moves PCR 7 and breaks the seal *loudly and recoverably*; one `systemd-cryptenroll` restores it. `installer/spikes/run-s6.py` + `s6-update-cycle.sh`; findings in [SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md) |
-| **S7** | Is the version number true | Build the same release twice from the same snapshot; diff `dpkg --get-selections` and the manifest hash | Byte-identical selections. If not, the pinning model is incomplete and §3 needs revisiting before anything is shipped |
+| **S7** | Is the version number true | Build the same release twice from the same snapshot; diff the package manifest | **PASS 2026-08-24 (arm64).** Two builds from `20260824T000000Z` hold identical package sets — 549 packages, manifest `sha256:ffd05e12c9cb3d08…` both times. `installer/spikes/run-s7.py`; findings in [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). **The method had to change:** §3.4's `dpkg --get-selections` carries no versions, so two builds holding different kernels compare EQUAL and this spike would have passed without testing anything (BUILD-NOTES #37). The manifest records `package<TAB>version<TAB>arch` |
 
 **Gate: S5 and S7 pass, and S6's failure mode is characterised, before Phase 1.**
-**S6 is done** (2026-08-23) — its failure mode is characterised and its recovery
-demonstrated. S5 and S7 remain.
+**S6 is done** (2026-08-23) and **S7 passed on 2026-08-24**, so the gate on the
+version number itself is open: the archive pin holds, and `1.0.0.32` names a
+package set rather than a moment. **S5 — does the clone-update-activate-rollback
+cycle boot at all — remains**, and it gates `Update-OS7`, not the release
+engineering S7 covers.
+
+Phase 1 was therefore run ahead of S5, deliberately: nothing it does clones a
+boot environment, and SETUP-PLAN Phase 3 needed the version number that did not
+exist.
 
 ### Phase 1 — Release engineering (no runtime code)
+**DONE 2026-08-24**, and pulled forward ahead of SETUP-PLAN Phase 3 rather than
+run after it: Phase 3 writes `/etc/os-release` (D8), titles the GRUB menu (L4)
+and names the boot environment (§4.4), and all three need a version number that
+until now did not exist anywhere in the repository.
 
-`build/config/os7-release.conf` as the single pin file (§2.3); build emits
-`/usr/lib/os7/release.json` and the selections manifest; os-release branding per
-§3.5; version threaded into the ISO name and BE name.
+`build/config/os7-release.conf` is the single pin file; hook 0075 emits
+`/usr/lib/os7/release.json` and `packages.manifest` and brands os-release per
+§3.5; the version names the ISO and the boot environment. Findings in
+[SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md):
+
+* **It takes fourteen mirror flags, not five.** `*_VOLATILE` is Debian's name for
+  `-updates`, defaults to the live archive, and is the one covering the suite
+  that MOVES. A build with the obvious five is pinned everywhere except where it
+  matters. Read `config/bootstrap` back after `lb config`; do not reason about
+  which flags live-build derives. BUILD-NOTES #36.
+* **Pinning removed a per-architecture special case.** The snapshot service has
+  no `archive`/`ports` split — arm64 is under the same `/ubuntu/<stamp>/` path —
+  so `auto/config` lost the branch it used to carry, as §3.2 predicted.
+* **§3.4's `dpkg --get-selections` cannot detect drift** and §5 depends on it
+  doing so: selections carry no versions, so two systems on different kernels
+  hash identically. The manifest records `package<TAB>version<TAB>arch`.
+  BUILD-NOTES #37.
+* **The BUILD field is `git rev-list --count HEAD`**, there being no CI here by
+  design. A dirty tree cannot be caught by that, so it is recorded as
+  `reproducible: false` and said on the Welcome screen rather than only warned
+  about once in a log.
+* **`/etc/os-release` is a symlink to `/usr/lib/os-release`**, which is a
+  `base-files` conffile — so the branding must be re-asserted after any `apt`
+  run (§4.2 step 6), and read back by SOURCING the file, never by scraping it.
+  BUILD-NOTES #37.
 
 ### Phase 2 — BE primitives in the OS7 module
 
@@ -523,10 +556,12 @@ rebuilt to accommodate it.
 
 ## 11. What this changes in the repo
 
-**The documentation rows were applied on 2026-08-23. Every code row below is
-still pending** — none of the build files, hooks or the PowerShell module have
-been touched by this plan, and they should be changed deliberately rather than
-folded into an in-flight build.
+**The documentation rows were applied on 2026-08-23. The code rows were applied
+on 2026-08-24** — §10 Phase 1 (release engineering) was pulled forward, ahead of
+SETUP-PLAN's Phase 3, because Phase 3 configures the installed system and all
+three of the things it has to write there need a version that did not exist:
+`/etc/os-release` (D8), the GRUB menu title (L4) and the boot-environment name
+(§4.4). See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md).
 
 | Where | Change | State |
 |---|---|---|
@@ -537,12 +572,12 @@ folded into an in-flight build.
 | `../installer/SETUP-PLAN.md` §9 | D8 **closed** (`IMAGE_ID`/`IMAGE_VERSION`, `ID`/`VERSION_ID` untouched, §3.5); **D10 opened** for the `/var` question — that plan's counterpart to U6. | **applied** |
 | `../installer/SETUP-PLAN.md` §8, L4 | The GRUB generator titles entries from the manifest, fixing the "reads Ubuntu 26.04 LTS" complaint. | **applied** |
 | `../installer/SETUP-PLAN.md` §6.3 | The shared BE primitives gain the paired-dataset constraint from §4.3. | **applied** |
-| `../powershell/OS7/OS7.psd1` | `ModuleVersion` becomes the OS/7 product version. `FunctionsToExport` grows §6. | pending |
-| `../powershell/OS7/OS7.psm1` | The stubs get their missing on-disk format, transport and ZFS layout. `Set-OS7Mode`'s self-documented ambiguity resolves (§6). | pending |
-| `../build/config/auto/config` | Sources `os7-release.conf` instead of carrying `OS7_DISTRIBUTION` itself. Mirror URLs point at the pinned snapshot — **and the archive/ports split disappears** (§3.2). | pending |
-| `../build/config/hooks/0010`, `0020` | Pins move to `os7-release.conf`; both hooks feed the manifest. | pending |
-| New `build/config/hooks/00xx-os-release.hook.chroot` | Writes the branded os-release per §3.5. | pending |
-| `../Makefile`, `../.github/workflows/build-iso.yml` | Version and snapshot timestamp become build inputs; ISO artefacts carry the version. | pending |
+| `../powershell/OS7/OS7.psd1` | `ModuleVersion` becomes the OS/7 product version. `FunctionsToExport` grows §6. | **`ModuleVersion` done 2026-08-24** — stamped into the STAGED copy by `build.sh`, never into the source, so the module is not separately versioned and cannot drift from the release. `FunctionsToExport` still pending. |
+| `../powershell/OS7/OS7.psm1` | The stubs get their missing on-disk format, transport and ZFS layout. `Set-OS7Mode`'s self-documented ambiguity resolves (§6). | pending. `New-OS7BootEnvironmentName` now finds `/usr/lib/os7/release.json` and no longer falls back to `0.0.0.0` — measured, not assumed. |
+| `../build/config/auto/config` | Sources `os7-release.conf` instead of carrying `OS7_DISTRIBUTION` itself. Mirror URLs point at the pinned snapshot — **and the archive/ports split disappears** (§3.2). | **done 2026-08-24.** The split did disappear. It takes **fourteen** mirror flags, not five: the two `*_VOLATILE` ones cover `-updates` and default to the live archive — BUILD-NOTES #36. |
+| `../build/config/hooks/0010`, `0020` | Pins move to `os7-release.conf`; both hooks feed the manifest. | **done 2026-08-24.** Key fingerprints and the PowerShell version + hashes are read from the pin file; hook 0075 measures what they produced. |
+| New `build/config/hooks/0075-release-identity.hook.chroot` | Writes the branded os-release per §3.5, **and** `release.json` + `packages.manifest`. One hook, because the branded `IMAGE_VERSION` and the manifest's `version` are the same number and two writers are two chances to disagree. | **done 2026-08-24.** Numbered 0075 so it runs BEFORE 0080, which lets `os7-setup --self-test` check the manifest at build time — a missing version fails the ISO build rather than appearing on a booted screen. |
+| `../Makefile`, `../.github/workflows/build-iso.yml` | Version and snapshot timestamp become build inputs; ISO artefacts carry the version. | **done 2026-08-24.** `out/OS7-<version>-<arch>.iso` plus its `.release.json` and `.packages.manifest`, with `out/os7-<arch>.iso` kept as a symlink because six harnesses open it by that name. The workflow's `out/*.iso` glob needed no change. |
 
 ---
 

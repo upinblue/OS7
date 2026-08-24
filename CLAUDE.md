@@ -17,6 +17,7 @@ here either — this file points, they rule.
 
 | Question | The file that answers it |
 |---|---|
+| What version this is, what archive it was built against, what is in it | [build/config/os7-release.conf](build/config/os7-release.conf) — the pin. **The only place a version number or an archive URL may live.** |
 | What is locked, what is still open | [README.md](README.md) — "Locked decisions" and "Open questions" |
 | The installer: design, screens, decisions D1–D10, limitations L1–L22, phases | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) — **authoritative** |
 | Versioning, the update train, rollback, `/var` | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
@@ -38,12 +39,31 @@ make build-arm64                          # the ISO. ~5 min. Docker, privileged.
 make build-amd64                          # x86_64 hosts only - refuses elsewhere
 make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hours
 
+./installer/testing/check-image.py        # ask a built ISO what it is - no boot
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/spikes/run-s1.py all          # the look: palette, font, glyphs, keys
 ./installer/spikes/run-s3.py all          # install to a disk and boot from it
 ./installer/spikes/run-s4.py all          # Secure Boot + TPM2 unlock (budget 1h)
 ./installer/spikes/run-s6.py all          # TPM2 unlock across an update
+./installer/spikes/run-s7.py all          # is the version number true (two builds)
 ```
+
+**One file defines the release:**
+[build/config/os7-release.conf](build/config/os7-release.conf) — the version, the
+archive snapshot, and every component version and hash. Nothing else in the repo
+may carry a version number or an archive URL. The build turns it into
+`/usr/lib/os7/release.json`, `IMAGE_VERSION` in `/etc/os-release`, the ISO
+filename and the boot-environment name, so those four cannot disagree. What a
+built ISO actually contains is beside it:
+
+```bash
+./installer/testing/check-image.py        # seconds, no VM
+```
+
+That last one is the check nothing else can make: it reads
+`/etc/apt/sources.list` out of the **shipped** image and fails if a single source
+escaped the pin. Hook 0075 runs mid-build and cannot see what live-build does to
+apt afterwards.
 
 Building `os7-setup` alone, without an ISO:
 
@@ -124,6 +144,9 @@ build/                      the ISO: live-build config, hooks, and build.sh
   lib/build-console-font.sh Fixedsys TTF -> two PSFs, coverage and shape asserted
   lib/psf.py                the font subset table, the fixes, and the guard
   lib/palette.py            the palette, and D5's contrast check
+  config/os7-release.conf   THE PIN: version, archive snapshot, component hashes
+  config/hooks/0075-*       turns the pin into os-release, release.json and the
+                            package manifest - and checks what it wrote
   lib/arm64-efi-remaster.sh arm64 has no live-build bootloader; this fixes it,
                             and owns the ISO's GRUB menu
 installer/

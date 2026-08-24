@@ -23,7 +23,9 @@ internal sealed record Disk(
     string Serial,
     string PartitionTable,
     int Partitions,
-    string? Blocker)
+    string? Blocker,
+    IReadOnlyList<(string Path, string Label)> PartitionLabels,
+    bool Os7Layout)
 {
     public bool Selectable => Blocker is null;
 
@@ -35,7 +37,13 @@ internal sealed record Disk(
     /// <summary>What screen 4 puts in the box, in the §3.1 column layout.</summary>
     public string Describe(int width)
     {
+        // "OS/7 installation" outranks the partition count, because the count is
+        // what a blank GPT disk and somebody's working system have in common and
+        // the distinction is the one that matters before ENTER is pressed. The
+        // VERSION is not here: reading it costs an import, and screen 4 lists
+        // every disk on the machine (DiskScreen.Handle probes the one chosen).
         string what = Blocker is not null ? $"-- {Blocker.ToUpperInvariant()} --"
+            : Os7Layout ? "OS/7 installation"
             : PartitionTable.Length == 0 ? "empty"
             : $"{PartitionTable.ToUpperInvariant()}, {Partitions} partition{(Partitions == 1 ? "" : "s")}";
         string model = Model.Length > 0 ? Model : "(no model)";
@@ -91,6 +99,13 @@ internal static class Disks
             string? blocker = Blocked(d);
             int parts = d.Children?.Count(c => c.Type == "part") ?? 0;
 
+            var labels = new List<(string, string)>();
+            if (d.Children is not null)
+                foreach (LsblkDevice c in d.Children)
+                    if (c.Type == "part" && c.Path is not null &&
+                        !string.IsNullOrEmpty(c.PartLabel))
+                        labels.Add((c.Path, c.PartLabel));
+
             disks.Add(new Disk(
                 Path: d.Path,
                 StablePath: StablePath(d.Name, d.Path),
@@ -100,13 +115,16 @@ internal static class Disks
                 Serial: (d.Serial ?? "").Trim(),
                 PartitionTable: d.PtType ?? "",
                 Partitions: parts,
-                Blocker: blocker));
+                Blocker: blocker,
+                PartitionLabels: labels,
+                Os7Layout: ExistingInstalls.LooksLikeOs7(d)));
         }
 
         disks.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
         foreach (Disk d in disks)
             Log.Info($"disk {d.Name} {d.Size} {d.Model} "
                      + (d.Blocker is null ? "selectable" : $"BLOCKED: {d.Blocker}")
+                     + (d.Os7Layout ? " CARRIES AN OS/7 LAYOUT" : "")
                      + $" [{d.StablePath}]");
         return disks;
     }
@@ -224,7 +242,11 @@ internal static class Disks
             foreach (string a in new[]
                      {
                          "--json", "-b", "-o",
-                         "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,RO,RM,PTTYPE,MOUNTPOINTS,TRAN",
+                         // PARTLABEL is what identifies an existing OS/7 install:
+                         // PartitionStep writes os7-esp / os7-bpool / os7-luks as
+                         // GPT partition names, and reading them back costs one
+                         // more column on a call screen 4 already makes.
+                         "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,RO,RM,PTTYPE,PARTLABEL,MOUNTPOINTS,TRAN",
                      })
                 psi.ArgumentList.Add(a);
 
@@ -271,6 +293,7 @@ internal sealed class LsblkDevice
     [JsonPropertyName("ro")] public bool? ReadOnly { get; set; }
     [JsonPropertyName("rm")] public bool? Removable { get; set; }
     [JsonPropertyName("pttype")] public string? PtType { get; set; }
+    [JsonPropertyName("partlabel")] public string? PartLabel { get; set; }
     [JsonPropertyName("tran")] public string? Transport { get; set; }
     [JsonPropertyName("mountpoints")] public List<string?>? MountPoints { get; set; }
     [JsonPropertyName("children")] public List<LsblkDevice>? Children { get; set; }

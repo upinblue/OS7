@@ -39,7 +39,69 @@ case "${ARCH}" in
 	*)           usage ;;
 esac
 
-echo ">>> Building OS/7 for ${ARCH}"
+# ---------------------------------------------------------------------------
+# The release pin, and the version this build carries.
+#
+# docs/RELEASE-AND-UPDATE-PLAN.md §3. One file defines the release; this script
+# turns it into a version STRING and hands that string to everything downstream.
+# Nothing else in the repo may compose a version number.
+# ---------------------------------------------------------------------------
+RELEASE_CONF="${SRC_CONFIG}/os7-release.conf"
+[[ -r "${RELEASE_CONF}" ]] || {
+	echo "!!! release pin missing: ${RELEASE_CONF}" >&2
+	echo "!!! refusing to build against an unpinned archive." >&2
+	exit 1
+}
+# shellcheck source=config/os7-release.conf
+source "${RELEASE_CONF}"
+
+REPO="$(cd "${HERE}/.." && pwd)"
+
+# BUILD = commit count. `git rev-list` needs the repo marked safe: /work is a
+# bind mount owned by the host user and git refuses to read a repository it
+# thinks belongs to somebody else, with an error that looks like corruption.
+GIT="git -c safe.directory=${REPO} -C ${REPO}"
+if [[ -n "${OS7_VERSION_BUILD:-}" && -n "${OS7_GIT_COMMIT:-}" ]]; then
+	# HANDED IN BY THE CALLER. scripts/build-amd64-vm.sh copies the tree into a
+	# QEMU VM with --exclude=.git, so git inside the VM would answer "not a
+	# repository" and every amd64 ISO would be version x.y.z.0 with
+	# reproducible=false - permanently, and for a reason that has nothing to do
+	# with the build. The host computes the three values and passes them in.
+	OS7_GIT_DIRTY="${OS7_GIT_DIRTY:-true}"
+	echo "    source facts supplied by the caller (no .git in this tree)"
+elif OS7_GIT_COMMIT="$(${GIT} rev-parse --short=12 HEAD 2>/dev/null)"; then
+	OS7_VERSION_BUILD="$(${GIT} rev-list --count HEAD)"
+	if [[ -n "$(${GIT} status --porcelain 2>/dev/null)" ]]; then
+		OS7_GIT_DIRTY=true
+	else
+		OS7_GIT_DIRTY=false
+	fi
+else
+	# Neither a git checkout nor told. Say so in the manifest rather than
+	# inventing a number: a build that cannot identify its source must not claim
+	# to, and `reproducible: false` is how it says so where somebody will read it.
+	echo "    NOTE: no git repository at ${REPO} and no OS7_VERSION_BUILD - BUILD field is 0"
+	OS7_VERSION_BUILD=0
+	OS7_GIT_COMMIT="unknown"
+	OS7_GIT_DIRTY=true
+fi
+
+OS7_VERSION="${OS7_VERSION_MAJOR}.${OS7_VERSION_MINOR}.${OS7_VERSION_PATCH}.${OS7_VERSION_BUILD}"
+OS7_BUILT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo ">>> Building OS/7 ${OS7_VERSION} (${OS7_CHANNEL}) for ${ARCH}"
+echo "    archive pin  ${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}/"
+echo "    source       ${OS7_GIT_COMMIT}$( [[ "${OS7_GIT_DIRTY}" = true ]] && echo ' (DIRTY)' )"
+
+# A dirty tree means two builds can carry one version and different bits, which
+# is exactly what the pin exists to prevent (release plan §3.1). It is not made
+# fatal - a dirty tree is the normal state while developing - but it is said out
+# loud here and recorded as "reproducible": false in the manifest, so the number
+# never quietly claims more than it knows.
+if [[ "${OS7_GIT_DIRTY}" = true ]]; then
+	echo "    WARNING: the source tree is dirty. ${OS7_VERSION} does not identify it."
+	echo "    WARNING: the manifest will record reproducible=false."
+fi
 
 # ---------------------------------------------------------------------------
 # HARVESTED FIX 3: build in a CONTAINER-LOCAL directory, never under /work.
@@ -66,6 +128,11 @@ mkdir -p "${WORK}/config"
 # Ubuntu image with no OS/7 content in it.
 # ---------------------------------------------------------------------------
 cp -a "${SRC_CONFIG}/auto" "${WORK}/auto"
+
+# The archive half of the pin, for auto/config. The chroot half is staged after
+# the includes.chroot copy below - doing it here would make `cp -a` nest the
+# authored tree inside the directory this created.
+install -Dm644 "${RELEASE_CONF}" "${WORK}/auto/os7-release.conf"
 
 for sub in package-lists hooks includes.chroot; do
 	if [[ -d "${SRC_CONFIG}/${sub}" ]]; then
@@ -98,6 +165,44 @@ for sub in package-lists hooks includes.chroot; do
 done
 
 # ---------------------------------------------------------------------------
+# The chroot half of the pin. Two files, and the difference between them is the
+# point:
+#
+#   /usr/lib/os7/release.conf   the pin the HOOKS read - versions, hashes, the
+#                               archive snapshot. A verbatim copy of the file in
+#                               the repository.
+#   /usr/lib/os7/build.conf     what the pin file cannot know, because it is not
+#                               a git repository and does not know when it ran.
+#
+# Both ship in the image. A hook that reads its pins from a file which then
+# disappears leaves the image unable to answer "where did this come from".
+# `release.json` (hook 0075) carries the same facts in machine-readable form and
+# adds what can only be MEASURED after the packages are in; these two are the
+# INPUTS. If the inputs and the manifest ever disagree, that is visible instead
+# of invisible.
+# ---------------------------------------------------------------------------
+install -Dm644 "${RELEASE_CONF}" \
+	"${WORK}/config/includes.chroot/usr/lib/os7/release.conf"
+
+# The .NET SDK is recorded here and NOT measured by the hook, because it is not
+# in the image to measure: os7-setup is NativeAOT (S2) and the image ships no
+# runtime. It is a property of the build container, so this is the only place
+# that can honestly report it.
+OS7_DOTNET_SDK="$(DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 dotnet --version 2>/dev/null || echo unknown)"
+
+cat > "${WORK}/config/includes.chroot/usr/lib/os7/build.conf" <<BUILDCONF
+# OS/7 — generated by build/build.sh. Do not edit; edit build/config/os7-release.conf.
+OS7_VERSION="${OS7_VERSION}"
+OS7_BUILT="${OS7_BUILT}"
+OS7_BUILD_ARCH="${ARCH}"
+OS7_GIT_COMMIT="${OS7_GIT_COMMIT}"
+OS7_GIT_DIRTY=${OS7_GIT_DIRTY}
+OS7_DOTNET_SDK="${OS7_DOTNET_SDK}"
+BUILDCONF
+chmod 0644 "${WORK}/config/includes.chroot/usr/lib/os7/build.conf"
+echo "    staged the release pin -> /usr/lib/os7/{release,build}.conf"
+
+# ---------------------------------------------------------------------------
 # Stage the OS7 PowerShell module from its ONE source of truth (powershell/OS7)
 # into the image, at a path already on PowerShell 7's default PSModulePath.
 # Hook 0060 verifies it imports. Keeping a second copy checked in under
@@ -108,7 +213,25 @@ OS7_MODULE_DST="${WORK}/config/includes.chroot/usr/local/share/powershell/Module
 if [[ -d "${OS7_MODULE_SRC}" ]]; then
 	mkdir -p "${OS7_MODULE_DST}"
 	cp -a "${OS7_MODULE_SRC}/." "${OS7_MODULE_DST}/"
-	echo "    staged OS7 PowerShell module -> ${OS7_MODULE_DST#${WORK}/}"
+
+	# ModuleVersion becomes the product version (release plan §11), stamped into
+	# the STAGED copy and never into the source. The module ships as part of the
+	# release train - it is not separately versioned - so a hand-maintained
+	# number in the .psd1 would be a second source of truth that drifts, and the
+	# only way to notice would be a support case quoting two numbers.
+	#
+	# PowerShell parses ModuleVersion as System.Version, which takes exactly the
+	# four numeric fields §3.3 defines. Asserted below rather than assumed: a
+	# .psd1 whose ModuleVersion does not parse makes the module unimportable, and
+	# BUILD-NOTES #14 means no hook can detect that by importing it BY NAME.
+	sed -i -E "s/^([[:space:]]*ModuleVersion[[:space:]]*=[[:space:]]*).*$/\1'${OS7_VERSION}'/" \
+		"${OS7_MODULE_DST}/OS7.psd1"
+	if ! grep -q "ModuleVersion *= *'${OS7_VERSION}'" "${OS7_MODULE_DST}/OS7.psd1"; then
+		echo "!!! could not stamp ModuleVersion = ${OS7_VERSION} into the staged OS7.psd1" >&2
+		grep -n 'ModuleVersion' "${OS7_MODULE_DST}/OS7.psd1" >&2 || true
+		exit 1
+	fi
+	echo "    staged OS7 PowerShell module -> ${OS7_MODULE_DST#${WORK}/}  (ModuleVersion ${OS7_VERSION})"
 else
 	echo "!!! OS7 module source missing: ${OS7_MODULE_SRC}" >&2
 	exit 1
@@ -242,14 +365,31 @@ echo "    staged ${#STAGED_HOOKS[@]} hook(s) at config/hooks/*.chroot"
 
 cd "${WORK}"
 
-export OS7_ARCH="${ARCH}"   # read by auto/config
+export OS7_ARCH="${ARCH}"        # read by auto/config
+export OS7_VERSION               # ditto - it names the ISO volume
 lb config
 
 echo ">>> Running live-build (needs network access to the Ubuntu archives)"
 lb build 2>&1 | tee "${WORK}/build-${ARCH}.log"
 
 mkdir -p "${OUT_DIR}"
-DEST="${OUT_DIR}/os7-${ARCH}.iso"
+
+# ---------------------------------------------------------------------------
+# The ISO carries its version in its NAME, and a stable name points at the
+# newest one.
+#
+#   out/OS7-1.0.0.32-arm64.iso   the artefact. Two of these side by side are
+#                                distinguishable without mounting either, which
+#                                is the whole reason spike S7 can compare builds.
+#   out/os7-arm64.iso            a symlink to it.
+#
+# The symlink is not decoration. Every harness in installer/testing/ and
+# installer/spikes/ opens out/os7-<arch>.iso by that exact name, and the Makefile
+# and CLAUDE.md both promise it. Versioning the artefact without keeping the
+# stable name would have broken six scripts to gain a filename.
+# ---------------------------------------------------------------------------
+DEST="${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.iso"
+STABLE="${OUT_DIR}/os7-${ARCH}.iso"
 
 if [[ "${ARCH}" = "arm64" ]]; then
 	# HARVESTED FIX 7: live-build emits NO arm64 bootloader (lb_binary_grub2 is
@@ -257,15 +397,66 @@ if [[ "${ARCH}" = "arm64" ]]; then
 	# empty El-Torito catalog - a complete live filesystem that cannot boot.
 	# Re-master it.
 	"${HERE}/lib/arm64-efi-remaster.sh" "${WORK}" "${DEST}"
-	echo ">>> Done: ${DEST}"
 else
 	ISO="$(ls -1 "${WORK}"/*.iso 2>/dev/null | head -n1 || true)"
 	if [[ -n "${ISO}" ]]; then
 		cp -f "${ISO}" "${DEST}"
-		echo ">>> Done: ${DEST}"
 	else
 		echo "!!! No ISO produced - see ${WORK}/build-${ARCH}.log (in container)" >&2
 		tail -n 40 "${WORK}/build-${ARCH}.log" >&2 || true
 		exit 1
 	fi
 fi
+
+ln -sfn "$(basename "${DEST}")" "${STABLE}"
+
+# The manifest the image carries, lifted out beside the ISO. S7 diffs two of
+# these without booting anything, and a support case can read one without a
+# loop mount. Extracted from the squashfs rather than re-derived here: the file
+# beside the ISO must be the file IN it, or it is a second source of truth.
+SQ="${WORK}/binary/casper/filesystem.squashfs"
+[[ -f "${SQ}" ]] || { echo "!!! no squashfs at ${SQ}" >&2; exit 1; }
+
+MANIFEST_DIR="${WORK}/manifest-extract"
+rm -rf "${MANIFEST_DIR}"
+
+# ASK FOR THE FILES, THEN LOOK FOR THEM. Do not read unsquashfs's exit code as
+# an answer: measured 2026-08-24, `unsquashfs -d out image.squashfs a/path/that/
+# does/not/exist` extracts nothing and EXITS 0. So the one failure this check
+# exists to catch - hook 0075 never ran, trap #13's shape exactly - is the one
+# the exit code cannot report.
+unsquashfs -q -n -f -d "${MANIFEST_DIR}" "${SQ}" \
+	usr/lib/os7/release.json usr/lib/os7/packages.manifest >/dev/null 2>&1 || true
+
+for want in release.json packages.manifest; do
+	if [[ ! -s "${MANIFEST_DIR}/usr/lib/os7/${want}" ]]; then
+		echo "!!! the image carries no /usr/lib/os7/${want}." >&2
+		echo "!!! Hook 0075 did not run, or did not write it. The ISO exists and is" >&2
+		echo "!!! unusable as a release: nothing on it knows which version it is," >&2
+		echo "!!! and every boot environment it installs would be named 0.0.0.0." >&2
+		rm -rf "${MANIFEST_DIR}"
+		exit 1
+	fi
+done
+
+mv "${MANIFEST_DIR}/usr/lib/os7/release.json" \
+   "${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.release.json"
+mv "${MANIFEST_DIR}/usr/lib/os7/packages.manifest" \
+   "${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.packages.manifest"
+rm -rf "${MANIFEST_DIR}"
+
+# The manifest that just came OUT of the image has to agree with the version
+# this build thinks it made. They can only differ if the staging and the hook
+# disagreed about the pin, and that is worth catching here rather than in a
+# support case.
+LIFTED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+	"${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.release.json" 2>/dev/null || echo "")"
+if [[ "${LIFTED}" != "${OS7_VERSION}" ]]; then
+	echo "!!! the image says version '${LIFTED}', this build is ${OS7_VERSION}" >&2
+	exit 1
+fi
+echo "    manifest -> ${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.release.json"
+
+echo ">>> Done: ${DEST}"
+echo "    OS/7 ${OS7_VERSION} (${OS7_CHANNEL}), ${ARCH}, archive ${OS7_ARCHIVE_SNAPSHOT}"
+echo "    ${STABLE} -> $(basename "${DEST}")"

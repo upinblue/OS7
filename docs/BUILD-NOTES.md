@@ -970,3 +970,256 @@ the CD was the unrealistic case as well as the untestable one.
 
 Order the `-device` lines so the medium enumerates first, and the harness lands
 on it without having to know which name it got.
+
+## 36. Pinning live-build's archive takes ALL the mirror flags — the two that matter are `*_VOLATILE`
+
+Found on 2026-08-24, pinning the build to `snapshot.ubuntu.com` (release plan
+§3.2). It is the same shape as #25 and #13: something silently keeps its default,
+and the default is the thing you were trying to replace.
+
+`auto/config` set the five obvious flags — `--mirror-bootstrap`,
+`--mirror-chroot`, `--mirror-chroot-security`, `--mirror-binary`,
+`--mirror-binary-security`. Reading `config/bootstrap` back after `lb config`
+showed the pin had *not* taken everywhere:
+
+```
+LB_MIRROR_CHROOT_VOLATILE="http://archive.ubuntu.com/ubuntu/"
+LB_MIRROR_BINARY_VOLATILE="http://archive.ubuntu.com/ubuntu/"
+```
+
+**"Volatile" is Debian's name for what Ubuntu calls `-updates`.** So the two
+flags nobody thinks to set are the ones covering the suite that *moves*. A build
+like that draws its base from a fixed snapshot and its updates from whatever the
+archive holds today, and is therefore not reproducible — while every flag on
+screen says it is pinned. On arm64 it is also pointed at a host that does not
+carry the architecture at all (`archive.ubuntu.com` vs `ports.ubuntu.com`).
+
+Set both families, all of them:
+
+```
+--parent-mirror-{bootstrap,chroot,chroot-security,chroot-volatile,binary,binary-security,binary-volatile}
+--mirror-{bootstrap,chroot,chroot-security,chroot-volatile,binary,binary-security,binary-volatile}
+```
+
+`*_BACKPORTS` may stay `"none"` — that is disabled, not defaulted.
+
+**The check that finds this costs thirty seconds and no build.** Run `lb config`
+alone and grep what it recorded:
+
+```bash
+grep -E "^LB_(PARENT_)?MIRROR" config/bootstrap | grep -v snapshot.ubuntu.com
+```
+
+Anything that prints is a leak. Do not reason about which flags live-build
+derives from which — read what it wrote.
+
+Two things measured the same day, both worth having:
+
+* **`security.ubuntu.com` does serve arm64** for `resolute-security`
+  (`binary-arm64/Packages.gz` → 200). The unpinned security mirror in the
+  pre-pin ISO was a reproducibility hole, not a broken source. Checked before
+  claiming it, because the `archive`/`ports` split makes the opposite obvious
+  and wrong.
+* **The snapshot service has no `archive`/`ports` split at all.** arm64 is under
+  the same `/ubuntu/<stamp>/` path as amd64, so pinning *removes* the
+  per-architecture branch `auto/config` used to carry.
+
+## 37. `/etc/os-release` is a symlink, and `dpkg --get-selections` cannot detect drift
+
+Two findings from writing the release identity (hook 0075).
+
+**The file to write is `/usr/lib/os-release`.** On Ubuntu 26.04
+`/etc/os-release` is a symlink to `../usr/lib/os-release`, and `base-files` owns
+the target as a *conffile*. Writing through the symlink works today and breaks
+silently the day the symlink is not there; and because it is a conffile, an
+`apt` run that reinstalls `base-files` reverts the branding — which is why the
+update sequence has to re-assert it (release plan §4.2 step 6).
+
+Read it back by **sourcing** it, never by scraping it. os-release(5) defines the
+file as shell-compatible and every real consumer reads it with `.`; a
+`sed`-and-strip-quotes reader agrees right up to the first value quoted the other
+way, then disagrees in silence. The first version of hook 0075's own readback
+check stripped only double quotes while its writer emitted single ones.
+
+Also: the release plan's §3.5 example shows `ID_LIKE=ubuntu`. The actual file
+says `ID_LIKE=debian`. It does not matter — the field is one of the three left
+untouched for Intune — but do not "fix" the real file to match the example.
+
+**`dpkg --get-selections` is the wrong basis for drift detection.** §3.4
+specifies it for `packages_manifest`, and §5 wants that manifest to catch an
+admin typing `apt upgrade` behind the release train's back. It cannot: selections
+record package *names* and an install state, so a system holding
+`linux-image 7.0.0-28` and one holding `7.0.0-31` produce **byte-identical**
+selections. The hash would match and the drift would be invisible.
+
+Hook 0075 writes `package<TAB>version<TAB>architecture`, sorted, instead. It is
+a strict superset of the selections list and it makes both of the things the
+manifest exists for actually work — drift detection (§5) and comparing two
+builds of one release (spike S7).
+
+## 38. Two different chroots: bundled cmdlets resolve in one and not in the other
+
+Measured 2026-08-24, and then **contradicted by the build the same afternoon.**
+Read the correction at the bottom before relying on the measurement.
+
+#14 says PowerShell's module discovery is broken inside `chroot(2)` — it probes
+`PSModulePath` with the character at index 1 dropped — and hook 0020 adds that
+`Write-Host` therefore "cannot work at build time". Hook 0075 has to read
+`/usr/lib/os7/release.json` through `New-OS7BootEnvironmentName`, which calls
+`Test-Path`, `Get-Content`, `ConvertFrom-Json` and `Get-Date`, all from the same
+bundled `Microsoft.PowerShell.Utility`. If #14 read the way it appears to, that
+check could not exist.
+
+So it was measured rather than assumed: overlay the shipped squashfs, bind
+`/dev` and `/proc`, `chroot`, and ask.
+
+```
+chroot /mnt/root /usr/bin/pwsh -NoLogo -NoProfile -Command \
+  "Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; New-OS7BootEnvironmentName"
+os7_1.0.0.32_202608241502
+```
+
+**It works.** Chrooted, importing by path, with every bundled cmdlet resolving.
+
+The distinction #14 was always making, now visible:
+
+| | under `chroot(2)` |
+|---|---|
+| `Import-Module <name>` / `Get-Module -ListAvailable` | broken — this is #14 |
+| `Import-Module <absolute path>` | works, and #14 says so |
+| **Bundled cmdlets from `$PSHOME/Modules`** | **work** |
+
+And the reason the third row ever looked broken is in hook 0020's own root cause,
+one paragraph further down than the part that gets quoted: with no usable
+`/dev/urandom`, .NET throws `CryptographicException` while initialising a
+runspace, and then *no on-disk module can load at all* — which presents as
+"`Write-Host` is not recognized" and looks exactly like a discovery failure. A
+live-build chroot gets only `/dev/pts`, so that was the state when the note was
+written. Hook 0020 now `mknod`s the device nodes, so every hook numbered after it
+runs with a working RNG.
+
+### The correction — the same command fails in live-build's chroot
+
+The measurement above is real and reproducible. It is also **not representative
+of the chroot a hook actually runs in.** The first ISO build after it printed:
+
+```
+OS/7 hook 0075:   NOTE: the module produced no boot-environment name.
+OS/7 hook 0075:   NOTE: pwsh said: … included, verify that the path is correct and try again.
+```
+
+That sentence is the tail of PowerShell's *command-not-found* message, not of an
+import failure — and in the same build, twenty lines earlier:
+
+```
+OS/7 hook 0060:   manifest loads, exports: New-OS7BootEnvironmentName, New-OS7Storage, …
+```
+
+So in live-build's chroot the module **imports** by path and its functions are
+**listed** — and *calling* one fails. The distinction that matters is therefore
+not import-by-path versus import-by-name:
+
+| | overlay + bind-mounted /dev | live-build's chroot |
+|---|---|---|
+| `Import-Module <path>` | works | **works** |
+| `Get-Command -Module OS7` | works | **works** |
+| **Calling a function that uses `Get-Content` / `ConvertFrom-Json`** | works | **fails** |
+
+Hook 0060 has always been written to stay on the right side of that line, and
+its comments say so without quite saying why: it uses `Get-Command` (compiled
+into the engine, in `Microsoft.PowerShell.Core`) and `[Console]::WriteLine`
+(pure .NET), and touches nothing that has to be **autoloaded by name** out of
+`$PSHOME/Modules`. `New-OS7BootEnvironmentName` calls `Test-Path`,
+`Get-Content`, `ConvertFrom-Json` and `Get-Date`, all of which do — and that
+autoload is #14's mangled-path lookup.
+
+**Why the overlay test disagreed has not been isolated.** The environment differs
+(a hook inherits live-build's), and so does how `/dev` came to exist. Both are
+plausible; neither is measured. Do not build on the overlay result.
+
+**The operative rule, unchanged from #14 and now with a reason:**
+
+> A build-time hook may `Import-Module` by path and inspect what it exports. It
+> must not CALL anything that needs a bundled cmdlet. If it needs real work done,
+> do it in `python3` or `bash`.
+
+**And the design rule this cost nothing because of.** Hook 0075 treats
+"PowerShell produced no answer" as a NOTE and "PowerShell produced the WRONG
+version" as fatal. Had it treated both as fatal — the obvious way to write it —
+this build would have failed on a perfectly good image. The load-bearing check
+that the version reaches the disk is `installer/testing/run-phase2.py`, on a
+booted system, where none of this applies.
+
+## 39. `unsquashfs` exits 0 when the file you asked for is not in the image
+
+Measured 2026-08-24, while making `build.sh` lift `/usr/lib/os7/release.json`
+out of the finished squashfs.
+
+```
+unsquashfs -q -n -f -d /tmp/probe image.squashfs usr/lib/os7/release.json
+echo $?        # 0
+find /tmp/probe -type f | wc -l    # 0
+```
+
+It extracts nothing and reports success. So the exit code cannot answer the one
+question the extraction exists to ask — *did hook 0075 actually write the
+manifest into the image* — which is trap #13's shape again, one layer down: the
+build "succeeds" and the artefact is not there.
+
+**Ask for the files, then look for them.** Ignore the status, test the paths:
+
+```bash
+unsquashfs -q -n -f -d "${DIR}" "${SQ}" usr/lib/os7/release.json ... || true
+for want in release.json packages.manifest; do
+    [[ -s "${DIR}/usr/lib/os7/${want}" ]] || { echo "not in the image" >&2; exit 1; }
+done
+```
+
+The check is worth having rather than dropping, because an ISO with no manifest
+is not merely missing a file: nothing on it knows which version it is, and every
+boot environment it installs would be named `0.0.0.0`.
+
+Verified on `unsquashfs` 4.7.5 (2026/03/01), the version in the build container.
+
+### A second hazard, from the same session
+
+**Do not edit `build/build.sh` while a build is running.** Bash reads a script
+lazily, by byte offset, so inserting lines ahead of the point the interpreter has
+not reached yet misaligns everything after it — and the failure appears at the
+very end of a long build, in the post-processing, looking like a bug in the code
+you just wrote. Let the build finish, or kill it, before editing.
+
+## 40. `--iso-volume` does nothing on arm64 — the remaster discards it
+
+Found 2026-08-24 by reading the label off a finished ISO, which is the only way
+it could have been found.
+
+`auto/config` passes `--iso-volume "OS7-<version>-<arch>"`, and `lb config`
+records it faithfully:
+
+```
+config/binary:LB_ISO_VOLUME="OS7-1.0.0.32-arm64"
+```
+
+The ISO said `OS7-arm64`.
+
+`build/lib/arm64-efi-remaster.sh` does not modify live-build's ISO — it builds a
+**new one** with `xorriso`, because live-build emits no arm64 bootloader at all
+(harvested fix 7). So every ISO9660 property live-build was told about is
+discarded at the last step, and the `-volid "OS7-arm64"` hardcoded on the xorriso
+line quietly won over the flag.
+
+**The nastiest part is that it is architecture-dependent.** amd64 keeps
+live-build's ISO, so there the same flag works. One setting, two behaviours, and
+the difference only shows on the artefact.
+
+The fix takes the volume id from the output filename the caller already passes —
+`OS7-<version>-<arch>.iso` → `OS7-<version>-<arch>` — rather than adding a second
+variable. The label on the medium and the name of the file then cannot disagree,
+and there is nothing new for a future caller to forget.
+
+**The general form, worth carrying:** anything that re-masters an image discards
+everything the tool that built it was configured with. Check the artefact, not
+the configuration — `blkid -o value -s LABEL image.iso` costs nothing.
+`installer/testing/check-image.py` does this and four other things the build
+cannot check from inside itself.

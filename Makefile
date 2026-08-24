@@ -97,11 +97,17 @@ build-arm64: image-arm64
 	$(call DOCKER_RUN,arm64,) /work/build/build.sh arm64
 
 # Config-only smoke test: stages the tree and runs `lb config`, no `lb build`.
+#
+# The pin file and OS7_VERSION are staged here too because auto/config refuses to
+# run without them - deliberately, so that no path can reach the archive
+# unpinned. The version here is a placeholder: this target validates the
+# configuration, it does not produce a medium anyone could quote it from.
 lb-config: image-amd64
 	$(call DOCKER_RUN,amd64,) bash -c 'set -e; \
 	  rm -rf /os7-build && mkdir -p /os7-build/config; \
 	  cp -a /work/build/config/auto /os7-build/auto; \
-	  cd /os7-build && OS7_ARCH=amd64 lb config && echo "lb config OK"'
+	  cp -a /work/build/config/os7-release.conf /os7-build/auto/os7-release.conf; \
+	  cd /os7-build && OS7_ARCH=amd64 OS7_VERSION=0.0.0.0 lb config && echo "lb config OK"'
 
 shell-amd64: image-amd64
 	$(call DOCKER_RUN,amd64,-it) bash

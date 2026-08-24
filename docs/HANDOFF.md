@@ -25,6 +25,8 @@ decides what, the commands that work, and the traps that cost the most.
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
 | `os7-setup` | **Phases 1 and 2 done.** Boots from the ISO's *Install OS/7* entry, runs on tty1, and **writes to a disk**: partition table, ESP, LUKS2 container, both pools and the §4.4 datasets. No OS on it yet — that is Phase 3. See [SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md) and [SESSION-PHASE2-STORAGE.md](SESSION-PHASE2-STORAGE.md). |
+| **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
+| `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 
 ### Phase 0 is done — the gate is open
 
@@ -69,6 +71,31 @@ progress; chroot configuration (locale, timezone, hostname, users,
 `zgenhostid`, `update-initramfs`); bootloader install and the `grub.d` boot-
 environment generator; screens 7–11; the GUI/headless split.
 *Deliverable: a machine installed by Setup boots into OS/7.*
+
+**Three things were decided into Phase 3 on 2026-08-24** and are in SETUP-PLAN
+§10 in full:
+
+* **TPM2 enrolment is in it.** The layout screen already tells the operator that
+  Setup will seal the passphrase to the TPM if it can, and Phase 3 builds the
+  initramfs anyway. It is not `systemd-cryptenroll` alone — BUILD-NOTES #19, #20,
+  and `installer/spikes/s4-tpm-enroll.sh` is the working version. U8, the
+  escrowed recovery passphrase, stays open.
+* **Every chroot step takes the target root as a PARAMETER**, not
+  `StorageSteps.Target` as a constant. `Update-OS7` runs the same sequence from
+  step 3 onwards against a cloned boot environment mounted elsewhere (release
+  plan §4.2). It costs nothing now and cannot be retrofitted without
+  re-validating all of Phase 3.
+* **The identity goes onto the target.** `/etc/os-release` (D8) and the GRUB menu
+  title (L4) come from the manifest Phase 3 copies in with the system.
+  `build/config/hooks/0075-release-identity.hook.chroot` does exactly this for
+  the image and is the model.
+
+**And the release-engineering half is now done**, ahead of Phase 3 rather than
+after it, because Phase 3 writes the version in three places and the version did
+not exist. Read [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md)
+before touching the build: the pin takes **fourteen** mirror flags, not five
+(BUILD-NOTES #36), and `unsquashfs` exits 0 for a file that is not there
+(BUILD-NOTES #39).
 
 **Where it starts.** Phase 2 leaves the pools created with `-R /target` and the
 boot environment mounted, so Phase 3 begins on a mounted, empty

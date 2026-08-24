@@ -29,6 +29,7 @@ the unit is running, and reading /var/log/os7-setup/setup.log at the end. That
 log is independent evidence — it says what Setup THOUGHT happened, next to a
 screendump of what it drew.
 """
+import json
 import os
 import subprocess
 import sys
@@ -60,6 +61,72 @@ CELL = (16, 32)
 CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
            "console=ttyAMA0,115200")
+
+
+RELEASE_JSON = os.path.join(lab.dir, "release.json")
+_release = None
+
+
+def fetch_release():
+    """Take /usr/lib/os7/release.json out of the ISO's squashfs.
+
+    THE VERSION ON THE SCREEN IS CHECKED AGAINST THIS FILE, not against a string
+    written into the harness. A harness carrying its own copy of the expected
+    version passes for as long as somebody remembers to edit it, and the day
+    they forget is the day it stops testing anything — which is the same
+    argument fetch_font() makes about the PSF.
+
+    Reading it out of the IMAGE rather than out of out/OS7-*.release.json is the
+    same point one level down: build.sh writes that file beside the ISO by
+    extracting it from the squashfs, and this asserts the copy that shipped.
+
+    CACHED IN MEMORY, NEVER ON DISK — the one place this deliberately differs
+    from fetch_font(). The font is identical from build to build, so a copy in
+    .vm/ is as good as the original. The manifest changes with EVERY build, so a
+    cached copy is a stale expectation: rebuild the ISO, run this without
+    `reset`, and the harness would compare a new screen against the version of
+    an ISO that no longer exists — reporting a mismatch as Setup's fault, or
+    agreeing with itself if the number happened not to move.
+    """
+    global _release
+    if _release is not None:
+        return _release
+    os.makedirs(lab.dir, exist_ok=True)
+    if os.path.exists(RELEASE_JSON):
+        os.remove(RELEASE_JSON)
+    print("    taking the release manifest out of the ISO …")
+    try:
+        run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
+            "-v", f"{os.path.dirname(lab.iso)}:/iso:ro", "-v", f"{lab.dir}:/out",
+            "os7-build:arm64", "bash", "-c",
+            f"set -e; mkdir -p /mnt/iso /mnt/sq; "
+            f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
+            "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
+            "cp /mnt/sq/usr/lib/os7/release.json /out/; "
+            "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        # `run` uses check=True, so a missing file surfaces as a traceback naming
+        # a docker command — which says nothing about what is wrong. Say it.
+        raise SystemExit(
+            f"could not read /usr/lib/os7/release.json out of {os.path.basename(lab.iso)}.\n"
+            "Either hook 0075 did not run, or this ISO predates the release "
+            "manifest. Rebuild: make build-arm64") from None
+    if not os.path.exists(RELEASE_JSON):
+        raise SystemExit("the ISO has no /usr/lib/os7/release.json — hook 0075 did not run")
+    _release = json.load(open(RELEASE_JSON))
+    return _release
+
+
+def title_stamp():
+    """What Setup should be putting on the right of every title row.
+
+    Composed here the way Model/Release.cs composes it, from the manifest's own
+    fields — so this asserts the RULE (stable builds show a bare number, every
+    other channel names itself) rather than one particular string.
+    """
+    r = fetch_release()
+    version, channel = r["version"], r.get("channel", "unknown")
+    return f"Version {version}" if channel == "stable" else f"Version {version} ({channel})"
 
 
 def fetch_font():
@@ -135,9 +202,21 @@ def expect_text(w, h, rgb, font, needle, what, fg=(255, 255, 255)):
     return False
 
 
-def expect_chrome(w, h, rgb, font, title, status):
+def expect_chrome(w, h, rgb, font, title, status, version=True):
     """Title row, brand stripe and status bar — the three things every screen has."""
     ok = expect_line(w, h, rgb, font, 0, title, f"title row says '{title}'", col=1)
+
+    # The version, right-aligned on the same row, on EVERY screen.
+    #
+    # Read off the screen through the console font and compared with the
+    # manifest that shipped in the image, which is what makes this a measurement
+    # rather than a restatement: it fails if hook 0075 wrote a different number,
+    # if Setup read the wrong file, and if the string is drawn somewhere the
+    # right-hand edge is not.
+    if version:
+        stamp = title_stamp()
+        ok &= expect_line(w, h, rgb, font, 0, stamp,
+                          f"title row carries '{stamp}'", col=1)
     # The stripe is row 1 of the cell grid, i.e. y = 32..63 with a 32px cell.
     band = histogram(w, h, rgb, box=(0, 40, w, 56))
     if band[0][0] != BRAND:
@@ -280,6 +359,16 @@ def phase_boot(c, q, font):
     ok &= expect_text(w, h, rgb, font, "Welcome to Setup.", "screen 1 is Welcome")
     ok &= expect_text(w, h, rgb, font, "To set up OS/7 now, press ENTER.",
                       "the bullet list rendered")
+
+    # The full identity, which only screen 1 has room for. The archive snapshot
+    # is the half that turns "OS/7 1.0.0.32" from the name of a product into the
+    # name of a STATE (RELEASE-AND-UPDATE-PLAN §3.1), so it is asserted rather
+    # than assumed to be decoration.
+    rel = fetch_release()
+    ok &= expect_text(w, h, rgb, font, f"OS/7 {rel['version']}",
+                      "screen 1 names the release")
+    ok &= expect_text(w, h, rgb, font, rel["base"]["archive_snapshot"],
+                      "screen 1 names the archive snapshot it was built from")
     return ok
 
 

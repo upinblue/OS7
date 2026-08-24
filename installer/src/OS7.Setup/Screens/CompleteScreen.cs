@@ -34,22 +34,27 @@ internal sealed class CompleteScreen : Screen
         int width = Math.Min(70, f.BodyWidth - 10);
         StoragePlan s = _plan.Storage;
 
-        f.Box(5, left, width, 8);
-        f.Text(6, left + 3, $"Language:    {_plan.Language}");
-        f.Text(7, left + 3, $"Keyboard:    {_plan.Keyboard}");
-        f.Text(8, left + 3, $"Time zone:   {_plan.Timezone}");
-        f.Text(9, left + 3, $"Disk:        {s.Disk ?? "(none)"}");
-        f.Text(10, left + 3, $"Encryption:  {(s.Encrypt ? "LUKS2 (passphrase set)" : "none")}");
-        f.Text(11, left + 3, $"Swap:        {s.Swap}");
+        f.Box(5, left, width, 9);
+        // The version comes FIRST, and it is here as well as on the title row
+        // because this is the screen someone reads when the install is over: it
+        // is the record of what was put on this machine, and the boot
+        // environment on the disk is named after this exact number.
+        f.Text(6, left + 3, $"OS/7 version: {Release.Current.Short}");
+        f.Text(7, left + 3, $"Language:     {_plan.Language}");
+        f.Text(8, left + 3, $"Keyboard:     {_plan.Keyboard}");
+        f.Text(9, left + 3, $"Time zone:    {_plan.Timezone}");
+        f.Text(10, left + 3, $"Disk:         {s.Disk ?? "(none)"}");
+        f.Text(11, left + 3, $"Encryption:   {(s.Encrypt ? "LUKS2 (passphrase set)" : "none")}");
+        f.Text(12, left + 3, $"Swap:         {s.Swap}");
 
         // The half that has NOT happened, in the brand colour, because it is the
         // sentence that stops someone rebooting into a disk with nothing on it.
-        f.Body(14, 5, "NO OPERATING SYSTEM HAS BEEN COPIED TO THIS DISK YET.", Slot.Brand);
-        f.Body(16, 5, "Setup is at Phase 2: the disk is partitioned, encrypted and carries");
-        f.Body(17, 5, "empty ZFS pools. Copying the system, creating accounts and installing");
-        f.Body(18, 5, "the bootloader are Phase 3, and this computer will not boot from it");
-        f.Body(19, 5, "until they exist.");
-        f.Body(21, 5, $"A log of this session is at {Log.Path}.");
+        f.Body(15, 5, "NO OPERATING SYSTEM HAS BEEN COPIED TO THIS DISK YET.", Slot.Brand);
+        f.Body(17, 5, "Setup is at Phase 2: the disk is partitioned, encrypted and carries");
+        f.Body(18, 5, "empty ZFS pools. Copying the system, creating accounts and installing");
+        f.Body(19, 5, "the bootloader are Phase 3, and this computer will not boot from it");
+        f.Body(20, 5, "until they exist.");
+        f.Body(22, 5, $"A log of this session is at {Log.Path}.");
     }
 
     public override Transition Handle(KeyPress key) =>

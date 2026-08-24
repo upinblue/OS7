@@ -384,10 +384,21 @@ is an upgrade/repair path Calamares would never have given us. Phase 6.
 These are the visual spec. `═` stands for the solid **`#1289ff`** stripe under
 the title (rendered as full-width reverse-video cells, not as a character).
 
+**The release is chrome, on every screen.** `Version <four fields>` sits
+right-aligned on the title row, with the channel in brackets whenever it is not
+`stable`. It is drawn by `Frame.Chrome` and never by a screen, for the same
+reason the title is: it must be identical everywhere, and the question every
+support call opens with is which version this is — so whichever screen somebody
+photographed, the answer is in the picture. The value comes from
+`/usr/lib/os7/release.json` (RELEASE-AND-UPDATE-PLAN §3.4) and never from a
+constant compiled into the binary; §6.7 says why. On a console too narrow to
+hold both strings the stamp is DROPPED rather than truncated, because half a
+version number still reads as a version number.
+
 **1 — Welcome**
 
 ```
- OS/7 Setup
+ OS/7 Setup                                       Version 1.0.0.32 (development)
  ═══════════════════════════════════════════════════════════════════════════════
 
      Welcome to Setup.
@@ -409,7 +420,7 @@ the title (rendered as full-width reverse-video cells, not as a character).
 **4 — Select a disk**
 
 ```
- OS/7 Setup
+ OS/7 Setup                                       Version 1.0.0.32 (development)
  ═══════════════════════════════════════════════════════════════════════════════
 
      Setup will install OS/7 on the disk selected below.
@@ -417,12 +428,15 @@ the title (rendered as full-width reverse-video cells, not as a character).
      Use the UP and DOWN ARROW keys to select a disk, then press ENTER.
 
      ┌──────────────────────────────────────────────────────────────────────┐
-     │  nvme0n1   SAMSUNG MZVL21T0HCLR-00B    953 GB   GPT, 3 partitions    │
+     │  nvme0n1   SAMSUNG MZVL21T0HCLR-00B    953 GB   OS/7 installation    │
      │  sda       ATA WDC WD10EZEX-08W        931 GB   empty                │
      │  sdb       SanDisk Cruzer Blade       14.4 GB   -- SETUP MEDIUM --   │
      └──────────────────────────────────────────────────────────────────────┘
 
      Every partition on the selected disk will be destroyed.
+
+     nvme0n1 already carries OS/7 1.0.0.29, 2 boot environments.
+     Press ENTER again to erase it.
 
  ENTER=Select   F5=Advanced   F3=Quit
 ```
@@ -430,10 +444,38 @@ the title (rendered as full-width reverse-video cells, not as a character).
 The medium Setup booted from is listed but never selectable. F5 opens the
 per-partition view (create/delete/keep free space) for the dual-boot case.
 
+**An OS/7 already on the disk is named before it is destroyed**, and destroying
+it takes a second, deliberate ENTER. Two things make that affordable:
+
+* **Recognising the layout is free.** `os7-esp`, `os7-bpool` and `os7-luks` are
+  GPT partition names this installer writes, and they come back in the `lsblk`
+  call screen 4 already makes. So the list can say "OS/7 installation" instead of
+  "GPT, 3 partitions" for every disk, at no cost.
+* **Reading the VERSION costs an import**, so it happens only for the disk
+  somebody selected. `bpool` is deliberately unencrypted (§4.2, D3, because GRUB
+  must read it), and the boot environment names in it carry the release —
+  `os7_<release>_<stamp>`, §4.4. So the version of an installed system is
+  readable *without the passphrase*, which is the only reason this works at all:
+  the release manifest itself lives on `rpool`, behind LUKS. The import is
+  `-o readonly=on -N -f -R <altroot> -d <partition>` and is exported in a
+  `finally`.
+
+**This is where the upgrade path attaches.** Screen 1's `R=Repair` — install into
+a new boot environment beside the existing one — and `Update-OS7`
+(RELEASE-AND-UPDATE-PLAN §4.2) both have to begin by answering *what is on this
+disk and which version is it*. That answer is measured now; the offer that uses
+it is Phase 6. An offer Setup cannot honour would be worse than no offer.
+
+**Checked on a real disk, not argued for.** `run-phase2.py existing` installs
+OS/7 unattended, reboots, and points Setup at that same disk — the only phase in
+that harness which does not start from a blank one. It is also the only round
+trip the version number gets: written into a dataset name by one boot, read back
+off the disk by a different mechanism in the next.
+
 **5 — Storage layout**, the MS-DOS 6.22 homage:
 
 ```
- OS/7 Setup
+ OS/7 Setup                                       Version 1.0.0.32 (development)
  ═══════════════════════════════════════════════════════════════════════════════
 
      Setup will use the following storage settings:
@@ -461,7 +503,7 @@ per-partition view (create/delete/keep free space) for the dual-boot case.
 **10 — Copying files**
 
 ```
- OS/7 Setup
+ OS/7 Setup                                       Version 1.0.0.32 (development)
  ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -484,7 +526,7 @@ per-partition view (create/delete/keep free space) for the dual-boot case.
 trace. Every error screen names the command that failed and its output:
 
 ```
- OS/7 Setup
+ OS/7 Setup                                       Version 1.0.0.32 (development)
  ═══════════════════════════════════════════════════════════════════════════════
 
      Setup cannot continue.
@@ -952,6 +994,39 @@ strictly afterwards, from that object alone. Consequences, all free:
 * **CI can install OS/7 end-to-end** in QEMU over a serial console and assert
   the result. That is the only affordable way to keep an installer honest.
 
+### 6.7 The version is read, never compiled in
+
+Setup shows the OS/7 release on every screen (§3.1) and it takes the number from
+`/usr/lib/os7/release.json`, the manifest the build writes
+(RELEASE-AND-UPDATE-PLAN §3.4). Not from a constant, not from `/etc/os-release`,
+and not from anything the installer composes itself.
+
+**Why not a constant.** A version baked into the binary is correct exactly once,
+at the moment it is compiled. The binary is then published into an image whose
+package set is fixed later; and the SAME binary is what an upgrade path
+(§3 screen 1, `R=Repair`) would run against an already-installed system carrying
+a different version entirely. A constant would be right about the medium and
+wrong about the target, with nothing on screen saying which one it meant.
+
+**Why the manifest and not `/etc/os-release`.** They agree by construction —
+hook 0075 writes both from one value — but the manifest is what
+`New-OS7BootEnvironmentName` reads (§6.3). Setup's title bar and the name of the
+dataset Setup creates therefore come from one file, and cannot end up quoting
+different numbers.
+
+**Why the reader takes a path.** `Release.Load(path)` is parameterised because
+the same reader answers two questions: *what is on this medium*
+(`/usr/lib/os7/release.json`) and *what is on that disk*
+(`/target/usr/lib/os7/release.json`). The second is what an upgrade needs in
+order to say what it would replace. Writing it for one path and generalising
+later would mean writing it twice.
+
+**What "no manifest" looks like.** `0.0.0.0`, `Known == false`, and
+"Version unknown" on screen. Deliberately not a plausible number: an installer
+that invents a version is worse than one that admits it does not have one.
+`--self-test` fails on it, and because hook 0075 runs before hook 0080, that
+failure happens during the ISO build rather than on a booted console.
+
 ---
 
 ## 7. Where Setup runs
@@ -1170,6 +1245,32 @@ hostname, users, `zgenhostid`, `update-initramfs`); bootloader install and the
 `grub.d` BE generator; screens 7–11; the GUI/headless split (offline
 `apt purge` of the desktop for headless, `systemctl set-default multi-user.target`).
 *Deliverable:* a machine installed by Setup boots into OS/7.
+
+**Scope decided 2026-08-24, three additions:**
+
+* **TPM2 enrolment is IN this phase.** Spikes S4 and S6 proved it works and what
+  it costs, and the layout screen already tells the operator that Setup will seal
+  the passphrase to the TPM if it can. Phase 3 builds the initramfs regardless,
+  and the enrolment is not `systemd-cryptenroll` alone: it needs the initramfs
+  hook carrying the token handler **and the libtss2 libraries systemd dlopens**,
+  plus a `local-top` script running before `cryptroot` (BUILD-NOTES #19, #20;
+  `installer/spikes/s4-tpm-enroll.sh` is the working version). Doing it later
+  means building and re-validating the initramfs twice. U8 — the escrowed
+  recovery passphrase unattended re-enrolment needs — stays open and stays on the
+  screen.
+* **Every chroot step takes the target root as a PARAMETER.** Not
+  `StorageSteps.Target` as a constant. `Update-OS7` performs the same sequence
+  from step 3 onwards against a *cloned boot environment mounted somewhere else*
+  (RELEASE-AND-UPDATE-PLAN §4.2: "everything from 3 onward is S3 code with a
+  different root"), and §6.3 already routes Setup's ZFS work through the OS7
+  module for exactly this reason. This costs nothing now and cannot be retrofitted
+  without re-validating all of Phase 3.
+* **Write the release identity onto the TARGET.** `/etc/os-release` branding (D8)
+  and the GRUB menu title (L4) both come from the manifest, which Phase 3 copies
+  in with the system — so the same values that named the ISO name the installed
+  machine. The mechanism exists: `build/config/hooks/0075-release-identity.hook.chroot`
+  does it for the image, and re-asserting it is a documented step of the update
+  sequence (§4.2 step 6) rather than a one-off.
 
 ### Phase 4 — Authenticity and polish
 GRUB theme, boot palette, "inspecting your computer's hardware configuration",

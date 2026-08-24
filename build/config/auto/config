@@ -2,8 +2,6 @@
 # =============================================================================
 # OS/7 — live-build configuration
 #
-#   *** STUB — no package lists, hooks or includes.chroot authored yet. ***
-#
 # The flag choices below are not arbitrary: several are HARVESTED FROM A PRIOR
 # BUILD SESSION (2026-06-24) that reached a bootable arm64 ISO. Each harvested
 # flag is marked. See docs/BUILD-NOTES.md before changing one.
@@ -14,51 +12,98 @@
 
 set -e
 
-# --- Locked ------------------------------------------------------------------
-# Ubuntu 26.04 LTS "Resolute Raccoon". Not overridable (README "Locked decisions").
-OS7_DISTRIBUTION="resolute"
+# --- The release pin ---------------------------------------------------------
+# Everything this build IS comes from one file. build.sh stages it next to this
+# script; `make lb-config` copies the same directory, so both paths find it.
+#
+# A missing pin file is fatal rather than defaulted: a build that quietly fell
+# back to the live archive would produce an ISO that looks identical to a pinned
+# one and is not reproducible, which is precisely the failure the pin exists to
+# prevent.
+OS7_RELEASE_CONF="${OS7_RELEASE_CONF:-auto/os7-release.conf}"
+if [ ! -r "${OS7_RELEASE_CONF}" ]; then
+	echo "OS/7: release pin not found at ${OS7_RELEASE_CONF}" >&2
+	echo "OS/7: refusing to build against an unpinned archive." >&2
+	exit 1
+fi
+. "${OS7_RELEASE_CONF}"
 
 # --- Build-time knobs --------------------------------------------------------
 # Set by build/build.sh from the make target.
 OS7_ARCH="${OS7_ARCH:-amd64}"
 
-# Ubuntu splits its archive by architecture: amd64 lives on archive.ubuntu.com,
-# every other port (incl. arm64) lives on ports.ubuntu.com. Wrong mirror =
-# failure at debootstrap time.
-#
-# NOTE: this is NOT harvested — the prior session set no mirror flags at all and
-# still built arm64, so live-build's ubuntu mode may already handle the split.
-# Being explicit is safer, but if `lb config` complains, this is a prime suspect.
 case "${OS7_ARCH}" in
-	amd64)
-		OS7_MIRROR="http://archive.ubuntu.com/ubuntu/"
-		;;
-	arm64)
-		OS7_MIRROR="http://ports.ubuntu.com/ubuntu-ports/"
-		;;
+	amd64|arm64) ;;
 	*)
 		echo "OS/7: unsupported architecture '${OS7_ARCH}' (expected amd64 or arm64)" >&2
 		exit 1
 		;;
 esac
 
-# =============================================================================
-# STUB: a build from this config produces (at best) a bare Ubuntu live system
-# with none of OS/7 in it:
-#   - no PowerShell 7 / .NET            (README: Core, non-negotiable)
-#   - no authd + authd-msentraid        (README: Identity)
-#   - no ZFS root support               (README: Storage - blocked on Open Q #1)
-#   - no os7-setup installer            (installer/SETUP-PLAN.md - the hard part)
-#   - no GNOME / headless mode split    (README: installer-time choice)
-# =============================================================================
+# The four-field product version. Computed by build.sh, because its BUILD field
+# comes from `git rev-list --count HEAD` and this script runs from a staged tree
+# that is not a git repository. Not defaulted here for the same reason the pin
+# file is not: an ISO labelled with a version nobody chose is worse than a
+# failed build.
+if [ -z "${OS7_VERSION:-}" ]; then
+	echo "OS/7: OS7_VERSION is not set - build.sh must export it." >&2
+	exit 1
+fi
 
+# --- The archive -------------------------------------------------------------
+# ONE URL for both architectures.
+#
+# Ubuntu's live archive splits by architecture - amd64 on archive.ubuntu.com,
+# every port (incl. arm64) on ports.ubuntu.com - and this file used to branch on
+# that. The snapshot service does NOT: arm64 is served under the same /ubuntu/
+# path, measured 2026-08-24 (os7-release.conf records the checks). So pinning the
+# archive REMOVES a per-architecture special case rather than adding one.
+OS7_MIRROR="${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}/"
+
+# EVERY mirror flag, in both families. Not the three obvious ones.
+#
+# Setting only --mirror-bootstrap/chroot/binary is the obvious mistake and it is
+# silent. live-build defaults the ones you did not name, and its defaults are
+# live archives: the build then draws its base from a pinned snapshot and its
+# updates and security from whatever is current, and the resulting ISO is
+# unreproducible while every flag on screen says it is pinned.
+#
+# MEASURED, not reasoned about. `lb config` was run and its config/bootstrap read
+# back, which is the only way to see what live-build actually recorded:
+#
+#   naming bootstrap/chroot/chroot-security/binary/binary-security still left
+#   LB_MIRROR_CHROOT_VOLATILE and LB_MIRROR_BINARY_VOLATILE pointing at
+#   http://archive.ubuntu.com/ubuntu/ - live, and on arm64 not even the right
+#   host, since ports live on ports.ubuntu.com.
+#
+# "Volatile" is Debian's name for what Ubuntu calls -updates. So the two flags
+# that were missing were the ones covering the suite that MOVES.
+#
+# The snapshot service carries resolute, resolute-updates and resolute-security
+# under one base URL (measured 200 for all three), so there is nowhere else any
+# of these could legitimately point.
+#
+# `--mode ubuntu` makes ubuntu the parent distribution, so the parent family is
+# what actually reaches debootstrap; the non-parent family is set to match so
+# that no code path can pick up a different archive. Backports stay "none".
 lb config noauto \
 	--mode ubuntu \
 	--distribution "${OS7_DISTRIBUTION}" \
 	--architectures "${OS7_ARCH}" \
+	--parent-mirror-bootstrap "${OS7_MIRROR}" \
+	--parent-mirror-chroot "${OS7_MIRROR}" \
+	--parent-mirror-chroot-security "${OS7_MIRROR}" \
+	--parent-mirror-chroot-volatile "${OS7_MIRROR}" \
+	--parent-mirror-binary "${OS7_MIRROR}" \
+	--parent-mirror-binary-security "${OS7_MIRROR}" \
+	--parent-mirror-binary-volatile "${OS7_MIRROR}" \
 	--mirror-bootstrap "${OS7_MIRROR}" \
 	--mirror-chroot "${OS7_MIRROR}" \
+	--mirror-chroot-security "${OS7_MIRROR}" \
+	--mirror-chroot-volatile "${OS7_MIRROR}" \
 	--mirror-binary "${OS7_MIRROR}" \
+	--mirror-binary-security "${OS7_MIRROR}" \
+	--mirror-binary-volatile "${OS7_MIRROR}" \
 	--archive-areas "main restricted universe multiverse" \
 	`# HARVESTED FIX 4: "none" is REJECTED by this live-build ("flavour none` \
 	`# not supported"). "false" is the value that actually disables it.` \
@@ -69,7 +114,9 @@ lb config noauto \
 	--bootappend-live "boot=casper quiet splash" \
 	--iso-application "OS/7" \
 	--iso-publisher "up in blue GmbH; https://github.com/upinblue/OS7" \
-	--iso-volume "OS7-${OS7_ARCH}" \
+	`# The version is ON the medium, not only in it. A mounted ISO, a USB stick` \
+	`# in a drawer and a support ticket all quote the volume name.` \
+	--iso-volume "OS7-${OS7_VERSION}-${OS7_ARCH}" \
 	"${@}"
 
 # NOTE: deliberately NOT setting --bootloaders / --binary-images here. The prior
