@@ -15,7 +15,7 @@ It is **not** aimed at desktop consumers. Two primary targets, chosen at install
 
 ## Status
 
-The arm64 ISO builds, boots, installs itself to a ZFS-on-LUKS disk under Secure Boot, and comes up in OS/7's own colours and console font. `os7-setup` itself is not written yet, and amd64 is unvalidated. Read this table before assuming any command in this repo actually works.
+The arm64 ISO builds, boots into OS/7 Setup, installs itself to a ZFS-on-LUKS disk under Secure Boot, and comes up in OS/7's own colours and console font. Setup itself does not touch a disk yet — that is Phase 2. `os7-setup` itself is not written yet, and amd64 is unvalidated. Read this table before assuming any command in this repo actually works.
 
 | Component | Status |
 |---|---|
@@ -23,7 +23,7 @@ The arm64 ISO builds, boots, installs itself to a ZFS-on-LUKS disk under Secure 
 | `build/config/auto/config` (live-build config) | **validated** — `lb config` passes and an arm64 ISO builds from it; still has no package lists, hooks or includes |
 | `powershell/OS7/` module | stub — function signatures only, no logic. The on-disk format, transport and ZFS layout its stubs say they lack are now designed: [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
 | Updates / release train | not started — **designed**: [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md). Version scheme, product identity, archive pinning and the `/var` split are **locked** (U2–U4, U6); the update mechanism (U1) and cadence (U5) are recommendations; U8 is open question 5 below |
-| Installer (`os7-setup`) | not started — **designed, decided, and now unblocked**: all four Phase 0 spikes have passed, so [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) Phase 1 is the next code to write |
+| Installer (`os7-setup`) | **Phase 1 done** — the skeleton runs on arm64 from the ISO's *Install OS/7* entry and walks Welcome → Licence → Regional → Complete, **strictly non-destructive**. 3.6 MB NativeAOT, no .NET runtime at run time. Storage is Phase 2: [docs/SESSION-PHASE1-SETUP.md](docs/SESSION-PHASE1-SETUP.md) |
 | `os7-setup` toolchain (NativeAOT) | **works on both arches** — spike S2: 3.2–3.4 MB native binary, no .NET runtime needed at run time. The SDK is now in the build container: [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md) |
 | Installing to a disk | **works on arm64** — the install sequence is proven end to end by spike S3, ahead of any Setup code: [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md) |
 | Secure Boot + TPM2 unlock | **works on arm64** — spike S4: boots against the Microsoft UEFI CA, TPM2 auto-unlock, TPM-less fallback intact: [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md) |
@@ -85,6 +85,7 @@ Treated as fixed. Do not re-architect without discussion — see "Open questions
   - **One installer serves both architectures**, which is why Calamares went: it is a Qt GUI application and could never have installed the desktop-less arm64 image. Subiquity is no longer needed either.
   - Nothing is implemented yet. Design, limitations, decisions and the phased plan — including the spikes that must pass before any installer code is written: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md).
   - **Phase 0 is complete.** S2, S3 and S4 passed 2026-08-23, S1 on 2026-08-24, so the gate on writing installer code is open. `os7-setup` publishes as a NativeAOT binary on both architectures (3.2–3.4 MB, no .NET runtime needed at run time) — [docs/SESSION-S2-NATIVEAOT.md](docs/SESSION-S2-NATIVEAOT.md).
+  - **Phase 1 is done** — [docs/SESSION-PHASE1-SETUP.md](docs/SESSION-PHASE1-SETUP.md). The TUI layer, screens 1–3 and 12, the error screen and logging, on tty1 from a systemd unit, with the language/keyboard/timezone lists read out of the system's own data (154/99/313 in the current image) rather than hand-maintained. `installer/testing/run-phase1.py` walks the flow in a VM and checks every screen by reading it back through the console font the image ships — and boots the *live* entry separately, to prove Setup's unit leaves an ordinary live session alone (L14).
   - **The look is measured, not asserted** — [docs/SESSION-S1-LOOK.md](docs/SESSION-S1-LOOK.md). Field `#0057ad` and stripe `#1289ff` exact on a framebuffer; the box-drawing and block glyphs verified against the font pixel for pixel; every arrow and F-key decoded. The palette ships as `/etc/vtrgb`, **not** on the kernel command line: Ubuntu's `setvtrgb.service` replaces that before the console is ever displayed.
   - **Storage and boot:** the install sequence Setup's storage step will drive is written and proven end to end on arm64, and the installed system boots under Secure Boot with TPM2 auto-unlock — [installer/spikes/](installer/spikes/), [docs/SESSION-S3-ZFS-LUKS.md](docs/SESSION-S3-ZFS-LUKS.md), [docs/SESSION-S4-SECUREBOOT-TPM.md](docs/SESSION-S4-SECUREBOOT-TPM.md).
 

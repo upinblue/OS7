@@ -785,3 +785,130 @@ is not a statement about anything.
 
 The progress bar is the only place in SETUP-PLAN §3.1 where the brand blue is a
 foreground rather than a background, so this had exactly one place to show up.
+
+## 31. fbcon DEFERS taking the console over, and completes it only when something writes
+
+Found in Phase 1 ([SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md)), and it
+cost several boots because the symptom points somewhere else entirely.
+
+`os7-setup` starts from a systemd unit on tty1 and immediately loads its console
+font. On a virtio-gpu machine:
+
+```
+[    0.000431] Console: colour dummy device 80x25
+[    0.569495] fbcon: Deferring console take-over
+[    0.570004] virtio-pci ... [drm] fb0: virtio_gpudrmfb frame buffer device
+```
+
+and then **nothing**. `fb0` exists, the DRM driver is loaded, and tty1 is still
+the kernel's *dummy* device. On it:
+
+```
+setfont:          ERROR ... put_font_kdfontop: Unable to load such font with
+                  such kernel version
+showconsolefont:  ERROR ... get_font_kdfontop: ioctl(KDFONTOP): Function not
+                  implemented
+```
+
+ENOSYS, because a dummy console implements no font operations. A palette applied
+to it goes nowhere either.
+
+**The takeover completes when output arrives on the console, not when time
+passes.** Normally the getty's login prompt does it. A harness that waits by
+probing with ioctls waits forever — the first version of the S1 `waitfb` step
+polled for two minutes and the console never moved, *because polling is not
+writing*.
+
+Two fixes, and use both:
+
+* **`fbcon=nodefer` on the kernel command line.** The framebuffer console then
+  exists from the start and the race does not. This is on OS/7's Install entry
+  and in the spike harnesses.
+* **Notice and re-take.** A program that owns the console should re-apply its
+  font and palette whenever the console is not what its font should have
+  produced, with a backoff. Recovering from a race is worse than not having one,
+  but it also covers a mode change and a serial client resizing.
+
+**And `setfont` exiting 0 does not mean the font loaded.** During the same
+window, `setfont -C /dev/tty1 <psf>` exited **0** and the console stayed in its
+8x16 font; the identical command from a shell a minute later worked. So the
+question "did the font load" is a question about the console's geometry
+afterwards, never about an exit code:
+
+```
+expected grid = framebuffer / cell size      e.g. 1280x800 / 16x32 = 80x25
+```
+
+**Related, and the reason a broken screen looked half-drawn:** `setfont` CLEARS
+the console. A re-take that loads the same font again therefore wipes the screen
+*without changing its size*, and a renderer with row-level damage tracking then
+sends nothing, because the frame it believes is on screen has not changed. Any
+code path that re-applies the font must invalidate the frame AND report that
+something changed. The symptom was a Welcome screen with a status bar and
+nothing above it.
+
+## 32. `read(2)` needs a deadline: SIGWINCH will not break it, and neither will ESC
+
+Found in Phase 1, and it is two problems with one answer.
+
+**.NET installs its POSIX signal handlers with `SA_RESTART`.** A `SIGWINCH`
+therefore does not interrupt a blocking `read`, so a program that only repaints
+when a key arrives will sit on a stale screen indefinitely — which is exactly
+what happens when fbcon takes the console over (#31) while Setup waits for
+input.
+
+**A lone ESC is the prefix of every escape sequence**, so a reader that blocks
+until the accumulated string can be decided waits forever on the Escape key.
+Spike S1 recorded this as the debt Phase 1 owes.
+
+`poll(2)` answers both: a 200 ms idle tick so the caller can look around and
+repaint, and a 100 ms deadline once a sequence has started so a bare ESC decides
+itself.
+
+**Use `poll`, not `VMIN`/`VTIME`.** With a `VTIME` timer, "nothing arrived" and
+"the terminal went away" are both `read` returning 0, and an installer that
+cannot tell an idle user from a hangup will either spin or quit on somebody
+thinking. `poll` reports `POLLHUP` separately.
+
+
+## 33. `Conflicts=` is resolved when the transaction is built; `Condition…=` when the job runs
+
+Found in Phase 1. A one-line unit file mistake that took the whole live session
+with it, and produced a symptom in a different subsystem.
+
+`os7-setup.service` is meant to run only when the boot entry asks for it:
+
+```ini
+ConditionKernelCommandLine=os7.setup=1
+Conflicts=getty@tty1.service      # tty1 is Setup's for the duration
+[Install]
+WantedBy=multi-user.target
+```
+
+That reads as "on a live boot the condition fails, so nothing happens". It is
+not what happens. **systemd resolves `Conflicts=` while building the
+transaction, and evaluates `Condition…=` when the job actually runs.** An enabled
+unit whose condition later fails has *already* had getty@tty1 stopped.
+
+The result on the live entry: tty1 had no login prompt. And because nothing then
+wrote to that console, fbcon's deferred takeover never completed either (#31), so
+tty1 stayed the kernel's dummy device for the whole session — which is how a
+missing `WantedBy` presented as "the console does not support fonts".
+
+**The fix is not to drop `Conflicts=`.** Drop `[Install]` instead, and start the
+unit from the kernel command line:
+
+```
+linux ... os7.setup=1 systemd.wants=os7-setup.service ...
+```
+
+Then the unit is not in the live boot's transaction at all and nothing about it
+applies there.
+
+**Do not "fix" it with `ExecStartPre=systemctl stop getty@tty1.service`
+either** — that was tried, and it is worse. `getty@tty1` has `TTYReset=yes`, so
+stopping it resets the VT, and **a VT reset restores the palette from the
+kernel's module defaults** — i.e. whatever `setvtrgb.service` put there, i.e.
+Ubuntu's. The screen went back to Ubuntu's colours a moment after Setup painted
+it in OS/7's. `Conflicts=` happens before `ExecStart`, so there is nothing to
+race.

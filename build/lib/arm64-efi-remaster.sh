@@ -45,17 +45,45 @@ echo ">>> arm64 EFI: kernel=${VMLINUZ} initrd=${INITRD}"
 
 # The on-disk GRUB menu the firmware will load. Uses /.disk/info (always present
 # on a live-build ISO) to locate the media regardless of device naming.
+#
+# SETUP-PLAN §7: Install is the default entry, and the live entry stays, because
+# booting straight into Setup would lose "try before you install" (L14).
+#
+# The Install entry's command line is SHORTER than §7 originally proposed, and
+# spike S1 is why. `vt.default_red/grn/blu` is replaced by Ubuntu's enabled
+# setvtrgb.service before the console is ever displayed, and `vt.color=0x4f` has
+# no observable effect on the default attribute at all - so both were removed
+# and Setup applies its palette itself from /usr/share/os7. BUILD-NOTES #25.
+#
+# What is left earns its place:
+#   systemd.wants=...      what actually starts Setup; the unit has no [Install]
+#   os7.setup=1            os7-setup.service's ConditionKernelCommandLine, as a belt
+#   fbcon=font:TER16x32    the closest built-in match until setfont runs (L20)
+#   fbcon=nodefer          the framebuffer console exists from the start
+#   plymouth.enable=0      nothing scrolls over the field
+#   quiet loglevel=0       nor does the kernel
+#
+# `nodefer` is not a tuning flag. By default fbcon DEFERS taking the console
+# over and completes the takeover only when something writes to it, so tty1
+# stays the kernel's dummy device - on which KDFONTOP returns ENOSYS, so no font
+# can be loaded and no palette applies. Setup recovers from that on its own
+# (BUILD-NOTES #31), but recovering from a race is worse than not having one.
 mkdir -p "${BIN}/boot/grub"
 cat > "${BIN}/boot/grub/grub.cfg" <<EOF
 set default=0
 set timeout=10
 insmod all_video
-menuentry "OS/7 (arm64) — live" {
+menuentry "Install OS/7 (arm64)" {
+    search --no-floppy --set=root --file /.disk/info
+    linux  /casper/${VMLINUZ} boot=casper os7.setup=1 systemd.wants=os7-setup.service fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 ---
+    initrd /casper/${INITRD}
+}
+menuentry "OS/7 (arm64) — live session, without installing" {
     search --no-floppy --set=root --file /.disk/info
     linux  /casper/${VMLINUZ} boot=casper quiet splash ---
     initrd /casper/${INITRD}
 }
-menuentry "OS/7 (arm64) — live (safe graphics)" {
+menuentry "OS/7 (arm64) — live session (safe graphics)" {
     search --no-floppy --set=root --file /.disk/info
     linux  /casper/${VMLINUZ} boot=casper nomodeset ---
     initrd /casper/${INITRD}

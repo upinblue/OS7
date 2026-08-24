@@ -22,7 +22,10 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# vmconsole and vmscreen live in installer/testing/ - they are the VM harness
+# library, which the spikes happened to write first and os7-setup now shares.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testing"))
 from vmconsole import (Console, live_login, qemu_prefix, run,
                        to_plain_bash)
 

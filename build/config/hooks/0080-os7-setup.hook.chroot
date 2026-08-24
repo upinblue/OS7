@@ -1,0 +1,83 @@
+#!/bin/bash
+# OS/7 — enable Setup on tty1, and prove it will actually run.
+#
+# The binary and the unit are placed by build.sh into includes.chroot; this hook
+# only wires them up and then CHECKS THE WIRING. That split matters: live-build
+# applies includes before hooks, so a hook is the first place that can see the
+# finished filesystem.
+#
+# docs/BUILD-NOTES.md #13 is the reason for the checks rather than the enable
+# alone: a hook that "succeeded" is not evidence that anything happened.
+
+set -euo pipefail
+
+BIN=/usr/lib/os7-setup/os7-setup
+UNIT=/usr/lib/systemd/system/os7-setup.service
+echo "OS/7 hook 0080: staging os7-setup for tty1"
+
+[ -x "${BIN}" ]  || { echo "OS/7 hook 0080: ${BIN} missing or not executable" >&2; exit 1; }
+[ -f "${UNIT}" ] || { echo "OS/7 hook 0080: ${UNIT} missing" >&2; exit 1; }
+
+# The binary is NativeAOT (SETUP-PLAN §6.1) and must not need a .NET runtime.
+# Checked here rather than assumed, because the whole point of publishing it
+# that way is that it runs before anything else on the machine - and spike S2
+# established that "it ran where it was compiled" is not the claim.
+if ldd "${BIN}" 2>/dev/null | grep -qi 'dotnet\|libcoreclr\|libhostfxr'; then
+	echo "OS/7 hook 0080: ${BIN} links against the .NET runtime - it is not AOT" >&2
+	ldd "${BIN}" >&2
+	exit 1
+fi
+
+# ICU. os7-setup is a .NET application built with InvariantGlobalization=false,
+# because L9 wants English and German and turning globalization off would make
+# that impossible while shrinking the binary and looking like a win. The cost is
+# that .NET ABORTS AT STARTUP without ICU, before Main runs, with
+#
+#   Couldn't find a valid ICU package installed on the system.
+#
+# which is the same wall hook 0020 hit with PowerShell. Hook 0020 installs the
+# ICU package for PowerShell, and hook numbering puts it before this one - so
+# the dependency is satisfied, and it is satisfied BY ACCIDENT. Named here so
+# that removing PowerShell some day does not silently take the installer with
+# it, and checked so that the failure reads as a missing package rather than as
+# a crashing binary.
+if ! ldconfig -p | grep -q 'libicuuc\.so'; then
+	echo "OS/7 hook 0080: no libicu in the image - os7-setup cannot start." >&2
+	echo "OS/7 hook 0080: hook 0020 installs it for PowerShell; if that changed," >&2
+	echo "OS/7 hook 0080: add an ICU package to os7-base.list.chroot." >&2
+	exit 1
+fi
+
+# Its own self-test: the key table, the JSON round trip, the palettes, the fonts,
+# the licence and every screen rendering into an off-screen frame. This is the
+# one place where a missing PSF or an unstaged palette is caught at BUILD time
+# rather than on a console with nothing else on it.
+#
+# Run under `env -i` with a minimal environment: a hook inherits live-build's,
+# and a locale or DOTNET_* variable leaking in would make this test measure the
+# build machine instead of the image.
+if ! env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin "${BIN}" --self-test; then
+	echo "OS/7 hook 0080: os7-setup --self-test failed (above)" >&2
+	exit 1
+fi
+
+# NOT `systemctl enable`. The unit has no [Install] section and is started by
+# `systemd.wants=os7-setup.service` on the Install entry's command line - see the
+# Conflicts comment in the unit for why enabling it breaks the LIVE entry.
+# Checked here so that adding an [Install] section later fails the build rather
+# than the live session.
+if grep -q '^WantedBy=' "${UNIT}"; then
+	echo "OS/7 hook 0080: ${UNIT} has an [Install] section." >&2
+	echo "OS/7 hook 0080: enabling it puts Conflicts=getty@tty1 into EVERY boot's" >&2
+	echo "OS/7 hook 0080: transaction, which leaves the live entry without a login." >&2
+	exit 1
+fi
+systemctl show -p Conflicts os7-setup.service 2>/dev/null | grep -q 'getty@tty1' \
+	|| echo "OS/7 hook 0080: note - the unit does not conflict getty@tty1"
+echo "OS/7 hook 0080: unit staged at ${UNIT}, started from the kernel command line"
+
+# A human-reachable name. tty2 keeps a root shell for diagnosis (§7), and
+# `os7-setup` being on PATH there is the difference between debugging it and
+# guessing where it lives.
+ln -sf "${BIN}" /usr/sbin/os7-setup
+echo "OS/7 hook 0080: /usr/sbin/os7-setup -> ${BIN}"

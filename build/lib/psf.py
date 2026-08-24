@@ -29,6 +29,13 @@ import sys
 # glyph is a hole in every screen. Each block below was read out of FSEX302.ttf
 # on 2026-08-22 and found complete — this is the guard that keeps it true.
 #
+# THE RULE FOR CHANGING IT: a codepoint the installer draws belongs here, not in
+# WANTED. Being in WANTED means "included if the font has it", and the font not
+# having it is not the visible failure — bdf2psf maps the codepoint onto some
+# equivalent glyph and the screen shows the wrong picture with no warning
+# anywhere. U+25B2/U+25BC are exactly that case, which is why the scroll hints
+# in Tui/Widgets/SelectionList.cs use U+2191/U+2193 instead.
+#
 # WANTED is best-effort: included when the font has it, reported when it does
 # not. §2.3 records Arrows and Geometric Shapes as only *partially* covered, so
 # demanding them would fail the build over decoration.
@@ -39,6 +46,7 @@ REQUIRED = [
     ("Box Drawing",         [(0x2500, 0x257F)]),   # the entire UI is made of these
     ("Block Elements",      [(0x2580, 0x259F)]),   # progress bar fill, shading
     ("Bullet",              [0x2022]),             # the list marker in §3.1 screen 1
+    ("Arrows",              [(0x2190, 0x2193)]),   # the scroll hints on every list
 ]
 
 WANTED = [
@@ -48,7 +56,7 @@ WANTED = [
                              0x201C, 0x201D, 0x201E, 0x2020, 0x2021, 0x2026,
                              0x2030, 0x2039, 0x203A, 0x203C]),
     ("Currency / marks",    [0x20AC, 0x2122]),
-    ("Arrows",              [(0x2190, 0x2195), 0x21A8, 0x21B5]),
+    ("Arrows (the rest)",   [0x2194, 0x2195, 0x21A8, 0x21B5]),
     ("Geometric Shapes",    [0x25A0, 0x25AC, 0x25B2, 0x25BA, 0x25BC, 0x25C4,
                              0x25CB, 0x25CF, 0x25D8, 0x25D9]),
     ("CP437 symbols",       [0x263A, 0x263B, 0x263C, 0x2640, 0x2642,

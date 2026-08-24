@@ -1,0 +1,77 @@
+[Unit]
+# OS/7 Setup on tty1 — SETUP-PLAN §7.
+#
+# Only when the boot entry asked for it. The ISO carries an "Install OS/7" entry
+# and a live entry, and the live entry has to stay a plain live session: booting
+# straight into Setup would lose "try before you install" (L14).
+ConditionKernelCommandLine=os7.setup=1
+
+Description=OS/7 Setup
+Documentation=file:///usr/share/os7/SETUP-PLAN.md
+
+# setvtrgb.service is the one that matters and it is not obvious why: Ubuntu
+# ships it enabled, and it replaces the WHOLE console palette from /etc/vtrgb.
+# Setup applies its own palette when it starts, so it has to start after the
+# thing that would otherwise overwrite it. docs/BUILD-NOTES.md #25.
+After=systemd-user-sessions.service plymouth-quit-wait.service setvtrgb.service
+After=systemd-udev-settle.service
+
+# tty1 belongs to Setup for the duration.
+#
+# THIS UNIT IS PULLED IN BY THE KERNEL COMMAND LINE, not by [Install]. The boot
+# entry carries `systemd.wants=os7-setup.service`, and there is deliberately no
+# WantedBy= below. That is what makes `Conflicts=` safe:
+#
+#   A CONDITION is evaluated when the job RUNS. A CONFLICT is resolved when the
+#   transaction is BUILT. So an enabled unit with a failing
+#   ConditionKernelCommandLine still conflicts getty@tty1 away - and booting the
+#   live entry left tty1 with no login prompt at all, on a console that then
+#   never got taken over because nothing wrote to it. Measured 2026-08-24.
+#
+# Pulled in from the command line, the unit is not in the live boot's
+# transaction at all, so nothing of it applies there. The Condition stays as a
+# second line of defence and as documentation.
+#
+# Conflicts rather than stopping the getty from ExecStartPre, which was the
+# other way round and was worse: stopping getty@tty1 while Setup is already
+# running triggers its TTYReset=yes, and a VT reset restores the palette from
+# the kernel's module defaults - i.e. Ubuntu's, which setvtrgb.service put
+# there. The screen went back to Ubuntu's colours a moment after Setup painted
+# it. Conflicts happens before ExecStart, so there is nothing to race.
+Conflicts=getty@tty1.service
+Before=getty.target
+
+[Service]
+# `idle` holds the start until the boot messages have stopped, so the first
+# frame is not scrolled off by something else finishing.
+Type=idle
+ExecStart=/usr/lib/os7-setup/os7-setup
+
+# Give the console back on the way out - that is what "F3=Quit to a shell"
+# promises. After ExecStart, so it cannot race the screen.
+ExecStopPost=-/usr/bin/systemctl start getty@tty1.service
+
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+# Do NOT deallocate the VT on exit: the log Setup points at is on the same
+# screen, and clearing it takes the last thing a person needs to read.
+TTYVTDisallocate=no
+
+# One shot. A crashing installer that respawns is an installer that repaints
+# over its own error screen; the unit below picks the machine up instead.
+Restart=no
+
+# Exit 0 = the user chose to restart. Exit 1 = the user quit. Anything else is
+# a fault. All three are "the service ended" as far as systemd is concerned;
+# what happens next is deliberately left to a person, because a machine that
+# reboots itself out of a failed install has hidden the reason.
+SuccessExitStatus=0 1
+
+# NO [Install] SECTION, on purpose. See the Conflicts comment above: this unit
+# is started by `systemd.wants=os7-setup.service` on the Install entry's kernel
+# command line, and enabling it would put it in every boot's transaction.

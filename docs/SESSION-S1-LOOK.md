@@ -369,6 +369,33 @@ whatever GOP mode the firmware likes, and 80×25 is not obtainable everywhere
 | L19 | Not binding: 434 codepoints in 512 positions, all REQUIRED blocks complete. |
 | Phase 1 | Owes the ESC timer, and gets the renderer, the key table and the font for free. |
 
+## Added 2026-08-24: S1's harness had a race, and it had it all along
+
+Phase 1 ([SESSION-PHASE1-SETUP.md](SESSION-PHASE1-SETUP.md)) found that **fbcon
+defers taking the console over and completes it only when something writes to
+it**. Until then tty1 is the kernel's dummy device, on which `KDFONTOP` returns
+`ENOSYS`: no font loads and no palette applies.
+
+Everything measured above is unaffected — the numbers were read off a real
+framebuffer console — but the harness reached that console **by luck**. It logs
+in over the serial line and drives tty1; the getty's login prompt on tty1 had
+already completed the takeover, so the console was always ready by the time the
+harness looked. Nothing in the harness required that, and the moment the getty
+stopped appearing (a systemd-unit bug in Phase 1, BUILD-NOTES #33) every S1 phase
+failed at once with "the console never accepted a font".
+
+Two changes, and both are in the committed harness:
+
+* `fbcon=nodefer` on S1's kernel command line, so the framebuffer console exists
+  from the first frame and the race does not.
+* A `waitfb` step that waits for the console to accept a font — and waits by
+  **loading one and asking the console what it holds**, not by watching for a
+  dmesg line. The first version watched dmesg and deadlocked for two minutes:
+  probing with ioctls is not writing, so the takeover it was waiting for could
+  never happen. That is this repo's own rule, in a new place — a diagnostic must
+  not depend on the subsystem it is diagnosing, and must be checked against the
+  thing it claims to check.
+
 ## What S1 does not show
 
 * **arm64 only**, like S3, S4 and S6 — there is still no amd64 ISO.

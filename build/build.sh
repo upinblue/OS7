@@ -168,6 +168,57 @@ if [[ ! -f "${WORK}/config/includes.chroot/etc/default/console-setup" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# os7-setup (SETUP-PLAN §6.1, §7, §11).
+#
+# Published as a NativeAOT binary for the TARGET architecture, which is this
+# container's own - the build containers are architecture-matched (harvested
+# fix 1), so this is a native compile and never a cross one. Spike S2 measured
+# the result at 3.2-3.4 MB with no .NET runtime needed at run time, which is
+# what makes it viable as the first thing that runs on a machine.
+#
+# The RID is derived rather than passed: getting it wrong produces a binary that
+# builds cleanly and cannot execute, and the failure would surface as an empty
+# tty1 on a booted image.
+# ---------------------------------------------------------------------------
+case "${ARCH}" in
+	amd64) RID=linux-x64   ;;
+	arm64) RID=linux-arm64 ;;
+esac
+
+SETUP_SRC="${HERE}/../installer/src/OS7.Setup"
+SETUP_DST="${WORK}/config/includes.chroot/usr/lib/os7-setup"
+
+echo ">>> os7-setup: publishing for ${RID}"
+mkdir -p "${SETUP_DST}"
+DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
+	dotnet publish "${SETUP_SRC}" -c Release -r "${RID}" -p:PublishAot=true \
+	-o "${SETUP_DST}" --nologo
+
+if [[ ! -x "${SETUP_DST}/os7-setup" ]]; then
+	echo "!!! dotnet publish produced no os7-setup binary" >&2
+	exit 1
+fi
+echo "    ${SETUP_DST#${WORK}/}/os7-setup  ($(stat -c %s "${SETUP_DST}/os7-setup") bytes)"
+
+# Publish leaves debugging symbols beside the binary. They are a third of the
+# size of the thing itself and nothing on the image can read them.
+rm -f "${SETUP_DST}"/*.dbg "${SETUP_DST}"/*.pdb
+
+# The systemd unit, and the licence the Licence screen reads.
+#
+# The licence is a FILE rather than text compiled into the binary, on purpose:
+# what a user agrees to has to be what the image ships, and root README open
+# question 4 ("License - this README currently assumes MIT ... Confirm before
+# the first public commit") is not settled. Baking it in would settle it by
+# accident.
+install -Dm644 "${HERE}/../installer/assets/os7-setup.service" \
+	"${WORK}/config/includes.chroot/usr/lib/systemd/system/os7-setup.service"
+install -Dm644 "${HERE}/../LICENSE" \
+	"${WORK}/config/includes.chroot/usr/share/os7/LICENSE"
+install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
+	"${WORK}/config/includes.chroot/usr/share/os7/SETUP-PLAN.md"
+
+# ---------------------------------------------------------------------------
 # GUARD: live-build 3.0 globs hooks at config/hooks/*.chroot - FLAT. The older
 # Debian live-build layout (config/hooks/normal/) does NOT match, and when it
 # does not match live-build prints "Begin executing hooks..." and silently runs

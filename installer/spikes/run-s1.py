@@ -39,39 +39,26 @@ the kernel and userspace, so the bootloader is not part of the question — S4
 already answered the one question that was about it.
 """
 import gzip
-import json
 import os
 import shutil
-import socket
-import struct
-import subprocess
 import sys
 import time
-import zlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vmconsole import Console, live_login, qemu_prefix, run, to_plain_bash
+# The VM harness library. vmconsole drives the serial line; vmscreen adds the
+# framebuffer, QMP screendumps, key injection and reading the screen back
+# through the console font. Both live in installer/testing/ because os7-setup's
+# own verification shares them - the spikes only wrote them first.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testing"))
+from vmscreen import (REPO, Lab, assert_region, assert_uniform, histogram,   # noqa: E402
+                      hexc, load_font, run, verify_glyphs)
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPIKES = os.path.join(REPO, "installer", "spikes")
-VM = os.path.join(REPO, ".vm", "s1")
-ISO = os.path.join(REPO, "out", "os7-arm64.iso")
-FONTS = os.path.join(VM, "fonts")
-SHOTS = os.path.join(VM, "shots")
 BIN = os.path.join(REPO, "out", "s1", "arm64", "os7-s1")
-KERNEL = os.path.join(VM, "vmlinuz")
-INITRD = os.path.join(VM, "initrd")
-VARS = os.path.join(VM, "edk2-vars.fd")
-PAYLOAD = os.path.join(VM, "payload.iso")
-QMPSOCK = os.path.join(VM, "qmp.sock")
 
-MEM = "4096"
-CPUS = "4"
-
-# virtio-gpu-pci's default mode. Named rather than assumed, because every pixel
-# assertion below is in these coordinates and a firmware that picked something
-# else would otherwise fail as "wrong colour" instead of "wrong resolution".
-FB_W, FB_H = 1280, 800
+lab = Lab("s1")
+FONTS = os.path.join(lab.dir, "fonts")
+SHOTS = lab.shots
 
 
 # ---------------------------------------------------------------------------
@@ -118,269 +105,6 @@ def vtrgb_hex(overrides):
     return palette.vtrgb(overrides)
 
 
-# ---------------------------------------------------------------------------
-# QMP — screendumps out, keypresses in
-# ---------------------------------------------------------------------------
-class Qmp:
-    def __init__(self, path, timeout=120):
-        deadline = time.time() + timeout
-        while True:
-            try:
-                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                self.sock.connect(path)
-                break
-            except (FileNotFoundError, ConnectionRefusedError):
-                if time.time() > deadline:
-                    raise SystemExit(f"QMP socket never appeared: {path}")
-                time.sleep(0.2)
-        self.f = self.sock.makefile("rwb", buffering=0)
-        self._read()                       # the greeting
-        self.cmd("qmp_capabilities")
-
-    def _read(self):
-        """Return the next message that is a reply, skipping asynchronous events."""
-        while True:
-            line = self.f.readline()
-            if not line:
-                raise SystemExit("QMP closed")
-            msg = json.loads(line)
-            if "event" in msg:
-                continue
-            return msg
-
-    def cmd(self, name, **args):
-        payload = {"execute": name}
-        if args:
-            payload["arguments"] = args
-        self.f.write((json.dumps(payload) + "\n").encode())
-        reply = self._read()
-        if "error" in reply:
-            raise SystemExit(f"QMP {name} failed: {reply['error']}")
-        return reply.get("return")
-
-    def screendump(self, path):
-        # PPM, not PNG: every QEMU build can write it and it parses in five
-        # lines, so the analysis never depends on how QEMU was compiled. The
-        # viewable PNG is made here instead (write_png).
-        if os.path.exists(path):
-            os.remove(path)
-        self.cmd("screendump", filename=path, format="ppm")
-        for _ in range(100):               # the write is asynchronous to the reply
-            if os.path.exists(path) and os.path.getsize(path) > 0:
-                time.sleep(0.1)
-                return
-            time.sleep(0.1)
-        raise SystemExit(f"screendump produced nothing at {path}")
-
-    def send_key(self, qcode):
-        self.cmd("send-key", keys=[{"type": "qcode", "data": qcode}])
-
-    def close(self):
-        try:
-            self.f.close()
-            self.sock.close()
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# Images: parse the PPM, write a PNG, count colours
-# ---------------------------------------------------------------------------
-def read_ppm(path):
-    with open(path, "rb") as f:
-        data = f.read()
-    if not data.startswith(b"P6"):
-        raise SystemExit(f"{path}: not a P6 PPM")
-    # Header: P6 <w> <h> <maxval>, whitespace-separated, '#' comments allowed.
-    fields, i = [], 2
-    while len(fields) < 3:
-        while i < len(data) and data[i:i + 1].isspace():
-            i += 1
-        if data[i:i + 1] == b"#":
-            while data[i:i + 1] not in (b"\n", b""):
-                i += 1
-            continue
-        j = i
-        while j < len(data) and not data[j:j + 1].isspace():
-            j += 1
-        fields.append(int(data[i:j]))
-        i = j
-    i += 1                                  # exactly one whitespace byte follows
-    w, h, maxval = fields
-    if maxval != 255:
-        raise SystemExit(f"{path}: maxval {maxval}, expected 255")
-    return w, h, data[i:i + w * h * 3]
-
-
-def write_png(path, w, h, rgb):
-    raw = b"".join(b"\x00" + rgb[y * w * 3:(y + 1) * w * 3] for y in range(h))
-
-    def chunk(tag, payload):
-        return (struct.pack(">I", len(payload)) + tag + payload
-                + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
-
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n")
-        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)))
-        f.write(chunk(b"IDAT", zlib.compress(raw, 9)))
-        f.write(chunk(b"IEND", b""))
-
-
-def histogram(w, h, rgb, box=None):
-    x0, y0, x1, y1 = box or (0, 0, w, h)
-    counts = {}
-    for y in range(y0, y1):
-        base = y * w * 3
-        for x in range(x0, x1):
-            p = base + x * 3
-            key = (rgb[p], rgb[p + 1], rgb[p + 2])
-            counts[key] = counts.get(key, 0) + 1
-    return sorted(counts.items(), key=lambda kv: -kv[1])
-
-
-def hexc(c):
-    return "#%02x%02x%02x" % c
-
-
-# ---------------------------------------------------------------------------
-# Reading the screen back through the font
-#
-# "Box glyphs render" is one of §10's four pass criteria, and looking at a PNG
-# is not a measurement of it. This is: take the cell at (row, col) out of the
-# screendump, threshold it to a bitmap, and compare that bitmap to the glyph the
-# console font holds for the character the program was asked to draw.
-#
-# It fails on everything that matters and nothing that does not. A missing glyph
-# gives a blank cell or a replacement box; a font that never loaded gives the
-# kernel's TER16x32 shapes; a broken subset gives the wrong glyph at the right
-# position - and none of those match. It is also completely independent of the
-# renderer: the expected bitmap comes from the PSF on disk, not from anything
-# os7-s1 computed.
-# ---------------------------------------------------------------------------
-def region(w, h, rgb, x0, y0, x1, y1):
-    return histogram(w, h, rgb, box=(x0, y0, x1, y1))
-
-
-def assert_region(w, h, rgb, cell, box, allowed, want, what):
-    """Every pixel in a character-cell rectangle must be one of `allowed`, and
-    `want` must be the most common one.
-
-    Cell coordinates, not pixels, because that is how the screen was authored -
-    and because the check then survives a font-size change.
-    """
-    cw, ch = cell
-    c0, r0, c1, r1 = box
-    hist = region(w, h, rgb, c0 * cw, r0 * ch, c1 * cw, r1 * ch)
-    stray = [c for c, _ in hist if c not in allowed]
-    if stray:
-        print(f"      FAIL  {what}: unexpected {', '.join(hexc(c) for c in stray[:3])}")
-        return False
-    if hist[0][0] != want:
-        print(f"      FAIL  {what}: {hexc(hist[0][0])} dominates, expected {hexc(want)}")
-        return False
-    print(f"      ok    {what}: {hexc(want)}")
-    return True
-
-
-def load_font():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "psf", os.path.join(REPO, "build", "lib", "psf.py"))
-    psf = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(psf)
-    raw = os.path.join(FONTS, "os7-fixedsys-16x32.psf")
-    if not os.path.exists(raw):
-        with gzip.open(raw + ".gz", "rb") as fin, open(raw, "wb") as fout:
-            shutil.copyfileobj(fin, fout)
-    return psf.Font(raw)
-
-
-def cell_bitmap(w, rgb, row, col, cw, ch, fg):
-    """The cell as booleans: True where the pixel is the foreground colour."""
-    out = []
-    for y in range(ch):
-        line = []
-        for x in range(cw):
-            p = ((row * ch + y) * w + col * cw + x) * 3
-            line.append((rgb[p], rgb[p + 1], rgb[p + 2]) == fg)
-        out.append(line)
-    return out
-
-
-def verify_glyphs(w, h, rgb, font, row, col, text, fg=(255, 255, 255)):
-    """Compare a run of cells on screen with the font's own glyphs."""
-    cw, ch = font.width, font.height
-    wrong, missing = [], []
-    for i, rune in enumerate(text):
-        if ord(rune) not in font.table:
-            missing.append(rune)
-            continue
-        want = font.bitmap(font.table[ord(rune)])
-        got = cell_bitmap(w, rgb, row, col + i, cw, ch, fg)
-        if got != want:
-            wrong.append((i, rune))
-    return wrong, missing
-
-
-# ---------------------------------------------------------------------------
-# VM plumbing
-# ---------------------------------------------------------------------------
-def extract_boot_files():
-    """Pull casper/vmlinuz and casper/initrd out of the ISO.
-
-    Through a container, because macOS will not mount this image: `hdiutil
-    attach` reports "no mountable file systems" on the arm64 ISO — it is an
-    El Torito hybrid that the remaster in build/lib/arm64-efi-remaster.sh
-    produces and Disk Utility does not recognise. The container has loop mounts.
-    """
-    if os.path.exists(KERNEL) and os.path.exists(INITRD):
-        return
-    os.makedirs(VM, exist_ok=True)
-    print("    extracting the kernel and initrd from the ISO …")
-    run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
-        "-v", f"{os.path.dirname(ISO)}:/iso:ro", "-v", f"{VM}:/vm",
-        "os7-build:arm64", "bash", "-c",
-        # The names carry the kernel version - build/lib/arm64-efi-remaster.sh
-        # copies them straight out of the chroot as vmlinuz-<ver> and
-        # initrd.img-<ver> - so glob rather than guess. Exactly one of each is
-        # expected; more would mean the image has two kernels and the choice
-        # would be silent.
-        "set -e; mkdir -p /mnt/iso; mount -o loop,ro /iso/os7-arm64.iso /mnt/iso; "
-        "k=$(ls /mnt/iso/casper/vmlinuz*); i=$(ls /mnt/iso/casper/initrd*); "
-        "test $(echo \"$k\" | wc -l) -eq 1 && test $(echo \"$i\" | wc -l) -eq 1; "
-        "cp \"$k\" /vm/vmlinuz; cp \"$i\" /vm/initrd; "
-        "echo \"kernel=$(basename $k)\"; umount /mnt/iso")
-    for f in (KERNEL, INITRD):
-        if not os.path.exists(f):
-            raise SystemExit(f"extraction did not produce {f}")
-
-
-def qemu_args(cmdline):
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
-    if os.path.exists(QMPSOCK):
-        os.remove(QMPSOCK)
-    return [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
-        "-smp", CPUS, "-m", MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={VARS}",
-        # A display with no window. The scanout still exists, which is all a
-        # screendump needs.
-        "-device", f"virtio-gpu-pci,xres={FB_W},yres={FB_H}",
-        # A USB keyboard rather than virtio-input: HID is in every kernel and
-        # every initramfs, and S1 must not fail because a driver was missing.
-        "-device", "qemu-xhci", "-device", "usb-kbd",
-        "-display", "none", "-monitor", "none", "-serial", "stdio",
-        "-qmp", f"unix:{QMPSOCK},server,nowait",
-        "-kernel", KERNEL, "-initrd", INITRD, "-append", cmdline,
-        "-drive", f"if=none,id=payload,file={PAYLOAD},format=raw,readonly=on",
-        "-device", "virtio-blk-pci,drive=payload",
-        "-cdrom", ISO,
-    ]
-
-
 def base_cmdline(overrides=None):
     return " ".join([
         "boot=casper", "quiet", "loglevel=0", "plymouth.enable=0",
@@ -389,12 +113,18 @@ def base_cmdline(overrides=None):
         # kernel cannot load a PSF from disk, so this covers the frames between
         # the firmware handing over and Setup starting.
         "fbcon=font:TER16x32",
+        # And the framebuffer console from the start rather than deferred. By
+        # default fbcon waits for something to write to the console before
+        # taking it over, and a harness that only probes with ioctls is not
+        # writing: tty1 stays the dummy device, KDFONTOP returns ENOSYS, and
+        # nothing measured here would be about a framebuffer at all.
+        "fbcon=nodefer",
     ] + ([palette_cmdline(overrides)] if overrides else []))
 
 
 def build_payload():
-    """An ISO9660 volume with the fonts, the painter and the runner on it."""
-    stage = os.path.join(VM, "payload")
+    """Stage S1's payload: the fonts, the painter, the palettes and the runner."""
+    stage = os.path.join(lab.dir, "payload")
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(os.path.join(stage, "fonts"))
 
@@ -426,68 +156,36 @@ def build_payload():
         f.write(vtrgb_hex(OS7_CONTRAST))
 
     shutil.copy(os.path.join(SPIKES, "s1-look.sh"), stage)
-
-    if os.path.exists(PAYLOAD):
-        os.remove(PAYLOAD)
-    run("hdiutil", "makehybrid", "-iso", "-joliet",
-        "-default-volume-name", "OS7S1", "-o", PAYLOAD, stage,
-        stdout=subprocess.DEVNULL)
-    print(f"    payload  {PAYLOAD}")
+    return stage
 
 
 def prepare():
-    os.makedirs(VM, exist_ok=True)
-    os.makedirs(SHOTS, exist_ok=True)
-    if not os.path.exists(ISO):
-        raise SystemExit(f"ISO not found: {ISO}\nBuild it with: make build-arm64")
-    if not os.path.exists(VARS):
-        pre = qemu_prefix()
-        for c in ("edk2-arm-vars.fd", "edk2-aarch64-vars.fd"):
-            src = os.path.join(pre, "share", "qemu", c)
-            if os.path.exists(src):
-                shutil.copy(src, VARS)
-                break
-        else:
-            raise SystemExit("no EDK2 vars template found")
-    extract_boot_files()
-    build_payload()
+    lab.prepare(payload_dir=None)
+    lab.build_payload(build_payload())
 
 
 def boot(cmdline, label):
     """Boot the live session and return (console, qmp) at a plain bash prompt."""
-    print(f"    booting ({label}) …")
-    c = Console(qemu_args(cmdline), os.path.join(VM, f"{label}.serial.log"))
-    q = Qmp(QMPSOCK)
-    live_login(c)
-    to_plain_bash(c)
-    # Mounted by LABEL: the live medium, the payload and every other virtio-blk
-    # device get their names from PCI enumeration order, which run-s3.py already
-    # learned not to depend on. And under sudo, because the live session is the
-    # `ubuntu` user and every step after this one - chvt, setfont, setvtrgb,
-    # stopping a unit - is privileged.
-    c.send("sudo mount -o ro -L OS7S1 /mnt")
-    c.settle()
+    c, q = lab.boot(cmdline, label)
+    lab.mount_payload(c)
     # The acknowledgement comes from a FILE ON THE VOLUME, so it cannot be the
-    # shell echoing the command back. BUILD-NOTES #16: never expect a marker the
-    # typed command itself contains. An earlier version of this line used
+    # shell echoing the command back. BUILD-NOTES #16: an earlier version used
     # `&& echo MOUNT-OK` and reported success for a mount that had failed with
     # "must be superuser".
     c.drop()
     c.send("sh /mnt/s1-look.sh ready")
     c.expect(r"S1-READY", 60, "payload mounted and readable")
+
+    # Nothing may touch tty1 before fbcon owns it. See `waitfb` for why, and
+    # docs/BUILD-NOTES.md #31 for what it looks like when this is skipped.
+    c.drop()
+    c.send("sudo sh /mnt/s1-look.sh waitfb")
+    c.expect(r"S1-FB-OK", 180, "fbcon takeover")
     return c, q
 
 
 def shoot(q, name):
-    """Screendump, save both forms, and return the parsed pixels."""
-    ppm = os.path.join(SHOTS, f"{name}.ppm")
-    png = os.path.join(SHOTS, f"{name}.png")
-    q.screendump(ppm)
-    w, h, rgb = read_ppm(ppm)
-    write_png(png, w, h, rgb)
-    os.remove(ppm)
-    print(f"      {png}  ({w}x{h})")
-    return w, h, rgb
+    return lab.shoot(q, name)
 
 
 # ---------------------------------------------------------------------------
@@ -667,18 +365,6 @@ def phase_palette():
         c.close()
 
 
-def assert_uniform(hist, total, want, what):
-    """The screen must be EXACTLY one colour, and that colour must be `want`."""
-    dominant, n = hist[0]
-    if dominant != want:
-        print(f"      FAIL  {what}: {hexc(dominant)}, expected {hexc(want)}")
-        return False
-    if n < total * 0.99:
-        print(f"      FAIL  {what}: only {100.0 * n / total:.1f}% of the screen")
-        return False
-    print(f"      ok    {what}: exactly {hexc(want)}")
-    return True
-
 
 def phase_mockup():
     """The §3.1 screens, at the geometry they were drawn for."""
@@ -771,7 +457,7 @@ def phase_mockup():
         # The glyphs themselves, settled against the font rather than by eye.
         time.sleep(1.0)
         w, h, rgb = shoot(q, "11-testcard-verified")
-        font = load_font()
+        font = load_font(os.path.join(FONTS, "os7-fixedsys-16x32.psf.gz"))
         for row, col, text, label in TESTCARD_ROWS:
             wrong, missing = verify_glyphs(w, h, rgb, font, row, col, text)
             if missing:
@@ -871,8 +557,7 @@ def phase_keys():
 
 
 def phase_reset():
-    shutil.rmtree(VM, ignore_errors=True)
-    print(f"    removed {VM}")
+    lab.reset()
     return True
 
 

@@ -139,7 +139,14 @@ not — the `ENOSYS` in BUILD-NOTES #12 is specific to debootstrap's tar. But
 
 ## Shared
 
-[`vmconsole.py`](vmconsole.py) holds the serial-console driving both harnesses
-use: an expect loop, character-at-a-time typing, and just enough terminal
-emulation to keep PowerShell alive on a line with nothing on the other end
-(docs/BUILD-NOTES.md #16).
+The VM harness library lives in [`../testing/`](../testing), not here — the
+spikes wrote it first, and `os7-setup`'s own verification now shares it.
+
+- [`../testing/vmconsole.py`](../testing/vmconsole.py) — serial-console driving:
+  an expect loop, character-at-a-time typing, and just enough terminal emulation
+  to keep PowerShell alive on a line with nothing on the other end
+  (docs/BUILD-NOTES.md #16).
+- [`../testing/vmscreen.py`](../testing/vmscreen.py) — the framebuffer half:
+  QMP screendumps, keypresses injected as qcodes to a USB keyboard, and reading
+  the screen back through the console font. S1 needed it first; Phase 1 needs
+  exactly the same thing.

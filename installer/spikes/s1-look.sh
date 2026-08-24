@@ -38,6 +38,44 @@ ready)
 		"$(test -x "${HERE}/os7-s1" && echo yes || echo MISSING)"
 	;;
 
+waitfb)
+	# Wait until the console can actually take a font.
+	#
+	# NOT OPTIONAL, and it used to pass by luck. fbcon defers its takeover for
+	# some seconds after boot; until then tty1 is the kernel's dummy device,
+	# `setfont` fails with "Unable to load such font with such kernel version",
+	# and a palette applied to it goes nowhere. Phase 1 hit the same thing from
+	# inside os7-setup — docs/BUILD-NOTES.md #31.
+	#
+	# The test is the OPERATION, not a proxy for it. A dmesg marker was tried
+	# first and is exactly the kind of diagnostic this repo keeps warning about:
+	# it asks whether the kernel said something, where the question is whether
+	# setfont works. So this loads the font and asks the console what it holds.
+	SIZE="${2:-16x32}"
+	i=0
+	chvt 1
+	while [ $i -lt 120 ]; do
+		# WRITE TO THE CONSOLE FIRST. fbcon's takeover is DEFERRED, and what
+		# completes it is output arriving - not time passing. A loop that only
+		# probes with ioctls waits forever and is the reason this comment
+		# exists: the first version of `waitfb` polled for two minutes and the
+		# console never moved, because polling is not writing.
+		printf ' \010' > /dev/tty1 2>/dev/null || true
+		# `|| true` because the script runs under `set -e` and setfont FAILING
+		# is the expected state here - that is the whole thing being waited out.
+		setfont -C /dev/tty1 "${HERE}/fonts/os7-fixedsys-${SIZE}.psf" 2>/dev/null || true
+		if showconsolefont -i 2>/dev/null | grep -q "^${SIZE%x*}x${SIZE#*x}x"; then
+			echo "S1-FB-OK $(showconsolefont -i) $(stty -F /dev/tty1 size)"
+			exit 0
+		fi
+		i=$((i + 1))
+		sleep 1
+	done
+	echo "S1-FB-TIMEOUT: the console never accepted a font" >&2
+	echo "  showconsolefont: $(showconsolefont -i 2>&1)" >&2
+	exit 1
+	;;
+
 free)
 	# getty@tty1 is what SETUP-PLAN §7 says gets masked when os7-setup runs, so
 	# this is the production arrangement rather than a test affordance. Stopped
