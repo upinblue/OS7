@@ -113,6 +113,14 @@ Genuinely undecided — flag before making irreversible choices in a Claude Code
 5. ~~**Is `/var` inside the boot environment?**~~ — **RESOLVED 2026-08-23 (U6 / D10): split, not placed.** Package state (`/var/lib/dpkg`, `/var/lib/apt`, `/var/cache`) stays inside the boot environment, because it describes exactly the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and the state of the agents holding this device's identity in Entra, Intune and Arc — **the tenant has no rollback**, so a machine returning with a stale identity or an expired certificate is a worse problem than the update that caused it. Deciding rule: a path belongs in the BE only if rolling it back makes the system *more correct*. Layout: [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) §4.4; reasoning: [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) §4.4.
 6. **Where does the recovery key live?** (U8. Raised 2026-08-23, **narrowed the same day by spike S6**.) TPM2 auto-unlock seals against PCR 7, so a `shim` or `dbx` update — an entirely routine Ubuntu patch — invalidates it and drops every machine back to a passphrase prompt. S6 measured what that actually looks like ([docs/SESSION-S6-UPDATE-CYCLE.md](docs/SESSION-S6-UPDATE-CYCLE.md)): the failure names its own cause, the passphrase still works, and one `systemd-cryptenroll` against the new PCR 7 restores auto-unlock with no reinstall. So the recovery *mechanism* exists and is demonstrated. What does not exist is the **escrowed recovery passphrase** it needs to run unattended — Entra, an OS/7-managed store, or Intune's own escrow. Still blocking for fleet deployment, but now a key-management design rather than an unknown.
 
+## Working on this repository
+
+[CLAUDE.md](CLAUDE.md) is the orientation file: where authority lives, the
+commands that actually work, how work is done here, and the traps that cost the
+most. [docs/HANDOFF.md](docs/HANDOFF.md) is the state of play and what to do
+next; [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) is every trap found so far and
+is worth reading before debugging anything.
+
 ## Repository layout
 
 ```

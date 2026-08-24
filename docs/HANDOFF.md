@@ -4,6 +4,9 @@
 Everything here runs **locally on an Apple Silicon Mac**. No cloud, no CI, no
 paid services.
 
+New here? [../CLAUDE.md](../CLAUDE.md) is the shorter door: which document
+decides what, the commands that work, and the traps that cost the most.
+
 ---
 
 ## 1. What works today
