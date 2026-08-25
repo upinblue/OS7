@@ -75,21 +75,33 @@ installed or walked, so every Phase 1–3 result is still arm64-only.
 Otherwise: **Phase 4 — Authenticity and polish**, or **screen 9**, or the release
 plan's **S5**. Phase 3 is done (below); what it leaves is:
 
-* **Screen 9, the network screen — now PLANNED as Phase 3b, and it is not
-  optional.** It was left out of Phase 3 on the grounds that "DHCP is the default
-  on a fresh Ubuntu install". **Both shipped ISOs were read on 2026-08-25 and that
-  premise does not hold for them**: `/etc/netplan/` is empty, `/etc/systemd/network/`
-  is empty, there is no `cloud-init` to write `50-cloud-init.yaml`, and
-  `systemd-networkd` is not enabled — only its *consumer*
-  `networkd-dispatcher.service` is. amd64-GUI is masked by NetworkManager;
-  arm64 and amd64-headless have nothing equivalent. Plan, screens, limitations
-  L23–L28 and decisions D11–D14 are in
+* **Screen 9, the network screen — Phase 3b, WRITTEN and NOT OPTIONAL. M1 is
+  measured and it is worse than the image suggested.** An installed arm64 machine
+  booted alone with a NIC attached comes up with:
+
+  ```
+  2: enp0s2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN
+  ip -o addr show    1: lo  inet 127.0.0.1/8   (and nothing else)
+  ip route show      (empty)
+  systemd-networkd   disabled, inactive     networkd-dispatcher  enabled
+  ```
+
+  Not "DHCP did not answer" — the link was never brought up, there is no route,
+  and nothing on the machine reports a problem. Every headless arm64 machine this
+  installer has produced needed a keyboard and a monitor to be reached. Screen 9
+  was left out of Phase 3 on the premise that "DHCP is the default on a fresh
+  Ubuntu install"; that default comes from `cloud-init` on Ubuntu Server and this
+  image has none. amd64-GUI is masked by NetworkManager.
+
+  Plan, screens, L23–L28 and D11–D14 are in
   [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md) §3, §7.2, §7.3, §8, §9
-  and Phase 3b; the reasoning is in
+  and Phase 3b; the reasoning and the M1 transcript are in
   [SESSION-NETWORK-ACCOUNTS-PLAN.md](SESSION-NETWORK-ACCOUNTS-PLAN.md).
-  **Start with M1**: boot an installed machine with a NIC attached and run
-  `ip -o addr`. Everything above is a property of a squashfs, not of a computer,
-  and M1 is what turns it into one — or overturns it.
+  Run it with `./installer/testing/run-phase3b-network.py`.
+
+  **Still owed: M3, the amd64 half.** M1 is one machine, arm64, in QEMU. On amd64
+  `network-manager` is installed on the GUI product and would have brought the
+  link up by itself — which is exactly why nobody saw this.
 * **The account model is decided and needs no code (D11).** Root stays locked and
   the first account stays in `sudo`, which is what `SystemSteps` already does.
   What is owed is one sentence on screen 7 naming the role — the local account is
