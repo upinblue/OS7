@@ -2252,6 +2252,52 @@ Worth stating in general, because the next font conversion will meet it too:
 **when a pipeline step is replaced, its silent guarantees go with it.** `bdf2psf`
 was not only converting — it was also refusing, and the refusal was load-bearing.
 
+## 55. The rasteriser is a container package, so rebuilding the container changes the console
+
+Found while putting SETUP-PLAN §2.8's route into the build.
+
+The Cascadia pipeline pins two inputs — the `.deb` from the archive snapshot and
+the TTF inside it — and both hashes matched on every run. The output still moved:
+
+```
+same TTF, same cellfont.py, same 8x16 cell
+
+  libfreetype 2.13.2 (host)          }
+  libfreetype 2.14.2 (container)     }  41 of 409 glyphs DIFFER
+```
+
+It is not subtle where it lands. `U+0022 "` goes from two one-pixel strokes to a
+solid four-pixel block, and most accented capitals shift a row. The affected
+glyphs are the ones with fine detail — exactly where hinting decides things.
+
+**Nothing in the pin could see this.** `libfreetype6` comes from the build
+container, which is `FROM ubuntu:26.04` and not archive-pinned; the font pin
+describes what goes *in*, and the rasteriser is not an input, it is the
+machinery. So `docker build` on a different day is enough to change what every
+console looks like while `os7-release.conf`, the `.deb` hash and the TTF hash all
+stay exactly as they were.
+
+That is the same rule spike S7 tested one layer up (two builds from one pin hold
+identical package sets, SESSION-RELEASE-IDENTITY): **a version number is only
+honest if what it names is fixed.** A pinned input does not fix an output when
+something unpinned sits between them.
+
+**Fix: pin the artefact.** `OS7_CASCADIA_PSF_SHA256_8x16` / `_16x32` hold the
+SHA256 of the built PSFs, and `build-installed-console-font.sh` fails the build
+when they do not match, naming the libfreetype version it found. Drift becomes a
+build failure with a diff to look at, instead of a silent redraw.
+
+**Measured and NOT a factor: architecture.** arm64 and amd64 containers on the
+same libfreetype produce byte-identical PSFs, so one pair of hashes covers both.
+Worth stating because the opposite would have needed two pins and an explanation
+of which is authoritative.
+
+Related, same session: `dpkg-deb -x` inside the **amd64** container on Apple
+Silicon dies with `Cannot open: Function not implemented` on every file — trap
+#12's `ENOSYS` again, since `dpkg-deb` shells out to GNU tar. So this script
+cannot run for amd64 on this Mac, exactly like `debootstrap`. It fails loudly
+rather than producing a short font, and CI is unaffected.
+
 ## 56. The interface name changes between installing and running, and netplan says nothing
 
 The same machine, the same NIC, the same MAC — two names, measured 2026-08-25:

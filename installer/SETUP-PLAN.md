@@ -464,11 +464,35 @@ both files, returns **no failures and one note** — `Arrows (the rest): 3/4 —
 absent: U+21B5`, the single glyph Cascadia lacks. The shipping Fixedsys PSFs
 emit four such notes, covering eleven glyphs.
 
-**Not yet booted.** Everything above is the artefact measured on the host and in
-the build container. `psf.py verify` is a diagnostic like any other, and this
-repo's rule is to check a diagnostic against the thing it claims to check — so
-the outstanding work is to point `installer/testing/vmscreen` at a console
-running this font and read the screen back through it, the way S1 did for
+#### In the build since 2026-08-25
+
+[`build/lib/build-installed-console-font.sh`](../build/lib/build-installed-console-font.sh)
+and [`build/lib/cellfont.py`](../build/lib/cellfont.py), run by `build/build.sh`
+next to the Fixedsys step and staged into the same
+`includes.chroot/usr/share/consolefonts/`. Both fonts ship;
+`/etc/default/console-setup` selects Cascadia, and one line changes it back.
+
+**A third hash had to be added, and it is the interesting one.** The `.deb` and
+the TTF are both pinned, and the output still moved: `libfreetype` is a **build
+container** package, not an archive-pinned one, and **41 of 409 glyphs differ**
+between 2.13.2 and 2.14.2 from the same TTF through the same script. `U+0022 "`
+goes from two one-pixel strokes to a solid block. Nothing in the input pin can
+see that — so `OS7_CASCADIA_PSF_SHA256_8x16` / `_16x32` pin the *output*, and the
+build fails, naming the libfreetype version it found, when the rasterisation
+moves. This is release plan §3.1 one layer further down: a pinned input does not
+fix an output when something unpinned sits between them. BUILD-NOTES #55.
+
+Architecture is not a factor — arm64 and amd64 containers on the same
+libfreetype produce byte-identical PSFs, so one pair of hashes covers both. But
+the script **cannot run for amd64 on an Apple Silicon Mac**: `dpkg-deb` shells
+out to GNU tar and hits trap #12's `ENOSYS`. It fails loudly rather than
+producing a short font, and CI is unaffected.
+
+**Not yet booted.** The ISO builds with the font in it and every check above is
+green, but no console has displayed it. `psf.py verify` is a diagnostic like any
+other, and this repo's rule is to check a diagnostic against the thing it claims
+to check — so the outstanding work is to point `installer/testing/vmscreen` at a
+console running this font and read the screen back through it, the way S1 did for
 Fixedsys. Until then this is a claim about a file, not about a computer.
 
 ---
@@ -1565,7 +1589,7 @@ be recorded here a few minutes before the entry it points at.
 | D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty. **S1 gave it a mechanism and made it free:** the palette has to be shipped as `/etc/vtrgb` for Setup to work at all (§2.1), Ubuntu already enables `setvtrgb.service` to apply it, and that same file is what the installed console reads. Keeping the palette is now the default outcome and *removing* it would be the extra work |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3). **Scope narrowed 2026-08-25 by D15:** the second half of that — the installed system in non-GUI mode — is now Cascadia Mono. Fixedsys keeps Setup, which is the half the DOS reproduction depends on |
-| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against **eleven** missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures and a single note. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **Not yet booted** — the artefact is verified, a console running it is not |
+| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against **eleven** missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures and a single note. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **In the build since 2026-08-25**, which added a third pin nobody predicted: `libfreetype` is a container package, so the same TTF gives 41 different glyphs of 409 across two of its versions and the built PSFs have to be hashed too (BUILD-NOTES #55). **Not yet booted** — the ISO carries it, no console has displayed it |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
 | D10 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split, not placed (§4.4).** Package state (`dpkg`, `apt`, `cache`) stays inside the BE, because it describes the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and — the OS/7-specific part — the state of the agents that hold a device identity in Entra, Intune and Arc, because the tenant on the other end has no rollback. Out-of-BE datasets hang under `rpool/DATA` rather than carrying a do-not-clone property, so the mistake is structurally impossible rather than merely discouraged |
 

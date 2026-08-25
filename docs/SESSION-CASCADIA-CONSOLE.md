@@ -7,9 +7,10 @@ like, and how it would be built — and it does so against the artefact rather
 than against the documentation, because a font is exactly the kind of component
 that reports success and renders the wrong picture (BUILD-NOTES #26).
 
-Nothing in `build/` changed. This is the evidence and the design; the
-implementation is specified in [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md)
-§2.8 and decided as D15.
+Decided as D15, specified in [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md)
+§2.8, and **in the build as of the same day** — §6a covers what implementing it
+turned up, including one pin that measuring had not predicted. Sections 1-6 are
+the evidence the decision was taken on, written before any of `build/` changed.
 
 **Scope decided during the session:** Cascadia is for the **installed console
 only**. `os7-setup` keeps Fixedsys Excelsior — the installer is a deliberate
@@ -362,19 +363,109 @@ does not do.
 
 ---
 
+## 6a. Putting it in the build — and the pin that was not predicted
+
+Written after the sections above, on the same day. The route in §5 went into
+`build/lib/build-installed-console-font.sh` + `build/lib/cellfont.py`, called by
+`build.sh` beside the Fixedsys step. Two things came out of building it that
+measuring it had not shown.
+
+### The rasteriser is not pinned, and it changes the picture
+
+The `.deb` hash matched. The TTF hash matched. The output was different anyway:
+
+```
+same TTF, same script, same 8x16 cell
+
+  libfreetype 2.13.2 (my host)          }
+  libfreetype 2.14.2 (build container)  }  41 of 409 glyphs DIFFER
+```
+
+`U+0022 "` goes from two one-pixel strokes to a solid four-pixel block; most
+accented capitals shift a row. It lands on exactly the glyphs where hinting has
+something to decide.
+
+`libfreetype6` comes from the **build container**, which is `FROM ubuntu:26.04`
+and not archive-pinned. So `docker build` on a different day changes what every
+console looks like while `os7-release.conf`, the `.deb` hash and the TTF hash all
+stay put. That is the rule spike S7 tested one layer up (SESSION-RELEASE-IDENTITY:
+two builds from one pin hold identical package sets), and it fails here for a
+reason the pin was never shaped to catch: **a pinned input does not fix an output
+when something unpinned sits between them.**
+
+Fixed by pinning the artefact — `OS7_CASCADIA_PSF_SHA256_8x16` / `_16x32`, checked
+after `psf.py verify`, failing the build and naming the libfreetype version it
+found. Drift becomes a build failure with a diff to look at instead of a silent
+redraw. BUILD-NOTES #55.
+
+**And the guard was made to fire before it was trusted.** Corrupting the pinned
+hash deliberately: exit 1, the expected/got pair printed, the libfreetype version
+named, and — the part that matters — **nothing staged**, so a build cannot
+continue on a font that is not the pinned one.
+
+**Architecture is not a factor.** arm64 and amd64 containers on the same
+libfreetype produce byte-identical PSFs, measured. One pair of hashes covers
+both, and that is worth recording because the opposite would have needed two
+pins and a rule about which wins.
+
+### The image was asked, not the build
+
+`OS7-1.0.0.51-arm64.iso` built clean, and this repo's rule is that a build
+exiting 0 proves nothing about what it produced (#13). So the squashfs was
+opened and the shipped files read back:
+
+```
+/usr/share/consolefonts/   os7-console-8x16.psf.gz     3 006 B   <- Cascadia
+                           os7-console-16x32.psf.gz    5 223 B   <- Cascadia
+                           os7-console-8x16.psf        7 896 B
+                           os7-fixedsys-8x16.psf.gz    4 353 B   <- Setup's, still there
+                           os7-fixedsys-16x32.psf.gz   6 581 B
+/usr/share/doc/os7-console-font/LICENSE                5 592 B   <- the OFL obligation
+/etc/default/console-setup   FONT="os7-console-16x32.psf.gz"
+```
+
+And the byte that closes the chain — the PSF **inside the ISO**, hashed:
+
+```
+shipped   335d0b096e4df18faa3f90b64290a86534e31b148b8fe2b2260a90339fc4ccfc
+pinned    335d0b096e4df18faa3f90b64290a86534e31b148b8fe2b2260a90339fc4ccfc
+```
+
+So `os7-release.conf` → `.deb` → TTF → rasterisation → PSF → squashfs → ISO
+holds end to end, and every link was checked rather than assumed. Both fonts
+ship, and the installed console selects Cascadia.
+
+Note that `check-image.py` passes but says nothing about any of this: it does not
+know the console font exists. Teaching it is the obvious next small job, and
+until then the check above is manual.
+
+### Trap #12 reaches further than debootstrap
+
+`dpkg-deb -x` inside the **amd64** container on Apple Silicon fails on every file
+with `Cannot open: Function not implemented` — `dpkg-deb` shells out to GNU tar,
+and this is the same `ENOSYS` that stops `debootstrap` (#12/#23). So this script
+cannot run for amd64 on this Mac either. It fails loudly rather than producing a
+short font, which is the behaviour that matters; CI on a real x86 host is
+unaffected.
+
+---
+
 ## 7. What this does not answer
 
-* **Nothing was booted.** Everything here is the artefact measured on the host
-  and in the build container: the font file, the BDF, the PSF, and `psf.py
-  verify`'s reading of the PSF. What a real framebuffer does with an
-  8×16 PSF built this way is unproven, and the repo's own rule says an exit code
-  and a verifier are both diagnostics. The check that would close it is the one
-  S1 already built: `installer/testing/vmscreen` reads the screen back through
-  the console font, so pointing it at a Cascadia console is a small job on top
-  of existing machinery.
+* **Nothing was booted.** The arm64 ISO builds with the font in it, and every
+  check up to that point is green — but no console has displayed a single glyph.
+  Everything here is the artefact measured on the host and in the build
+  container: the font file, the BDF, the PSF, `psf.py verify`'s reading of the
+  PSF, and the SHA256 of what the build produced. The repo's own rule says an
+  exit code and a verifier are both diagnostics. The check that would close it is
+  the one S1 already built: `installer/testing/vmscreen` reads the screen back
+  through the console font, so pointing it at a Cascadia console is a small job
+  on top of existing machinery — and until it is done, D15 rests on files.
 * **No `console-setup` round trip.** `setupcon` takes `FONT=` verbatim
-  (build/config/includes.chroot/etc/default/console-setup explains why), and the
-  new filenames are ordinary, but that path has not been exercised.
+  (build/config/includes.chroot/etc/default/console-setup explains why), and
+  `FONT=` now names `os7-console-16x32.psf.gz`, which the build stages and
+  checks — but nothing has watched `setupcon` actually load it from the
+  initramfs. This is the same gap as the point above and closes with it.
 * **`fbcon` accepts the geometry** — 8×16 and 16×32 are both already in use in
   this image, so nothing new is asked of the kernel. This is inherited, not
   re-measured.

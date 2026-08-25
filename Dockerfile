@@ -54,6 +54,17 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 	`# It lives here and never in the image - see build/lib/build-console-font.sh.` \
 	otf2bdf \
 	bdf2psf \
+	`# The INSTALLED console's font is Cascadia Mono (SETUP-PLAN 2.8, D15) and` \
+	`# needs a second route: otf2bdf scales both axes together, so from Cascadia` \
+	`# it reaches 8x15 or 9x16 and never 8x16 (BUILD-NOTES #52).` \
+	`# build/lib/cellfont.py drives libfreetype directly to hit the cell exactly.` \
+	`#` \
+	`# NOTE THAT libfreetype IS PART OF WHAT THE IMAGE LOOKS LIKE. It is a` \
+	`# container package, not an archive-pinned one, and 41 of 409 glyphs differ` \
+	`# between 2.13.2 and 2.14.2 from the same TTF. That is why the built PSFs` \
+	`# are hashed against OS7_CASCADIA_PSF_SHA256_* - rebuilding this container` \
+	`# can change the console with no version number moving. BUILD-NOTES #55.` \
+	python3-freetype \
 	`# os7-setup is NativeAOT C# (SETUP-PLAN 6.1). The exact list spike S2` \
 	`# established: the SDK, and the linker toolchain ILCompiler shells out to.` \
 	`# docs/SESSION-S2-NATIVEAOT.md.` \

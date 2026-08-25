@@ -1,9 +1,27 @@
 # OS/7 — console font for the installed system in non-GUI mode.
 #
-# Decision D9 (installer/SETUP-PLAN.md §2.3): Fixedsys Excelsior, for os7-setup
-# AND for the installed console. The PSFs beside this file are built from the
-# pinned TTF by build/lib/build-console-font.sh; the toolchain that makes them
-# lives in the build container and never ships here.
+# Decision D15 (installer/SETUP-PLAN.md §2.8): CASCADIA MONO for the installed
+# console. Decision D9 (§2.3) keeps Fixedsys Excelsior for os7-setup, which is a
+# deliberate MS-DOS 6.22 / Windows 2000 reproduction and needs the period face.
+# Setup calls setfont with its own PSF before it paints, so this file governs
+# the installed console only.
+#
+# Both fonts are in /usr/share/consolefonts beside this file:
+#
+#   os7-console-*.psf.gz     Cascadia Mono  <- selected below
+#   os7-fixedsys-*.psf.gz    Fixedsys Excelsior, what Setup uses
+#
+# To put the installer's face on the installed console, change FONT below to
+# os7-fixedsys-16x32.psf.gz. Nothing else has to move.
+#
+# The PSFs are built from pinned sources by build/lib/build-console-font.sh and
+# build/lib/build-installed-console-font.sh; the toolchain that makes them lives
+# in the build container and never ships here.
+#
+# CASCADIA IS OFL 1.1, NOT CC0. Its licence ships at
+# /usr/share/doc/os7-console-font/LICENSE and must stay with the font. The PSF
+# is deliberately not named after the font: OFL treats a format change as a
+# Modified Version, which may not carry the reserved name "Cascadia Code".
 #
 # WHY FONT= AND NOT FONTFACE/FONTSIZE: setupcon composes a filename out of
 # CODESET+FONTFACE+FONTSIZE and would go looking for a Debian-named font that
@@ -11,10 +29,13 @@
 # font from outside the distribution needs.
 #
 # WHY 16x32 IS THE DEFAULT: 8x16 on a 1920x1080 panel is a 240x67 grid - legible
-# only in the sense that the pixels are there. The 16x32 is the same font pixel-
-# doubled (§2.4), so it is the same design, twice the size, and gives 120x33.
-# os7-fixedsys-8x16.psf.gz is installed alongside for small framebuffers and for
-# serial/rescue use; swap the name below to switch.
+# only in the sense that the pixels are there. 16x32 gives 120x33.
+#
+# For Cascadia the large cell is a SECOND RASTERISATION, not a pixel doubling:
+# it is an outline font, so 16x32 carries twice the detail rather than twice the
+# pixel size. (Fixedsys's 16x32 is doubled, because a bitmap face has no more
+# detail to give.) os7-console-8x16.psf.gz is installed alongside for small
+# framebuffers and for serial/rescue use; swap the name below to switch.
 #
 # console-setup applies this FROM THE INITRAMFS (FRAMEBUFFER=y), i.e. before the
 # root filesystem is mounted, so only the earliest boot frames use the kernel's
@@ -30,6 +51,6 @@ CODESET=
 FONTFACE=
 FONTSIZE=
 
-FONT="os7-fixedsys-16x32.psf.gz"
+FONT="os7-console-16x32.psf.gz"
 
 VIDEOMODE=

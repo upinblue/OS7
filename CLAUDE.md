@@ -158,7 +158,15 @@ build/                      the ISO: live-build config, hooks, and build.sh
   config/package-lists/     common; -amd64/ and -arm64/ for the split
   config/includes.chroot/   files copied verbatim into the image
   lib/build-console-font.sh Fixedsys TTF -> two PSFs, coverage and shape asserted
-  lib/psf.py                the font subset table, the fixes, and the guard
+                            (os7-setup's font, D9)
+  lib/build-installed-console-font.sh
+                            Cascadia Mono .deb -> two PSFs (the INSTALLED
+                            console, D15). A second route because otf2bdf
+                            cannot reach an 8x16 cell from that font (#52)
+  lib/cellfont.py           rasterise an outline font into an EXACT console
+                            cell and write PSF2; skips what the cmap lacks (#54)
+  lib/psf.py                the font subset table, the fixes, and the guard -
+                            shared by both fonts, deliberately
   lib/palette.py            the palette, and D5's contrast check
   config/os7-release.conf   THE PIN: version, archive snapshot, component hashes
   config/hooks/0075-*       turns the pin into os-release, release.json and the

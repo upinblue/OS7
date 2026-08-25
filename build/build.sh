@@ -333,6 +333,38 @@ for required in os7-fixedsys-8x16.psf.gz os7-fixedsys-16x32.psf.gz; do
 done
 
 # ---------------------------------------------------------------------------
+# Installed console font (SETUP-PLAN §2.8, decision D15).
+#
+# A SECOND font and a SECOND route, both deliberate. Fixedsys above is what
+# os7-setup is drawn in; Cascadia Mono here is what the installed system's
+# console uses. The routes differ because the fonts do: Fixedsys's em is the
+# console cell so otf2bdf lands on 8x16 exactly, and Cascadia's is not, so that
+# route can only reach 8x15 or 9x16 (BUILD-NOTES #52).
+#
+# Both fonts ship. /etc/default/console-setup selects between them, and Setup
+# calls setfont with the Fixedsys PSF itself before it paints (§2.4).
+# ---------------------------------------------------------------------------
+"${HERE}/lib/build-installed-console-font.sh" "${CONSOLEFONT_DST}" "${WORK}/cache/fonts"
+
+for required in os7-console-8x16.psf.gz os7-console-16x32.psf.gz; do
+	if [[ ! -s "${CONSOLEFONT_DST}/${required}" ]]; then
+		echo "!!! installed console font step produced no ${required}" >&2
+		exit 1
+	fi
+done
+
+# The licence is a redistribution obligation (OFL 1.1 §2, SETUP-PLAN L29), and
+# it is the kind that has no runtime symptom: an image missing it boots, looks
+# right, and is out of compliance. So the pair is checked here the same way the
+# consolefonts and /etc/default/console-setup are checked below.
+CASCADIA_LICENCE="${WORK}/config/includes.chroot/usr/share/doc/os7-console-font/LICENSE"
+if [[ ! -s "${CASCADIA_LICENCE}" ]]; then
+	echo "!!! Cascadia PSFs staged but their licence is not." >&2
+	echo "!!! OFL 1.1 requires the licence to ship with the font (L29)." >&2
+	exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Console palette (SETUP-PLAN §2.1, decision D5).
 #
 # Generated rather than checked in, because the same sixteen values are needed
