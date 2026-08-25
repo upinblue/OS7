@@ -108,6 +108,18 @@ lb config noauto \
 	`# HARVESTED FIX 4: "none" is REJECTED by this live-build ("flavour none` \
 	`# not supported"). "false" is the value that actually disables it.` \
 	--debian-installer false \
+	`# amd64 ONLY, and loaded by default: lb_binary_memtest copies` \
+	`# chroot/boot/${_MEMTEST_BIN}.bin from a variable nothing assigns unless` \
+	`# memtest86+x64.bin is already in the chroot - so it runs cp chroot/boot/.bin` \
+	`# and the build dies at the binary stage. BUILD-NOTES #44; it is what stopped` \
+	`# the only native-x86_64 amd64 attempt this project has evidence of. arm64` \
+	`# skips the whole stage (x86-only), which is why no ISO built here has met` \
+	`# it. "none" and "false" both reach the early exit - unlike` \
+	`# --debian-installer above, where "none" is rejected. OS/7 wants nothing` \
+	`# from this stage: the medium carries exactly two GRUB entries by design.` \
+	`# UNPROVEN: that an amd64 ISO now builds. This removes the next failure,` \
+	`# not demonstrably the last one.` \
+	--memtest none \
 	`# HARVESTED FIX 5: Ubuntu-mode live-build expects the casper initramfs at` \
 	`# binary/casper/initrd.img; without boot=casper (and the casper package in` \
 	`# the base list) lb_binary_disk fails.` \
