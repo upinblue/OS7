@@ -215,6 +215,12 @@ internal sealed class NetworkScreen : Screen
         }
 
         n.Interface = link.Name;
+        // THE MAC IS WHAT THE NETPLAN FILE WILL MATCH ON, because the NAME does
+        // not survive the reboot: the setup medium is a PCI device, and removing
+        // it renumbers the slots that predictable names are derived from.
+        // Measured 2026-08-25 — enp0s5 while installing, enp0s2 once booted, one
+        // machine, one NIC. See NetworkPlan.MacAddress and L30.
+        n.MacAddress = link.Mac.Length > 0 ? link.Mac : null;
         n.Kind = link.Kind;
         // A wired adapter cannot carry a wireless network, and stepping back
         // from 9W to pick an Ethernet port has to drop it rather than leave it

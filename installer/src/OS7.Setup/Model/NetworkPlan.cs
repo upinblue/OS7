@@ -63,6 +63,29 @@ internal sealed class NetworkPlan
     /// </summary>
     public string? Interface { get; set; }
 
+    /// <summary>
+    /// The chosen adapter's MAC, and WHAT NETPLAN ACTUALLY MATCHES ON.
+    ///
+    /// MEASURED 2026-08-25, and it is the reason this field exists. The same
+    /// machine, the same NIC, the same MAC — and two different interface names:
+    ///
+    ///   installing, with the setup medium attached      enp0s5
+    ///   booted from the disk, medium removed            enp0s2
+    ///
+    /// Predictable interface names are derived from the PCI topology, and the
+    /// install medium is a PCI device. Removing it renumbers the slots. So the
+    /// name Setup sees while installing is NOT the name the installed machine
+    /// will use, and a netplan file naming `enp0s5` matches nothing after the
+    /// reboot — which netplan accepts in silence. The result is the exact
+    /// failure this whole phase exists to prevent: no address, no route, no
+    /// error, and a machine nobody can reach.
+    ///
+    /// A MAC address does not move when a disk is unplugged. `Interface` is kept
+    /// because it is what the operator saw on screen 9 and what the log and
+    /// screen 12 should say; the netplan `match:` uses this.
+    /// </summary>
+    public string? MacAddress { get; set; }
+
     public LinkKind Kind { get; set; } = LinkKind.Wired;
 
     public NetworkMethod Method { get; set; } = NetworkMethod.Dhcp;
@@ -190,8 +213,17 @@ internal sealed class NetworkPlan
             throw new InvalidOperationException(
                 "Method.None writes no netplan file; NetworkStep must not call this.");
 
-        string id = Interface == "auto" ? "os7net" : Interface!;
         bool wireless = Kind == LinkKind.Wireless;
+
+        // THE DEVICE ID IS A LABEL, NOT A NAME, whenever there is a `match:`
+        // below it — netplan keys the block by this string and decides which
+        // hardware it means from the match. Using `os7net` rather than the
+        // interface name makes that unmistakable: an id that looks like an
+        // interface name invites the next reader to believe the name is what
+        // selects the device, which is exactly the mistake this file's
+        // MacAddress comment documents.
+        bool matching = !string.IsNullOrWhiteSpace(MacAddress) || Interface == "auto";
+        string id = matching ? "os7net" : Interface!;
 
         var y = new StringBuilder();
         y.Append("# Written by OS/7 Setup ").Append(version).Append(".\n");
@@ -204,10 +236,21 @@ internal sealed class NetworkPlan
         y.Append(wireless ? "  wifis:\n" : "  ethernets:\n");
         y.Append("    ").Append(id).Append(":\n");
 
-        if (Interface == "auto")
+        if (!string.IsNullOrWhiteSpace(MacAddress))
+        {
+            // L30. The MAC, because the NAME CHANGES between installing and
+            // running — measured, see MacAddress. This is the normal path for an
+            // interactive install: the operator picked a port, and this is the
+            // only property of that port which survives the setup medium being
+            // removed.
+            y.Append("      match:\n");
+            y.Append("        macaddress: \"").Append(MacAddress!.ToLowerInvariant())
+             .Append("\"\n");
+        }
+        else if (Interface == "auto")
         {
             // L28. A glob, because the plan is replayed on a machine whose
-            // interface names Setup has never seen.
+            // interface names — and whose MACs — Setup has never seen.
             y.Append("      match:\n");
             y.Append("        name: \"").Append(wireless ? "wl*" : "en*").Append("\"\n");
         }

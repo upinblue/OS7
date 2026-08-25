@@ -141,8 +141,30 @@ internal sealed class TargetRoot
         File.WriteAllText(wrapper, wrap.ReplaceLineEndings("\n"));
         try
         {
-            return x.Exec("unshare", "--mount", "--propagation", "private",
-                          "--", "bash", wrapper);
+            string output = x.Exec("unshare", "--mount", "--propagation", "private",
+                                   "--", "bash", wrapper);
+
+            // THE SCRIPT'S OUTPUT IS THE ONLY PLACE ITS PROOFS EXIST, so it is
+            // logged rather than returned and dropped.
+            //
+            // Every chroot script in this codebase ends by checking its own work
+            // and saying what it found — AccountStep reads the hash length out of
+            // /etc/shadow, InitramfsStep lists what the initrd contains,
+            // NetworkStep reads back the unit netplan generated. `Executor.Exec`
+            // captures stdout and never prints it, so until now all of that went
+            // into a string that nobody looked at: the steps proved their work
+            // to an empty room.
+            //
+            // Found on 2026-08-25 by a harness assertion that watched the serial
+            // console for a line the console structurally could not carry. The
+            // assertion was wrong; the gap it revealed was not.
+            //
+            // The scripts print no secrets — hashes and passphrases are in the
+            // script text, which is logged only under --dry-run, never in what
+            // the script says back.
+            foreach (string line in output.Split('\n'))
+                if (line.Trim().Length > 0) Log.Info($"    {what}: {line.TrimEnd()}");
+            return output;
         }
         finally
         {

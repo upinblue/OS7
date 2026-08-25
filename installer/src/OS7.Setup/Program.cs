@@ -743,6 +743,23 @@ internal static class Program
                   && y.Contains("    enp1s0:") && y.Contains("dhcp4: true"),
                   "netplan: DHCP over Ethernet");
 
+            // L30, AND THE MOST EXPENSIVE THING THIS PHASE LEARNED. An interface
+            // name is not stable across the install: the setup medium is a PCI
+            // device, so removing it renumbers the slots that predictable names
+            // come from. Measured 2026-08-25 - enp0s5 while installing, enp0s2
+            // once booted, one machine, one NIC. A netplan file naming the
+            // install-time name matches nothing afterwards, and netplan accepts
+            // that silently: no address, no route, no error.
+            var byMac = new NetworkPlan
+            {
+                Interface = "enp0s5", MacAddress = "52:54:00:12:34:56",
+                Kind = LinkKind.Wired, Method = NetworkMethod.Dhcp,
+            };
+            y = byMac.ToNetplanYaml("networkd", V);
+            Check(y.Contains("match:") && y.Contains("macaddress: \"52:54:00:12:34:56\"")
+                  && y.Contains("    os7net:") && !y.Contains("enp0s5"),
+                  "netplan: a chosen adapter is matched by MAC, never by name");
+
             var stat = new NetworkPlan
             {
                 Interface = "enp1s0", Kind = LinkKind.Wired, Method = NetworkMethod.Static,
@@ -809,6 +826,18 @@ internal static class Program
             y = auto.ToNetplanYaml("networkd", V);
             Check(y.Contains("match:") && y.Contains("name: \"en*\""),
                   "netplan: interface 'auto' becomes a match glob");
+
+            // The MAC wins over the glob when both could apply: `auto` is for a
+            // plan replayed on a machine whose hardware Setup has never seen, so
+            // a plan that DOES carry a MAC is describing a specific port.
+            var both = new NetworkPlan
+            {
+                Interface = "auto", MacAddress = "aa:bb:cc:dd:ee:ff",
+                Kind = LinkKind.Wired, Method = NetworkMethod.Dhcp,
+            };
+            y = both.ToNetplanYaml("networkd", V);
+            Check(y.Contains("macaddress:") && !y.Contains("name: \"en*\""),
+                  "netplan: a MAC in the plan beats the 'auto' glob");
 
             // Method.None writes NOTHING. The guard is here because a caller
             // that forgets is a caller that writes an empty `ethernets:` block,

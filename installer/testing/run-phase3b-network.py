@@ -94,6 +94,41 @@ def ask(c, command, label, timeout=180):
     return c.text()
 
 
+def shut_down(c, q=None):
+    """Stop the VM, and MAKE SURE IT IS STOPPED.
+
+    `poweroff` asks the guest; it does not guarantee the qemu process leaves,
+    and a guest that never reaches the request - a failed phase, a hung boot -
+    leaves it running forever. Three of these leaked in one afternoon on
+    2026-08-25 and the symptom was not a slow Mac: the next run could not open
+    its own disk image, because qemu holds a WRITE LOCK on it.
+
+        qemu-system-aarch64: Failed to get "write" lock
+        Is another process using the image ...?
+
+    That is a message about the right thing pointing at the wrong run. And it is
+    the same shape a previous session hit at 13h50m of leaked runtime, so it is
+    a repeat rather than a surprise.
+
+    Console.close() terminates and then kills. It is called from a finally in
+    every phase, whether the phase passed, failed or threw.
+    """
+    try:
+        c.send("poweroff")
+        time.sleep(3)
+    except Exception:
+        pass
+    if q is not None:
+        try:
+            q.close()
+        except Exception:
+            pass
+    try:
+        c.close()
+    except Exception:
+        pass
+
+
 def disk_only_args(vmdir, nic=True):
     """QEMU with THE TARGET DISK AND NOTHING ELSE, plus a NIC.
 
@@ -130,13 +165,18 @@ def boot_installed(vmdir, label, passphrase, user, password):
     i = c.expect([r"unlock disk", r"Enter passphrase", r"passphrase for",
                   r"\(initramfs\)", r"Kernel panic", r"No bootable"],
                  600, "the passphrase prompt")
+    # CLOSE BEFORE RAISING. A failure here is exactly when the VM is left
+    # running, because nothing downstream gets a chance to tidy up - and the
+    # next run then cannot open its own disk image, qemu holding the write lock.
     if i >= 3:
         print(c.text()[-2000:])
+        c.close()
         raise SystemExit("the machine never got as far as asking for the passphrase")
     c.send(passphrase)
     j = c.expect([r"\blogin:", r"\(initramfs\)", r"Kernel panic"], 900, "a login prompt")
     if j >= 1:
         print(c.text()[-2000:])
+        c.close()
         raise SystemExit("unlocked, but never reached a login prompt")
     live_login(c, user=user, password=password)
     to_plain_bash(c)
@@ -191,13 +231,12 @@ def phase_m1():
         print("      M1 is a REPORT. Read it against L23 and record the answer in")
         print("      docs/SESSION-NETWORK-ACCOUNTS-PLAN.md — it is not a pass/fail.")
     finally:
-        c.send("poweroff")
-        time.sleep(3)
+        shut_down(c)
     return True
 
 
 # ---------------------------------------------------------------------------
-def write_plan(c, iface):
+def write_plan(c, iface, mac):
     """A complete plan with a STATIC network, plus the secrets as separate files.
 
     THE INTERFACE NAME IS DISCOVERED, NOT ASSUMED. Predictable interface names
@@ -207,9 +246,11 @@ def write_plan(c, iface):
     any host where it is `ens1` — with a message about an address, which is the
     wrong thing to be told.
 
-    It is still a NAME and not `auto`: this phase asserts an address on ONE
-    interface, and a `match:` glob would make "which interface" part of what is
-    being tested. run-phase3.py's unattended plan covers the `auto` path.
+    AND THE MAC GOES IN WITH IT, because the name is not stable across the
+    install either: the setup medium is a PCI device and removing it renumbers
+    the slots predictable names come from. Measured here on 2026-08-25 - enp0s5
+    while installing, enp0s2 once booted, one machine and one NIC. netplan
+    matches on the MAC; the name is what the operator saw and what the log says.
     """
     plan = ('{"version":1,"intent":"Install","language":"en_US.UTF-8",'
             '"keyboard":"us","timezone":"UTC","mode":"Headless",'
@@ -217,7 +258,8 @@ def write_plan(c, iface):
             '"bpoolGiB":2,"encrypt":true,"swap":"zram"},'
             f'"account":{{"hostname":"{HOSTNAME}","username":"{USERNAME}",'
             '"fullName":"OS/7 Phase 3b"},'
-            f'"network":{{"interface":"{iface}","kind":"Wired","method":"Static",'
+            f'"network":{{"interface":"{iface}","macAddress":"{mac}",'
+            f'"kind":"Wired","method":"Static",'
             f'"address":"{ADDRESS}","gateway":"{GATEWAY}",'
             f'"nameservers":["{NAMESERVER}"],"search":["os7.test"]}}}}')
     c.drop()
@@ -261,9 +303,19 @@ def phase_install():
             print("      FAIL  this VM has no wired interface; the NIC did not attach")
             return False
         iface = wired[0]
-        print(f"      the plan will name {iface}")
+        out = ask(c, f"cat /sys/class/net/{iface}/address", "mac")
+        mac = ""
+        for line in out.splitlines():
+            t = line.strip()
+            if len(t) == 17 and t.count(":") == 5:
+                mac = t
+                break
+        if not mac:
+            print(f"      FAIL  could not read a MAC for {iface}")
+            return False
+        print(f"      the plan will name {iface} and match on {mac}")
 
-        write_plan(c, iface)
+        write_plan(c, iface, mac)
         c.drop()
         # `sudo`, because casper logs in as an unprivileged user and Setup opens
         # block devices. Without it the run dies at the first sgdisk with
@@ -280,21 +332,29 @@ def phase_install():
             return False
         print("      ok    the unattended install finished")
 
-        # The netplan step's own output, on the serial line, before any reboot.
+        # WHAT THE CONSOLE CAN ACTUALLY CARRY, and no more.
+        #
+        # The first version of this also demanded "enabling systemd-networkd",
+        # which the chroot script prints. It never appeared, and the reason was
+        # not the installer: `Executor.Exec` captures a subprocess's stdout with
+        # ReadToEnd and never writes it out, so no chroot script's output reaches
+        # the serial line at all. The assertion watched for something the console
+        # structurally could not carry, and reported the installer for it.
+        #
+        # The progress lines DO reach it, so that is what is checked here. The
+        # real evidence - that networkd is enabled and running, that the netplan
+        # file says networkd, that the address is the typed one - is asserted in
+        # `boot`, against the installed machine, where it belongs.
         text = c.text()
-        for want, what in [
-            ("Configuring the network", "the network step ran"),
-            ("enabling systemd-networkd", "systemd-networkd was enabled"),
-        ]:
-            if want in text:
-                print(f"      ok    {what}")
-            else:
-                print(f"      FAIL  {what}: '{want}' is not in the install output")
-                return False
+        if "Configuring the network" not in text:
+            print("      FAIL  the network step never ran")
+            return False
+        print("      ok    the network step ran")
+        print("      note  the step's own proofs are in /var/log/os7-setup/setup.log")
+        print("            on the LIVE medium and are checked on the booted disk")
         return True
     finally:
-        c.send("poweroff")
-        time.sleep(3)
+        shut_down(c, q)
 
 
 def phase_boot():
@@ -323,6 +383,23 @@ def phase_boot():
             for line in out.splitlines()[:15]:
                 if line.strip():
                     print(f"            {line.rstrip()}")
+            # NAME THE LIKELY CAUSE. A netplan file that matches no interface
+            # produces exactly this - no address, no route, no error - and the
+            # interface name is the thing most likely to differ between the
+            # install environment and the installed machine, because the setup
+            # medium occupies a PCI slot and predictable names come from the PCI
+            # topology. Printing the links and what netplan generated turns
+            # "no address" into a diagnosis.
+            for cmd, label in [("ip -o link show", "the links this machine has"),
+                               (f"echo {PASSWORD} | sudo -S cat /etc/netplan/01-os7-network.yaml 2>/dev/null",
+                                "the netplan file on the disk"),
+                               ("ls -A /run/systemd/network/ 2>/dev/null || echo NONE",
+                                "what netplan generated")]:
+                extra = ask(c, cmd, label, timeout=90)
+                print(f"            --- {label} ---")
+                for line in extra.splitlines()[:12]:
+                    if line.strip() and not line.startswith("OK") and cmd not in line:
+                        print(f"            {line.rstrip()}")
 
         # 2 — THE ROUTE. An address with no default route is a machine that can
         # talk to its own segment and nothing else, which is a different failure
@@ -359,7 +436,9 @@ def phase_boot():
         # 5 — THE RENDERER, on the disk. D14: a headless install must render to
         # networkd, because the desktop purge removed NetworkManager. This is the
         # assertion L24 exists for, made against the installed machine.
-        out = ask(c, "grep renderer /etc/netplan/01-os7-network.yaml", "renderer")
+        # `sudo`: the file is 0600 and owned by root, which is L25 working.
+        out = ask(c, f"echo {PASSWORD} | sudo -S grep renderer "
+                     "/etc/netplan/01-os7-network.yaml 2>/dev/null", "renderer")
         if "networkd" in out:
             print("      ok    the renderer on the disk is networkd (headless, D14)")
         else:
@@ -378,8 +457,7 @@ def phase_boot():
             print("      FAIL  /etc/resolv.conf does not point at systemd-resolved")
             print(f"            {out.strip()[:300]}")
     finally:
-        c.send("poweroff")
-        time.sleep(3)
+        shut_down(c)
     return ok
 
 
@@ -506,8 +584,7 @@ def phase_wifi():
                     print(f"            {line.rstrip()}")
         return ok
     finally:
-        c.send("poweroff")
-        time.sleep(3)
+        shut_down(c, q)
 
 
 # ---------------------------------------------------------------------------
