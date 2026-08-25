@@ -319,11 +319,20 @@ internal sealed class NetworkStep : IStep
         // on the key rather than on one spelling of the value.
         string needle = n.Method == NetworkMethod.Static ? n.Address! : "DHCP=";
 
+        // `|| true` ON EVERY `ls`, AND IT IS NOT DECORATION. TargetRoot.Chroot
+        // wraps this in `set -euo pipefail`. `ls` on a glob that matches nothing
+        // exits non-zero, and with `pipefail` the pipeline inherits it — so the
+        // assignment fails, `set -e` kills the script, and the carefully worded
+        // message two lines below NEVER PRINTS. The failure would arrive as a
+        // bare non-zero exit from a step called "netplan", which says nothing at
+        // all about what was wrong. `bash -n` cannot see this: the syntax is
+        // fine and the semantics are not.
         string check = renderer == "networkd"
             ? $"""
-               OUT=$(ls /run/systemd/network/*.network 2>/dev/null | head -20)
+               OUT=$(ls /run/systemd/network/*.network 2>/dev/null | head -20 || true)
                if [ -z "$OUT" ]; then
                    echo "!!! netplan generate produced no networkd unit" >&2
+                   echo "    the netplan file is /etc/netplan/01-os7-network.yaml" >&2
                    exit 1
                fi
                echo "    generated:"; echo "$OUT" | sed 's/^/      /'
@@ -331,14 +340,15 @@ internal sealed class NetworkStep : IStep
                    echo "    the generated unit carries {needle}"
                else
                    echo "!!! no generated unit carries {needle}" >&2
-                   cat /run/systemd/network/*.network >&2
+                   cat /run/systemd/network/*.network >&2 || true
                    exit 1
                fi
                """
             : """
-              OUT=$(ls /run/NetworkManager/system-connections/ 2>/dev/null)
+              OUT=$(ls /run/NetworkManager/system-connections/ 2>/dev/null || true)
               if [ -z "$OUT" ]; then
                   echo "!!! netplan generate produced no NetworkManager connection" >&2
+                  echo "    the netplan file is /etc/netplan/01-os7-network.yaml" >&2
                   exit 1
               fi
               echo "    generated:"; echo "$OUT" | sed 's/^/      /'
