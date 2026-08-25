@@ -451,10 +451,11 @@ rm -f "${SETUP_DST}"/*.dbg "${SETUP_DST}"/*.pdb
 # The systemd unit, and the licence the Licence screen reads.
 #
 # The licence is a FILE rather than text compiled into the binary, on purpose:
-# what a user agrees to has to be what the image ships, and root README open
-# question 4 ("License - this README currently assumes MIT ... Confirm before
-# the first public commit") is not settled. Baking it in would settle it by
-# accident.
+# what a user agrees to has to be what the image ships. It was written this way
+# while the licence question was still open (docs/DECISIONS.md question 5,
+# resolved 2026-08-25 - MIT), because baking one in would have settled it by
+# accident; it stays this way because a compiled-in copy can disagree with the
+# file on the medium and nothing would say so.
 install -Dm644 "${HERE}/../installer/assets/os7-setup.service" \
 	"${WORK}/config/includes.chroot/usr/lib/systemd/system/os7-setup.service"
 install -Dm644 "${HERE}/../LICENSE" \

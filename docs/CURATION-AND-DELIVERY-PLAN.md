@@ -490,7 +490,7 @@ per package, because for two of them building costs far more than it buys:
 | `systemd-zram-generator` | **rebuild is affordable** | Small Rust package, self-contained. |
 
 **C8a — OPEN, and it is the real problem in this row: `authd-msentraid` is a
-snap.** README open question 4 already records that seeding it into a live-build
+snap.** DECISIONS open question 4 already records that seeding it into a live-build
 image is unsolved, so **no OS/7 build can log in with Entra ID today** — the
 headline feature. C7 does not fix this by itself: a snap is not a `.deb`, and
 snapd refreshes on its own schedule regardless of the release train (§5 #2 of

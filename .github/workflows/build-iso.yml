@@ -1,12 +1,24 @@
 # =============================================================================
 # OS/7 — ISO build CI
 #
-#   *** THIS FILE BUILDS arm64. amd64 HAS NEVER FINISHED. ***
+#   *** BOTH ARCHITECTURES BUILD. amd64 EXISTS ONLY BECAUSE OF THIS FILE. ***
 #
-# Run 32830869552 (2026-08-25, the first dispatch of this file): arm64 SUCCESS
-# in 15m57s with an ISO artifact, amd64 FAILURE in 23m2s in `lb_binary_syslinux`
-# - one stage past the `lb_binary_memtest` that stopped the June attempt, which
-# is how docs/BUILD-NOTES.md #44's fix was confirmed. #47 has both.
+# Run 32854778263 (2026-08-25, the latest dispatch): ISO (amd64) SUCCESS in
+# 73m17s, ISO (arm64) SUCCESS in 52m9s, both uploading an ISO artifact. Run
+# 32838033581 earlier the same day was the first to go green whole (arm64
+# 14m32s, amd64 25m53s); the wall-clock spread between the two runs is hosted
+# runner variance, not a change here.
+#
+# It took four dispatches and four stale live-build stages to get there. The
+# first dispatch of this file, run 32830869552: arm64 SUCCESS in 15m57s with an
+# ISO artifact, amd64 FAILURE in 23m2s in `lb_binary_syslinux` - one stage past
+# the `lb_binary_memtest` that stopped the June attempt, which is how
+# docs/BUILD-NOTES.md #44's fix was confirmed. #47 has both.
+#
+# What a green amd64 run does NOT mean: no amd64 ISO has ever been INSTALLED.
+# The medium boots to OS/7's GRUB menu (docs/SESSION-AMD64-EFI-REMASTER.md) and
+# stops being measured there, because `run-phase1/2/3.py` are
+# qemu-system-aarch64 throughout and no x86_64 harness exists.
 #
 # The history below is why this file distrusts the word "never":
 #
@@ -40,9 +52,12 @@
 # under QEMU emulation — there is deliberately no setup-qemu-action /
 # docker/setup-buildx cross-build step, and none should be added.
 #
-# Trigger is workflow_dispatch only, and stays that way until amd64 finishes:
-# a `push:` trigger today would put a red X on every push for a job that is
-# known to fail. Add `push:` once ONE dispatched run has gone green whole.
+# Trigger is workflow_dispatch only. The original reason - "a red X on every
+# push for a job that is known to fail" - has expired: amd64 goes green. The
+# reason it has NOT been changed is a different one and is a judgement call:
+# these are 50-70 minute runs producing a 3 GB artefact, and an ISO that has
+# never been installed on any machine is not something every push needs to
+# rebuild. Revisit when the amd64 install path exists.
 # =============================================================================
 
 name: build-iso

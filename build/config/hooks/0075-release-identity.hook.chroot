@@ -301,13 +301,13 @@ doc = {
         },
         "os7_module": env["MODULE_VERSION"],
         "authd":      v("AUTHD_VERSION"),
-        # Root README open question 4: authd-msentraid is a Canonical snap and
+        # docs/DECISIONS.md open question 4: authd-msentraid is a Canonical snap and
         # seeding a snap into a live-build image is unsolved. Recorded as absent
         # WITH ITS REASON, because a null here otherwise reads as an oversight
         # and this is a known, headline gap.
         "authd_msentraid": {
             "present": False,
-            "reason": "snap seeding into live-build is unsolved; see README open question 4",
+            "reason": "snap seeding into live-build is unsolved; see docs/DECISIONS.md open question 4",
         },
     },
 

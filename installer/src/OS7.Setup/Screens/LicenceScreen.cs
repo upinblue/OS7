@@ -8,11 +8,13 @@ namespace OS7.Setup.Screens;
 /// Screen 2 — the licence. SETUP-PLAN §3, modelled on the Win2k EULA screen:
 /// F8 to accept, ESC to decline, PGDN to read on.
 ///
-/// The text is read from disk, not compiled in. Two reasons and both are about
-/// honesty: the licence a user agrees to has to be the file the image actually
-/// ships, and root README open question 5 ("License — this README currently
-/// assumes MIT ... Confirm before the first public commit") is not settled, so
-/// baking a licence into the installer binary would settle it by accident.
+/// The text is read from disk, not compiled in, and it stays that way now that
+/// the licence question is settled. The reason it was written this way was that
+/// open question 5 was open and baking a licence into the binary would have
+/// settled it by accident; the reason it survives its own answer is the better
+/// one: the licence a user agrees to has to be the file the image ACTUALLY
+/// ships. A compiled-in copy can disagree with /usr/share/os7/LICENSE and
+/// nothing would say so. (Q5 resolved 2026-08-25 — MIT, ../../docs/DECISIONS.md.)
 /// </summary>
 internal sealed class LicenceScreen : Screen
 {

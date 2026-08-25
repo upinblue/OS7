@@ -1072,7 +1072,7 @@ The same Microsoft page states the supported platforms for Linux compliance:
 
 Two consequences for OS/7:
 
-1. **26.04 is officially supported.** The root README's Intune claim holds on
+1. **26.04 is officially supported.** DECISIONS' Intune claim holds on
    `resolute`, and the x86-64-only wording confirms the arm64-is-server-only
    decision from the Microsoft side as well.
 2. **New risk: OS/7's own identity may fail the "Allowed distributions"
@@ -1144,7 +1144,7 @@ Two constraints, both already satisfied by this repo:
   build base *is* the target. Fine.
 
 `dotnet-sdk-10.0` stays in the base package list for the shipped OS regardless
-(root README, "Core, non-negotiable"); the installer does not depend on it.
+([../docs/DECISIONS.md](../docs/DECISIONS.md), "Core, non-negotiable"); the installer does not depend on it.
 
 ### 6.2 What is C# and what is not
 
@@ -2073,7 +2073,7 @@ belong in an installer log). `espeakup` accessibility. CI installs in QEMU.
 | Root `README.md`, "Locked decisions" → Installer | Calamares → **`os7-setup`, an OS/7-authored text-mode installer in C#/.NET**. One installer for both architectures. |
 | Root `README.md`, "arm64 is server-only" → consequence | The "Calamares cannot install arm64" consequence is **resolved**, not merely noted. |
 | Root `README.md`, Branding | Reconcile orange `#ff6912` with Setup's blue `#1289ff` (D7). |
-| `installer/README.md` | **DONE 2026-08-24 — rewritten.** It was a Calamares planning document that declared itself superseded and then went on for a hundred lines; three of its four open problems had been closed by this plan (arm64's install path, encryption, branding) and the fourth is not an installer problem at all. It is now a directory README. The one live finding, the `authd-msentraid` snap, is open question 4 in the root README so it does not depend on anyone opening this one. |
+| `installer/README.md` | **DONE 2026-08-24 — rewritten.** It was a Calamares planning document that declared itself superseded and then went on for a hundred lines; three of its four open problems had been closed by this plan (arm64's install path, encryption, branding) and the fourth is not an installer problem at all. It is now a directory README. The one live finding, the `authd-msentraid` snap, is open question 4 in [../docs/DECISIONS.md](../docs/DECISIONS.md) so it does not depend on anyone opening this one. |
 | `build/config/package-lists-amd64/os7-desktop.list.chroot` | Drop `calamares`. Its header rationale ("Calamares needs a running desktop, therefore GNOME ships in the live image on every architecture") is now stale — and was already inaccurate, since the file is amd64-only. |
 | `build/config/package-lists/os7-base.list.chroot` | Add the install-time tools from §7.1, including the `cryptsetup` family that D3 makes mandatory. |
 | Wherever `/etc/os-release` gets branded | **D8 is decided (§9):** brand `NAME` / `PRETTY_NAME` / `HOME_URL`, add `IMAGE_ID` / `IMAGE_VERSION`, and leave `ID` / `ID_LIKE` / `VERSION_ID` alone — Intune's "Allowed distributions" rule reads them (§4.6). Re-assert after every update: the file is a `base-files` conffile. |

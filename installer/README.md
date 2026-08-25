@@ -64,14 +64,14 @@ plan model fails the build rather than a boot.
 ## What is still open here
 
 **`authd-msentraid` is not in the archive.** `authd` is, but its Entra broker is
-a Canonical-verified **snap** (0.4.1, both architectures) — the root README's
+a Canonical-verified **snap** (0.4.1, both architectures) — DECISIONS'
 "no PPA needed" is right and its "in the archive" is not. Seeding a snap into a
 live-build image is its own unsolved task (`snap download` + `snap ack` into
 `/var/lib/snapd/seed` plus a seed manifest, none of which plain live-build
 supports). Until it is solved **no OS/7 build can log in with Entra ID**, which
 is a headline feature. It is not an installer problem — it is an image problem —
-but it was found here and it is tracked as open question 4 in the root
-[README.md](../README.md).
+but it was found here and it is tracked as open question 4 in
+[docs/DECISIONS.md](../docs/DECISIONS.md).
 
 **Onboarding is deliberately not done at install time.** `azcmagent` is in the
 image (hook 0040) and left un-onboarded and disabled: onboarding needs tenant

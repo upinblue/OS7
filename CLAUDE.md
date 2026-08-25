@@ -18,7 +18,7 @@ here either — this file points, they rule.
 | Question | The file that answers it |
 |---|---|
 | What version this is, what archive it was built against, what is in it | [build/config/os7-release.conf](build/config/os7-release.conf) — the pin. **The only place a version number or an archive URL may live.** |
-| What is locked, what is still open | [README.md](README.md) — "Locked decisions" and "Open questions" |
+| What is locked, what is still open | [docs/DECISIONS.md](docs/DECISIONS.md) — "Locked decisions" and "Open questions". Moved out of README.md on 2026-08-25; the README is now the public front page and decides nothing |
 | The installer: design, screens, decisions D1–D10, limitations L1–L22, phases | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) — **authoritative** |
 | Versioning, the update train, rollback, `/var` | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
@@ -27,7 +27,7 @@ here either — this file points, they rule.
 | What a past session actually measured | `docs/SESSION-*.md` |
 
 **Intune's constraints outrank OS/7's technical preferences** wherever the two
-collide (README, "Intune compatibility is a hard requirement"). Anything touching
+collide (DECISIONS, "Intune compatibility is a hard requirement"). Anything touching
 disk layout, encryption, OS identity, desktop or browser gets checked against
 Microsoft's live docs *first*.
 
@@ -203,6 +203,6 @@ docs/                       plans, handoff, build notes, session results
 out/, .vm/                  artefacts and VM state. Both gitignored.
 ```
 
-**arm64 and amd64 are different products** (README): arm64 is server-only — no
+**arm64 and amd64 are different products** (DECISIONS): arm64 is server-only — no
 GNOME, no Edge, no Intune — because Microsoft ships no arm64 desktop stack.
 Everything proven so far is **arm64 only**; no amd64 ISO has ever been built.
