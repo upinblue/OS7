@@ -1,0 +1,6 @@
+cannot destroy 'tank/data': filesystem has children
+use '-r' to destroy the following datasets:
+tank/data/projects@second
+tank/data/projects
+tank/data@first
+tank/data@second

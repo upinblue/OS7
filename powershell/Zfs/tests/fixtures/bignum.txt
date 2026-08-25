@@ -1,0 +1,5 @@
+{"output_version":{"command":"zfs get","vers_major":0,"vers_minor":1},"datasets":{"tank":{"name":"tank","type":"FILESYSTEM","pool":"tank","createtxg":1,"properties":{"available":{"value":88895488,"source":{"type":"NONE","data":"-"}}}}}}
+
+--- is a >2^53 value ever emitted bare? check quota set huge ---
+cannot create 'tank/huge': numeric value is too large
+cannot open 'tank/huge': dataset does not exist

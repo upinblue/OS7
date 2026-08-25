@@ -107,6 +107,22 @@ printf '%s' 'check-image-password'   > /tmp/p.pw
 cp /tmp/p.json /tmp/p.pass /tmp/p.pw /mnt/root/tmp/ 2>/dev/null || true
 chroot /mnt/root /usr/lib/os7-setup/os7-setup --unattend /tmp/p.json     --passphrase-file /tmp/p.pass --password-file /tmp/p.pw --dry-run     >/dev/null 2>&1 || true
 emit setup.dryrun      bash -c 'cat /mnt/root/var/log/os7-setup/setup.log 2>/dev/null || true'
+# THE Zfs MODULE'S SELF-TEST, run against the SHIPPED module and the recorded
+# ZFS output shipped beside it (docs/ZFS-POWERSHELL-PLAN.md Z10).
+#
+# It cannot live in build hook 0060. A live-build hook may import a module by
+# path and list its exports, but calling a function that needs a bundled cmdlet
+# — Get-Content, ConvertFrom-Json — fails there, and BUILD-NOTES #38 is the
+# measurement. This chroot is an overlay with /dev bound, which is the
+# environment where #38 saw those cmdlets work.
+#
+# Because that environment is the one #38 says not to build on, the result is
+# read in two parts: whether PowerShell got as far as producing a verdict at
+# all, and what the verdict was. Only the second one can fail the image.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Zfs/Zfs.psd1 -Force; Test-ZfsModule' >/tmp/zfs.txt 2>&1
+echo "EXIT=$?" >> /tmp/zfs.txt
+emit zfs.selftest      bash -c 'tail -30 /tmp/zfs.txt'
+
 emit volume            bash -c 'blkid -o value -s LABEL /iso/ISONAME'
 emit grub.cfg          bash -c 'cat /mnt/iso/boot/grub/grub.cfg 2>/dev/null | head -40'
 
@@ -349,6 +365,27 @@ def main() -> None:
     check("mode 0600" in netplan_write,
           "the netplan file would be written 0600 (L25)",
           netplan_write.split("would write ", 1)[-1] if netplan_write else "not written")
+
+    # -- the Zfs module, asked to check itself ------------------------------
+    #
+    # Two questions, and only the second may fail an image. "PowerShell never
+    # produced a verdict" is a property of this chroot (BUILD-NOTES #38), not of
+    # the image; "the verdict was FAIL" is a property of the image. Hook 0075
+    # already draws this line and #38 records what it saved.
+    zt = img.get("zfs.selftest", "")
+    ran = "Zfs self-test:" in zt
+    exit0 = "EXIT=0" in zt
+    if not ran:
+        print("      note  the Zfs self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run ./installer/testing/run-zfs.py test — a "
+              "booted VM is where this is authoritative.")
+    else:
+        summary = next((l.strip() for l in zt.splitlines()
+                        if l.strip().startswith("Zfs self-test:")
+                        and "passed" in l), "")
+        detail = summary or next(
+            (l.strip() for l in zt.splitlines() if "FAILED:" in l), "")
+        check(exit0, "the Zfs module parses the ZFS output it ships with", detail)
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

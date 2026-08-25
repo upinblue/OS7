@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Zfs display formats.
+
+  THE POINT OF THIS FILE (docs/ZFS-POWERSHELL-PLAN.md Z6): the objects carry
+  sizes as [uint64] BYTES so they can be compared, summed and sorted. A human
+  reading `Get-Zpool` wants "240 MiB". Both are true at once only if the
+  rendering is separate from the value — which is what a format file is for,
+  and why the module does not store pre-formatted strings the way `zfs list`
+  hands them out.
+
+  Units are binary (KiB/MiB/GiB), because that is what ZFS itself means by K, M
+  and G. Rounding is to one decimal above 10 units and none below, which keeps
+  a column narrow without lying about small numbers.
+-->
+<Configuration>
+  <Controls>
+    <Control>
+      <Name>ZfsSize</Name>
+      <CustomControl>
+        <CustomEntries>
+          <CustomEntry>
+            <CustomItem>
+              <ExpressionBinding>
+                <ScriptBlock>
+                  if ($null -eq $_) { '-' }
+                  else {
+                    $u = 'B','KiB','MiB','GiB','TiB','PiB','EiB'
+                    $v = [double]$_; $i = 0
+                    while ($v -ge 1024 -and $i -lt $u.Count - 1) { $v /= 1024; $i++ }
+                    if ($i -eq 0) { '{0} B' -f [uint64]$_ }
+                    elseif ($v -lt 10) { '{0:N1} {1}' -f $v, $u[$i] }
+                    else { '{0:N0} {1}' -f $v, $u[$i] }
+                  }
+                </ScriptBlock>
+              </ExpressionBinding>
+            </CustomItem>
+          </CustomEntry>
+        </CustomEntries>
+      </CustomControl>
+    </Control>
+  </Controls>
+
+  <ViewDefinitions>
+
+    <!-- Pools -->
+    <View>
+      <Name>OS7.Zfs.Pool</Name>
+      <ViewSelectedBy><TypeName>OS7.Zfs.Pool</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Name</Label><Width>16</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Health</Label><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Size</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Allocated</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Free</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Cap%</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Frag%</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Health</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Size</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Allocated</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Free</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>CapacityPct</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Fragmentation</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Datasets -->
+    <View>
+      <Name>OS7.Zfs.Dataset</Name>
+      <ViewSelectedBy><TypeName>OS7.Zfs.Dataset</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Name</Label><Width>34</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Type</Label><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Used</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Avail</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Refer</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Mountpoint</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Type</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Used</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Available</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Referenced</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>Mountpoint</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Pool status: the summary line. The tree is Vdevs, and Format-List
+         shows it; a table cannot render a tree and should not pretend to. -->
+    <View>
+      <Name>OS7.Zfs.PoolStatus</Name>
+      <ViewSelectedBy><TypeName>OS7.Zfs.PoolStatus</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Name</Label><Width>16</Width></TableColumnHeader>
+          <TableColumnHeader><Label>State</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Errors</Label><Width>8</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Status</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>State</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ErrorCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Vdev nodes: indented by Level, so -Flat reads as the tree it is -->
+    <View>
+      <Name>OS7.Zfs.VdevNode</Name>
+      <ViewSelectedBy><TypeName>OS7.Zfs.VdevNode</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Pool</Label><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Vdev</Label><Width>34</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Type</Label><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Label>State</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Read</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Write</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Cksum</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Pool</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>(' ' * (2 * $_.Level)) + $_.Name</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>Type</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>State</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ReadErrors</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>WriteErrors</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ChecksumErrors</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Properties -->
+    <View>
+      <Name>OS7.Zfs.Property</Name>
+      <ViewSelectedBy><TypeName>OS7.Zfs.Property</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Dataset</Label><Width>30</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Property</Label><Width>24</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Value</Label><Width>22</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Source</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Dataset</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Value</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.SourceFrom) { "$($_.Source) ($($_.SourceFrom))" } else { $_.Source }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Space breakdown -->
+    <View>
+      <Name>OS7.Zfs.Space</Name>
+      <ViewSelectedBy><TypeName>OS7.Zfs.Space</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Name</Label><Width>34</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Avail</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Used</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Snapshots</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Dataset</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Children</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Available</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.Used</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.UsedBySnapshots</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.UsedByDataset</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>Format-ZfsSize $_.UsedByChildren</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+  </ViewDefinitions>
+</Configuration>

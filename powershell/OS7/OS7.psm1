@@ -3,8 +3,13 @@
 #
 # TWO HALVES, and the difference matters when reading this file:
 #
-#   IMPLEMENTED   New-OS7Storage, New-OS7BootEnvironmentName — the ZFS layer,
-#                 written for os7-setup's Phase 2 storage executor.
+#   IMPLEMENTED   New-OS7Storage, New-OS7BootEnvironmentName — the storage
+#                 layer, written for os7-setup's Phase 2 storage executor.
+#                 Since 2026-08-25 it does NOT run zfs/zpool itself: it calls
+#                 the Zfs module (docs/ZFS-POWERSHELL-PLAN.md Z1), so the pool
+#                 flags exist in exactly one place and Update-OS7 cannot drift
+#                 from Setup. installer/testing/check-layering.py holds that
+#                 line at zero.
 #   STUB          Set-OS7Mode, Update-OS7, Restore-OS7 — signatures only, each
 #                 throwing NotImplementedException, pinning the command surface
 #                 README.md documents.
@@ -84,6 +89,45 @@ function Invoke-OS7Native {
 	finally {
 		Remove-Item -Force -ErrorAction SilentlyContinue $errFile
 	}
+}
+
+# ---------------------------------------------------------------------------
+# The ZFS layer (docs/ZFS-POWERSHELL-PLAN.md Z1)
+#
+# THIS MODULE DOES NOT CALL zfs OR zpool. Every ZFS operation goes through the
+# Zfs module, which is Layer 2: the flags for a pool are decided in exactly one
+# place, so New-OS7Storage and Update-OS7 cannot drift apart. That is the same
+# argument SETUP-PLAN §6.3 used to move this work out of C# in the first place.
+# installer/testing/check-layering.py holds the line.
+#
+# LAZILY, AND NEVER AT IMPORT TIME. A live-build hook may Import-Module by path
+# and list what it exports, but anything that CALLS a bundled cmdlet - Test-Path
+# included - fails inside live-build's chroot (BUILD-NOTES #38). Module-level
+# code runs during import, so resolving the Zfs module up here would break
+# hook 0060 and therefore the build. Down here it runs only when somebody
+# actually asks for storage work, which never happens in a hook.
+# ---------------------------------------------------------------------------
+function Import-OS7ZfsLayer {
+	if (Get-Module -Name Zfs) { return }
+
+	$candidates = @(
+		# Beside this module in the repository, which is how a developer and
+		# the VM harness see it...
+		(Join-Path (Split-Path -Parent $PSScriptRoot) 'Zfs/Zfs.psd1'),
+		# ...and where build.sh stages it on an installed system.
+		'/usr/local/share/powershell/Modules/Zfs/Zfs.psd1'
+	)
+	foreach ($c in $candidates) {
+		if (Test-Path $c) {
+			Import-Module $c -Force -ErrorAction Stop
+			Write-OS7Step "ZFS layer: $c"
+			return
+		}
+	}
+	# By name as the last resort. It works on a booted system and not in a
+	# chroot (BUILD-NOTES #14), which is the right way round for this caller.
+	Import-Module Zfs -Force -ErrorAction Stop
+	Write-OS7Step 'ZFS layer: Zfs (by name)'
 }
 
 # ---------------------------------------------------------------------------
@@ -187,6 +231,11 @@ function New-OS7Storage {
 	$dry = -not $PSCmdlet.ShouldProcess($RootDevice, 'create OS/7 pools and datasets')
 	$created = [System.Collections.Generic.List[string]]::new()
 
+	# Z1: every zpool/zfs call below goes through the Zfs module, never through
+	# a process this module starts. Resolved here rather than at import time -
+	# see Import-OS7ZfsLayer for why that distinction is load-bearing.
+	if (-not $dry) { Import-OS7ZfsLayer }
+
 	# A per-install suffix on the USERDATA datasets. It is what lets two
 	# installs of the same user name coexist on one pool, which is exactly what
 	# `R=Repair` does when it installs a new BE beside an old one (§3, Phase 6).
@@ -194,55 +243,111 @@ function New-OS7Storage {
 
 	Write-OS7Step "boot environment $BootEnvironment"
 
+	# THE DRY RUN IS A SEPARATE BRANCH, not -WhatIf passed downwards.
+	#
+	# PowerShell writes "What if:" to the HOST, and the host's output is stdout
+	# (BUILD-NOTES #60). Handing -WhatIf to the Zfs cmdlets would therefore put
+	# English prose in front of the JSON object os7-setup parses - the same trap
+	# that makes Write-Verbose unusable here. So a dry run logs to stderr and
+	# calls nothing, which is exactly what it did before.
+	$describe = {
+		param($what, $props)
+		$p = if ($props) { ' ' + (($props.Keys | ForEach-Object { "$_=$($props[$_])" }) -join ' ') } else { '' }
+		Write-OS7Step "would create $what$p"
+	}
+
 	# -- pools --------------------------------------------------------------
 	# bpool: GRUB reads only the read-only-compatible feature set (§4.2).
-	# `-o compatibility=grub2` is the maintained way to say that - ZFS ships the
+	# `compatibility=grub2` is the maintained way to say that - ZFS ships the
 	# list at /usr/share/zfs/compatibility.d/grub2, so it tracks GRUB instead of
-	# being a hand-written -o feature@... incantation that rots. It excludes
-	# zstd, which is why bpool compresses with lz4.
-	Invoke-OS7Native -WhatIf:$dry zpool @(
-		'create', '-f',
-		'-o', 'ashift=12', '-o', 'autotrim=on',
-		'-o', 'compatibility=grub2',
-		'-o', 'cachefile=/etc/zfs/zpool.cache',
-		'-O', 'devices=off', '-O', 'acltype=posixacl', '-O', 'xattr=sa',
-		'-O', 'compression=lz4', '-O', 'normalization=formD', '-O', 'relatime=on',
-		'-O', 'canmount=off', '-O', 'mountpoint=/boot', '-R', $Root,
-		'bpool', $BootDevice) | Out-Null
+	# being a hand-written feature@... incantation that rots. It excludes zstd,
+	# which is why bpool compresses with lz4.
+	#
+	# ORDERED tables, not @{}: a plain hashtable enumerates in whatever order it
+	# likes, and the command line that ends up in the install log should be
+	# comparable to the one written down here.
+	$bpoolProps = [ordered]@{
+		ashift        = 12
+		autotrim      = 'on'
+		compatibility = 'grub2'
+		cachefile     = '/etc/zfs/zpool.cache'
+	}
+	$bpoolFs = [ordered]@{
+		devices       = 'off'
+		acltype       = 'posixacl'
+		xattr         = 'sa'
+		compression   = 'lz4'
+		normalization = 'formD'
+		relatime      = 'on'
+		canmount      = 'off'
+		mountpoint    = '/boot'
+	}
+	if ($dry) { & $describe "pool bpool on $BootDevice" $bpoolProps }
+	else {
+		New-Zpool -Name bpool -Device $BootDevice -Force `
+			-Property $bpoolProps -FilesystemProperty $bpoolFs `
+			-AltRoot $Root -Confirm:$false | Out-Null
+	}
 	$created.Add('bpool')
 
-	Invoke-OS7Native -WhatIf:$dry zpool @(
-		'create', '-f',
-		'-o', 'ashift=12', '-o', 'autotrim=on',
-		'-o', 'cachefile=/etc/zfs/zpool.cache',
-		'-O', 'acltype=posixacl', '-O', 'xattr=sa', '-O', 'dnodesize=auto',
-		'-O', 'compression=lz4', '-O', 'normalization=formD', '-O', 'relatime=on',
-		'-O', 'canmount=off', '-O', 'mountpoint=/', '-R', $Root,
-		'rpool', $RootDevice) | Out-Null
+	$rpoolProps = [ordered]@{
+		ashift    = 12
+		autotrim  = 'on'
+		cachefile = '/etc/zfs/zpool.cache'
+	}
+	$rpoolFs = [ordered]@{
+		acltype       = 'posixacl'
+		xattr         = 'sa'
+		dnodesize     = 'auto'
+		compression   = 'lz4'
+		normalization = 'formD'
+		relatime      = 'on'
+		canmount      = 'off'
+		mountpoint    = '/'
+	}
+	if ($dry) { & $describe "pool rpool on $RootDevice" $rpoolProps }
+	else {
+		New-Zpool -Name rpool -Device $RootDevice -Force `
+			-Property $rpoolProps -FilesystemProperty $rpoolFs `
+			-AltRoot $Root -Confirm:$false | Out-Null
+	}
 	$created.Add('rpool')
 
 	# -- the hierarchy (§4.4, as revised by D10) ----------------------------
-	$zfs = { param($a) Invoke-OS7Native -WhatIf:$dry zfs $a | Out-Null }
+	#
+	# One helper, so that the list below reads as the layout it is rather than
+	# as twenty near-identical calls. Out-Null on the result is not optional:
+	# New-ZfsDataset returns the dataset it created (Z3) and anything returned
+	# here lands on stdout in front of the JSON.
+	$mk = {
+		param($name, $props)
+		if ($dry) { & $describe $name $props; return }
+		New-ZfsDataset -Name $name -Property $props -Confirm:$false | Out-Null
+	}
 
-	& $zfs @('create', '-o', 'canmount=off', '-o', 'mountpoint=none', 'rpool/ROOT')
-	& $zfs @('create', '-o', 'canmount=off', '-o', 'mountpoint=none', 'bpool/BOOT')
+	$none = [ordered]@{ canmount = 'off'; mountpoint = 'none' }
+
+	& $mk 'rpool/ROOT' $none
+	& $mk 'bpool/BOOT' $none
 
 	# canmount=noauto on the boot environment: several BEs exist side by side and
 	# only the one named on the kernel command line may claim /. The initramfs
 	# mounts it, which is what `boot=zfs` is for (BUILD-NOTES #15).
-	& $zfs @('create', '-o', 'canmount=noauto', '-o', 'mountpoint=/', "rpool/ROOT/$BootEnvironment")
-	& $zfs @('mount', "rpool/ROOT/$BootEnvironment")
-	& $zfs @('create', '-o', 'mountpoint=/boot', "bpool/BOOT/$BootEnvironment")
+	& $mk "rpool/ROOT/$BootEnvironment" ([ordered]@{ canmount = 'noauto'; mountpoint = '/' })
+	if ($dry) { Write-OS7Step "would mount rpool/ROOT/$BootEnvironment" }
+	else { Mount-ZfsDataset -Name "rpool/ROOT/$BootEnvironment" -Confirm:$false | Out-Null }
+	& $mk "bpool/BOOT/$BootEnvironment" ([ordered]@{ mountpoint = '/boot' })
 
 	# IN the boot environment: package state describes exactly the /usr that
 	# rolls with it. /var and /var/lib are canmount=off containers - the
 	# directories live in the BE's root dataset and only the named children are
 	# separate datasets, exactly as the OpenZFS root-on-ZFS layout does it.
-	& $zfs @('create', '-o', 'canmount=off', "rpool/ROOT/$BootEnvironment/var")
-	& $zfs @('create', '-o', 'canmount=off', "rpool/ROOT/$BootEnvironment/var/lib")
-	& $zfs @('create', "rpool/ROOT/$BootEnvironment/var/lib/dpkg")
-	& $zfs @('create', "rpool/ROOT/$BootEnvironment/var/lib/apt")
-	& $zfs @('create', "rpool/ROOT/$BootEnvironment/var/cache")
+	$off = [ordered]@{ canmount = 'off' }
+	& $mk "rpool/ROOT/$BootEnvironment/var" $off
+	& $mk "rpool/ROOT/$BootEnvironment/var/lib" $off
+	& $mk "rpool/ROOT/$BootEnvironment/var/lib/dpkg" $null
+	& $mk "rpool/ROOT/$BootEnvironment/var/lib/apt" $null
+	& $mk "rpool/ROOT/$BootEnvironment/var/cache" $null
 
 	# OUTSIDE the boot environment. D10's rule: a path belongs inside only if
 	# rolling it back makes the system MORE correct. Logs explain the update
@@ -254,23 +359,23 @@ function New-OS7Storage {
 	# the BE with a do-not-clone property. zsys used a property and zsys is
 	# gone; a dataset that is not a child of the BE cannot be cloned into the
 	# next one by mistake. Forgetting a property is a bug that ships.
-	& $zfs @('create', '-o', 'canmount=off', '-o', 'mountpoint=none', 'rpool/DATA')
-	& $zfs @('create', '-o', 'mountpoint=/var/log',   'rpool/DATA/log')
-	& $zfs @('create', '-o', 'mountpoint=/var/spool', 'rpool/DATA/spool')
-	& $zfs @('create', '-o', 'mountpoint=/var/tmp',   'rpool/DATA/tmp')
-	& $zfs @('create', '-o', 'mountpoint=/srv',       'rpool/DATA/srv')
-	& $zfs @('create', '-o', 'canmount=off', '-o', 'mountpoint=none', 'rpool/DATA/lib')
-	& $zfs @('create', '-o', 'mountpoint=/var/lib/snapd',           'rpool/DATA/snapd')
-	& $zfs @('create', '-o', 'mountpoint=/var/lib/NetworkManager',  'rpool/DATA/lib/networkmanager')
-	& $zfs @('create', '-o', 'mountpoint=/var/lib/authd',           'rpool/DATA/lib/authd')
-	& $zfs @('create', '-o', 'mountpoint=/var/opt/azcmagent',       'rpool/DATA/lib/azcmagent')
+	& $mk 'rpool/DATA' $none
+	& $mk 'rpool/DATA/log'   ([ordered]@{ mountpoint = '/var/log' })
+	& $mk 'rpool/DATA/spool' ([ordered]@{ mountpoint = '/var/spool' })
+	& $mk 'rpool/DATA/tmp'   ([ordered]@{ mountpoint = '/var/tmp' })
+	& $mk 'rpool/DATA/srv'   ([ordered]@{ mountpoint = '/srv' })
+	& $mk 'rpool/DATA/lib' $none
+	& $mk 'rpool/DATA/snapd'              ([ordered]@{ mountpoint = '/var/lib/snapd' })
+	& $mk 'rpool/DATA/lib/networkmanager' ([ordered]@{ mountpoint = '/var/lib/NetworkManager' })
+	& $mk 'rpool/DATA/lib/authd'          ([ordered]@{ mountpoint = '/var/lib/authd' })
+	& $mk 'rpool/DATA/lib/azcmagent'      ([ordered]@{ mountpoint = '/var/opt/azcmagent' })
 
 	# USERDATA is a SIBLING of ROOT, not a child. This is the decision the whole
 	# layout exists for: rolling back a bad release must not roll back the
 	# user's files, and it cannot be retrofitted afterwards (§4.4).
-	& $zfs @('create', '-o', 'canmount=off', '-o', 'mountpoint=none', 'rpool/USERDATA')
-	& $zfs @('create', '-o', "mountpoint=/root", "rpool/USERDATA/root_$suffix")
-	& $zfs @('create', '-o', "mountpoint=/home/$UserName", "rpool/USERDATA/${UserName}_$suffix")
+	& $mk 'rpool/USERDATA' $none
+	& $mk "rpool/USERDATA/root_$suffix"           ([ordered]@{ mountpoint = '/root' })
+	& $mk "rpool/USERDATA/${UserName}_$suffix"    ([ordered]@{ mountpoint = "/home/$UserName" })
 
 	Write-OS7Step 'datasets created'
 

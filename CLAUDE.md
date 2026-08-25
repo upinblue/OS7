@@ -22,6 +22,7 @@ here either — this file points, they rule.
 | The installer: design, screens, decisions D1–D10, limitations L1–L22, phases | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) — **authoritative** |
 | Versioning, the update train, rollback, `/var` | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
+| ZFS from PowerShell: the two layers, decisions Z1–Z13, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -48,6 +49,21 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 ./installer/spikes/run-s4.py all          # Secure Boot + TPM2 unlock (budget 1h)
 ./installer/spikes/run-s6.py all          # TPM2 unlock across an update
 ./installer/spikes/run-s7.py all          # is the version number true (two builds)
+
+./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
+./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
+./installer/testing/check-layering.py     # Z1: does OS7 still reach ZFS directly
+```
+
+**Two PowerShell modules, and the direction between them matters.**
+`powershell/Zfs/` is the generic ZFS layer — it knows nothing about OS/7 and
+would run on any OpenZFS host. `powershell/OS7/` is the product layer on top of
+it. Z1 says OS7 reaches ZFS only through Zfs; `check-layering.py` holds that
+line at a baseline that may fall and may not rise. The Zfs module checks itself
+against **recorded real ZFS output** shipped beside it:
+
+```bash
+pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'
 ```
 
 **One file defines the release:**

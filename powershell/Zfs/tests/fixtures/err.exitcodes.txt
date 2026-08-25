@@ -1,0 +1,3 @@
+zfs list missing      -> 1
+zpool status missing -> 1
+zfs list -j missing  -> 1

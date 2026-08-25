@@ -1,0 +1,8 @@
+tank	36933632	88895488	106496	/tank
+tank/data	196608	88895488	98304	/tank/data
+tank/data@first	0	-	98304	-
+tank/data@second	0	-	98304	-
+tank/data/projects	98304	67010560	98304	/tank/data/projects
+tank/data/projects@second	0	-	98304	-
+tank/restored	0	88895488	98304	/tank/restored
+tank/vol	36175872	125014016	57344	-

@@ -10,7 +10,7 @@
 	Author            = 'up in blue GmbH'
 	CompanyName       = 'up in blue GmbH'
 	Copyright         = '(c) 2026 up in blue GmbH. MIT licensed.'
-	Description       = 'OS/7 system management: curated release train over ZFS boot environments. The ZFS layer (New-OS7Storage) is implemented; Set-OS7Mode/Update-OS7/Restore-OS7 are still stubs.'
+	Description       = 'OS/7 system management: curated release train over ZFS boot environments. Storage (New-OS7Storage) is implemented and runs on the Zfs module rather than on zfs/zpool directly; Set-OS7Mode/Update-OS7/Restore-OS7 are still stubs.'
 
 	PowerShellVersion = '7.0'
 

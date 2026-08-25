@@ -30,7 +30,7 @@ as a conversation.
 
 *No number is currently claimed but unwritten.*
 
-Everything below is written. Numbers above 59 are free.
+Everything below is written. Numbers above 61 are free.
 
 ## What was kept, and what was dropped
 
@@ -2581,3 +2581,127 @@ every property its own verifier knows about and still be rejected by the thing
 that consumes it. The only check that closes that gap is handing the artefact to
 the real consumer. Here that meant booting a machine, and nothing cheaper would
 have done.
+---
+
+## 60. `Write-Verbose` writes to STDOUT in PowerShell 7, and it breaks a JSON contract
+
+`powershell/OS7/OS7.psm1` writes its progress with a hand-rolled
+`[Console]::Error.WriteLine()`, and its header explains the contract it serves:
+`os7-setup` runs `pwsh -NoProfile -Command …` and reads **exactly one JSON
+object on stdout**, with progress on stderr, so the two can be told apart
+(SETUP-PLAN §6.3).
+
+That looks like something to modernise. `Write-Verbose` is the idiomatic way to
+emit progress from a cmdlet, PowerShell has a verbose *stream*, and streams
+other than Output conventionally go to stderr. Replacing the `[Console]` call
+with `Write-Verbose` is a one-line cleanup that a reviewer would wave through.
+
+**It is wrong, and the failure is silent.** Measured 2026-08-25, in the shipped
+image (PowerShell 7.6.5, arm64), redirecting the two file descriptors of the
+`pwsh` process separately:
+
+```
+Write-Verbose "V"   ->  STDOUT   "VERBOSE: V"
+Write-Warning "W"   ->  STDOUT   "WARNING: W"
+Write-Output  "O"   ->  STDOUT   "O"
+Write-Error   "E"   ->  stderr
+```
+
+Only the error stream reaches stderr. Verbose and warning are rendered to the
+host, and the host's output is stdout. So:
+
+```powershell
+function f { [CmdletBinding()] param() Write-Verbose "progress"; [pscustomobject]@{a=1} }
+f -Verbose | ConvertTo-Json -Compress
+```
+
+puts this on stdout:
+
+```
+VERBOSE: progress
+{"a":1}
+```
+
+which fails `json.load` outright — the installer would report that PowerShell
+returned an unparseable result, about a module that did exactly what it was
+asked.
+
+**Why it would not be caught.** The pollution only appears when the verbose
+stream is switched on, and nothing switches it on in the normal path: not
+`--unattend`, not `run-phase3.py`, not a hand-run install. It appears the first
+time somebody debugs a storage problem by adding `-Verbose` — which is to say,
+at the worst possible moment, and it makes the diagnostic look like the fault.
+
+**The rules that follow**, both now in `powershell/Zfs/Zfs.psm1` (Z5) and true
+of `OS7.psm1` as it already stands:
+
+* Machine-readable progress goes through an explicit stderr writer
+  (`Write-ZfsStep` / `Write-OS7Step`). Always. That code is not a crutch.
+* `Write-Verbose` is for humans, and never on a path whose stdout is somebody
+  else's data channel.
+* The IPC boundary suppresses the other streams by mechanism as well as by
+  convention: `3>$null 4>$null 6>$null` before the pipe. A convention is a rule
+  people follow; a redirect is a rule the runtime enforces.
+
+**The general form**, which is the part worth carrying: *a stream is not a file
+descriptor.* PowerShell's six streams are a host-level concept, and how a host
+maps them onto fd 1 and fd 2 is the host's business — not something to infer
+from the name. If a contract depends on which descriptor a byte lands on, write
+to the descriptor.
+
+---
+
+## 61. A payload ISO lowercases its names, and the harness reported a tidy skip
+
+Every VM harness here hands a script to the guest the same way: stage a
+directory, `hdiutil makehybrid -iso -joliet` it into a small ISO, attach it, and
+`mount -L OS7SPIKE /mnt` inside. `run-s3.py` has done it since Phase 0.
+
+`run-zfs.py` staged a PowerShell module the same way — a directory `Zfs/`
+containing `Zfs.psd1` — and the guest could not find it:
+
+```
+BOOTSTRAP-OK
+ZFS-SELFTEST-SKIP (no module staged yet)
+ALL-DONE
+```
+
+The module was on the medium. macOS, reading the same ISO, showed
+`/Volumes/OS7ZFS/Zfs/Zfs.psd1`. Linux showed something else:
+
+```
+/p/payload.iso on /m type iso9660 (ro,relatime,nojoliet,check=s,map=n,blocksize=2048)
+
+dr-xr-xr-x  zfs                 <- the directory is "Zfs" on the medium
+-rw-r--r--  b.sh
+-rwxr-xr-x  zfs-fixtures.sh
+```
+
+**`hdiutil makehybrid` writes no Rock Ridge**, and Linux mounted the result
+`nojoliet` — so names come through the plain ISO 9660 directory records, which
+Linux renders in lower case. `[ -f /mnt/Zfs/Zfs.psd1 ]` was false about a file
+that was there.
+
+**Why no harness had hit it in four months:** every earlier payload carried only
+`b.sh`, `s3-zfs-luks.sh`, `s4-*.sh` — names that were already lower case, so the
+mapping was the identity function and nobody could tell it was happening.
+
+**Two things were wrong, and the second one cost the time.** The first is the
+name mapping. The second is that the script tested `[ -f … ]` and, on false,
+printed *"no module staged yet"* — a sentence describing a **different**
+situation, one where the harness had deliberately not staged anything. A clean
+skip is indistinguishable from success at a glance, and the run reported
+`ALL-DONE` and exited. This is the standing shape again: the program reported a
+normal outcome and the thing it was meant to do had not happened.
+
+**The fix is to remove the class, not the instance.** The module now travels as
+`module.tar` and is unpacked in the guest: a tar carries its own names, so
+ISO 9660's rules and the mount options stop mattering. And when the module is
+still not there, the script now prints `ls -la /mnt` and the unpack target
+before giving up, so the next failure explains itself instead of being tidy.
+
+**Carry this into any new payload:** anything with an upper-case letter, a name
+longer than the ISO 9660 rules allow, or a nested directory should go through a
+tar. `hdiutil makehybrid -iso -joliet` is only safe for a handful of lower-case
+files at the top level, which is exactly the shape the existing spikes use and
+exactly why they never revealed the limit.

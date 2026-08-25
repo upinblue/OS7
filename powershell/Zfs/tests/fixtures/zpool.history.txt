@@ -1,0 +1,11 @@
+History for 'tank':
+2026-08-25.16:44:23 zpool create -f -o ashift=12 -O compression=lz4 tank mirror /var/tmp/zfscap/a.img /var/tmp/zfscap/b.img
+2026-08-25.16:44:23 zfs create tank/data
+2026-08-25.16:44:23 zfs create -o quota=64M -o compression=zstd tank/data/projects
+2026-08-25.16:44:23 zfs create -V 32M tank/vol
+2026-08-25.16:44:23 zfs snapshot tank/data@first
+2026-08-25.16:44:23 zfs snapshot -r tank/data@second
+2026-08-25.16:44:23 zfs clone tank/data@first tank/restored
+2026-08-25.16:44:23 zfs set org.os7:role=fixture tank/data
+2026-08-25.16:44:24 zpool offline tank /var/tmp/zfscap/b.img
+2026-08-25.16:44:25 zpool online tank /var/tmp/zfscap/b.img

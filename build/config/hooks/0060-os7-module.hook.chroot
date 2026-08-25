@@ -1,9 +1,11 @@
 #!/bin/bash
-# OS/7 — verify the OS7 PowerShell module landed and is loadable.
+# OS/7 — verify the PowerShell modules landed and are loadable.
 #
-# The module is placed by build.sh, which copies powershell/OS7/ into the staged
-# includes.chroot. That keeps ONE source of truth in the repo - the June-2026
-# tree carried a second baked-in copy that could drift.
+# TWO modules since 2026-08-25: Zfs (the generic ZFS layer,
+# docs/ZFS-POWERSHELL-PLAN.md) and OS7 (the product layer on top of it). Both
+# are placed by build.sh, which copies powershell/<name>/ into the staged
+# includes.chroot. That keeps ONE source of truth per module in the repo - the
+# June-2026 tree carried a second baked-in copy that could drift.
 #
 # WHAT IS CHECKED, AND WHAT CANNOT BE:
 #
@@ -21,39 +23,75 @@
 # lives in Microsoft.PowerShell.Utility, which is exactly what does not resolve
 # under chroot. Reporting through it would break this check for no reason.
 
+#   AND WHAT STILL CANNOT BE, which is the thing to read before adding a check
+#   here: a hook may import a module by path and inspect what it EXPORTS. It
+#   must not CALL a function that needs a bundled cmdlet — Get-Content,
+#   ConvertFrom-Json, Where-Object and friends autoload by NAME out of
+#   $PSHOME/Modules, and that is exactly the lookup #14 mangles. BUILD-NOTES #38
+#   is the measurement, including the part where an overlay chroot disagreed and
+#   live-build's chroot had the last word.
+#
+#   So `Test-ZfsModule` is NOT run here, although it is written to be run
+#   somewhere automatic. It runs in installer/testing/check-image.py, against
+#   the finished artefact, and authoritatively in run-zfs.py on a booted VM.
+
 set -euo pipefail
 
-MODULE_DIR="/usr/local/share/powershell/Modules/OS7"
-MANIFEST="${MODULE_DIR}/OS7.psd1"
+MODULES_ROOT="/usr/local/share/powershell/Modules"
 
-echo "OS/7 hook 0060: verifying the OS7 module at ${MODULE_DIR}"
+# Zfs first: it is Layer 2 and OS7 sits on top of it
+# (docs/ZFS-POWERSHELL-PLAN.md Z1).
+check_module() {
+	local name="$1"; shift
+	local dir="${MODULES_ROOT}/${name}"
+	local manifest="${dir}/${name}.psd1"
+	local expected="$*"
 
-if [ ! -f "${MANIFEST}" ] || [ ! -f "${MODULE_DIR}/OS7.psm1" ]; then
-	echo "OS/7 hook 0060: OS7 module missing from ${MODULE_DIR}" >&2
-	echo "OS/7 hook 0060: build.sh should have staged it from powershell/OS7/" >&2
-	ls -la "${MODULE_DIR}" >&2 2>&1 || true
+	echo "OS/7 hook 0060: verifying the ${name} module at ${dir}"
+
+	if [ ! -f "${manifest}" ] || [ ! -f "${dir}/${name}.psm1" ]; then
+		echo "OS/7 hook 0060: ${name} module missing from ${dir}" >&2
+		echo "OS/7 hook 0060: build.sh should have staged it from powershell/${name}/" >&2
+		ls -la "${dir}" >&2 2>&1 || true
+		exit 1
+	fi
+
+	chown -R root:root "${dir}"
+	find "${dir}" -type f -exec chmod 0644 {} +
+	find "${dir}" -type d -exec chmod 0755 {} +
+
+	/usr/bin/pwsh -NoLogo -NoProfile -Command "
+		\$ErrorActionPreference = 'Stop'
+		try {
+			Import-Module '${manifest}' -Force -ErrorAction Stop
+			\$expected = '${expected}'.Split(' ')
+			\$actual   = (Get-Command -Module ${name}).Name
+			foreach (\$f in \$expected) {
+				if (\$actual -notcontains \$f) { throw '${name} module does not export ' + \$f }
+			}
+			[Console]::WriteLine('OS/7 hook 0060:   ${name}: manifest loads, exports: ' + (\$actual -join ', '))
+		} catch {
+			[Console]::WriteLine('OS/7 hook 0060:   ${name}: FAILED: ' + \$_.Exception.Message)
+			exit 1
+		}
+	"
+}
+
+check_module Zfs Get-Zpool Get-ZpoolStatus Get-ZfsDataset Get-ZfsSnapshot \
+	Get-ZfsProperty Get-ZfsSpace Format-ZfsSize Test-ZfsModule
+check_module OS7 Set-OS7Mode Update-OS7 Restore-OS7
+
+# The fixtures travel with the Zfs module so that Test-ZfsModule can run without
+# ZFS. Their absence would not break an import, so it is checked separately -
+# otherwise the self-test would silently degrade to testing only the converters.
+FIX="${MODULES_ROOT}/Zfs/tests/fixtures"
+n=$(find "${FIX}" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${n}" -lt 5 ]; then
+	echo "OS/7 hook 0060: only ${n} JSON fixtures under ${FIX}; expected at least 5" >&2
+	echo "OS/7 hook 0060: re-capture them with installer/testing/run-zfs.py capture" >&2
 	exit 1
 fi
-
-chown -R root:root "${MODULE_DIR}"
-find "${MODULE_DIR}" -type f -exec chmod 0644 {} +
-find "${MODULE_DIR}" -type d -exec chmod 0755 {} +
-
-/usr/bin/pwsh -NoLogo -NoProfile -Command "
-	\$ErrorActionPreference = 'Stop'
-	try {
-		Import-Module '${MANIFEST}' -Force -ErrorAction Stop
-		\$expected = @('Set-OS7Mode','Update-OS7','Restore-OS7')
-		\$actual   = (Get-Command -Module OS7).Name
-		foreach (\$f in \$expected) {
-			if (\$actual -notcontains \$f) { throw \"OS7 module does not export \$f\" }
-		}
-		[Console]::WriteLine('OS/7 hook 0060:   manifest loads, exports: ' + (\$actual -join ', '))
-	} catch {
-		[Console]::WriteLine('OS/7 hook 0060:   FAILED: ' + \$_.Exception.Message)
-		exit 1
-	}
-"
+echo "OS/7 hook 0060:   Zfs: ${n} recorded ZFS captures shipped for the self-test"
 
 echo "OS/7 hook 0060:   NOTE: 'Import-Module OS7' by name is not testable in a"
 echo "OS/7 hook 0060:   NOTE: chroot; verify it on a booted system."

@@ -1,0 +1,1 @@
+cannot open 'nosuchpool/nosuchds': dataset does not exist

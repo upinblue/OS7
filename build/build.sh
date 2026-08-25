@@ -277,15 +277,26 @@ echo "    staged the release pin -> /usr/lib/os7/{release,build}.conf"
 # Hook 0060 verifies it imports. Keeping a second copy checked in under
 # includes.chroot - as the June-2026 tree did - just lets the two drift.
 # ---------------------------------------------------------------------------
-OS7_MODULE_SRC="${HERE}/../powershell/OS7"
-OS7_MODULE_DST="${WORK}/config/includes.chroot/usr/local/share/powershell/Modules/OS7"
-if [[ -d "${OS7_MODULE_SRC}" ]]; then
-	mkdir -p "${OS7_MODULE_DST}"
-	cp -a "${OS7_MODULE_SRC}/." "${OS7_MODULE_DST}/"
+# Both modules are staged the same way, so the staging is written once. Zfs is
+# the generic ZFS layer (docs/ZFS-POWERSHELL-PLAN.md); OS7 is the product layer
+# above it, and Z1 says OS7 reaches ZFS only through Zfs — which is only true if
+# both are actually on the image.
+stage_ps_module() {
+	local name="$1"
+	local src="${HERE}/../powershell/${name}"
+	local dst="${WORK}/config/includes.chroot/usr/local/share/powershell/Modules/${name}"
+
+	if [[ ! -d "${src}" ]]; then
+		echo "!!! ${name} module source missing: ${src}" >&2
+		exit 1
+	fi
+
+	mkdir -p "${dst}"
+	cp -a "${src}/." "${dst}/"
 
 	# ModuleVersion becomes the product version (release plan §11), stamped into
-	# the STAGED copy and never into the source. The module ships as part of the
-	# release train - it is not separately versioned - so a hand-maintained
+	# the STAGED copy and never into the source. The modules ship as part of the
+	# release train - they are not separately versioned - so a hand-maintained
 	# number in the .psd1 would be a second source of truth that drifts, and the
 	# only way to notice would be a support case quoting two numbers.
 	#
@@ -294,17 +305,26 @@ if [[ -d "${OS7_MODULE_SRC}" ]]; then
 	# .psd1 whose ModuleVersion does not parse makes the module unimportable, and
 	# BUILD-NOTES #14 means no hook can detect that by importing it BY NAME.
 	sed -i -E "s/^([[:space:]]*ModuleVersion[[:space:]]*=[[:space:]]*).*$/\1'${OS7_VERSION}'/" \
-		"${OS7_MODULE_DST}/OS7.psd1"
-	if ! grep -q "ModuleVersion *= *'${OS7_VERSION}'" "${OS7_MODULE_DST}/OS7.psd1"; then
-		echo "!!! could not stamp ModuleVersion = ${OS7_VERSION} into the staged OS7.psd1" >&2
-		grep -n 'ModuleVersion' "${OS7_MODULE_DST}/OS7.psd1" >&2 || true
+		"${dst}/${name}.psd1"
+	if ! grep -q "ModuleVersion *= *'${OS7_VERSION}'" "${dst}/${name}.psd1"; then
+		echo "!!! could not stamp ModuleVersion = ${OS7_VERSION} into the staged ${name}.psd1" >&2
+		grep -n 'ModuleVersion' "${dst}/${name}.psd1" >&2 || true
 		exit 1
 	fi
-	echo "    staged OS7 PowerShell module -> ${OS7_MODULE_DST#${WORK}/}  (ModuleVersion ${OS7_VERSION})"
-else
-	echo "!!! OS7 module source missing: ${OS7_MODULE_SRC}" >&2
-	exit 1
-fi
+	echo "    staged ${name} PowerShell module -> ${dst#${WORK}/}  (ModuleVersion ${OS7_VERSION})"
+}
+
+# Zfs first, because OS7 depends on it and hook 0060 checks them in this order.
+#
+# The Zfs module's tests/fixtures go WITH it, deliberately. They are a few KB of
+# recorded real ZFS output, and they are what lets `Test-ZfsModule` run inside
+# the chroot at build time — where ZFS itself cannot run at all, because the
+# kernel module is not loaded there (ZFS-POWERSHELL-PLAN §12, M-Z1). Shipping a
+# self-test with the artefact is the same trade `os7-setup --self-test` already
+# makes, for the same reason: a parser that stopped matching what ZFS emits
+# should fail the BUILD, not a customer's boot.
+stage_ps_module Zfs
+stage_ps_module OS7
 
 # ---------------------------------------------------------------------------
 # Console font (SETUP-PLAN §2.5, decision D9).
