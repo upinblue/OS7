@@ -2519,6 +2519,43 @@ rest follows from 127. `cellfont.py` also asserts position 32 is blank before
 writing, so a future layout change cannot reintroduce it quietly — but the
 assertion is the second line of defence, not the first.
 
+### And then it failed again, differently
+
+With position 32 blank, `setfont` got one step further and the KERNEL refused it:
+
+```
+setfont: ERROR kdfontop.c:240 put_font_kdfontop: ioctl(KDFONTOP): Invalid argument
+  exit 71
+```
+
+`fbcon` accepts two glyph counts and no others:
+
+```c
+/* drivers/video/fbdev/core/fbcon.c, fbcon_set_font() */
+if (charcount != 256 && charcount != 512)
+        return -EINVAL;
+```
+
+The font had **441**. A perfectly valid PSF, and an unloadable console font.
+
+**The number was in the repo the whole time and written down as the wrong kind
+of fact.** `build-console-font.sh` passes `512` to `bdf2psf`; `psf.py` calls it
+`PSF_MAX_GLYPHS`; SETUP-PLAN §2.5 says "PSF caps at 512 glyphs". Every one of
+those reads as an upper bound, so a font with fewer looked comfortably inside
+it. It is not a cap — it is one of exactly two permitted values, and Fixedsys
+only ever worked because `bdf2psf` was told to emit 512 and pads to fill them.
+
+`cellfont.py` now pads to 256 or 512. Measured after the change, on the running
+machine: `setfont` returns 0 and `stty size < /dev/tty1` goes from `50 160` to
+**`25 80`** — the reference geometry §2.4 anchors the layout rule on.
+
+**Two refusals, one lesson, and it is not "check harder".** Both requirements
+belong to the CONSUMER — kbd and the kernel — and neither is visible in the
+artefact's own definition of correctness. A PSF can satisfy every property this
+repo knows how to assert and still be rejected by the thing that loads it. The
+only check that closes that gap is handing the artefact to the real consumer,
+which here meant booting a machine and reading `$?`.
+
 **And the lesson that generalises past fonts:** a build artefact can satisfy
 every property its own verifier knows about and still be rejected by the thing
 that consumes it. The only check that closes that gap is handing the artefact to

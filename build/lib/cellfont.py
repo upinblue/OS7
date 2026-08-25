@@ -318,6 +318,31 @@ def build(font, out, W, H, hinting=True):
                          "refuse this font (BUILD-NOTES #59)\n")
         sys.exit(1)
 
+    # ---------------------------------------------------------------------
+    # PAD TO EXACTLY 256 OR 512. fbcon accepts nothing else:
+    #
+    #     drivers/video/fbdev/core/fbcon.c, fbcon_set_font()
+    #         if (charcount != 256 && charcount != 512) return -EINVAL;
+    #
+    # and the kernel reports that as
+    #
+    #     setfont: ERROR kdfontop.c:240 put_font_kdfontop:
+    #              ioctl(KDFONTOP): Invalid argument
+    #
+    # 441 glyphs is a perfectly good PSF and an unloadable console font.
+    # `build-console-font.sh` has always passed 512 to bdf2psf, and psf.py calls
+    # the number PSF_MAX_GLYPHS - so the figure was in the repo all along,
+    # written down as a CAP. It is not a cap; it is one of two permitted values.
+    # BUILD-NOTES #59.
+    # ---------------------------------------------------------------------
+    target = 256 if len(glyphs) <= 256 else psfmod.PSF_MAX_GLYPHS
+    if len(glyphs) > target:
+        sys.stderr.write(f"!!! {len(glyphs)} glyphs exceeds {target}\n")
+        sys.exit(1)
+    while len(glyphs) < target:
+        glyphs.append(blank)
+        codepoints.append(None)
+
     if len(glyphs) > psfmod.PSF_MAX_GLYPHS:
         sys.stderr.write(f"!!! {len(glyphs)} glyphs exceeds the PSF cap of "
                          f"{psfmod.PSF_MAX_GLYPHS}\n")
