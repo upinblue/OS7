@@ -16,7 +16,7 @@ re-validated against the current scaffold.
 | File | Why |
 |---|---|
 | `build/build.sh` | The two staging fixes below (3, 6) are required for any build to work on macOS. |
-| `build/lib/arm64-efi-remaster.sh` | 95 lines of GRUB/EFI work; the only reason an arm64 ISO boots at all. Verbatim. |
+| `build/lib/efi-remaster.sh` | GRUB/EFI work; the only reason an OS/7 ISO boots at all. Harvested verbatim for arm64, generalised to both architectures on 2026-08-25 (#48). |
 | `scripts/run-vm.sh` | QEMU + HVF runner for Apple Silicon, incl. the UEFI vars/pflash handling. Verbatim. |
 | Fixes 1–8 below | Applied inline to `Dockerfile`, `Makefile`, `build/config/auto/config`. |
 
@@ -74,7 +74,7 @@ so staging must re-map them. Get it wrong and live-build **silently ignores all
 of them**: the build succeeds and hands you a bare Ubuntu image with no OS/7
 content. There is no warning — check the ISO, not the exit code.
 
-### 7. live-build emits no arm64 bootloader — `build/lib/arm64-efi-remaster.sh`
+### 7. live-build emits no arm64 bootloader — `build/lib/efi-remaster.sh` (arm64-only when this was written; see #48)
 `lb_binary_grub2` is gated to `amd64 i386`. On arm64 live-build produces a
 complete live filesystem inside an **unbootable** ISO: no `/EFI`, empty
 El-Torito catalog. The remaster script builds `BOOTAA64.EFI` via
@@ -1203,7 +1203,7 @@ config/binary:LB_ISO_VOLUME="OS7-1.0.0.32-arm64"
 
 The ISO said `OS7-arm64`.
 
-`build/lib/arm64-efi-remaster.sh` does not modify live-build's ISO — it builds a
+`build/lib/efi-remaster.sh` does not modify live-build's ISO — it builds a
 **new one** with `xorriso`, because live-build emits no arm64 bootloader at all
 (harvested fix 7). So every ISO9660 property live-build was told about is
 discarded at the last step, and the `-volid "OS7-arm64"` hardcoded on the xorriso
@@ -1486,7 +1486,7 @@ direction.**
 accepted by `lb config` (measured — unlike `--debian-installer`, where HARVESTED
 FIX 4 found `none` rejected and `false` required). OS/7 wants nothing from this
 stage: the medium carries exactly two GRUB entries by design, and on arm64 the
-menu is written by `build/lib/arm64-efi-remaster.sh` regardless.
+menu is written by `build/lib/efi-remaster.sh` regardless.
 
 **What has NOT been measured: that an amd64 ISO now builds.** This is the next
 failure removed, not the last one — nothing in either history has ever run past
@@ -1729,7 +1729,7 @@ lb_binary_grub  lb_binary_grub2  lb_binary_syslinux  lb_binary_yaboot  lb_binary
 ```
 
 — `--bootloader` accepts `grub|syslinux|yaboot`, and nothing there emits an EFI
-boot path. That is the *same hole* `build/lib/arm64-efi-remaster.sh` was written
+boot path. That is the *same hole* `build/lib/efi-remaster.sh` was written
 to fill on arm64, and it means **the amd64 medium needs its own remaster before
 it can boot the way the product requires.** `--syslinux-theme live-build` is a
 stopgap that lets the build reach a point where there is something to remaster;
@@ -1764,7 +1764,7 @@ arm64: LB_BOOTLOADER=""
 ```
 
 **arm64 has been building with no bootloader stage at all since the first ISO**,
-and that is precisely why `build/lib/arm64-efi-remaster.sh` exists — OS/7 already
+and that is precisely why `build/lib/efi-remaster.sh` exists — OS/7 already
 owns its medium's boot path on one architecture. Every bootloader stage guards on
 `[ "${LB_BOOTLOADER}" != "<its own name>" ]`, and `lb_binary_iso`'s
 `case "${LB_BOOTLOADER}"` has no branch for an unknown value, so `none` is inert
@@ -1837,3 +1837,72 @@ output the product had already decided it would not use. The rootfs is not the
 hard part on amd64; assembling the medium is. And the cheapest way through a
 stale stage is to establish that you never wanted it — which the *other*
 architecture's config had been saying the whole time, in one empty variable.
+
+## 48. Refactoring something proven: the hash said it changed, and the hash was the wrong instrument
+
+2026-08-25. `build/lib/arm64-efi-remaster.sh` became `build/lib/efi-remaster.sh`
+and took an architecture argument, so that amd64 could be re-mastered by the same
+code rather than by a copy of it. The thing being edited was the only reason any
+OS/7 ISO boots, and the edit had to be proved not to change arm64.
+
+### The obvious check gives a wrong answer
+
+Run the old script, run the new one, compare the ISOs:
+
+```
+old      57978880  b07ff871437cf228
+new      57978880  4b47b07a40b30938
+```
+
+Different. On that evidence the refactor changed the artefact — and the
+conclusion would have been wrong. **The control is the whole experiment:** run
+the OLD script twice, against two identical synthetic trees.
+
+```
+old1     57978880  b07ff871437cf228
+old2     57978880  d5fb4ff80984ff15
+```
+
+The old script does not reproduce itself either. `xorriso` stamps a creation time
+into the PVD, so two runs a second apart differ. Comparing hashes across a
+refactor of this script can only ever produce "different", whatever the change
+was — the instrument reads noise at full scale.
+
+### What can be compared, and was
+
+* **The GRUB menu** — `diff` on `binary/boot/grub/grub.cfg`: identical. This is
+  the file SETUP-PLAN §7 specifies and the one a person actually sees.
+* **The EFI binary** — `grub-mkstandalone` IS deterministic here: all three runs
+  produced the same 6811648 bytes, same SHA-256. So the payload that boots the
+  machine is provably unchanged, even though its container is not.
+* **The ISO's structure** — `xorriso -indev … -report_el_torito plain -find /`,
+  with dates filtered out: **no difference**. Same tree, same El Torito catalog,
+  one UEFI boot image at `/boot/grub/efiboot.img`, MBR cyl-align-all.
+
+Three instruments that can distinguish signal from noise, in place of one that
+cannot.
+
+### Worth carrying
+
+**Before comparing two artefacts, find out whether one of them equals itself.**
+The reproducibility of the output is a property of the tool, not of the change,
+and it decides which comparison means anything. This repository already knew the
+neighbouring version of that rule — an exit code is a diagnostic, ask the thing
+itself — and this is the same mistake wearing a checksum.
+
+### While in there: the medium is UNSIGNED, on both architectures
+
+`grub-mkstandalone` produces an unsigned GRUB, so **the OS/7 install medium boots
+only with Secure Boot OFF**. That has been true of every arm64 ISO this project
+ever built, and nothing had written it down, because the arm64 harnesses do not
+enable Secure Boot and spike S4 tested the INSTALLED disk — shim plus
+Canonical-signed GRUB on the ESP, which is a different boot path from the one the
+ISO takes.
+
+It matters more on amd64: that firmware ships with Secure Boot enabled, so the
+first person to try the medium on real hardware meets it. The pieces for the
+other approach are already in the image (`shim-signed` 1.59+15.8,
+`grub-efi-amd64-signed` 1.215+2.14, and their arm64 equivalents), and the cost is
+that a signed GRUB has a fixed prefix and loads only signed modules, so the
+embedded-config trick above cannot be used. Open item, recorded here rather than
+in a fix.

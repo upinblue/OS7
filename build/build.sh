@@ -460,22 +460,19 @@ mkdir -p "${OUT_DIR}"
 DEST="${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.iso"
 STABLE="${OUT_DIR}/os7-${ARCH}.iso"
 
-if [[ "${ARCH}" = "arm64" ]]; then
-	# HARVESTED FIX 7: live-build emits NO arm64 bootloader (lb_binary_grub2 is
-	# gated to "amd64 i386"), so the arm64 ISO it produces has no /EFI and an
-	# empty El-Torito catalog - a complete live filesystem that cannot boot.
-	# Re-master it.
-	"${HERE}/lib/arm64-efi-remaster.sh" "${WORK}" "${DEST}"
-else
-	ISO="$(ls -1 "${WORK}"/*.iso 2>/dev/null | head -n1 || true)"
-	if [[ -n "${ISO}" ]]; then
-		cp -f "${ISO}" "${DEST}"
-	else
-		echo "!!! No ISO produced - see ${WORK}/build-${ARCH}.log (in container)" >&2
-		tail -n 40 "${WORK}/build-${ARCH}.log" >&2 || true
-		exit 1
-	fi
-fi
+# BOTH ARCHITECTURES ARE RE-MASTERED, and since 2026-08-25 for the same reason
+# rather than two.
+#
+#   arm64 - HARVESTED FIX 7: live-build emits NO arm64 bootloader (lb_binary_grub2
+#           is gated to "amd64 i386"), so the ISO it produces has no /EFI and an
+#           empty El-Torito catalog - a complete live filesystem that cannot boot.
+#   amd64 - live-build's default IS a bootloader and it is syslinux, which is BIOS,
+#           while OS/7 boots UEFI. That stage also cannot run against a 2026
+#           archive at all (BUILD-NOTES #47), so auto/config sets --bootloader
+#           none and amd64 arrives here in the state arm64 was always in.
+#
+# live-build's own ISO is therefore discarded on both. Nothing here reads it.
+"${HERE}/lib/efi-remaster.sh" "${ARCH}" "${WORK}" "${DEST}"
 
 ln -sfn "$(basename "${DEST}")" "${STABLE}"
 

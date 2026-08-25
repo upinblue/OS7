@@ -40,7 +40,7 @@ LB_BINARY_IMAGES  amd64 "iso-hybrid"   arm64 "iso"
 ```
 
 **arm64 has been building with no bootloader stage since the first ISO, and that
-empty string is the entire reason `build/lib/arm64-efi-remaster.sh` exists.** It
+empty string is the entire reason `build/lib/efi-remaster.sh` exists.** It
 had been sitting in the configuration the whole time, saying that OS/7 already
 owns its medium's boot path on one architecture. Three of the four fixes are the
 same edit: give amd64 arm64's value.
@@ -119,8 +119,9 @@ pieces it needs, exactly as arm64 did.
 
 ## What it changes in the plan
 
-1. **An amd64 EFI remaster is now the next amd64 task**, and it is a known shape:
-   `build/lib/arm64-efi-remaster.sh` is the sibling, `shim-signed` and
+1. **An amd64 EFI remaster is now the next amd64 task** — *done the same day;
+   see [SESSION-AMD64-EFI-REMASTER.md](SESSION-AMD64-EFI-REMASTER.md)* — and it is
+   a known shape: `build/lib/arm64-efi-remaster.sh` (now `efi-remaster.sh`) is the sibling, `shim-signed` and
    `grub-efi-amd64-signed` are already in the image, and the GRUB menu it must
    write is the same two entries.
 2. **CI is load-bearing, not decoration.** It is the only way an amd64 ISO can be

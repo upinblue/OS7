@@ -230,7 +230,7 @@ Found by reading the label off the finished ISO, which is the only way it could
 have been found. `lb config` recorded `LB_ISO_VOLUME="OS7-1.0.0.32-arm64"`
 faithfully; the ISO said `OS7-arm64`.
 
-`build/lib/arm64-efi-remaster.sh` does not modify live-build's ISO — it builds a
+`build/lib/efi-remaster.sh` does not modify live-build's ISO — it builds a
 **new one** with `xorriso`, because live-build emits no arm64 bootloader at all.
 So every ISO9660 property live-build was configured with is discarded at the last
 step, and a hardcoded `-volid` quietly won.

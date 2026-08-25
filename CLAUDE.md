@@ -163,7 +163,8 @@ build/                      the ISO: live-build config, hooks, and build.sh
   config/os7-release.conf   THE PIN: version, archive snapshot, component hashes
   config/hooks/0075-*       turns the pin into os-release, release.json and the
                             package manifest - and checks what it wrote
-  lib/arm64-efi-remaster.sh arm64 has no live-build bootloader; this fixes it,
+  lib/efi-remaster.sh       neither arch gets a usable bootloader out of
+                            live-build; this makes the ISO boot, and owns
                             and owns the ISO's GRUB menu
 installer/
   SETUP-PLAN.md             the installer design. Authoritative.

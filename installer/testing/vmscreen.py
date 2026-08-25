@@ -345,7 +345,7 @@ class Lab:
         """Pull the kernel and initrd out of the ISO, through a container.
 
         macOS will not mount this image: `hdiutil attach` reports "no mountable
-        file systems" on the El Torito hybrid that build/lib/arm64-efi-remaster.sh
+        file systems" on the El Torito hybrid that build/lib/efi-remaster.sh
         produces. The container has loop mounts.
 
         The names carry the kernel version, so they are globbed rather than

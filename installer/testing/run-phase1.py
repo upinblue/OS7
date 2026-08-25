@@ -55,7 +55,7 @@ FONT = os.path.join(lab.dir, "os7-fixedsys-16x32.psf.gz")
 # confirmed by spike S1. Every row/column below is in those cells.
 CELL = (16, 32)
 
-# The Install entry's command line, verbatim from build/lib/arm64-efi-remaster.sh
+# The Install entry's command line, verbatim from build/lib/efi-remaster.sh
 # plus a serial console so the harness can log in. If these ever disagree, the
 # harness is testing something the ISO does not do.
 CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service "

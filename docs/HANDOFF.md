@@ -67,11 +67,10 @@ to an initramfs prompt. BUILD-NOTES #15.
 ## 2. Do this next
 
 **The amd64 EFI remaster** is the newest and best-defined piece: an amd64 ISO now
-exists and cannot boot, `build/lib/arm64-efi-remaster.sh` is the sibling to copy,
-and `shim-signed` + `grub-efi-amd64-signed` are already in the image
-([SESSION-AMD64-FIRST-ISO.md](SESSION-AMD64-FIRST-ISO.md)). Until it is written,
-nothing on amd64 can be booted, installed or walked — every Phase 1–3 result is
-arm64-only.
+**DONE 2026-08-25** — `build/lib/efi-remaster.sh` now re-masters both
+architectures ([SESSION-AMD64-EFI-REMASTER.md](SESSION-AMD64-EFI-REMASTER.md)).
+What that leaves is the first amd64 BOOT: nothing on amd64 has been booted,
+installed or walked, so every Phase 1–3 result is still arm64-only.
 
 Otherwise: **Phase 4 — Authenticity and polish**, or **screen 9**, or the release
 plan's **S5**. Phase 3 is done (below); what it leaves is:
@@ -470,7 +469,8 @@ build/config/package-lists/       common packages
 build/config/package-lists-{amd64,arm64}/   arch-specific
 build/config/hooks/               common hooks, FLAT (see trap #13)
 build/config/hooks-amd64/         amd64-only hooks
-build/lib/arm64-efi-remaster.sh   arm64 has no live-build bootloader; this fixes it
+build/lib/efi-remaster.sh         neither arch gets a usable bootloader from
+                                  live-build; this makes the ISO boot (both)
 powershell/OS7/                   the OS7 module - ONE source of truth, staged by build.sh
 installer/SETUP-PLAN.md           the installer design and decisions. Authoritative.
 installer/src/OS7.Setup/          os7-setup itself. SETUP-PLAN is its design.
