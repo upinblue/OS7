@@ -256,11 +256,16 @@ internal sealed class NetworkStep : IStep
     /// and the producer is not, so the enabled-units list reads like evidence
     /// that networking is configured.
     ///
-    /// netplan's generator does not enable a service that was never wanted
-    /// before; it writes units into `/run/systemd/network` and assumes something
-    /// will read them. On a live system networkd is usually already running for
-    /// other reasons, which is exactly why this is invisible until an installed
-    /// machine boots.
+    /// WHETHER NETPLAN WOULD HAVE DONE THIS ANYWAY IS NOT KNOWN HERE, and the
+    /// honest version matters more than the tidy one. `netplan-generator` runs
+    /// as a systemd generator at boot and may enable `systemd-networkd` itself
+    /// once `/etc/netplan` has content — that has not been measured, and this
+    /// comment is not going to claim it either way. What HAS been measured is
+    /// that the shipped image does not enable it, so on a machine installed
+    /// before Phase 3b nothing did. Enabling it explicitly costs one `systemctl`
+    /// and removes the question; `run-phase3b-network.py boot` then asks the
+    /// booted machine `systemctl is-active systemd-networkd`, which is the
+    /// answer that counts.
     ///
     /// `/etc/resolv.conf` goes with it: `systemd-resolved` serves a stub at
     /// `/run/systemd/resolve/stub-resolv.conf`, and a machine whose resolv.conf

@@ -1698,9 +1698,15 @@ already happened and cannot remove the backend the file names (L24).
 
 For the `networkd` renderer, the step must also **enable `systemd-networkd` and
 `systemd-resolved` on the target** — §7.2 measured that neither is enabled in the
-image, and netplan's generator does not enable a service that was never wanted
-before. This is the concrete shape of L23 and the easiest part of it to forget,
-because on a live system networkd is already running for other reasons.
+image, so on a machine installed before this phase nothing did.
+
+Whether `netplan-generator` would have enabled networkd by itself once
+`/etc/netplan` has content is **not known and is not assumed here**. It runs as a
+systemd generator at boot and might; that has not been measured. Enabling it
+explicitly costs one `systemctl` and removes the question, and the answer that
+counts comes from the booted machine — `run-phase3b-network.py boot` asks
+`systemctl is-active systemd-networkd`, which is a different word from `enabled`
+and the exact distinction L23 is about.
 
 #### Packages
 
