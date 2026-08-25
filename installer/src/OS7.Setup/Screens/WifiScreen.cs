@@ -53,20 +53,21 @@ internal sealed class WifiScreen : Screen
     }
 
     /// <summary>
-    /// The scan is NOT run in the constructor.
+    /// The scan runs ON THE FIRST IDLE TICK, not in the constructor and not in
+    /// Layout.
     ///
-    /// `iw scan` takes seconds and the flow draws a screen before it reads a
-    /// key, so scanning in the constructor means a black console for as long as
-    /// the radio takes with nothing on it to say why. The first Layout call runs
-    /// it instead, after the screen exists, and the screen says "scanning" in
-    /// the meantime.
+    /// `iw scan` takes seconds. SetupFlow's order is Layout → Draw → Show →
+    /// Read, so a scan in either the constructor or Layout happens BEFORE
+    /// anything reaches the console: the operator sees the previous screen, for
+    /// several seconds, with nothing to say why. The first version did exactly
+    /// that while carrying a comment claiming the opposite.
+    ///
+    /// Ticking instead costs one frame and gets the order right — "Setup is
+    /// scanning…" is drawn and shown first, then the idle tick 200 ms later does
+    /// the work. `Ticks` goes false afterwards so the screen stops being woken
+    /// for nothing.
     /// </summary>
-    public override void Layout(int cols, int rows)
-    {
-        if (_scanned) return;
-        _scanned = true;
-        Rescan();
-    }
+    public override bool Ticks => !_scanned;
 
     private SelectionList Build()
     {
@@ -226,6 +227,16 @@ internal sealed class WifiScreen : Screen
 
     public override Transition Handle(KeyPress key)
     {
+        // The first idle tick is the scan. SetupFlow passes Key.None through
+        // only for a screen that opted in with `Ticks`, so this arrives exactly
+        // once — after the "scanning" frame is already on the console.
+        if (!_scanned)
+        {
+            _scanned = true;
+            Rescan();
+            return Transition.Redraw;
+        }
+
         KeepFocusValid();
         switch (key.Key)
         {

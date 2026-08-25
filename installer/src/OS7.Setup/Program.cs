@@ -947,6 +947,16 @@ internal static class Program
             {
                 var f = new Frame(80, 25);
                 s.Layout(80, 25);
+
+                // A TICKING SCREEN GETS ITS TICK. SetupFlow passes Key.None
+                // through to any screen that opted in with `Ticks`, and for
+                // WifiScreen that tick IS the scan — so without it this would
+                // only ever render the "scanning…" frame and the box check
+                // below would silently find no box to measure. Driving it here
+                // exercises the idle-tick path of every screen that has one,
+                // which is a path nothing else in --self-test touches.
+                if (s.Ticks) s.Handle(KeyPress.None);
+
                 f.Chrome(s.Title, s.Status, Release.Current.TitleBar);
                 s.Draw(f);
                 string rendered = f.Render();
