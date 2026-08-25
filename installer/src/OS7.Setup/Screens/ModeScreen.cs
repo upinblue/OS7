@@ -76,7 +76,10 @@ internal sealed class ModeScreen : Screen
             case Key.Enter:
                 _plan.Mode = _list.Selected == 0 ? InstallMode.Gui : InstallMode.Headless;
                 Log.Info($"install mode: {_plan.Mode}");
-                return Transition.To(new ExecuteScreen(_plan));
+                // Start, not `new`: the whole-plan check lives behind that
+                // factory and the constructor is private so it cannot be walked
+                // round. This is the last ENTER before a disk is written.
+                return Transition.To(ExecuteScreen.Start(_plan));
 
             case Key.Escape:
                 return Transition.Back;
@@ -101,6 +104,9 @@ internal sealed class ModeScreen : Screen
         // silently. Nothing later has to re-derive it.
         plan.Mode = InstallMode.Headless;
         Log.Info("install mode: Headless (arm64 is server-only; screen 8 skipped)");
-        return new ExecuteScreen(plan);
+        // The SAME door as the branch above. A skipped screen must not also skip
+        // the gate behind it, and this is the arm64 path - the only one anything
+        // has ever been installed through.
+        return ExecuteScreen.Start(plan);
     }
 }

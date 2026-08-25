@@ -42,17 +42,24 @@ internal sealed class InstallPlan
     /// <summary>
     /// Everything wrong with the WHOLE plan, in one pass.
     ///
-    /// For `--unattend` and for the moment before execution — the two places
-    /// where the plan really is complete. One pass rather than failing on the
-    /// first problem, because §3.1's error screen shows a list and a person
-    /// fixing an unattended plan file wants to fix all of it before booting
-    /// again.
+    /// EXACTLY TWO CALLERS, and they are the only two moments at which the plan
+    /// really is complete: `--unattend`, and `ExecuteScreen.Start` — the front
+    /// door of the executor, which is why that constructor is private. One pass
+    /// rather than failing on the first problem, because §3.1's error screen
+    /// shows a list and a person fixing an unattended plan file wants to fix all
+    /// of it before booting again.
     ///
-    /// A SCREEN MUST NOT CALL THIS. §6.6 has the screens filling the plan in
-    /// one at a time, so the plan is incomplete for most of the flow by design.
-    /// Screen 3 did call it, and the result was an error screen reading "no disk
-    /// selected" three screens before the disk screen exists. Each screen
-    /// validates what it collected; only execution validates the lot.
+    /// A SCREEN MUST NOT CALL THIS, and this project has now paid for that
+    /// sentence twice. §6.6 has the screens filling the plan in one at a time,
+    /// so the plan is incomplete for most of the flow by design.
+    ///
+    ///   screen 3  called it and produced an error screen reading "no disk
+    ///             selected" three screens before the disk screen exists.
+    ///   screen 6  called it and produced "no user account was named" ONE screen
+    ///             before the account is typed — which made screen 7 unreachable
+    ///             and the error screen the only thing past the confirmation.
+    ///
+    /// Each screen validates what it collected; only execution validates the lot.
     /// </summary>
     public bool Validate(out List<string> problems)
     {
@@ -68,6 +75,29 @@ internal sealed class InstallPlan
     {
         problems = new List<string>();
         ValidateRegional(problems);
+        return problems.Count == 0;
+    }
+
+    /// <summary>
+    /// What screens 3 to 5 collected — the regional half and the storage half.
+    ///
+    /// Screen 6's check, and the account is left out of it deliberately rather
+    /// than forgotten: §3's numbering puts the destructive confirmation at 6 and
+    /// the account at 7, so at the moment `F` is pressed nobody has been asked
+    /// for one yet. It is the same shape as ValidateRegional and exists for the
+    /// same reason — a screen may only be refused for something it could have
+    /// got right.
+    ///
+    /// It covers everything the format is about to act on, which is the whole
+    /// of the storage half; the regional half rides along because screen 6 is
+    /// still a screen ESC can walk back from, so a bad locale is worth saying
+    /// here rather than after an account has been typed.
+    /// </summary>
+    public bool ValidateThroughStorage(out List<string> problems)
+    {
+        problems = new List<string>();
+        ValidateRegional(problems);
+        Storage.Validate(problems);
         return problems.Count == 0;
     }
 

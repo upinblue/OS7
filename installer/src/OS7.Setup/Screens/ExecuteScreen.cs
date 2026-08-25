@@ -17,6 +17,11 @@ namespace OS7.Setup.Screens;
 /// The heading and the detail line follow the step instead, so the two mockups
 /// both appear and neither is a separate machine.
 ///
+/// THE CONSTRUCTOR IS PRIVATE and `Start` is the only way in. Constructing this
+/// object begins writing to a disk, so "did anybody check the plan first?" must
+/// not be a question about the caller. `Start` asks InstallPlan.Validate and
+/// hands back an error screen instead of an executor when the answer is no.
+///
 /// The work runs on a BACKGROUND THREAD and the screen only reads a snapshot of
 /// where it has got to. That is not concurrency for its own sake: the flow's
 /// input loop wakes every 200 ms whether or not a key arrived (Input.Read's idle
@@ -41,16 +46,46 @@ internal sealed class ExecuteScreen : Screen
     /// <summary>
     /// Set once from --dry-run, before the flow starts.
     ///
-    /// Static because the screen is constructed by the Confirm screen, deep in
-    /// the flow, and threading a boolean through four screens that have no other
-    /// use for it would be worse than one clearly-named global that is written
-    /// exactly once.
+    /// Static because the screen is constructed deep in the flow — screen 8, or
+    /// screen 7 where there is no screen 8 — and threading a boolean through
+    /// every screen between here and the command line, none of which has any
+    /// other use for it, would be worse than one clearly-named global that is
+    /// written exactly once.
     /// </summary>
     public static bool DryRun { get; set; }
 
     private readonly TargetRoot _target;
 
-    public ExecuteScreen(InstallPlan plan)
+    /// <summary>
+    /// THE FINAL GATE, and the only way to build an executor.
+    ///
+    /// The constructor below starts a thread that partitions a disk, so the
+    /// check that the plan is complete cannot be somewhere a caller might
+    /// forget: it is in front of the only door. §6.6 has execution read the plan
+    /// and nothing else, and this is the moment §6.6 means — after this there is
+    /// no screen left to catch an incomplete plan on, which is the sentence
+    /// screen 6 used to carry while 7 and 8 still came after it.
+    ///
+    /// It returns an ErrorScreen rather than throwing, and ForPlan's error
+    /// screen is the RECOVERABLE one: ENTER goes back to the screen that could
+    /// fix it. A plan that is short of a field is a person who has not finished,
+    /// not a failed install.
+    ///
+    /// Nothing has been written when this refuses. The executor is not
+    /// constructed at all, so there is no thread, no rollback list and no disk
+    /// to undo.
+    /// </summary>
+    public static Screen Start(InstallPlan plan)
+    {
+        if (!plan.Validate(out List<string> problems))
+        {
+            Log.Error("refusing to install: " + string.Join("; ", problems));
+            return ErrorScreen.ForPlan(problems);
+        }
+        return new ExecuteScreen(plan);
+    }
+
+    private ExecuteScreen(InstallPlan plan)
     {
         _plan = plan;
         _target = TargetRoot.Install;

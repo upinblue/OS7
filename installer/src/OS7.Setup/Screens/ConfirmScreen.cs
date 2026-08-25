@@ -12,6 +12,12 @@ namespace OS7.Setup.Screens;
 /// separate one. Every other screen in the flow advances on ENTER, so a person
 /// walking through with the ENTER key would walk straight through this one too.
 /// A key that is used nowhere else cannot be pressed by momentum.
+///
+/// IT IS THE GATE, NOT THE LAST GATE. It is the last screen before the one that
+/// decides to write - the account and the mode still come after it, and the
+/// writing starts at screen 10. So it refuses on the strength of what screens 3
+/// to 5 collected and leaves the whole-plan check to ExecuteScreen.Start, which
+/// is where "after here there is no screen left" is a true sentence.
 /// </summary>
 internal sealed class ConfirmScreen : Screen
 {
@@ -57,11 +63,21 @@ internal sealed class ConfirmScreen : Screen
     {
         if (key.Is('F'))
         {
-            // The last gate before anything is written, and the first place the
-            // WHOLE plan is complete enough to check. §6.6 makes execution read
-            // the plan and nothing else, so this is where an incomplete one has
-            // to be caught - after here there is no screen left to catch it on.
-            if (!_plan.Validate(out List<string> problems))
+            // WHAT SCREENS 3 TO 5 COLLECTED, and not one field more.
+            //
+            // This screen validated the WHOLE plan for exactly as long as it was
+            // the last screen before the executor. Phase 3 put the account at 7
+            // and the check was never narrowed, so pressing F asked for an
+            // account nobody had been offered a chance to type: "no user account
+            // was named" on the screen BEFORE the one that names it, with the
+            // error screen the only thing past the confirmation. Screen 7 was
+            // unreachable interactively for the whole of that commit.
+            //
+            // The whole-plan check did not move up, it moved DOWN, to
+            // ExecuteScreen.Start - the moment §6.6 actually means, which is the
+            // one after which there is no screen left to catch anything on. That
+            // is not this one: nothing is written until screen 10.
+            if (!_plan.ValidateThroughStorage(out List<string> problems))
             {
                 Log.Error("refusing to format: " + string.Join("; ", problems));
                 return Transition.To(ErrorScreen.ForPlan(problems));

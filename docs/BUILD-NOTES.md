@@ -1501,3 +1501,163 @@ repository asserted "never attempted" about a job that had been attempted,
 because the evidence lived in GitHub Actions rather than in git, and nothing here
 had thought to ask. Before writing *never* about a build, run `gh run list` —
 the repository name outlives the history under it.
+---
+
+## 45. A screen that validates the whole plan makes the next screen unreachable — and every automated path hid it
+
+Found on 2026-08-25 by walking `os7-setup` by hand. On `main` at 1d764e0 —
+"Phase 3: os7-setup installs a machine, and the machine boots" — **the
+interactive installer could not get past screen 6.**
+
+Welcome → Licence → Regional → Disk → Layout → Confirm, press `F`, and what
+appears is:
+
+```
+Setup cannot continue.
+Setup cannot continue with the settings as they are.
+  no user account was named
+  the account has no password
+```
+
+Both halves came in with the same commit. `ConfirmScreen` called
+`_plan.Validate(out problems)` — the WHOLE-plan check, which unconditionally
+runs `Account.Validate` — and only then transitioned to `new AccountScreen`. So
+the plan was checked for an account **one screen before the account is typed**.
+Screen 7 was unreachable interactively; the error screen was the only thing past
+screen 6.
+
+### The comment on the line was the bug
+
+The call was not careless. It carried this:
+
+> The last gate before anything is written, and the first place the WHOLE plan
+> is complete enough to check … after here there is no screen left to catch it
+> on.
+
+Every word of that was true when it was written, and Phase 2's session notes say
+the same thing: *"The full check runs in exactly two places: `--unattend`, and
+the Confirm screen the moment before anything is written."* Phase 3 then inserted
+screens 7 and 8 between the confirmation and the executor, and the sentence
+quietly became false while the code it justified stayed put. **A comment that
+states a structural fact is a claim with a lifetime**, and nothing checks it.
+
+The general shape: *when a screen is inserted into a flow, the screen before it
+inherits a promise it can no longer keep.*
+
+### Why nothing caught it — three paths, three different reasons
+
+This is the part worth carrying, because the repository's whole discipline is
+supposed to make this impossible and it did not:
+
+| path | why it passed |
+|---|---|
+| `--unattend` | the plan file it is handed **already contains an account**, so the whole-plan check is correct there and always has been |
+| `--storage-only` | skips the account check **by design** — a plan that is complete for preparing a disk should not be refused for lacking a login (`Program.cs`) |
+| `run-phase2.py walk` | the one path that drives the screens by hand. It pressed `F` and then waited for a progress bar, **because at Phase 2 the executor was what came next**. Nobody told it about screens 7 and 8. |
+
+The third is the expensive one, and its failure output is the lesson: the walk
+reported
+
+```
+FAIL  the executor is running
+```
+
+which reads as an executor problem, points at the storage steps, and is not
+about the executor at all. **A harness that asserts "the next thing appeared"
+without naming which thing reports the wrong subsystem when the flow changes
+underneath it.** The fix now reads the error screen first and prints it whole, so
+a returning bug is diagnosed from the log rather than from a screendump.
+
+### The fix: the gate moved down, it did not move up
+
+`ConfirmScreen` now calls `ValidateThroughStorage` — the regional half and the
+storage half, which is exactly what screens 3 to 5 collected. The whole-plan
+check moved to `ExecuteScreen.Start`, and **`ExecuteScreen`'s constructor is now
+private** so that factory is the only way to build one. Constructing that object
+starts a thread that partitions a disk, so "did anybody check the plan first?"
+must not be a question about the caller.
+
+That is the same rule as #33 and #42 in a third costume: *put the check on the
+thing, not on whoever happens to call it today.*
+
+### The regression guard is in `--self-test`, so it fails the BUILD
+
+Two `Handle` calls on screens built without a terminal:
+
+```
+SELFTEST ok   screen 6's check passes a plan that has no account yet
+SELFTEST ok   and the whole-plan check still refuses the same plan — no user account was named; the account has no password
+SELFTEST ok   F on screen 6 reaches screen 7 with no account in the plan — AccountScreen
+SELFTEST ok   the executor's own gate refuses a plan with no account — ErrorScreen
+```
+
+Hook 0080 runs `--self-test` inside the chroot during the ISO build, so a flow
+that cannot reach screen 7 now fails `make build-arm64` rather than a VM run.
+The third line is the one that matters: it asks the **transition**, not the
+predicate behind it. The bug was a screen calling the wrong check, so asking the
+check is asking the wrong question.
+
+What the self-test must NOT do is walk past screen 7. A complete plan through
+`ExecuteScreen.Start` returns an executor, and an executor is a thread
+partitioning a disk — inside a build chroot, as root. Only the refusal is safe to
+ask for, and the refusal is the half that guards a person.
+
+---
+
+## 46. `read_text` decoded a plain hyphen as U+00AD — eight bitmaps in the console font belong to more than one codepoint
+
+Found on 2026-08-25 by the first harness assertion that ever put a hyphen in a
+needle.
+
+`installer/testing/vmscreen.py`'s `read_text` is the repository's OCR: it cuts a
+cell out of a screendump and compares it against every glyph in the PSF, and the
+one that matches exactly wins. That is the right design — the screen was drawn
+from this font, so an exact match is the only correct answer.
+
+It is also ambiguous, and nothing said so. **Eight bitmaps in
+`os7-fixedsys-16x32.psf` are drawn by more than one glyph:**
+
+```
+[('0xad', '\xad'), ('0x2d', '-'), ('0x2010', '‐'), ('0x2212', '−')]  -> returned 0xad
+[('0x20', ' '), ('0xa0', '\xa0')]                                    -> returned 0x20
+[('0x2c', ','), ('0x201a', '‚')]                                     -> returned 0x2c
+[('0x2022', '•'), ('0x2219', '∙')]                                   -> returned 0x2022
+[('0x25c8', '◈'), ('0x2666', '♦'), ('0xfffd', '�')]                  -> returned 0x25c8
+[('0x3a9', 'Ω'), ('0x2126', 'Ω')]                                    -> returned 0x3a9
+[('0x394', 'Δ'), ('0x2206', '∆')]                                    -> returned 0x394
+[('0x2014', '—'), ('0x2015', '―')]                                   -> returned 0x2014
+```
+
+They are **separate glyph indices holding identical pixels** — U+002D is glyph
+45 and U+00AD is glyph 16 — not one glyph with several names, so the PSF itself
+makes no claim about which is meant. The decoder built its lookup with
+`setdefault`, so the winner was whichever codepoint came first in the unicode
+table: **glyph order, an artefact of how `build/lib/psf.py` assembles the
+subset.** For the dash that is U+00AD SOFT HYPHEN.
+
+The symptom, from a screen that was completely correct:
+
+```
+FAIL  the computer name that was typed (os7-phase3): 'os7-phase3' is not on the screen in #ffffff
+ok    the account that was typed (os7admin)
+```
+
+`os7admin` has no hyphen and `os7-phase3` does. The screendump beside it reads
+`Computer:     os7-phase3` in plain sight.
+
+**The lowest codepoint wins.** It is the ASCII one wherever there is an ASCII
+one — which is the character a program printing text actually used — and it is
+the same answer every run, which glyph order was not. It changes only the dash
+in practice; the other seven already resolved to the lower codepoint by accident.
+
+Two things worth carrying:
+
+* **A screen genuinely cannot distinguish them.** The pixels are the same, so
+  this is a naming rule, not a recognition improvement. `verify_glyphs` is
+  unaffected: it is told which character to expect and compares that glyph, which
+  is never ambiguous.
+* **This is #41's shape again from the other side** — a diagnostic that had never
+  been checked against the thing it claims to check. `read_text` had been in use
+  since spike S1 and had been right every time, because every needle anyone had
+  ever written happened to avoid the eight ambiguous glyphs. The first assertion
+  about a typed computer name found it in one run.

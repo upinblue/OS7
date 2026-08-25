@@ -24,7 +24,7 @@ decides what, the commands that work, and the traps that cost the most.
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally.** See §3. |
-| `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS.** `run-phase3.py all` installs unattended and then starts the disk with no ISO attached: LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs` on the command line. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md). Screen 9 (network) is the one part of 7–11 not delivered. |
+| `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS, from `--unattend` and from the keyboard.** `run-phase3.py all` installs unattended, starts the disk with no ISO attached (LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs`), and then installs a second machine **by keypress alone** — screens 1–7 to the Complete screen. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md) and [SESSION-SCREEN6-GATE.md](SESSION-SCREEN6-GATE.md). Screen 9 (network) is the one part of 7–11 not delivered. |
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 
@@ -79,7 +79,15 @@ to an initramfs prompt. BUILD-NOTES #15.
   to attach `swtpm`; until that is done, the enrolment path is written and
   unproven.
 * **The GUI half of screen 8 has never run**, because no amd64 ISO has ever been
-  built. `InstallModeStep`'s desktop-removal branch is in the same position.
+  built. `InstallModeStep`'s desktop-removal branch is in the same position, and
+  so is screen 8's own ENTER — the arm64 flow skips the screen entirely.
+* **The interactive flow could not reach screen 7 at all until 2026-08-25**, and
+  three automated paths passed throughout: `--unattend` is handed a plan that
+  already contains an account, `--storage-only` skips the account check by
+  design, and the screen-walking harness still expected Phase 2's flow.
+  [SESSION-SCREEN6-GATE.md](SESSION-SCREEN6-GATE.md), BUILD-NOTES #45. **Anything
+  that changes the screen order has to be walked by hand:**
+  `./installer/testing/run-phase3.py walk`.
 * **U8** — the escrowed recovery passphrase — is still open, and still on the
   layout screen where the operator can see it.
 

@@ -254,12 +254,28 @@ def read_text(w, h, rgb, font, row, col, length, fg=(255, 255, 255)):
     exactly wins. It is not fuzzy and it is not clever - the screen was drawn
     from this font, so an exact match is the only correct answer, and 'no glyph
     matched' is a finding rather than a reason to guess.
+
+    EIGHT BITMAPS IN THIS FONT BELONG TO MORE THAN ONE CODEPOINT, and one of
+    them is the hyphen. U+002D, U+00AD, U+2010 and U+2212 are four separate
+    glyphs in the subset drawing the identical picture, so a dash on the glass
+    cannot be told apart from any of the others - it is the same pixels. The
+    only question is which name to return, and the answer has to be the same
+    every time.
+
+    THE LOWEST CODEPOINT WINS. It is the ASCII one wherever there is an ASCII
+    one, which is the character a program printing text actually used; the
+    alternatives are in Latin-1 and General Punctuation. Before this, the winner
+    was whichever came first in the PSF's unicode table - that is glyph order,
+    an artefact of how the subset was built - and a plain `-` decoded as U+00AD
+    SOFT HYPHEN. Nothing caught it because no assertion in this repository had
+    ever put a hyphen in a needle. BUILD-NOTES #46.
     """
     cw, ch = font.width, font.height
     by_bits = {}
     for cp, glyph in font.table.items():
         key = tuple(tuple(r) for r in font.bitmap(glyph))
-        by_bits.setdefault(key, cp)
+        if cp < by_bits.get(key, 0x110000):
+            by_bits[key] = cp
     out = []
     for i in range(length):
         key = tuple(tuple(r) for r in cell_bitmap(w, rgb, row, col + i, cw, ch, fg))

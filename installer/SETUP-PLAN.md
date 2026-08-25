@@ -375,6 +375,15 @@ text — but it is why the screen list is longer than Win2k's text phase.
 | 12 | Setup is complete | Win2k restart prompt | `ENTER` |
 | E | Setup cannot continue (error) | Win2k blue error screen | `ENTER` `F2` `F3` |
 
+**Screen 6 is the gate, not the last check.** It is the last screen before the
+one that decides to write, and the writing starts at 10 — so `F` is a decision,
+not an action, and the disk is untouched while 7 and 8 are filled in. A screen
+may only refuse for something it could have got right, so screen 6 checks the
+regional and storage halves and no more. The whole plan is checked once, at
+`ExecuteScreen.Start`, which is where "there is no screen left to catch it on"
+is a true sentence. It was screen 6's sentence until Phase 3 inserted 7 and 8,
+and for one commit that made screen 7 unreachable — BUILD-NOTES #45.
+
 `R` on screen 1 is the interesting one. Win2k's `R=Repair` maps almost exactly
 onto a ZFS concept: **import an existing `rpool` and install into a new boot
 environment beside the current one**, leaving `rpool/USERDATA` untouched. That
@@ -1230,8 +1239,17 @@ back** each time — `sgdisk -p`, `blkid`, `cryptsetup luksDump`, `zpool list`,
   screens filling the plan in one at a time, so the plan is incomplete for most
   of the flow by design — screen 3 calling the whole-plan check produced an
   error screen reading "no disk selected" three screens before the disk screen.
-  The full check runs in exactly two places: `--unattend`, and the Confirm
-  screen the moment before anything is written.
+  The full check runs in exactly two places: `--unattend`, and
+  `ExecuteScreen.Start`, whose factory is the only way to build an executor
+  because building one begins writing to a disk.
+
+  *Corrected 2026-08-25.* That second place used to be the Confirm screen, which
+  was true for exactly as long as the Confirm screen was the last one before the
+  executor. Phase 3 put the account at 7 and the mode at 8; screen 6 went on
+  demanding an account nobody had been offered a chance to type, and **screen 7
+  became unreachable interactively.** Screen 6 now checks
+  `ValidateThroughStorage` — the regional and storage halves, which is what
+  screens 3 to 5 collected. BUILD-NOTES #45.
 * **`--dry-run` runs nothing**, including the parts that only read. The first
   version still started `pwsh` to ask for a boot-environment name, which makes
   the option fail on a machine where the real run would have worked and turns
@@ -1251,6 +1269,14 @@ hostname, users, `zgenhostid`, `update-initramfs`); bootloader install and the
 `grub.d` BE generator; screens 7–11; the GUI/headless split (offline
 `apt purge` of the desktop for headless, `systemctl set-default multi-user.target`).
 *Deliverable:* a machine installed by Setup boots into OS/7.
+
+**The flow was walked by hand on 2026-08-25, and that is what found the gate
+bug.** `./installer/testing/run-phase3.py walk` installs by keypress alone —
+screens 1 to 7, a typed passphrase and a typed account, to the Complete screen —
+because `--unattend` cannot stand in for it: an unattended plan already carries
+an account, so it kept passing while the interactive flow could not get past
+screen 6. run-phase2's `walk` now stops at the gate, checks that `F` reaches
+screen 7, and asks the device whether anything was written (it was not).
 
 **Screen 9 is NOT in the Phase 3 delivery, and that is a decision.** DHCP is
 the default on a fresh Ubuntu install and a machine that boots can be configured

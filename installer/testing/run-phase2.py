@@ -8,7 +8,7 @@ screens are walked and then the RESULT IS READ BACK OFF THE DEVICE:
 
     ./run-phase2.py dryrun     --unattend --dry-run: every command, none run
     ./run-phase2.py unattend   --unattend for real, then verify the disk
-    ./run-phase2.py walk       drive screens 4-6 by hand, then verify the disk
+    ./run-phase2.py walk       drive screens 4-6 by hand, up to the gate
     ./run-phase2.py rollback   make a step fail; check nothing is left behind
     ./run-phase2.py existing   install, then point Setup at that same disk again
     ./run-phase2.py all        all five                     (default)
@@ -20,6 +20,19 @@ install - Phase 3 made that the default, because an unattended mode that does
 less than the interactive one is a mode nothing tests the same way. This file
 tests the storage executor, so it asks for exactly that; the full install and the
 boot that follows it belong to `run-phase3.py`.
+
+`walk` OBEYS THAT CONTRACT BY STOPPING, and it is worth saying why rather than
+leaving it as a shorter phase than it used to be. THERE IS NO INTERACTIVE
+`--storage-only`: from screen 7 onwards the interactive path installs an entire
+operating system. So the walk drives screens 4, 5 and 6, presses `F`, checks that
+the ACCOUNT SCREEN is what appears - and checks on the device that pressing `F`
+wrote nothing - and hands over. `./run-phase3.py walk` drives the whole flow to
+the Complete screen.
+
+That handover is the fix for a bug this file helped hide. Phase 3 inserted
+screens 7 and 8 between the confirmation and the executor; this walk still
+pressed `F` and waited for a progress bar, so a flow that could not get past
+screen 6 was reported as "the executor is running: FAIL".
 
 The VM gets a SECOND, BLANK disk. The live medium is the first one, which is
 also the point: L12 requires Setup to refuse its own boot medium, and a run with
@@ -575,8 +588,15 @@ def phase_existing(font):
 
 
 def phase_walk(font):
-    """Screens 4, 5 and 6, driven by keypresses, then the disk read back."""
-    print("\n  walk — screens 4, 5 and 6, by hand")
+    """Screens 4, 5 and 6, driven by keypresses, up to and through the gate.
+
+    The storage SCREENS, which is a different subject from the storage EXECUTOR
+    the other four phases test. It ends where Phase 2 ends: `F` is pressed, the
+    account screen appears, ESC comes back, and the target disk is asked whether
+    any of that touched it. Nothing here runs an executor, so nothing here needs
+    `--storage-only` to be told not to.
+    """
+    print("\n  walk — screens 4, 5 and 6, by hand, up to the gate")
     c, q = lab.boot(CMDLINE, "walk")
     ok = True
     try:
@@ -661,42 +681,68 @@ def phase_walk(font):
         ok &= on_screen(w, h, rgb, "about to write to the disk",
                         "ENTER does not confirm a destructive step")
 
-        q.send_key("f")
-        w, h, rgb = shoot("28-executing", 3.0)
-        ok &= on_screen(w, h, rgb, "preparing", "the executor is running")
-
-        # WATCHED ON THE SCREEN, not on the serial line. os7-setup's own output
-        # goes to tty1 and its log goes to a file - the unit sends stderr to the
-        # journal - so there is nothing on the serial console to wait for. The
-        # screen is the interface; the screen is what gets watched.
+        # F: THE GATE. It leads to SCREEN 7, and it writes nothing on the way.
         #
-        # It takes a while: argon2id sized at 512 MB is deliberate (§4.5).
-        print("      waiting for the executor …")
-        deadline = time.time() + 900
-        w = h = 0
-        rgb = b""
-        while time.time() < deadline:
-            time.sleep(10)
-            w, h, rgb = lab.shoot(q, "29-complete")
-            rows = h // font.height
-            cols = w // font.width
-            page = "\n".join(read_text(w, h, rgb, font, r, 0, cols, BRAND)
-                              for r in range(rows))
-            page += "\n".join(read_text(w, h, rgb, font, r, 0, cols)
-                               for r in range(rows))
-            if "NO OPERATING SYSTEM HAS BEEN COPIED" in page: break
-            if "Setup cannot continue" in page:
-                print("      FAIL  the executor failed; the error screen is up")
-                return False
-        else:
-            print("      FAIL  the executor never finished")
-            return False
-        ok &= on_screen(w, h, rgb, "NO OPERATING SYSTEM HAS BEEN COPIED",
-                        "Complete says the disk does not boot yet", fg=BRAND)
+        # This is the assertion that was missing, and its absence cost a release.
+        # At Phase 2 the executor was what came after `F`, so this harness
+        # pressed `F` and waited for a progress bar. Phase 3 inserted screens 7
+        # and 8 between the two and nothing here was told. What actually appeared
+        # was the error screen - "no user account was named", ONE SCREEN BEFORE
+        # the account is typed - and the walk reported FAIL at "the executor is
+        # running", which reads as an executor problem and was not one.
+        q.send_key("f")
+        w, h, rgb = shoot("28-account", 2.5)
 
-        # tty2 keeps a root shell for diagnosis (§7) - but the harness has the
-        # serial line, which is simpler and is already logged in.
-        ok &= verify_disk(c, encrypted=True)
+        # The regression's own signature, read first and printed whole. A
+        # returning bug should be diagnosable from this log alone rather than
+        # from three assertions failing about text that is not there.
+        rows, cols = h // font.height, w // font.width
+        page = "\n".join(read_text(w, h, rgb, font, r, 0, cols).rstrip()
+                         for r in range(rows))
+        if "Setup cannot continue" in page:
+            print("      FAIL  screen 6 refused its own plan - the error screen is up")
+            print("            screen 7 is unreachable; this is the 1d764e0 regression")
+            for r in range(rows):
+                line = read_text(w, h, rgb, font, r, 0, cols).rstrip()
+                if line:
+                    print(f"            {line}")
+            return False
+
+        ok &= on_screen(w, h, rgb, "a name for this computer",
+                        "F on screen 6 leads to screen 7")
+        ok &= on_screen(w, h, rgb, "Computer name:", "screen 7 asks for a computer name")
+        ok &= on_screen(w, h, rgb, "User name:", "and for an account to administer it")
+
+        # ESC comes back. Screen 6 is a gate, not a door that locks behind you -
+        # and it is the first thing anybody does after being asked for a name
+        # they have not decided on yet.
+        q.send_key("esc")
+        w, h, rgb = shoot("29-back-at-the-gate", 2.0)
+        ok &= on_screen(w, h, rgb, "about to write to the disk",
+                        "ESC from screen 7 returns to the confirmation")
+
+        # AND NOTHING WAS WRITTEN. Asked of the DEVICE, not of the screen.
+        #
+        # §3 numbers the account 7 and the copy 10, so `F` is a decision and not
+        # an action - which is a claim about a disk and therefore has to be
+        # checked on the disk. lsblk lists the target's children: a blank disk
+        # has none, a partitioned one has three.
+        text = ask(c, f"lsblk -rno NAME,TYPE {TARGET}", "the target's partitions")
+        parts = [l.split()[0] for l in text.replace("\r", "").splitlines()
+                 if l.strip().endswith(" part")]
+        if parts:
+            print(f"      FAIL  F partitioned the disk before screen 7: {parts}")
+            ok = False
+        else:
+            print("      ok    the target is still blank - F decides, it does not write")
+
+        # AND THAT IS WHERE THIS PHASE STOPS, deliberately.
+        #
+        # Everything past screen 7 installs a whole operating system: there is no
+        # interactive equivalent of `--storage-only`, so an interactive walk that
+        # goes on from here would break this file's contract (see the top) and
+        # take twenty-five minutes doing it. The full interactive install, to the
+        # Complete screen, is `./run-phase3.py walk`.
         return ok
     finally:
         q.close()

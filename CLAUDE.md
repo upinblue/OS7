@@ -41,7 +41,8 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 
 ./installer/testing/check-image.py        # ask a built ISO what it is - no boot
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
-./installer/testing/run-phase3.py all     # install, then BOOT THE DISK ALONE
+./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
+                                          #   install again BY KEYPRESS (walk)
 ./installer/spikes/run-s1.py all          # the look: palette, font, glyphs, keys
 ./installer/spikes/run-s3.py all          # install to a disk and boot from it
 ./installer/spikes/run-s4.py all          # Secure Boot + TPM2 unlock (budget 1h)
@@ -140,6 +141,11 @@ the ones a fresh session hits first.
   (`scripts/os7-source-facts.sh`) and hands the three facts in; `build.sh` now
   refuses rather than inventing a version. Claude Code sessions run in a
   worktree by default, so this is hit on the first build, not the tenth.
+- **#45 — a screen must validate only what IT collected.** Screen 6 checked the
+  whole plan, including an account nobody had been asked for yet, and screen 7
+  was unreachable for a whole commit. `--unattend`, `--storage-only` and the
+  screen-walking harness each missed it for a different reason. The whole plan is
+  checked once, at `ExecuteScreen.Start`.
 
 ---
 

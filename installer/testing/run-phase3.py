@@ -9,7 +9,8 @@ that disk with nothing else attached.
 
     ./run-phase3.py install    install unattended from the live medium
     ./run-phase3.py boot       BOOT THE DISK ALONE and log in as the account
-    ./run-phase3.py all        install, boot        (default)
+    ./run-phase3.py walk       install by KEYPRESS, screens 1-7 to Complete
+    ./run-phase3.py all        install, boot, walk  (default)
     ./run-phase3.py reset      discard the VM state
 
 `install` and `boot` are separate phases on purpose, and the separation is the
@@ -34,16 +35,38 @@ WHAT IS ASSERTED, in order, because each one fails differently:
 
 7 is the check nothing else can make: os-release on the INSTALLED system, after
 `unsquashfs` copied it and ReleaseIdentityStep rewrote VARIANT.
+
+`walk` IS HERE AND NOT IN run-phase2.py, and that is a decision rather than a
+filing choice. The interactive path performs a FULL INSTALL - there is no
+interactive equivalent of `--storage-only`, and run-phase2's contract is that
+every invocation asks for storage alone. It is also the only phase in this
+repository that proves the flow can be walked at all: `install` above hands
+os7-setup a plan file with an account already in it, which is exactly why it kept
+passing on 2026-08-24 while the interactive flow could not get past screen 6.
+
+`walk` and `install` type the same passphrase, password, computer name and
+account name, so `boot` verifies whichever of them ran last.
 """
 
 import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vmconsole import Console, live_login, to_plain_bash            # noqa: E402
-from vmscreen import Lab, run                                      # noqa: E402
+from vmscreen import Lab, hexc, load_font, read_text, run           # noqa: E402
+
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "build", "lib"))
+import palette                                                     # noqa: E402
+
+# §3.1's brand blue. `walk` reads the screen back through the console font, and
+# the sentences that matter most on those screens are drawn in this colour
+# rather than in white - reading only white finds nothing and calls it absent.
+BRAND = palette.BRAND
 
 PASSPHRASE = "os7-phase3-passphrase"
 PASSWORD = "os7-phase3-password"
@@ -62,6 +85,15 @@ LIVE_CMDLINE = "boot=casper fbcon=nodefer quiet console=ttyAMA0,115200"
 # block device rather than a CD so that it is a `disk` to lsblk - BUILD-NOTES
 # #35, and the only shape in which "the medium is refused" can be tested at all.
 TARGET = "/dev/disk/by-id/virtio-os7target"
+
+# The console font, for reading the screen back through it. `walk` is the only
+# phase that needs it - `install` and `boot` are serial-line phases - so it is
+# fetched lazily rather than on every run.
+FONT = os.path.join(lab.dir, "os7-fixedsys-16x32.psf.gz")
+
+# QEMU qcodes for the characters `walk` types. Letters and digits are their own
+# qcode; everything else has a name.
+QCODE = {"-": "minus", "_": "shift-minus", ".": "dot", "/": "slash", " ": "spc"}
 
 _mark = 0
 
@@ -142,6 +174,27 @@ def medium_release():
         "cp /mnt/sq/usr/lib/os7/release.json /out/medium-release.json; "
         "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
     return json.load(open(out))
+
+
+def fetch_font():
+    """The console font off the ISO, so the screen can be read through it.
+
+    THE THIRD COPY of this function in installer/testing/ — run-phase1 and
+    run-phase2 have the same one. It is left duplicated rather than hoisted in a
+    bug-fix change: the other two are proven and this file is the one being
+    added to. Somewhere to put it is `vmscreen.Lab`.
+    """
+    if os.path.exists(FONT):
+        return
+    os.makedirs(lab.dir, exist_ok=True)
+    run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
+        "-v", f"{os.path.dirname(lab.iso)}:/iso:ro", "-v", f"{lab.dir}:/out",
+        "os7-build:arm64", "bash", "-c",
+        f"set -e; mkdir -p /mnt/iso /mnt/sq; "
+        f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
+        "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
+        "cp /mnt/sq/usr/share/consolefonts/os7-fixedsys-16x32.psf.gz /out/; "
+        "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
 
 
 def write_plan(c):
@@ -320,7 +373,269 @@ def phase_boot():
         c.close()
 
 
-PHASES = {"install": phase_install, "boot": phase_boot}
+def phase_walk(font):
+    """THE INTERACTIVE PATH, all of it — screens 1 to 7 by hand, to the Complete
+    screen, with a real install behind it.
+
+    This phase exists because `--unattend` cannot stand in for it, and the reason
+    is not a preference. At 1d764e0 - the commit whose message is "os7-setup
+    installs a machine, and the machine boots" - os7-setup could not get past
+    screen 6: the confirmation validated the WHOLE plan, including an account
+    nobody had been asked for yet, so pressing `F` produced "no user account was
+    named" and screen 7 was unreachable. Every automated check in the repository
+    passed throughout. `--unattend` hands over a plan that already has an account in it,
+    `--storage-only` skips the account check by design, and the one harness that
+    drove the screens by hand had never been taught that Phase 3 inserted screens
+    7 and 8 - it pressed `F`, waited for a progress bar, and reported the error
+    screen as "the executor is running: FAIL".
+
+    So: the KEYBOARD is the input, from the first ENTER to the Complete screen,
+    and every value on that last screen is one somebody typed.
+
+    THERE IS NO INTERACTIVE `--storage-only`. From screen 7 onwards this installs
+    an entire operating system, which is why it lives here and not in
+    run-phase2.py - that file's contract is that every invocation asks for
+    storage alone.
+
+    It types the same passphrase, password, computer name and account name that
+    `install` puts in its plan file, so the disk it leaves behind is one
+    `./run-phase3.py boot` can verify without knowing which of the two built it.
+    """
+    print("\n  walk — the whole flow, driven by keypresses")
+    rel = medium_release()
+    version = rel["version"]
+
+    lab.prepare()
+    c, q = lab.boot(CMDLINE, "walk")
+    ok = True
+    try:
+        def shoot(name, pause=1.5):
+            time.sleep(pause)
+            return lab.shoot(q, name)
+
+        def page_of(w, h, rgb):
+            """Everything on the screen, in white AND in the brand blue.
+
+            Both, because §3.1 puts the sentences that matter most in the brand
+            colour - "ALL DATA ON THIS DISK WILL BE LOST", "Do not turn off the
+            computer" - and reading only white finds nothing and calls it absent.
+            """
+            rows, cols = h // font.height, w // font.width
+            white = [read_text(w, h, rgb, font, r, 0, cols).rstrip() for r in range(rows)]
+            brand = [read_text(w, h, rgb, font, r, 0, cols, BRAND).rstrip()
+                     for r in range(rows)]
+            return "\n".join(white + brand)
+
+        def on_screen(w, h, rgb, needle, what, fg=(255, 255, 255)):
+            rows, cols = h // font.height, w // font.width
+            for row in range(rows):
+                if needle in read_text(w, h, rgb, font, row, 0, cols, fg).rstrip():
+                    print(f"      ok    {what}")
+                    return True
+            print(f"      FAIL  {what}: '{needle}' is not on the screen in {hexc(fg)}")
+            return False
+
+        def press(qcode, gap=0.06):
+            """One key, then a gap.
+
+            THE GAP IS NOT POLITENESS - BUILD-NOTES #34. QEMU holds each key for
+            a fixed time (20 ms as vmscreen sends them) and a USB HID keyboard
+            cannot report two independent presses at once, so keys sent closer
+            together than the hold OVERLAP and all but one vanish. That is how a
+            typed passphrase once arrived as a single character, with Setup
+            correctly complaining it was too short.
+            """
+            q.send_key(qcode)
+            time.sleep(gap)
+
+        def typed(text):
+            """Type a string, THROUGH THE HID KEYBOARD.
+
+            So it travels the path a person's keystrokes do - USB, the kernel
+            keymap, the VT's XLATE translation. Writing escape sequences into a
+            pipe would prove nothing about either layer.
+            """
+            for ch in text:
+                press(QCODE.get(ch, ch), 0.03)
+
+        # -- screens 1, 2, 3: Welcome, Licence, Regional ---------------------
+        w, h, rgb = shoot("40-welcome", 3.0)
+        ok &= on_screen(w, h, rgb, "Welcome to Setup", "screen 1 is Welcome")
+        press("ret")
+        w, h, rgb = shoot("41-licence", 1.5)
+        press("f8", 1.5)
+        # The defaults are accepted: this phase is about the flow, and the
+        # regional values have their own coverage in run-phase1.
+        for _ in range(3):
+            press("down")
+        time.sleep(0.5)
+        press("ret")
+
+        # -- screen 4: the disk ----------------------------------------------
+        w, h, rgb = shoot("42-disk", 2.0)
+        ok &= on_screen(w, h, rgb, "install OS/7 on the disk", "screen 4 is Select a disk")
+        press("down")               # past the setup medium, which L12 refuses
+        time.sleep(0.5)
+        press("ret")
+
+        # -- screen 5: the layout, and the passphrase ------------------------
+        w, h, rgb = shoot("43-layout", 2.0)
+        ok &= on_screen(w, h, rgb, "storage settings", "screen 5 is Storage layout")
+        press("ret", 1.0)           # refused: there is no passphrase yet
+        #
+        # ENTER AGAIN, WITHOUT MOVING FIRST. Refusing also moves the selection
+        # onto the offending row, which is right for a person and wrong for a
+        # harness that navigates there itself: run-phase2 once pressed UP as
+        # well, landed on Encryption, and turned encryption off.
+        press("ret")                # ENTER on the row it moved the selection to
+        w, h, rgb = shoot("44-passphrase", 1.5)
+        ok &= on_screen(w, h, rgb, "passphrase for the encrypted disk",
+                        "the passphrase prompt")
+        for _ in range(2):
+            typed(PASSPHRASE)
+            press("ret", 1.0)
+        w, h, rgb = shoot("44b-passphrase-set", 1.5)
+        press("ret")                # The settings are correct
+
+        # -- screen 6: the gate ----------------------------------------------
+        w, h, rgb = shoot("45-confirm", 2.0)
+        ok &= on_screen(w, h, rgb, "about to write to the disk",
+                        "screen 6 is the confirmation")
+        press("f")
+
+        # -- screen 7: the account -------------------------------------------
+        w, h, rgb = shoot("46-account", 2.5)
+        if "Setup cannot continue" in page_of(w, h, rgb):
+            print("      FAIL  screen 6 refused its own plan - screen 7 is unreachable")
+            for line in page_of(w, h, rgb).splitlines():
+                if line:
+                    print(f"            {line}")
+            return False
+        ok &= on_screen(w, h, rgb, "a name for this computer", "screen 7 is the account form")
+
+        # The computer name arrives PRE-FILLED with "os7" (AccountScreen fills
+        # the fields from the plan so ESC and ENTER show what was typed), so it
+        # is cleared before anything is typed into it. More backspaces than
+        # characters: an empty field returns them unhandled, which costs nothing.
+        for _ in range(10):
+            press("backspace", 0.03)
+        typed(HOSTNAME)
+        press("tab")
+        typed(USERNAME)
+        press("tab")                # Full name, left blank - it is optional
+        press("tab")
+        typed(PASSWORD)
+        press("tab")
+        typed(PASSWORD)
+        w, h, rgb = shoot("47-account-filled", 1.0)
+        ok &= on_screen(w, h, rgb, HOSTNAME, "the computer name is in the field")
+        ok &= on_screen(w, h, rgb, USERNAME, "and the account name")
+        press("ret")
+
+        # -- screen 8 does not exist here, and that is the assertion ---------
+        #
+        # arm64 is server-only (README), so ModeScreen.Next skips the GUI/headless
+        # question and goes straight to the executor. On amd64 there would be one
+        # more ENTER here; no amd64 ISO has ever been built.
+        w, h, rgb = shoot("48-executing", 4.0)
+        page = page_of(w, h, rgb)
+        if "Choose how this computer will be used" in page:
+            print("      FAIL  screen 8 appeared on arm64, which ships no desktop")
+            return False
+        if "Setup cannot continue" in page:
+            print("      FAIL  the plan was refused at the executor's gate")
+            for line in page.splitlines():
+                if line:
+                    print(f"            {line}")
+            return False
+        if "Do not turn off the computer" in page:
+            print("      ok    screen 8 is skipped on arm64 and the executor is running")
+        else:
+            print("      FAIL  the executor did not start after screen 7")
+            for line in page.splitlines():
+                if line:
+                    print(f"            {line}")
+            return False
+
+        # -- screens 10 and 11, watched, then 12 -----------------------------
+        #
+        # WATCHED ON THE SCREEN, not on the serial line: os7-setup writes to tty1
+        # and logs to a file, so there is nothing on the console to wait for. The
+        # screen is the interface, so the screen is what gets read.
+        #
+        # Thirty minutes, because that is what this actually is: unsquashfs of a
+        # 2 GB image onto ZFS-on-LUKS, argon2id sized at 512 MB (§4.5), and
+        # update-initramfs. A timeout that fires during a working install is a
+        # harness reporting a bug it created.
+        print("      waiting for the install … (unsquashfs + initramfs; ~15-25 min)")
+        deadline = time.time() + 1800
+        seen = ""
+        while time.time() < deadline:
+            time.sleep(20)
+            w, h, rgb = lab.shoot(q, "49-complete")
+            page = page_of(w, h, rgb)
+            if "Setup has prepared this computer" in page:
+                break
+            if "Setup cannot continue" in page:
+                print("      FAIL  the install failed; the error screen is up")
+                for line in page.splitlines():
+                    if line:
+                        print(f"            {line}")
+                return False
+            # The step name, printed when it changes, so a stall is visible as a
+            # step that stopped moving rather than as a silent twenty minutes.
+            for line in page.splitlines():
+                stripped = line.strip()
+                if stripped.endswith("…") and stripped != seen:
+                    seen = stripped
+                    print(f"        {stripped}")
+        else:
+            print("      FAIL  the install never reached the Complete screen")
+            return False
+
+        # -- screen 12: what it says is what was typed -----------------------
+        print("      the Complete screen:")
+        ok &= on_screen(w, h, rgb, "Setup has prepared this computer",
+                        "screen 12 is Setup is complete")
+        ok &= on_screen(w, h, rgb, version, f"it names the version on the medium ({version})")
+        ok &= on_screen(w, h, rgb, TARGET, "and the disk that was chosen")
+        ok &= on_screen(w, h, rgb, "LUKS2 (passphrase set)", "encryption, with a passphrase")
+        ok &= on_screen(w, h, rgb, HOSTNAME, f"the computer name that was typed ({HOSTNAME})")
+        ok &= on_screen(w, h, rgb, USERNAME, f"the account that was typed ({USERNAME})")
+        ok &= on_screen(w, h, rgb, "(headless)", "headless, as arm64 must be")
+        ok &= on_screen(w, h, rgb, "press ENTER to restart", "and it offers a restart")
+
+        # NOT "NO OPERATING SYSTEM HAS BEEN COPIED". That sentence was Phase 2's
+        # Complete screen being honest about a disk that could not boot; Phase 3
+        # copies a system, so a Complete screen still saying it would be the
+        # screen lying in the other direction.
+        if "NO OPERATING SYSTEM" in page_of(w, h, rgb):
+            print("      FAIL  the Complete screen still carries the Phase 2 wording")
+            ok = False
+        else:
+            print("      ok    it no longer says the disk holds no operating system")
+
+        # The pools are exported by TeardownStep, not by this harness - the same
+        # argument `install` makes. Asked, because the next boot is where the
+        # difference between "the installer did it" and "the harness did it"
+        # shows, and by then it is too late to tell them apart.
+        text = ask(c, "zpool list -H -o name || true", "imported pools")
+        body = text.split("zpool list -H -o name || true", 1)[-1]
+        if "rpool" in body or "bpool" in body:
+            print("      FAIL  a pool is still imported after the Complete screen")
+            ok = False
+        else:
+            print("      ok    the installer exported both pools")
+
+        print("      note  the disk on the bench is now the one this walk built;")
+        print("            `./run-phase3.py boot` boots it.")
+        return ok
+    finally:
+        q.close()
+        c.close()
+
+
+PHASES = {"install": phase_install, "boot": phase_boot, "walk": phase_walk}
 
 
 def main():
@@ -340,6 +655,13 @@ def main():
             return 1
     if what in ("all", "boot"):
         results["boot"] = phase_boot()
+    if what in ("all", "walk"):
+        # LAST in `all`, on purpose. It rebuilds the target disk from scratch, so
+        # running it before `boot` would have `boot` verify the walk's machine
+        # and never the unattended one. Afterwards the disk on the bench is the
+        # walk's, and `./run-phase3.py boot` will say whether that one boots too.
+        fetch_font()
+        results["walk"] = phase_walk(load_font(FONT))
     if not results:
         raise SystemExit(__doc__)
 

@@ -564,6 +564,66 @@ internal static class Program
         Check(!secret2.ToJson().Contains("hunter2"),
               "the account password is not serialised into the plan");
 
+        // ---------------------------------------------------------------------
+        // THE GATES, WALKED. Screen 6 -> screen 7, and the door in front of the
+        // executor.
+        //
+        // This exists because the flow was broken for a whole commit and every
+        // check in the repository still passed. `--unattend` hands over a plan
+        // with an account already in it, `--storage-only` skips the account
+        // check by design, and the one harness that drove the screens by hand
+        // had not been taught that Phase 3 inserted screens 7 and 8 — so
+        // "os7-setup cannot get past screen 6" was invisible from three
+        // directions at once.
+        //
+        // It is two `Handle` calls on screens built off a terminal, which is
+        // exactly what §6.5 says screens are for. It runs in the chroot during
+        // the ISO build (hook 0080), so a flow that cannot reach screen 7 fails
+        // the BUILD rather than the VM.
+        //
+        // WHAT IS NOT CHECKED HERE, and must not be: the far side of screen 7.
+        // A complete plan through `ExecuteScreen.Start` returns an executor, and
+        // an executor is a thread partitioning a disk. The self-test runs as
+        // root inside a build chroot. Only the refusal is safe to ask for, and
+        // the refusal is the half that guards a person.
+        {
+            // Everything screens 3, 4 and 5 collect, and not a field more —
+            // which is precisely the state the plan is in when `F` is pressed.
+            var atScreen6 = new InstallPlan
+            {
+                Storage = { Disk = "/dev/disk/by-id/scsi-selftest",
+                            Encrypt = true, Passphrase = "correct horse battery" },
+            };
+            var target = new Disk("/dev/sdz", "/dev/disk/by-id/scsi-selftest", "sdz",
+                                  953_000_000_000L, "SELFTEST", "0", "gpt", 3, null,
+                                  Array.Empty<(string, string)>(), Os7Layout: false);
+
+            Check(atScreen6.ValidateThroughStorage(out List<string> why4),
+                  "screen 6's check passes a plan that has no account yet",
+                  string.Join("; ", why4));
+            Check(!atScreen6.Validate(out List<string> why5)
+                  && why5.Any(w => w.Contains("account")),
+                  "and the whole-plan check still refuses the same plan",
+                  string.Join("; ", why5));
+
+            // The transition itself, not the predicate behind it: the bug was a
+            // screen calling the wrong check, so asking the check is asking the
+            // wrong question. Press F and see which screen comes back.
+            Transition t = new ConfirmScreen(atScreen6, target)
+                .Handle(new KeyPress(Key.Char, 'F', "F"));
+            Check(t.Kind == TransitionKind.Goto && t.Next is AccountScreen,
+                  "F on screen 6 reaches screen 7 with no account in the plan",
+                  t.Next?.GetType().Name ?? t.Kind.ToString());
+
+            // And the check that moved: the same plan must not be able to open
+            // the executor. `Start` refuses before the constructor runs, so
+            // nothing is written and there is no thread to join.
+            Screen refusedByGate = ExecuteScreen.Start(atScreen6);
+            Check(refusedByGate is ErrorScreen,
+                  "the executor's own gate refuses a plan with no account",
+                  refusedByGate.GetType().Name);
+        }
+
         // The GUI/headless question is amd64's alone: arm64 ships no desktop, so
         // a screen offering the choice would offer something that is not there.
         Check(ModeScreen.Applies == (System.Runtime.InteropServices.RuntimeInformation
