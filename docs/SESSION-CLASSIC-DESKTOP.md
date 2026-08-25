@@ -278,6 +278,31 @@ from an argument into a result.
 
 1. **Build an amd64 ISO with it.** Nothing else on this list can start until
    that exists, and it cannot be built on Apple Silicon (BUILD-NOTES #12/#23).
+   It does not need a merge to main: `.github/workflows/build-iso.yml` has
+   `workflow_dispatch`, and `--ref` takes a branch. The branch is pushed and
+   waiting.
+
+   ```bash
+   gh workflow run build-iso.yml --ref worktree-desktop-classic-theme
+   gh run watch <id> --exit-status
+   gh run download <id> -n os7-amd64-iso -D out/ci
+   ```
+
+   Three things to know before starting, all from os7-d7, who ran four amd64
+   jobs on 2026-08-25:
+
+   * **The CI environment was about four times slower that day** — an amd64 job
+     took 1h13m instead of 25 minutes. Long is not the same as hung. A peer
+     killed a live build that afternoon by inferring "stuck" from the duration
+     instead of reading the log.
+   * **A running job will not give you its log.** `gh run view --log` only works
+     after the run completes, so there is nothing to watch in between.
+   * **The 3 GB download ran at 910 KiB/s**, about 50 minutes. Measure the
+     throughput on the temp file rather than guessing whether it stalled.
+
+   Deliberately not started by this session: triggering CI means pushing and
+   spending someone else's compute, which is the product owner's call. The
+   branch is pushed so the run is one command away whenever that call is made.
 2. **Boot it and read the screen back.** The colours to check are exact:
    desktop `#000000`, caption gradient starting `#0A246A`, window face
    `#D4D0C8`. `installer/testing/vmscreen.py` does this for the text phase, but
