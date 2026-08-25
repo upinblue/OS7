@@ -592,7 +592,14 @@ def phase_walk(font):
         # executor anyway, and report success - which is exactly how the screen-6
         # gate bug survived every automated check in the repository.
         ok &= on_screen(w, h, rgb, "network connection", "screen 9 is the network screen")
-        ok &= on_screen(w, h, rgb, "virtio_net", "the virtio NIC is in the adapter list")
+
+        # IN BLACK, because the adapter row is SELECTED. SelectionList draws the
+        # highlighted row black-on-grey across the full inner width, so reading
+        # only white finds nothing and would report the NIC as absent - which is
+        # the same mistake `page_of` exists to avoid for the brand-blue
+        # sentences, in a third colour.
+        ok &= on_screen(w, h, rgb, "virtio_net", "the virtio NIC is in the adapter list",
+                        fg=(0, 0, 0))
 
         # F4 = apply it here and now (D12). The live medium has the whole stack,
         # so this is a REAL DHCP lease on a REAL interface, and the address is

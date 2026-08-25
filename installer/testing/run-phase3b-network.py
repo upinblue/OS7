@@ -265,7 +265,12 @@ def phase_install():
 
         write_plan(c, iface)
         c.drop()
-        c.send("os7-setup --unattend /tmp/plan.json --passphrase-file /tmp/pass "
+        # `sudo`, because casper logs in as an unprivileged user and Setup opens
+        # block devices. Without it the run dies at the first sgdisk with
+        # "Error is 13 ... You must run this program as root", which is a
+        # perfectly clear message about the wrong thing: the harness, not the
+        # installer.
+        c.send("sudo os7-setup --unattend /tmp/plan.json --passphrase-file /tmp/pass "
                "--password-file /tmp/pw")
         print("      installing … (unsquashfs + initramfs; ~15-25 min)")
         i = c.expect([r"OS7-SETUP-DONE install", r"OS7-SETUP-FAILED"], 2400, "the install")
@@ -404,7 +409,8 @@ def phase_wifi():
     c, q = lab.boot(LIVE_CMDLINE, "wifi")
     ok = True
     try:
-        out = ask(c, "modprobe mac80211_hwsim radios=2 && echo LOADED", "hwsim", timeout=120)
+        out = ask(c, "sudo modprobe mac80211_hwsim radios=2 && echo LOADED", "hwsim",
+                  timeout=120)
         if "LOADED" not in out:
             print("      SKIP  mac80211_hwsim is not available in this kernel")
             print("            Wi-Fi association is therefore UNMEASURED on this run.")
@@ -436,10 +442,12 @@ def phase_wifi():
         c.drop()
         c.send(f"printf '{ap}' > /tmp/ap.conf")
         ask(c, "cat /tmp/ap.conf", "ap config")
-        ask(c, "rfkill unblock wifi; ip link set wlan1 up", "wlan1 up", timeout=60)
-        ask(c, "wpa_supplicant -B -i wlan1 -c /tmp/ap.conf -D nl80211", "start ap", timeout=90)
+        ask(c, "sudo rfkill unblock wifi; sudo ip link set wlan1 up", "wlan1 up",
+            timeout=60)
+        ask(c, "sudo wpa_supplicant -B -i wlan1 -c /tmp/ap.conf -D nl80211",
+            "start ap", timeout=90)
         time.sleep(5)
-        ask(c, f"ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
+        ask(c, f"sudo ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
         out = ask(c, "iw dev wlan1 info", "ap info", timeout=60)
         if "type AP" not in out:
             print("      FAIL  wlan1 did not come up as an access point")
@@ -451,9 +459,9 @@ def phase_wifi():
         #
         # `iw scan` FIRST, so that a failure to see the AP is separated from a
         # failure to join it. Two different bugs; one message each.
-        ask(c, "ip link set wlan0 up", "wlan0 up", timeout=60)
+        ask(c, "sudo ip link set wlan0 up", "wlan0 up", timeout=60)
         time.sleep(3)
-        out = ask(c, "iw dev wlan0 scan | grep -E 'SSID|signal'", "scan", timeout=120)
+        out = ask(c, "sudo iw dev wlan0 scan | grep -E 'SSID|signal'", "scan", timeout=120)
         if AP_SSID not in out:
             print(f"      FAIL  wlan0 cannot see '{AP_SSID}'")
             print(out[-1200:])
@@ -475,7 +483,7 @@ def phase_wifi():
         ask(c, "wc -c /tmp/wifi.json /tmp/psk", "wifi plan")
 
         c.drop()
-        c.send("os7-setup --test-network /tmp/wifi.json --wifi-secret-file /tmp/psk")
+        c.send("sudo os7-setup --test-network /tmp/wifi.json --wifi-secret-file /tmp/psk")
         i = c.expect([r"OS7-NETWORK OK", r"OS7-NETWORK FAILED"], 180, "the association")
         if i != 0:
             print("      FAIL  os7-setup could not join the network")
