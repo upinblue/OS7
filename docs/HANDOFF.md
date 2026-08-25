@@ -172,9 +172,15 @@ Phase 3 is done (below); what it leaves is:
   handler looked for `systemd-cryptsetup` at a path resolute does not use
   (BUILD-NOTES #64). Fixed and re-run; see
   [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md) for the verdict.
-* **The GUI half of screen 8 has never run**, because no amd64 ISO has ever been
-  built. `InstallModeStep`'s desktop-removal branch is in the same position, and
-  so is screen 8's own ENTER — the arm64 flow skips the screen entirely.
+* **The GUI half of screen 8 has still never RUN on a machine** — but it is no
+  longer unexamined. Since 2026-08-25 `check-image.py` generates it out of the
+  SHIPPED binary in a second `--dry-run` with `"mode":"Gui"`, parses it with
+  `bash -n`, and asserts that it proves its own result; until then no bash had
+  ever seen that branch, and `systemctl enable gdm3` in it was a no-op whose
+  failure was printed as a note (BUILD-NOTES #72). `InstallModeStep`'s
+  desktop-removal branch is in the same position, and so is screen 8's own
+  ENTER — the arm64 flow skips the screen entirely. What is missing is an amd64
+  install, not the code.
 * **The interactive flow could not reach screen 7 at all until 2026-08-25**, and
   three automated paths passed throughout: `--unattend` is handed a plan that
   already contains an account, `--storage-only` skips the account check by

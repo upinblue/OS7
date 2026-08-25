@@ -563,7 +563,52 @@ internal sealed class InstallModeStep : IStep
         {
             _t.Chroot(x, "graphical target", """
                 systemctl set-default graphical.target
-                systemctl enable gdm3 2>/dev/null || echo "    (no gdm3 to enable)"
+
+                # `systemctl enable gdm3` IS NOT WHAT STARTS THE DESKTOP, and the
+                # previous version of this step hid that behind
+                # `|| echo "(no gdm3 to enable)"` - a failure printed as a note.
+                # Measured on the shipped amd64 image, 2026-08-25:
+                #
+                #   * gdm.service's [Install] carries ONLY
+                #     Alias=display-manager.service. There is no WantedBy=, so
+                #     enabling it adds nothing to any target's .wants.
+                #   * /etc/systemd/system/display-manager.service ALREADY points
+                #     at gdm3.service - the package's postinst wrote it into the
+                #     image, long before an install runs.
+                #   * graphical.target carries Wants=display-manager.service.
+                #
+                # The chain is therefore complete before this step touches
+                # anything, and `enable` is a no-op that can still FAIL on the
+                # symlink that is already there. It is kept because it would
+                # repair an image that ever lost the alias, and its result is
+                # ignored because the CHECK below is what decides.
+                systemctl enable gdm3 >/dev/null 2>&1 || true
+
+                # ASK THE THING ITSELF - the rule the headless path below already
+                # follows and this one did not. The operator asked for a desktop;
+                # a machine that comes up on a text console has not delivered
+                # that, and this is the last moment anyone can be told. Both
+                # checks are fatal on purpose: each is a single symlink, neither
+                # can fail on a correct image, and the alternative to failing
+                # here is handing back a machine that is quietly the wrong one.
+                DEFAULT="$(systemctl get-default)"
+                DM=""
+                if [ -L /etc/systemd/system/display-manager.service ]; then
+                    DM="$(readlink -f /etc/systemd/system/display-manager.service)"
+                fi
+
+                echo ">>> default target is now: ${DEFAULT}"
+                echo ">>> display-manager.service -> ${DM:-(absent)}"
+
+                if [ "${DEFAULT}" != "graphical.target" ]; then
+                    echo "!!! GUI was chosen and the default target is ${DEFAULT}" >&2
+                    exit 1
+                fi
+                if [ -z "${DM}" ] || [ ! -e "${DM}" ]; then
+                    echo "!!! no display manager: graphical.target would come up" >&2
+                    echo "!!! with no login screen. ${DM:-(no display-manager.service)}" >&2
+                    exit 1
+                fi
                 """);
             return;
         }

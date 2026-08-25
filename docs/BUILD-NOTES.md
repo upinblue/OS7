@@ -3324,3 +3324,71 @@ had failed — the log said `make: *** Error 127` and `out/` was empty. Do not
 trust an exit status marshalled back through `wsl.exe`; ask for the artefact.
 And Git Bash's `sed` strips CR (#70), so neither is a reliable witness on this
 host.
+
+## 72. `systemctl enable gdm3` enables nothing, and the branch that said so had never been parsed
+
+*Found 2026-08-25 while making "install WITH a desktop" mean "boots to one".*
+
+The GUI half of `InstallModeStep` was two lines:
+
+```bash
+systemctl set-default graphical.target
+systemctl enable gdm3 2>/dev/null || echo "    (no gdm3 to enable)"
+```
+
+**The second line cannot do what it looks like it does.** Measured by reading the
+units out of the shipped amd64 squashfs:
+
+* `gdm.service`'s `[Install]` section contains **only**
+  `Alias=display-manager.service`. There is **no `WantedBy=`**, so enabling it
+  adds nothing to any target's `.wants` — there is nothing to add.
+* `/etc/systemd/system/display-manager.service` → `/lib/systemd/system/gdm3.service`
+  is **already in the image**; the package's postinst wrote it at build time.
+* `graphical.target` carries `Wants=display-manager.service`.
+* `/usr/lib/systemd/system/default.target` → `graphical.target` is already the
+  vendor default.
+
+So the whole chain that makes a desktop appear is complete before the installer
+touches anything, `enable` is at best a no-op, and at worst it **fails** on the
+alias symlink that is already there — which is exactly what `2>/dev/null ||
+echo` was hiding. The note it printed reads like information and is a swallowed
+error. Meanwhile the branch checked **nothing**, in a file whose own
+`TargetRoot.Chroot` says *"Every chroot script in this codebase ends by checking
+its own work."* The headless branch does. This one did not.
+
+**The worse half: no bash had ever parsed it.** `check-image.py` ran its
+`--dry-run` with `"mode":"Headless"`, `InstallPlan.Mode` defaults to `Headless`,
+and arm64 forces it. The `all N generated chroot scripts are valid bash` check —
+the one thing standing between a typo and an install that dies mid-chroot — had
+therefore never seen the GUI script at all. An unrun branch is not a working
+branch, and this one is the entire difference between the two products amd64
+ships.
+
+**What was changed.** The GUI branch now proves its result the way the headless
+one does: it reads `systemctl get-default` and resolves
+`/etc/systemd/system/display-manager.service`, prints both, and **fails the
+install** if the default target is not `graphical.target` or no display manager
+resolves. Both are single symlinks that cannot be wrong on a correct image, and
+the alternative to failing is handing back a machine that is quietly the wrong
+one. `enable` is kept — it would repair an image that ever lost the alias — but
+its exit status is explicitly ignored, because the check is what decides.
+`check-image.py` now runs a **second** `--dry-run` with `"mode":"Gui"` and holds
+that script to the same bar.
+
+**Two things that could have overridden all of it, and do not.** The installed
+system's `GRUB_CMDLINE_LINUX` is `boot=zfs` with an empty
+`GRUB_CMDLINE_LINUX_DEFAULT` — no `systemd.unit=`, so nothing on the kernel
+command line forces a target. And `os7-setup.service` has **no `[Install]`
+section** (deliberately, see #33), so its `Conflicts=getty@tty1.service` is never
+in a transaction on an installed machine and cannot take anything with it.
+
+**The check was verified against a binary that fails it.** Run against
+`OS7-1.0.0.95-amd64.iso`, which was built before this change, `check-image.py`
+reports the GUI script as generated and as valid bash, and **FAILS** "the GUI
+mode script proves its own result". A check that has never failed is a check
+nobody has tested.
+
+**STILL NOT MEASURED: an amd64 install of either kind.** HANDOFF §1 has said so
+since the first amd64 ISO and it is still true. What changed here is that the
+GUI branch is now generated, parsed and asserted from the shipped binary — not
+that any machine has run it.

@@ -111,6 +111,23 @@ printf '%s' 'check-image-password'   > /tmp/p.pw
 cp /tmp/p.json /tmp/p.pass /tmp/p.pw /mnt/root/tmp/ 2>/dev/null || true
 chroot /mnt/root /usr/lib/os7-setup/os7-setup --unattend /tmp/p.json     --passphrase-file /tmp/p.pass --password-file /tmp/p.pw --dry-run     >/dev/null 2>&1 || true
 emit setup.dryrun      bash -c 'cat /mnt/root/var/log/os7-setup/setup.log 2>/dev/null || true'
+
+# THE SAME PLAN AGAIN, WITH mode=Gui.
+#
+# Until 2026-08-25 this file only ever ran the Headless branch, and nothing else
+# reached the other one either: InstallPlan.Mode defaults to Headless and arm64
+# forces it. So InstallModeStep's GUI script - the one that decides whether an
+# amd64 desktop install actually comes up on a desktop - had never been parsed
+# by any bash, on any host, ever. An unrun branch is not a working branch, and
+# this is the cheapest place that can say so: no VM, no install, just the
+# SHIPPED binary asked what it would do.
+#
+# The log is removed first because the second run appends to the same ring.
+sed 's/"mode":"Headless"/"mode":"Gui"/' /tmp/p.json > /tmp/p.gui.json
+cp /tmp/p.gui.json /mnt/root/tmp/ 2>/dev/null || true
+rm -f /mnt/root/var/log/os7-setup/setup.log
+chroot /mnt/root /usr/lib/os7-setup/os7-setup --unattend /tmp/p.gui.json --passphrase-file /tmp/p.pass --password-file /tmp/p.pw --dry-run >/dev/null 2>&1 || true
+emit setup.dryrun.gui  bash -c 'cat /mnt/root/var/log/os7-setup/setup.log 2>/dev/null || true'
 # THE Zfs MODULE'S SELF-TEST, run against the SHIPPED module and the recorded
 # ZFS output shipped beside it (docs/ZFS-POWERSHELL-PLAN.md Z10).
 #
@@ -374,6 +391,35 @@ def main() -> None:
         check(not bad_scripts,
               f"all {len(scripts)} generated chroot scripts are valid bash",
               "; ".join(bad_scripts) if bad_scripts else ", ".join(scripts))
+
+        # -- the GUI branch of screen 8, which nothing used to reach ---------
+        #
+        # InstallModeStep has two branches and only the headless one was ever
+        # generated here, so the branch that has to hold for "install WITH a
+        # desktop" went unparsed and unchecked. It is asked of the SHIPPED
+        # binary in a second --dry-run and checked for the two things it owes:
+        # that it is valid bash, and that it PROVES its result instead of
+        # assuming it. amd64 only - arm64 is server-only and never offers it.
+        if arch == "amd64":
+            gui = generated_scripts(img.get("setup.dryrun.gui", ""))
+            gui_body = "\n".join(gui.get("graphical target", []))
+            check(bool(gui_body), "the GUI branch of the mode step is generated",
+                  ", ".join(gui) if gui else "no 'graphical target' script in the GUI dry-run")
+            if gui_body:
+                text = "#!/bin/bash\nset -euo pipefail\n" + gui_body + "\n"
+                with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
+                    fh.write(text)
+                    path = fh.name
+                rc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+                os.unlink(path)
+                check(rc.returncode == 0, "the GUI mode script is valid bash",
+                      rc.stderr.strip().splitlines()[0] if rc.returncode else "bash -n")
+                proves = ("systemctl get-default" in gui_body
+                          and "display-manager.service" in gui_body
+                          and "exit 1" in gui_body)
+                check(proves, "the GUI mode script proves its own result",
+                      "reads back the default target and the display manager, "
+                      "and fails the install on either")
 
         # Phase 3b. Both halves of L23's mitigation have to be in the SHIPPED
         # binary's own output: netplan is useless on this image unless something
