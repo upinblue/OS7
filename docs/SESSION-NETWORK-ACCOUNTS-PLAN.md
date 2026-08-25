@@ -259,6 +259,87 @@ and the kind of check that caught each is the transferable part:
 | serialising four canary secrets | nothing leaked — but nothing had ever checked, and a removed `[JsonIgnore]` has no symptom |
 | looking inside the squashfs | "no `linux-modules-extra`, therefore no wireless drivers" is a plausible inference from the package list and is **wrong**: 197 wireless driver modules are present, `mac80211_hwsim` among them |
 
+## L30 — the interface name changes between installing and running
+
+**The most expensive thing this phase learned, and it was found only because the
+deliverable was checked on a booted machine rather than on the disk it had just
+been written to.**
+
+The install wrote a netplan file naming the adapter the harness had discovered.
+Then the disk was booted alone:
+
+```
+installing, setup medium attached      enp0s5
+booted from the disk, medium removed   enp0s2
+MAC, throughout                        52:54:00:12:34:56
+```
+
+One machine, one NIC, two names. Predictable interface names are derived from the
+PCI topology, and **the setup medium is a PCI device** — removing it renumbers
+the slots. The file named `enp0s5`, which no longer exists.
+
+netplan accepts a match that matches nothing. The installed machine came up:
+
+```
+2: enp0s2: <BROADCAST,MULTICAST> qdisc noop state DOWN
+ip -o addr show    1: lo  inet 127.0.0.1/8   (and nothing else)
+ip route show      (empty)
+```
+
+That is, line for line, the M1 transcript this phase exists to abolish. **Screen 9
+would have written a file, proved that netplan turned it into a valid networkd
+unit, reported success, and produced exactly the machine it was built to
+prevent.**
+
+### Why none of the checks saw it
+
+| Check | What it said | Why it was no help |
+|---|---|---|
+| `--self-test` on the generated YAML | correct | It named a real interface — just not the one that would exist later |
+| `netplan generate` in the chroot | a valid networkd unit | A unit that matches nothing is still a unit |
+| reading that unit back for `Address=` | present | On an interface that would not exist |
+
+Every check was right, and every one was about the wrong moment. The only
+instrument that could see this was a machine booted with the medium removed —
+which is exactly why `run-phase3.py`'s `boot` phase attaches no ISO. Spike S3 made
+that split for a different reason (a VM with the medium still in it can boot from
+the medium and look like a successful install), and this phase inherited it
+without understanding how much else it was protecting.
+
+### The fix
+
+`match: macaddress:`, never the name. A MAC does not move when a disk is
+unplugged. The netplan device id is `os7net` and not an interface name, because
+an id that looks like a name invites the next reader to believe the name selects
+the hardware. `Interface` is still recorded — it is what the operator saw on
+screen 9, and what the log and screen 12 should say — but it selects nothing.
+
+`"interface": "auto"` keeps its `en*` / `wl*` glob for a plan replayed on hardware
+Setup has never seen, and a MAC in the plan beats it.
+
+### Three more, found on the way
+
+* **Three QEMU processes leaked.** `poweroff` asks the guest; it does not
+  guarantee the process leaves, and a phase that fails never reaches the request.
+  The symptom was not a slow Mac — the next run could not open its own disk
+  image, because qemu holds a write lock on it. A previous session left one alive
+  for 13h50m, so this is a repeat rather than a surprise.
+* **Every chroot step was proving its work to an empty room.** `Executor.Exec`
+  captures a subprocess's stdout with `ReadToEnd` and never prints it, so
+  `AccountStep`'s `/etc/shadow` proof, `InitramfsStep`'s contents listing and
+  `NetworkStep`'s unit readback all went into a string nobody looked at.
+  `TargetRoot.Chroot` now logs it. Found by a harness assertion watching the
+  serial console for a line the console structurally could not carry: the
+  assertion was wrong, the gap it revealed was not.
+* **Nothing copies the install log onto the target.** `Log.Directory` is an
+  absolute path on the live system, which is casper's RAM overlay, so the entire
+  record of what Setup did is discarded at the reboot on screen 12 — including
+  every proof above. On a machine that boots correctly nobody misses it; on one
+  that boots wrong, the log that would explain it is already gone. Spun off as
+  its own task rather than widened into this one.
+
+---
+
 ## Owed, and not done
 
 * **M2 and M3.** M1 is measured (above). M2 is what recovery looks like on a
