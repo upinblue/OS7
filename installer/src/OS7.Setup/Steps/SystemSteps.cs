@@ -42,6 +42,11 @@ internal static class SystemSteps
         new InitramfsStep(plan, target),
         new TpmEnrolStep(plan, target),
         new BootloaderStep(plan, target),
+        // LAST BEFORE TEARDOWN, and that position is the whole of what it can
+        // promise. Everything after it is the disk being taken away, so its own
+        // proof and TeardownStep's export check cannot be in the file it writes
+        // — a record of an install cannot contain the end of that install (L31).
+        new InstallLogStep(target),
         new TeardownStep(plan, target),
     };
 
@@ -993,6 +998,109 @@ internal sealed class BootloaderStep : IStep
     /// </summary>
     private static string RuntimeArch => System.Runtime.InteropServices.RuntimeInformation
         .OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "arm64" : "amd64";
+}
+
+// ---------------------------------------------------------------------------
+/// <summary>
+/// Put the log on the disk, because the one Setup is writing to is about to
+/// cease to exist.
+///
+/// SETUP-PLAN L31. `Log.Path` is `/var/log/os7-setup/setup.log` on the LIVE
+/// system, which is casper's RAM overlay, so screen 12's restart discards it.
+/// What goes with it is every step's self-proof — AccountStep reading the hash
+/// length back out of /etc/shadow, InitramfsStep listing what the initrd
+/// contains, NetworkStep reading back the unit netplan generated,
+/// BootloaderStep checking the menu resolves a boot environment. None of that is
+/// missed on a machine that boots. On a machine that boots WRONG it is the only
+/// record of what was done to it, and it is gone before anybody can look.
+///
+/// WHY IT IS A STEP AND NOT SOMETHING TeardownStep DOES ON ITS WAY PAST: it has
+/// to be able to fail visibly. A step has a name on screen 11 and an entry in
+/// the log; a side-effect tucked into the unmount sequence has neither, and a
+/// silent failure here produces a screen 12 that names a file nobody wrote.
+///
+/// IT IS NOT FATAL. The machine on the disk is finished and correct by the time
+/// this runs — refusing to complete an install over a missing log would trade a
+/// working computer for a diagnostic about one. It is recorded loudly instead,
+/// and <see cref="Log.Kept"/> stays null so screen 12 says so rather than
+/// pointing at a path.
+/// </summary>
+internal sealed class InstallLogStep : IStep
+{
+    private readonly TargetRoot _t;
+    public InstallLogStep(TargetRoot t) => _t = t;
+
+    public string Describe => "Saving the installation record";
+
+    /// <summary>Where it goes inside the target: `Log.Installed` without its leading slash.</summary>
+    private static string Relative => Log.Installed.TrimStart('/');
+
+    public void Run(Executor x)
+    {
+        string path = _t.At(Relative);
+
+        // 0600. The audit that says nothing in the ring is a secret is in
+        // Log.LiveOnly, and it was done by reading every Log call rather than by
+        // trusting the shape of them: the passphrase reaches `cryptsetup`
+        // through a keyfile in /run and never through argv; the account password
+        // reaches `openssl` through ExecSecret's stdin; the crypt hash reaches
+        // `useradd` inside a chroot SCRIPT, and the script's text is logged only
+        // under --dry-run, where the hash is a constant. Chroot logs what the
+        // scripts SAY BACK, and the closest any of them comes is the length of a
+        // SHA-512 crypt hash, which is the same number for every password.
+        //
+        // 0600 anyway. The four lines that describe a secret are redacted by
+        // `persistent: true`, and the reasoning above has to stay right for
+        // every line anyone adds later. Mode is the half of this that does not
+        // depend on that staying true.
+        try
+        {
+            _t.Write(x, Relative, Log.Transcript(persistent: true), "0600");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"the installation record could not be written to {path}: {ex.Message}");
+            return;
+        }
+
+        if (x.DryRun) { Log.Kept = Log.Installed; return; }
+
+        // READ IT BACK OUT OF THE TARGET. `Write` returning is a diagnostic; the
+        // file having the log in it is the thing itself, and the two come apart
+        // in the one case that matters here — a pool that has filled up, where
+        // the write succeeds and the content is short or absent.
+        string? back = _t.Read(Relative);
+        if (back is null)
+        {
+            Log.Error($"the installation record is not at {path} after writing it");
+            return;
+        }
+
+        // Not "is it non-empty": the header alone would pass that, and the
+        // header is written by the same call that would have failed to carry the
+        // ring. A `step:` line is a line that came from the ring.
+        int steps = back.Split('\n').Count(l => l.Contains("step: "));
+        if (steps < 2)
+        {
+            Log.Error($"the installation record at {path} is {back.Length} bytes and "
+                      + $"holds {steps} step line(s) — the log did not reach it");
+            return;
+        }
+
+        // The mode, ASKED OF THE FILE. `Write` runs chmod and would have thrown,
+        // but that is the chmod's exit code rather than the file's mode, and the
+        // difference is the recurring one in BUILD-NOTES.
+        string mode = x.TryExec("stat", "-c", "%a", path).Trim();
+        if (mode != "600")
+        {
+            Log.Error($"the installation record at {path} is mode {mode}, not 600");
+            return;
+        }
+
+        Log.Kept = Log.Installed;
+        Log.Info($"the installation record is on the target: {path}, "
+                 + $"{back.Length} bytes, mode {mode}, {steps} steps");
+    }
 }
 
 // ---------------------------------------------------------------------------

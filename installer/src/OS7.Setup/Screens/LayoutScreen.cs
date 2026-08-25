@@ -210,7 +210,9 @@ internal sealed class LayoutScreen : Screen
                 _entering = false;
                 _row = Setting.Accept;
                 // Length only. The value itself never reaches the log.
-                Log.Info($"passphrase set ({_plan.Storage.Passphrase!.Length} characters)");
+                // LiveOnly - see Log.LiveOnly. This is the line that made the
+                // distinction necessary.
+                Log.LiveOnly($"passphrase set ({_plan.Storage.Passphrase!.Length} characters)");
                 _note = null;
                 return Transition.Redraw;
 

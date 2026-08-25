@@ -1519,6 +1519,7 @@ been checked on an installed machine.
 | L27 | **802.1X in a text installer has no certificate store.** PEAP/MSCHAPv2 verifies the RADIUS server against a CA certificate, and there is no UI in 80×25 for importing, viewing or trusting one. The honest options are a file path on the install medium, or associating without server verification | The CA field takes a path, and leaving it blank is a **visible choice with its consequence printed on the screen** — "the network is not verified" — never a silent default. TLS client-certificate EAP is out of scope for v1 |
 | L28 | **An interface name pinned into the plan file breaks replay.** §6.6 makes the plan a file written on one machine and replayed on another, and `enp1s0` is a property of the machine, not of the plan | An unattended plan may say `"interface": "auto"`, which becomes a netplan `match:` glob — `en*` for wired, `wl*` for wireless. The same trap as `/dev/sdb` in `StoragePlan.Disk`, and the same fix. **L30 is the harder half of this and was not foreseen here** |
 | L30 | **THE INTERFACE NAME CHANGES BETWEEN INSTALLING AND RUNNING — on the same machine, with the same NIC.** Measured 2026-08-25: `enp0s5` while installing, `enp0s2` once booted from the disk, MAC `52:54:00:12:34:56` throughout. Predictable names are derived from the PCI topology and **the setup medium is a PCI device**, so removing it renumbers the slots. A netplan file naming the install-time interface matches nothing afterwards, and netplan accepts that in silence: no address, no route, no error — the exact failure this phase exists to prevent, produced *by* the phase | **netplan matches on the MAC, never on the name** (`NetworkPlan.MacAddress`). The device id in the YAML is `os7net` rather than an interface name, so nothing reads as if the name selected the hardware. `Interface` is still recorded — it is what the operator saw on screen 9 and what the log and screen 12 say — but it selects nothing. Asserted in `--self-test` ("a chosen adapter is matched by MAC, never by name") and end to end by `run-phase3b-network.py boot`. **Found only because the deliverable was checked on a booted machine rather than on the disk it was written to** |
+| L31 | **SETUP'S LOG DIED WITH THE MACHINE THAT WROTE IT.** `Log.Path` is `/var/log/os7-setup/setup.log` on the LIVE system — casper's RAM overlay — so the restart screen 12 offers discarded the entire record of the install, and screen 12 printed *that* path on the way out: a sentence true when it was read and false one keypress later, false in exactly the case where somebody would go looking. What went with it is every step's self-proof — AccountStep reading the hash length back out of `/etc/shadow`, InitramfsStep listing what the initrd contains, NetworkStep reading back the unit netplan generated, BootloaderStep's menu check — which are worth nothing on a machine that boots and are the only record on one that does not. Two more things were found while fixing it, both by measuring rather than by reading: the log was a **200-entry ring** and a *dry* run logs **284 lines**, so a copy made from it would have arrived on the target with the whole storage phase and the start of AccountStep already dropped off the front, looking complete; and `--self-test` runs in the chroot during the ISO build (hook 0080) while `Main` logs one line before dispatching, so **every image ever built shipped a build-time `setup.log`** (3 993 bytes measured on 2026-08-25; the size is whatever the self-test printed that day) that `unsquashfs` then put on every installed machine, in the directory screen 12 sends the operator to, under the name the live log has | `InstallLogStep`, last before `TeardownStep`: it writes the whole log to `/var/log/os7-setup/install.log` on the target, mode 0600, then reads it back out of the target and checks the size, the step count and the mode before letting screen 12 name it. `install.log` and not `setup.log` because `R=Repair` will one day run Setup *on* an installed machine and create a real `setup.log` there. The ring is now the complete record (`Recent` is its tail, for a screen); `--self-test` never opens the file. **What it still cannot contain is its own end** — the export of the pools happens after it, and a record of an install cannot hold the part where the disk is taken away. Secrets: no plaintext secret reaches the log at all (measured with canaries through `--dry-run`: the passphrase goes to `cryptsetup` via a keyfile in `/run`, the account password to `openssl` via `ExecSecret`'s stdin, the crypt hash to `useradd` inside a chroot script whose text is logged only under `--dry-run`, where it is a constant), but four lines *describe* one by naming its length. Those are marked `Log.LiveOnly` **where they are written** — never matched afterwards, because a redactor that greps for "characters" falls out of step with the next caller silently and in the direction that leaks — and the persistent copy carries `[not kept]` in their place. Asserted in `--self-test` both ways, and end to end by `run-phase3b-network.py boot`, which reads the file off a machine with no ISO attached and checks that the live log's own path is *absent* |
 
 ---
 
@@ -1532,8 +1533,8 @@ so out loud; every one of those claims existed only where it had been said. A
 number claimed in the file survives `git pull`, which is what a numbered list
 needs in order to keep being one.
 
-**Taken as of 2026-08-25: D1–D15, L1–L30.** The next free numbers are **D16** and
-**L31**. If you take one, move this line in the same commit. The same rule and
+**Taken as of 2026-08-25: D1–D15, L1–L31.** The next free numbers are **D16** and
+**L32**. If you take one, move this line in the same commit. The same rule and
 the same table live at the top of [../docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md)
 for its numbers.
 
@@ -1971,6 +1972,18 @@ TLS client-certificate EAP.
 GRUB theme, boot palette, "inspecting your computer's hardware configuration",
 `F1` help on every screen, `F3` quit confirmation, log export to removable
 media, the `#003366` high-contrast mode.
+
+**Done early, 2026-08-25 — the log now survives the restart (L31).** Not the
+removable-media export, which is still Phase 4's: this is the half that had to
+come first, because a log offered to removable media is no use to the operator
+who has already pressed ENTER. `InstallLogStep` writes it to
+`/var/log/os7-setup/install.log` on the target before the pools are exported, and
+screen 12 names that path instead of the live one — or says plainly that it could
+not, which is the case the old wording could not express at all.
+
+When F2 does get removable media, `Log.Export` already takes `persistent:` and
+that call site passes `false`. It is the parameter, not a comment, that will make
+somebody notice the live-only lines have to drop out of that copy too.
 
 ### Phase 5 — arm64 and serial
 The same binary on arm64; serial-console mode; drop Calamares from the package
