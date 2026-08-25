@@ -66,19 +66,79 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-**The amd64 EFI remaster** is the newest and best-defined piece: an amd64 ISO now
-**DONE 2026-08-25** — `build/lib/efi-remaster.sh` now re-masters both
-architectures ([SESSION-AMD64-EFI-REMASTER.md](SESSION-AMD64-EFI-REMASTER.md)).
-What that leaves is the first amd64 BOOT: nothing on amd64 has been booted,
-installed or walked, so every Phase 1–3 result is still arm64-only.
+Two pieces landed on 2026-08-25 and each leaves a different next step.
 
-Otherwise: **Phase 4 — Authenticity and polish**, or **screen 9**, or the release
-plan's **S5**. Phase 3 is done (below); what it leaves is:
+**The amd64 EFI remaster is DONE**, and both halves are proved separately:
+`build/lib/efi-remaster.sh` re-masters both architectures, the boot line works
+(shown in a VM) and the built ISO carries it (read out of the artefact with
+`xorriso`) — [SESSION-AMD64-EFI-REMASTER.md](SESSION-AMD64-EFI-REMASTER.md).
+What it leaves: **the first amd64 INSTALLATION**, which needs an x86_64 harness
+that does not exist — `run-phase1/2/3` are `qemu-system-aarch64` with
+`accel=hvf` throughout — and **a Secure-Boot-capable medium**: the GRUB on the
+ISO is unsigned, on both architectures, and always has been.
 
-* **Screen 9, the network screen.** Deliberately not in Phase 3: DHCP is the
-  default and a machine that boots can be configured, while one that does not
-  cannot. It matters for the headless product — a server that comes up with no
-  network is a site visit.
+**Phase 3b — the network — is DONE on arm64 and measured**, below. What it
+leaves is amd64 (same missing harness), 802.1X, and M2.
+
+**So every Phase 1–3b result is still arm64-only.** The two next steps share one
+blocker, and it is the same one: there is no way to drive an x86_64 machine here.
+An amd64 harness that synchronises on markers the way `vmconsole`/`vmscreen` do —
+rather than on wall-clock time, which cost a peer session two wrong diagnoses in
+one afternoon — is the single piece that unblocks both.
+
+Otherwise: **Phase 4 — Authenticity and polish**, or the release plan's **S5**.
+Phase 3 is done (below); what it leaves is:
+
+* **Screen 9, the network screen — Phase 3b, WRITTEN and NOT OPTIONAL. M1 is
+  measured and it is worse than the image suggested.** An installed arm64 machine
+  booted alone with a NIC attached comes up with:
+
+  ```
+  2: enp0s2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN
+  ip -o addr show    1: lo  inet 127.0.0.1/8   (and nothing else)
+  ip route show      (empty)
+  systemd-networkd   disabled, inactive     networkd-dispatcher  enabled
+  ```
+
+  Not "DHCP did not answer" — the link was never brought up, there is no route,
+  and nothing on the machine reports a problem. Every headless arm64 machine this
+  installer has produced needed a keyboard and a monitor to be reached. Screen 9
+  was left out of Phase 3 on the premise that "DHCP is the default on a fresh
+  Ubuntu install"; that default comes from `cloud-init` on Ubuntu Server and this
+  image has none. amd64-GUI is masked by NetworkManager.
+
+  Plan, screens, L23–L28 and D11–D14 are in
+  [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md) §3, §7.2, §7.3, §8, §9
+  and Phase 3b; the reasoning and the M1 transcript are in
+  [SESSION-NETWORK-ACCOUNTS-PLAN.md](SESSION-NETWORK-ACCOUNTS-PLAN.md).
+  Run it with `./installer/testing/run-phase3b-network.py`.
+
+  **PROVED 2026-08-25 on ISO 1.0.0.65**, from a machine booted with no ISO
+  attached: the interface has `10.0.2.99/24` — the address that was typed — the
+  default route goes via `10.0.2.2`, `systemd-networkd` is *running*, the netplan
+  file is mode 0600 and names `networkd`. Wi-Fi associates over `mac80211_hwsim`
+  (`wlan0` to `OS7-TEST-AP` with `10.99.0.5/24`), and the interactive walk reaches
+  screen 9, finds the NIC, and takes a real DHCP lease with `F4`.
+
+  **L30 is the finding to read first.** The interface name *changes* between
+  installing and running — `enp0s5` with the setup medium attached, `enp0s2`
+  without, same MAC — because the medium is a PCI device and predictable names
+  come from the PCI topology. netplan accepts a match that matches nothing in
+  silence, so the first version of this screen produced exactly the machine it
+  was built to prevent. It matches on the MAC now. BUILD-NOTES #56.
+
+  **Still owed: M2, M3, 802.1X, and any real radio.** M1 is one machine, arm64,
+  in QEMU. On amd64 `network-manager` is installed on the GUI product and would
+  have brought the link up by itself — which is exactly why nobody saw this. The
+  Wi-Fi test runs on `mac80211_hwsim`, which simulates the hardware layer away
+  and loads no firmware: not one of the 19 firmware packages or 197 wireless
+  drivers on the image has been exercised.
+* **The account model is decided and needs no code (D11).** Root stays locked and
+  the first account stays in `sudo`, which is what `SystemSteps` already does.
+  What is owed is one sentence on screen 7 naming the role — the local account is
+  the *break-glass* credential for when Entra is unreachable — plus L26, found on
+  the way: `/etc/shadow` is inside the boot environment, so **a rollback un-says a
+  local password change.**
 * **TPM2 enrolment has never actually enrolled.** The code is written and the
   initramfs pieces are S4's, but every Phase 3 run so far was on a VM with no
   TPM, so the step took its "no TPM on this machine" path. `run-s4.py` shows how

@@ -97,7 +97,10 @@ cat > /tmp/p.json <<'PLAN'
  "timezone":"UTC","mode":"Headless",
  "storage":{"disk":"/dev/disk/by-id/checkimage","layout":"single","efiMiB":512,
             "bpoolGiB":2,"encrypt":true,"swap":"zram"},
- "account":{"hostname":"checkimage","username":"checker","fullName":"Check"}}
+ "account":{"hostname":"checkimage","username":"checker","fullName":"Check"},
+ "network":{"interface":"auto","kind":"Wired","method":"Static",
+            "address":"10.0.2.99/24","gateway":"10.0.2.2",
+            "nameservers":["10.0.2.3"],"search":["corp.example.com"]}}
 PLAN
 printf '%s' 'check-image-passphrase' > /tmp/p.pass
 printf '%s' 'check-image-password'   > /tmp/p.pw
@@ -324,6 +327,28 @@ def main() -> None:
         check(not bad_scripts,
               f"all {len(scripts)} generated chroot scripts are valid bash",
               "; ".join(bad_scripts) if bad_scripts else ", ".join(scripts))
+
+        # Phase 3b. Both halves of L23's mitigation have to be in the SHIPPED
+        # binary's own output: netplan is useless on this image unless something
+        # also enables systemd-networkd, and the only thing that does is
+        # NetworkStep.
+        for want in ("netplan", "networkd"):
+            check(want in scripts, f"the installer generates a '{want}' step",
+                  ", ".join(scripts))
+
+    # -- the netplan file's MODE, from the shipped binary --------------------
+    #
+    # L25: the file holds the Wi-Fi passphrase or the 802.1X password in
+    # plaintext, because that is netplan's design. 0600 is the whole mitigation,
+    # so it is asserted against what os7-setup says it would write rather than
+    # against the source. A chmod that quietly stopped happening has no symptom
+    # until somebody reads a passphrase off a running machine.
+    dry = img.get("setup.dryrun", "")
+    netplan_write = next(
+        (l for l in dry.splitlines() if "etc/netplan/01-os7-network.yaml" in l), "")
+    check("mode 0600" in netplan_write,
+          "the netplan file would be written 0600 (L25)",
+          netplan_write.split("would write ", 1)[-1] if netplan_write else "not written")
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

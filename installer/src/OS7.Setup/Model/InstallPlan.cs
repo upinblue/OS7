@@ -39,6 +39,27 @@ internal sealed class InstallPlan
     /// <summary>Screen 7 — the computer's name and its first account. Phase 3.</summary>
     public AccountPlan Account { get; set; } = new();
 
+    /// <summary>Screens 9, 9S and 9W — the network. Phase 3b, SETUP-PLAN §7.2.</summary>
+    public NetworkPlan Network { get; set; } = new();
+
+    /// <summary>
+    /// The netplan renderer, DERIVED FROM <see cref="Mode"/> and from nothing
+    /// else — D14, and L24 is what it costs to get wrong.
+    ///
+    /// amd64-GUI keeps `network-manager`, which is installed and owns every
+    /// device; amd64-headless and arm64 do not, because `InstallModeStep`'s
+    /// headless path runs `apt-get autoremove -y --purge` and takes NM with it.
+    ///
+    /// IT MUST NOT BE A PROBE. Asking the target whether `network-manager` is
+    /// installed gives a different answer depending on whether the purge has run
+    /// yet, which would make an installed machine's network depend on step
+    /// ordering rather than on the plan. Deriving it from a value screen 8
+    /// already collected makes the answer the same however the steps are
+    /// arranged — and the step order is asserted separately, in SystemSteps.For.
+    /// </summary>
+    [JsonIgnore]
+    public string Renderer => Mode == InstallMode.Gui ? "NetworkManager" : "networkd";
+
     /// <summary>
     /// Everything wrong with the WHOLE plan, in one pass.
     ///
@@ -60,6 +81,10 @@ internal sealed class InstallPlan
     ///             and the error screen the only thing past the confirmation.
     ///
     /// Each screen validates what it collected; only execution validates the lot.
+    ///
+    /// Phase 3b added the network half here and NOWHERE ELSE, for the same
+    /// reason. Screens 9, 9S and 9W each refuse only their own fields; the
+    /// network is checked as a whole at the same two moments as everything else.
     /// </summary>
     public bool Validate(out List<string> problems)
     {
@@ -67,6 +92,7 @@ internal sealed class InstallPlan
         ValidateRegional(problems);
         Storage.Validate(problems);
         Account.Validate(problems);
+        Network.Validate(problems);
         return problems.Count == 0;
     }
 

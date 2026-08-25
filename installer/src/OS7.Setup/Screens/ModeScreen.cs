@@ -76,10 +76,15 @@ internal sealed class ModeScreen : Screen
             case Key.Enter:
                 _plan.Mode = _list.Selected == 0 ? InstallMode.Gui : InstallMode.Headless;
                 Log.Info($"install mode: {_plan.Mode}");
-                // Start, not `new`: the whole-plan check lives behind that
-                // factory and the constructor is private so it cannot be walked
-                // round. This is the last ENTER before a disk is written.
-                return Transition.To(ExecuteScreen.Start(_plan));
+                // Screen 9 next, and it has to be AFTER this one: the netplan
+                // renderer is a function of the mode chosen here (D14), so the
+                // network cannot be asked before the answer exists.
+                //
+                // `Entry`, not `new`, for the same reason this screen has a
+                // `Next`: whether there is anything to ask belongs to the screen
+                // that would ask it, and a machine with no network hardware is a
+                // real machine.
+                return Transition.To(NetworkScreen.Entry(_plan));
 
             case Key.Escape:
                 return Transition.Back;
@@ -105,8 +110,9 @@ internal sealed class ModeScreen : Screen
         plan.Mode = InstallMode.Headless;
         Log.Info("install mode: Headless (arm64 is server-only; screen 8 skipped)");
         // The SAME door as the branch above. A skipped screen must not also skip
-        // the gate behind it, and this is the arm64 path - the only one anything
-        // has ever been installed through.
-        return ExecuteScreen.Start(plan);
+        // the screen behind it, and this is the arm64 path - the only one
+        // anything has ever been installed through. Setting Mode before this
+        // call is what makes the renderer right on the skipped path too.
+        return NetworkScreen.Entry(plan);
     }
 }

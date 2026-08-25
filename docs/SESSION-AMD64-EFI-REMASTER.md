@@ -89,8 +89,25 @@ because on amd64 "try before you install" (L14) means a desktop.
   into GRUB's editor, same ISO, same VM — at 310 s the Welcome screen is still
   there, where the unmodified entry had a desktop. One run per condition, the
   parameter after `---` rather than in its shipped position, and 310 s is a
-  moment rather than a guarantee. The CI ISO with the line built in has not been
-  booted yet.
+  moment rather than a guarantee.
+
+  **And the shipped ISO carries it** — `OS7-1.0.0.48-amd64.iso` from CI run
+  32854778263, read with `xorriso -osirrox on -extract /boot/grub/grub.cfg`:
+
+  ```
+  menuentry "Install OS/7 (amd64)" {
+      linux  /casper/vmlinuz-7.0.0-30-generic boot=casper os7.setup=1 \
+             systemd.wants=os7-setup.service systemd.unit=multi-user.target \
+             fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 ---
+  ```
+
+  and the two live entries deliberately do not. `/EFI/BOOT/BOOTX64.EFI` is on the
+  medium, 6828032 bytes.
+
+  Two facts, two instruments: **that the line works** was measured in a VM, and
+  **that the built ISO has it** was read out of the artefact. Booting the CI ISO
+  would have mixed them, and would have been sensitive to the load of the other
+  sessions building on this machine at the time.
 * **Secure Boot.** The medium's GRUB is `grub-mkstandalone`'s and therefore
   UNSIGNED, on both architectures, and always has been. The ISO boots only with
   Secure Boot **off**. S4 and S6 tested the INSTALLED disk — shim plus a

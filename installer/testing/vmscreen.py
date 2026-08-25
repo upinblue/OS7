@@ -293,9 +293,20 @@ class Lab:
     MEM = "4096"
     CPUS = "4"
 
-    def __init__(self, name, iso=None, target_gb=0, iso_as_disk=False):
+    def __init__(self, name, iso=None, target_gb=0, iso_as_disk=False, nic=False):
         self.name = name
         self.target_gb = target_gb
+        # A virtio NIC on QEMU user-mode networking. OPT-IN, because it changes
+        # what the guest sees: os7-setup's screen 9 is skipped entirely on a
+        # machine with no network adapter, so a lab without one cannot walk it -
+        # and a lab that suddenly grows one would change what run-phase1 and the
+        # spikes are testing without saying so.
+        #
+        # User-mode networking is deterministic and that is why it is the right
+        # fixture: the guest is 10.0.2.15, the gateway 10.0.2.2 and the DNS
+        # server 10.0.2.3, every time. An assertion can name the address it
+        # expects before the VM starts.
+        self.nic = nic
         # How the live medium is attached. As a CD it is `type=rom` to lsblk and
         # an installer skips it without thinking; as a block device it is a
         # DISK, and refusing it is L12's actual requirement. Real installs are
@@ -442,6 +453,8 @@ class Lab:
             # thing being built.
             args += ["-drive", f"if=none,id=target,file={self.target},format=qcow2",
                      "-device", "virtio-blk-pci,drive=target,serial=os7target"]
+        if self.nic:
+            args += ["-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0"]
         return args
 
     def boot(self, cmdline, label, login=True, payload=True):
