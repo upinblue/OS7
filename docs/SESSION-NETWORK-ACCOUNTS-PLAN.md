@@ -238,15 +238,48 @@ and that shape is worth keeping visible.
 
 ---
 
+## What was built after the plan
+
+`NetworkPlan` and `WifiPlan`; `NetworkLinks` (adapters from `/sys/class/net`, and
+an `iw scan` parser separable from the command so it can be fed a recording);
+screens 9, 9S and 9W; `NetworkProbe` (the live apply behind `F4`) and
+`NetworkStep` (the target write); `--test-network` and `--wifi-secret-file`;
+24 new `--self-test` assertions; `run-phase3b-network.py`, and `run-phase3.py`'s
+walk extended through screen 9.
+
+**Six defects were found by those checks before a machine could have found them**,
+and the kind of check that caught each is the transferable part:
+
+| Found by | Defect |
+|---|---|
+| a captured `iw scan` fed to the parser | `iw` escapes a hidden SSID as the literal text `\x00\x00…`, not as NUL bytes. A `c == '\0'` filter caught nothing |
+| running the generated shell with its targets absent | `set -euo pipefail` killed the diagnostic three lines before its own `echo`. Demonstrated: the pre-fix script exits 1 with **no output at all**. `bash -n` passes it |
+| reading SetupFlow's order against the code | the Wi-Fi scan blocked before the screen it was scanning for was drawn — under a comment claiming the opposite |
+| asking what the walk VM actually had | the walk VM had **no NIC**, so screen 9 would have been skipped and the walk would have reported success |
+| serialising four canary secrets | nothing leaked — but nothing had ever checked, and a removed `[JsonIgnore]` has no symptom |
+| looking inside the squashfs | "no `linux-modules-extra`, therefore no wireless drivers" is a plausible inference from the package list and is **wrong**: 197 wireless driver modules are present, `mac80211_hwsim` among them |
+
 ## Owed, and not done
 
-* **M1, M2, M3** — the three measurements above. M1 gates the phase.
-* **BUILD-NOTES** — the "consumer enabled, producer not" trap deserves a number.
-  It was deliberately *not* written here: `os7-d7` added #44–#49 on the same day
-  in the same tree, and two sessions choosing the next number independently is how
-  a numbered list stops being one. It is owed to whoever holds BUILD-NOTES next.
-* **No code.** No `NetworkPlan`, no screens, no steps, no harness. Phase 3b is
-  planned and unstarted.
+* **M2 and M3.** M1 is measured (above). M2 is what recovery looks like on a
+  machine with a locked root; M3 is the amd64 half of L23 and L24.
+* **amd64 is entirely unmeasured.** Everything here is arm64. `os7-d7` measured
+  on the same day that `os7-setup` on amd64 is not *absent* but *displaced* — it
+  starts, wins tty1, paints, and the desktop takes the console afterwards. Screen
+  9 on amd64 would compete with `gdm3` for the same screen, and no arm64 run can
+  say anything about that.
+* **802.1X is written and unproven.** PEAP/MSCHAPv2 is generated configuration
+  and a screen walk. Testing it needs an EAP server; `hostapd` has one and is not
+  on the image, and putting it there to test a feature would be adding to the
+  product for the test's benefit (D13).
+* **The Wi-Fi test proves no firmware.** `mac80211_hwsim` simulates the hardware
+  layer away and loads none. 19 firmware packages and 197 drivers are on the
+  image and not one has been exercised.
+* **BUILD-NOTES** — the "consumer enabled, producer not" trap and the `iw`
+  escaping trap both deserve numbers, and neither was written here. `os7-d7` holds
+  #50 and #51 for them in the file's own claiming table, and will write them when
+  a measurement of their own stands behind each. Citing this session's would be
+  the exact mistake the first entry describes.
 
 ---
 
