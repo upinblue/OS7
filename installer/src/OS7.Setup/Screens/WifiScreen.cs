@@ -18,6 +18,13 @@ namespace OS7.Setup.Screens;
 /// server and the image carries none. SETUP-PLAN Phase 3b says so in the same
 /// words, and this screen does not pretend otherwise.
 ///
+/// AND NEITHER OF THEM IS EVIDENCE ABOUT A REAL RADIO. The harness tests against
+/// `mac80211_hwsim`, which is a kernel module that simulates the hardware layer
+/// away and loads no firmware at all. What is measured is this screen's scan,
+/// association and netplan path; what is NOT measured is whether any actual
+/// wireless chip in this image comes up. The 19 `linux-firmware` packages are on
+/// both images (§7.2) and not one of them has been exercised.
+///
 /// L27 IS ON THE SCREEN, NOT IN A NOTE. There is no certificate store in 80×25,
 /// so leaving the CA field blank means the RADIUS server is not verified — and
 /// that is printed where the operator is looking rather than defaulted silently.
