@@ -150,8 +150,15 @@ high-contrast/projector use; the `#1289ff` stripe stays in both modes.
 
 ### 2.3 The font — Fixedsys Excelsior (decided)
 
-**Decided: [Fixedsys Excelsior](https://github.com/kika/fixedsys) is OS/7's
-console font**, for Setup and for the installed system in non-GUI mode.
+**Decided: [Fixedsys Excelsior](https://github.com/kika/fixedsys) is the font
+`os7-setup` is drawn in.**
+
+> **Scope narrowed 2026-08-25 by D15.** D9 originally gave Fixedsys to Setup
+> *and* to the installed system in non-GUI mode. The second half now belongs to
+> **Cascadia Mono** — see §2.8. Everything in this section is still current for
+> Setup, which is where the DOS reproduction has to hold; nothing about the
+> installer changed. Both fonts ship in the image and neither replaces the
+> other.
 
 It is the right choice for more than nostalgia: it is a deliberate simulation of
 the 8×16 bitmap font Windows and DOS actually used, drawn to be rendered
@@ -348,6 +355,110 @@ Cheap authenticity, worth doing in phase 4:
 | Serial console (headless servers — a real OS/7 target) | Palette cannot be set. Emit 24-bit SGR (`ESC[48;2;18;137;255m`); a truecolor-capable client shows it exactly, others degrade to their own blue. |
 | SSH into a running Setup | Same as serial. |
 | The Linux VT itself receiving 24-bit SGR | fbcon accepts the sequence but snaps it to the nearest of its 16 palette entries — so on the VT the *palette* is the mechanism, not SGR. Setup must pick per surface, not emit both. |
+
+### 2.8 The installed console — Cascadia Mono (decided)
+
+**Decided 2026-08-25 (D15): the installed system's non-GUI console is
+[Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24.** Setup
+keeps Fixedsys (§2.3); the machine you are left with afterwards does not.
+
+The split is the point rather than a compromise. Setup is a reproduction of
+MS-DOS 6.22 and Windows 2000 Setup, and Fixedsys is what those were drawn in.
+The installed console is where an administrator works in PowerShell — and
+Cascadia is the font Microsoft ships for exactly that, as the Windows Terminal
+default. Same house, correct era in each half.
+
+Full measurements: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md).
+The load-bearing parts:
+
+| | |
+|---|---|
+| Licence | **SIL OFL 1.1**, `Copyright 2019-2024 Aaron Bell`, **Reserved Font Name "Cascadia Code"**. Redistribution inside the ISO is permitted; two obligations follow — see below. This is the one place Cascadia is *worse* than Fixedsys, which is CC0 and imposes nothing. |
+| Source | **The pinned Ubuntu snapshot**, not GitHub: `fonts-cascadia-code` `2407.24-3`, universe, `all`, 1 355 014 bytes, SHA256 `bf3514c3d4617ccf42906724baf48e98c201c565d9a5bb5a2a7f1378b5845184`. Upstream publishes only a **150 454 761-byte ZIP** of every family × weight × format, so the archive route is 1.3 MB instead of 150 MB, on a domain already pinned by `os7-release.conf`, with a hash published in the archive's own index. |
+| File used | `/usr/share/fonts/truetype/cascadia-code/CascadiaMono.ttf`, 688 612 bytes, SHA256 `4bac5958d02c6fcf2b9365c5fdf65b9dc3a500a572c80357da7533d9fca9b098` — the **variable** font, `wght 200..400..700`, default 400 |
+| **Mono, not Code** | The two are one drawing; `Cascadia Code` adds programming ligatures, and a PSF is a fixed cell grid with no shaping engine. Same reasoning that rejects `FSEX302-alt.ttf` in §2.3, same conclusion. |
+| Design metrics | `unitsPerEm = 2048`; hhea ascender 1900, descender −480 → **line box 2380** against an advance of **1200**. That is **1 : 1.9833** where the console cell is 1 : 2 — the near-coincidence is what makes an exact 8×16 reachable. |
+| Coverage | 2 426 codepoints. **All 356 REQUIRED present**, every one of them advance 1200. Of WANTED only `U+21B5` is absent — against nine absent in Fixedsys, including `U+25B2`/`U+25BC`. |
+
+**The pin is the source, not just the version.** The Debian variable font and
+the GitHub static instances are both "2407.24" and they do **not** rasterise
+alike: with hinting on, 106 of 132 sampled glyphs differ at 8×16. Only the
+static files were run through `ttfautohint`. Changing where the font comes from
+silently re-renders every console — BUILD-NOTES #53.
+
+**Two licence obligations, both cheap and both easy to forget:**
+
+1. **The licence text ships with the font.** OFL §2 requires the copyright
+   notice and licence in every copy. The PSFs are binary, so it is a file:
+   `/usr/share/doc/os7-console-font/LICENSE`, staged beside them.
+2. **The PSF must not carry the reserved name.** OFL defines a Modified Version
+   as any derivative made "by changing formats", so TTF → PSF qualifies, and §3
+   then forbids the reserved name on it. Hence **`os7-console-8x16.psf`** and
+   `os7-console-16x32.psf` — *not* `os7-cascadia-*`. The asymmetry with
+   `os7-fixedsys-*.psf` is deliberate: CC0 imposes no such restriction.
+
+#### Building it — a second route, not a second call to the first
+
+`otf2bdf` → `bdf2psf` (§2.5) **cannot produce an 8×16 cell from this font**, and
+no flag combination fixes it. `otf2bdf` scales uniformly — `-rv` changes the
+BDF's `RESOLUTION_Y` field and nothing about the outlines — so cell height
+follows cell width, and at 1200 : 2380 the only cells reachable are **8×15** and
+**9×16**. Measured across `-rh 71…77`; BUILD-NOTES #52. 9×16 is not a way out
+either: it makes the cell 18×32 at the large size, and 1280×800 then gives 71×25
+instead of the 80×25 §2.4 anchors the whole layout rule on.
+
+So this font is rasterised **straight to the cell**, with the two axes scaled
+independently, and written as PSF2 directly. Same engine underneath — FreeType
+is what `otf2bdf` uses — but the cell is stated instead of inferred:
+
+```
+x_ppem   = W · 2048 / 1200                 advance maps to exactly W px
+y_ppem   = H · 2048 / 2380                 line box maps to exactly H px
+baseline = H − round(480 / 2380 · H)
+
+   8×16 -> x_ppem 13.653  y_ppem 13.766  baseline row 13
+  16×32 -> x_ppem 27.307  y_ppem 27.532  baseline row 26
+```
+
+The two ppem values differ by 0.8 %, i.e. 0.06 px of horizontal stretch at an
+8 px advance. That is the entire distortion, and it is below the rasteriser's
+resolution.
+
+Three things this route does *not* need, and one it does:
+
+* **No `fillcell`.** Cascadia overdraws its cell on purpose — `U+2500` spans
+  x −104…1304 and `U+2502` spans y −530…2226 — so strokes meet across cell
+  boundaries by construction. `psf.py verify` reported *cell tiling continuous*
+  on the first build. This is the exact opposite of trap #27.
+* **No pixel doubling.** 16×32 is a second rasterisation, so it carries twice
+  the outline detail rather than twice the pixel size. `/etc/default/console-setup`
+  ships 16×32 as the default, so this is the size that is actually seen.
+* **Barely any `fixedwidth`.** 1 810 of 1 863 glyphs advance exactly 8 px; the
+  other 53 are zero-advance combining marks. Fixedsys needed 1 921 glyphs
+  dropped.
+* **But Block Elements must be synthesised, not rasterised.** `U+2580`–`U+259F`
+  are drawn to Cascadia's *win* box (2706 units), not its line box, so the
+  eighths land in the wrong rows and `U+2594 ▔` falls outside the cell and comes
+  out **blank** — which is precisely how the first build failed `psf.py verify`.
+  They are pure geometry, so computing them is exact where rasterising is both
+  approximate and wrong: halves and quadrants from `W//2` / `H//2`, eighths from
+  `round(n·H/8)`, and the three shades as the CP437 patterns. That last part is
+  also a look decision — Cascadia draws `░▒▓` as diagonal hatching, and a
+  progress bar built from diagonal hatching does not read as the DOS one.
+
+**Result, measured 2026-08-25:** 409 codepoints, 32 of them synthesised;
+`os7-console-8x16.psf` 7 916 bytes (3 027 gzipped) and `os7-console-16x32.psf`
+27 548 bytes (5 281 gzipped). `build/lib/psf.py verify`, run unmodified against
+both files, returns **`ok` on every line — no failures and no notes**, which the
+shipping Fixedsys PSFs do not manage: they emit four notes for glyphs the font
+lacks.
+
+**Not yet booted.** Everything above is the artefact measured on the host and in
+the build container. `psf.py verify` is a diagnostic like any other, and this
+repo's rule is to check a diagnostic against the thing it claims to check — so
+the outstanding work is to point `installer/testing/vmscreen` at a console
+running this font and read the screen back through it, the way S1 did for
+Fixedsys. Until then this is a claim about a file, not about a computer.
 
 ---
 
@@ -1399,6 +1510,7 @@ been checked on an installed machine.
 | L19 | PSF caps at 512 glyphs; Fixedsys Excelsior has 6 192 codepoints | **RESOLVED by S1 (2026-08-24), and it was never close to binding.** 409 codepoints requested, 434 mapped into 512 positions, every required block complete (ASCII 95/95, Latin-1 96/96, Box Drawing 128/128, Block Elements 32/32). Latin Extended-A turned out unnecessary: German is entirely inside Latin-1, so only the cp1252 extras are carried. **The real risks were not the cap** — `bdf2psf`'s stock equivalences silently replaced the double-line box with the single-line one, and the font draws 15 px of ink in a 16-px cell so every vertical border came out dashed. Both are fixed in the pipeline and both are now asserted; neither was visible in a coverage count. BUILD-NOTES #26 and #27 |
 | L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4). **S1 note:** the same is true of the palette and for the same reason, except that there the gap is not a few frames — `setvtrgb.service` runs *before* fbcon takes the console over, so nothing is ever displayed in the pre-userspace palette at all (BUILD-NOTES #25) |
 | L22 | **A palette change does not retint pixels already drawn.** The framebuffer is truecolor, so every cell was resolved to RGB when it was written | `F5` is a palette switch **and** a full redraw. Free on a palettised framebuffer, which is why it is easy to miss; measured 2026-08-24 |
+| L29 | **The installed console's font carries a licence obligation the installer's does not.** Cascadia Mono is OFL 1.1 with Reserved Font Name "Cascadia Code" (§2.8), so the licence text must ship beside the PSFs and the PSFs must not be named after the font. Fixedsys is CC0 and imposes neither | Two files and a naming rule: `/usr/share/doc/os7-console-font/LICENSE`, and `os7-console-*.psf` rather than `os7-cascadia-*.psf`. Cheap, but invisible once done — nothing in the build fails if the licence file is dropped, so it belongs in the same staging check that already pairs the consolefonts with `/etc/default/console-setup` (`build.sh`) |
 | L21 | Any boot-required directory split into its own dataset must be listed in `ZFS_INITRD_ADDITIONAL_DATASETS` (`/etc/default/zfs`), or the system will not boot; `canmount=off` datasets are exempt | Nothing in the D10 split needs this — the list stays empty today. Recorded because it is the trap waiting for whoever later separates `/etc`, and the failure is at boot, not at install (§4.4) |
 | L23 | **An installed OS/7 machine comes up with no network at all.** Measured on a booted arm64 machine 2026-08-25 (M1): the interface is `state DOWN` with `qdisc noop`, `ip -o addr` shows only `lo`, the routing table is empty, `systemd-networkd` is *disabled and inactive* while its consumer `networkd-dispatcher` is *enabled*, and `/etc/netplan` and `/run/systemd/network` are both empty. The image explains it — no `cloud-init`, so nothing writes `50-cloud-init.yaml` the way Ubuntu Server does. Phase 3 left screen 9 out on the grounds that "DHCP is the default on a fresh Ubuntu install" | **Screen 9 is mandatory, not owed.** On amd64-GUI the problem is masked by `network-manager`'s `10-globally-managed-devices.conf`, which is why it was never seen; arm64 and amd64-headless have nothing equivalent. Every headless arm64 machine this installer has produced needed a keyboard and a monitor to be reached. Evidence: §10 Phase 3b, "M1, measured"; image side in §7.2. **amd64 is still unmeasured — M3** |
 | L24 | **The netplan renderer depends on a step that may not have run yet.** `SystemSteps`' headless path purges the desktop and then runs `apt-get autoremove -y --purge`, which removes `network-manager`. A NetworkManager-rendered netplan written before that purge leaves an installed machine with a config naming a backend that is no longer installed — no network, and no error at install time | The renderer comes from `plan.Mode` (§7.2), never from probing the target, and the network step runs **after** the mode step. Deriving it from the plan makes the outcome independent of step order; probing makes it depend on it |
@@ -1441,7 +1553,8 @@ be recorded here a few minutes before the entry it points at.
 | D5 | Field colour vs. white-text contrast | **DECIDED 2026-08-22 — field `#0057ad`** (`#1289ff` darkened along its own hue, 7.07 : 1, WCAG AAA); `#1289ff` becomes the full-width title stripe and the progress fill; `F5` → `#003366` (§2.2). **Confirmed on a framebuffer 2026-08-24:** every pixel of 1 280×800 carried the exact value, for all four slots and for the high-contrast field. Ratios recomputed from the measured pixels are 7.08 : 1 and 12.61 : 1 |
 | D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty. **S1 gave it a mechanism and made it free:** the palette has to be shipped as `/etc/vtrgb` for Setup to work at all (§2.1), Ubuntu already enables `setvtrgb.service` to apply it, and that same file is what the installed console reads. Keeping the palette is now the default outcome and *removing* it would be the extra work |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
-| D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3) |
+| D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3). **Scope narrowed 2026-08-25 by D15:** the second half of that — the installed system in non-GUI mode — is now Cascadia Mono. Fixedsys keeps Setup, which is the half the DOS reproduction depends on |
+| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against nine missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures *and no notes*. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **Not yet booted** — the artefact is verified, a console running it is not |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
 | D10 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split, not placed (§4.4).** Package state (`dpkg`, `apt`, `cache`) stays inside the BE, because it describes the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and — the OS/7-specific part — the state of the agents that hold a device identity in Entra, Intune and Arc, because the tenant on the other end has no rollback. Out-of-BE datasets hang under `rpool/DATA` rather than carrying a do-not-clone property, so the mistake is structurally impossible rather than merely discouraged |
 
@@ -1923,6 +2036,11 @@ remembered. What was *not* checked is marked as a spike in Phase 0.
 | **Its cmap covers Box Drawing `U+2500–257F` 128/128 and Block Elements `U+2580–259F` 32/32**, so every glyph the OS/7 UI draws is present — the upstream README advertises only windows-125x, which would not have been enough | read out of the **downloaded `FSEX302.ttf`**, 6 192 codepoints total (the repository's `FSEX.ttx` has 6 193 — checking the shipped artefact, not the source, is the point) |
 | `FSEX302.ttf` is 580 724 bytes, SHA256 `842f8fbf…3899`; `unitsPerEm = 160`, so 16 px is exactly 10 units per pixel | downloaded and hashed 2026-08-22 |
 | **The 16 ppem `EBDT` bitmap strike starts at glyph 66 (`A`)** — space, digits and ASCII punctuation have no embedded bitmap, so the conversion must rasterise outlines, not extract bitmaps | `EBLC` strike table read from the same file |
+| **Cascadia Mono is SIL OFL 1.1 with Reserved Font Name "Cascadia Code"**, `Copyright 2019-2024 Aaron Bell` — so it may ship inside the ISO, but the licence must ship with it and a PSF built from it may not carry the name (L29) | [LICENSE](https://github.com/microsoft/cascadia-code/blob/main/LICENSE) and the `name` table of the shipped TTF, both read 2026-08-25. OFL's own definition of a Modified Version includes "by changing formats", which is what makes TTF → PSF one |
+| **`fonts-cascadia-code 2407.24-3` is in the pinned snapshot's `universe`** — same upstream release as GitHub's, 1 355 014 bytes, SHA256 `bf3514c3…5184`, versus a 150 454 761-byte ZIP as upstream's only release asset | `dists/resolute/universe/binary-arm64/Packages.gz` under `OS7_ARCHIVE_SNAPSHOT`, and the GitHub release API, both read 2026-08-25 |
+| **Cascadia's line box is 1200 : 2380 = 1 : 1.9833**, against a console cell of 1 : 2 — which is what makes an exact 8×16 reachable at all; but its Block Elements are drawn to the **win** box (2706), so rasterising them puts the eighths in the wrong rows and blanks `U+2594` | `head`/`hhea`/`OS/2`/`hmtx` and per-glyph outline bounds read out of the shipped `CascadiaMono.ttf` with fontTools 4.63.0; the blank was then reproduced as a real `psf.py verify` failure |
+| **`otf2bdf` cannot yield an 8×16 cell from Cascadia** — `-rv` does not scale outlines, so height follows width and only 8×15 and 9×16 exist on that route | swept `-p 14 -rh 71…77` in `os7-build:arm64`, 2026-08-25 (BUILD-NOTES #52). Also confirms trap #24 is not Fixedsys-specific: `otf2bdf` exits 8 on this font too |
+| **Both Cascadia PSFs pass `psf.py verify` with no failures and no notes** — 409 codepoints, 32 synthesised, cell tiling continuous, all nine shape distinctions held | the repo's own `build/lib/psf.py verify --expect 8x16,16x32`, run unmodified against the built files, 2026-08-25 |
 
 Contrast ratios in §2.2 were computed from the sRGB relative-luminance formula,
 not taken from a source.

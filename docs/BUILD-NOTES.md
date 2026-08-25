@@ -9,6 +9,26 @@ Everything here was discovered by hitting the failure, not by reading
 documentation. Each item says what breaks if you undo it. Nothing here has been
 re-validated against the current scaffold.
 
+## Claiming a number
+
+The entries below are numbered and the numbers are referenced from CLAUDE.md,
+README, SETUP-PLAN, session documents, source comments and harnesses. **Two
+entries with the same number stop the list from being a list**, and on
+2026-08-25 that nearly happened twice in one afternoon: several Claude Code
+sessions were running at once, each picked "the next free number" independently,
+and two of them picked the same one.
+
+So: **claim the number here, in this table, in a commit, before you write the
+entry.** A number that is spoken for but not yet written looks free otherwise,
+and the next session takes it in good faith.
+
+| # | claimed for | by |
+|---|---|---|
+| 50 | `networkd-dispatcher.service` is enabled while `systemd-networkd` is not — the consumer of a unit is enabled, the producer is not, and the enable-list reads like proof that networking is configured | measured by session os7-b1 on both images; **held until measured independently**, because citing someone else's measurement as this list's evidence is the exact mistake the entry describes |
+| 51 | `iw scan` prints non-printable SSID bytes ESCAPED — a hidden network arrives as the literal four characters `\x00` per byte, so a parser testing `c == '\0'` filters nothing and writes gibberish into a picker. The byte level is not the character level; same shape as #46 | observed by session os7-b1 against a **recorded scan, not a radio** |
+
+Everything below is written. Numbers above 53 are free.
+
 ## What was kept, and what was dropped
 
 **Kept** — carried into this repo:
@@ -1933,8 +1953,10 @@ tell two different bugs apart:
 | tty2 | the GNOME session |
 | tty3 | `Ubuntu 26.04 LTS ubuntu tty3` / `ubuntu login:` |
 
-**os7-setup is on none of them.** Not hidden behind the desktop, not on a spare
-console: absent.
+**os7-setup is on none of them** — at 200 s. That sentence is as far as this
+measurement reaches, and the first version of this entry went further than it
+should have: it said *absent*, meaning never started. That is wrong, and the
+correction is below.
 
 ### Why
 
@@ -1954,7 +1976,50 @@ so nothing on arm64 could ever have exposed this** — the entry has worked ther
 since Phase 1, and every screenshot in `.vm/phase1/shots/` was taken on a machine
 with nothing to lose the race to.
 
-### The fix, and why it is a command line rather than another `Conflicts=`
+### CORRECTION, measured the same afternoon: displaced, not absent
+
+Booting the same ISO again and photographing earlier:
+
+| t | what is on the screen |
+|---|---|
+| 95 s | **OS/7 Setup**, Welcome screen, painted, version 1.0.0.47 |
+| 310 s | the GNOME desktop |
+
+So `os7-setup` **starts, wins tty1, and paints** — and is then displaced by the
+desktop. The VT walk above ran at 200 s, i.e. after the hand-over, and read an
+absence at one moment as a cause. That is the same error as the cancelled CI
+build earlier that day: a thing not being somewhere when you look is not the same
+as it never having been there.
+
+The direction of the diagnosis survives — `graphical.target` takes the screen —
+but "never started" was wrong, and it mattered: it would have sent the next
+person looking for a unit that failed to start, when the unit works.
+
+### The fix, verified, and why it is a command line rather than another `Conflicts=`
+
+`systemd.unit=multi-user.target` typed into GRUB's editor on the same ISO, on the
+`linux` line, booted with ctrl-x: **at 310 s the Welcome screen is still there.**
+The unmodified entry had been showing a desktop at that same point. One variable,
+one run each.
+
+Three caveats, because this is a probe and not a harness:
+* one run per condition, not repeated;
+* in the test the parameter sits **after `---`** (that is where End puts the
+  cursor), while the shipped entry has it before. systemd reads `/proc/cmdline`
+  either way, but the shipped placement is not what was tested — the CI ISO is;
+* 310 s is a moment, not a proof that Setup survives indefinitely. It is past the
+  point where the desktop had already taken over.
+
+Two earlier attempts at this test proved nothing and are worth recording, because
+both failed the same way — an assumption where a measurement belonged. The first
+waited 95 s for the menu while GRUB's own `set timeout=10` had long fired: the
+entry booted unmodified and the keystrokes went into Setup's Welcome screen. The
+second synchronised on GRUB's serial banner but pressed `down` twice, and the
+body of a menu entry is `setparams` / **blank** / `search` / `linux` / `initrd` —
+so the parameter landed on the `search` line and the kernel never saw it.
+
+**What caught both was photographing the edited line before booting it.** Without
+that frame, the second run would have been reported as "the fix does not work".
 
 `systemd.unit=multi-user.target` on the Install entry. The entry is a text-mode
 installer and has no business reaching the graphical target; not asking for it
@@ -1981,3 +2046,81 @@ This is #12 and #23 in a third costume: an arm64 pass said nothing about amd64,
 not because the code differs but because the *image* does. Whenever the two
 package sets diverge — and they diverge by 979 packages — any claim about
 behaviour has to name which image it was measured on.
+
+## 52. `otf2bdf` scales uniformly, so a font whose em is not its cell can never hit an 8×16
+
+Found while evaluating Cascadia Mono for the installed console
+([SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md), SETUP-PLAN §2.8).
+
+`build/lib/build-console-font.sh` gets an exact 8×16 out of Fixedsys Excelsior
+because that font's em **is** the console cell: `unitsPerEm = 160`, ascender 130,
+descender −30, so `-p 16 -r 72` gives ascent 13 + descent 3 = 16 and an advance
+of exactly 8. Nothing about that is generic, and it is easy to read the pipeline
+as if it were.
+
+Cascadia's em is 2048 while its line box is 1200 × 2380. Sweeping the horizontal
+resolution at a fixed point size:
+
+```
+otf2bdf -p 14 -rh N -rv N  CascadiaMono.ttf
+
+  -rh 74  (ppem 14.39)   ascent 12  descent 3  cell 15   DWIDTH 8
+  -rh 75  (ppem 14.58)   ascent 13  descent 3  cell 16   DWIDTH 9
+```
+
+The cell height reaches 16 in the same step the width leaves 8. **There is no
+setting in between**, and `-rv` is not the escape hatch it looks like: it is
+documented as "set the vertical resolution" and it does change the BDF's
+`RESOLUTION_Y` field, but the outlines are scaled from `-p × -rh` alone. Sweeping
+`-rv` 70…74 against a fixed `-rh 70` moved neither ascent, descent nor `DWIDTH`
+by one pixel.
+
+So the reachable cells for this font are **8×15 and 9×16**, and which one you get
+is not a choice you make separately from the width. Taking 9×16 is not a free
+escape either — it makes the large cell 18×32, and SETUP-PLAN §2.4's geometry
+rule is anchored on 1280×800 giving exactly 80×25, which becomes 71×25.
+
+**The fix is not a flag.** Rasterise straight to the cell with the two axes
+scaled independently (`x_ppem = W·upem/advance`, `y_ppem = H·upem/lineBox`) and
+write PSF2 directly. Same rasteriser underneath — FreeType is what `otf2bdf`
+uses — but the cell is stated instead of inferred from metrics that were never
+about a console.
+
+**Also confirmed here: trap #24 is not Fixedsys-specific.** `otf2bdf` exits 8 on
+Cascadia too, at every size tried, while writing a correct BDF. So the
+assert-the-artefact handling in `build-console-font.sh` is the right shape for
+any font, not a workaround for one.
+
+## 53. Two files, one font version, different pixels — "2407.24" does not identify a rasterisation
+
+Found in the same evaluation.
+
+`fonts-cascadia-code` in the Ubuntu archive and the upstream GitHub release are
+both Cascadia **2407.24**, and both report `Version 2407.024` internally. They do
+not render the same. Over a 132-character sample, rasterised into identical
+cells:
+
+```
+  8×16  hinting on    106 of 132 glyphs DIFFER
+  8×16  hinting off     1 of 132 differs
+ 16×32  hinting on    113 of 132 glyphs DIFFER
+ 16×32  hinting off    10 of 132 differ
+```
+
+The archive ships the **variable** font; the release also ships static
+instances, and only those were run through `ttfautohint` — visible in the name
+table as `Version 2407.024; ttfautohint (v1.8.4)` versus a bare
+`Version 2407.024`. Both files carry `fpgm`, `prep`, `cvt ` and `gasp`, so
+"is it hinted" cannot be answered by asking which tables exist.
+
+**What makes this a trap rather than a curiosity:** every obvious identifier
+agrees. Same upstream version, same family name, same metrics, same coverage,
+same licence. A future session swapping the source for a good reason — the ZIP
+is 150 MB, or the package moved — would have no signal that it just re-rendered
+every character on every console, and no coverage check would notice, because
+coverage is unchanged.
+
+Same shape as #26: the codepoint is mapped, the picture is different. The guard
+is the same too — **pin the file, not the version**, and treat the source as
+part of the pin. SETUP-PLAN §2.8 records the SHA256 of the exact TTF, not just
+the package version.
