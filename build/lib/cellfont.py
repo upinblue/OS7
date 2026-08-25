@@ -27,7 +27,7 @@ bespoke renderer, it is the same engine asked a better-posed question.
 
 TWO THINGS THAT ARE NOT OPTIONAL, both learned the hard way:
 
-  * `.notdef` IS NOT AN ABSENT GLYPH (BUILD-NOTES #54). FreeType answers every
+  * `.notdef` IS NOT AN ABSENT GLYPH (BUILD-NOTES #57). FreeType answers every
     request; ask for a codepoint the font lacks and it returns glyph 0, which in
     Cascadia is a hollow rectangle. `bdf2psf` used to refuse and log; replacing
     it removed that guarantee silently. So the cmap is consulted first and a
@@ -264,7 +264,7 @@ def build(font, out, W, H, hinting=True):
     # the erase character. Packing the codepoints in table order put U+0040 '@'
     # there and the kernel would not load the font at all — while `psf.py verify`
     # passed everything, because it asks about coverage, shapes and tiling and
-    # this is a question about POSITIONS. BUILD-NOTES #57.
+    # this is a question about POSITIONS. BUILD-NOTES #59.
     #
     # Laying ASCII out at position == codepoint fixes it structurally rather
     # than by special-casing one slot: 32 is U+0020 and a space is blank by
@@ -302,7 +302,7 @@ def build(font, out, W, H, hinting=True):
         if bm is not None:
             synthesised.append(cp)
         elif not has(cp):
-            # #54: rasterising this would map it to .notdef and every coverage
+            # #57: rasterising this would map it to .notdef and every coverage
             # check downstream would then pass on a hollow rectangle.
             skipped.append(cp)
             codepoints.append(None)
@@ -315,7 +315,7 @@ def build(font, out, W, H, hinting=True):
 
     if glyphs and any(any(r) for r in glyphs[32]):
         sys.stderr.write("!!! glyph position 32 is not blank; setfont would "
-                         "refuse this font (BUILD-NOTES #57)\n")
+                         "refuse this font (BUILD-NOTES #59)\n")
         sys.exit(1)
 
     if len(glyphs) > psfmod.PSF_MAX_GLYPHS:
@@ -339,7 +339,7 @@ def build(font, out, W, H, hinting=True):
     print(f"      baseline row {baseline}, {len(synthesised)} synthesised, "
           f"{len(skipped)} skipped"
           + (" (" + " ".join(f"U+{c:04X}" for c in skipped) + ")" if skipped else "")
-          + f"; position 32 blank (setfont, #57)")
+          + f"; position 32 blank (setfont, #59)")
     return len(glyphs)
 
 

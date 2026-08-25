@@ -164,7 +164,7 @@ build/                      the ISO: live-build config, hooks, and build.sh
                             console, D15). A second route because otf2bdf
                             cannot reach an 8x16 cell from that font (#52)
   lib/cellfont.py           rasterise an outline font into an EXACT console
-                            cell and write PSF2; skips what the cmap lacks (#54)
+                            cell and write PSF2; skips what the cmap lacks (#57)
   lib/psf.py                the font subset table, the fixes, and the guard -
                             shared by both fonts, deliberately
   lib/palette.py            the palette, and D5's contrast check

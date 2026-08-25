@@ -30,7 +30,7 @@ as a conversation.
 
 *No number is currently claimed but unwritten.*
 
-Everything below is written. Numbers above 57 are free.
+Everything below is written. Numbers above 59 are free.
 
 ## What was kept, and what was dropped
 
@@ -2221,7 +2221,7 @@ part of the pin. SETUP-PLAN §2.8 records the SHA256 of the exact TTF, not just
 the package version.
 
 
-## 54. A direct rasteriser answers every request — `.notdef` passed both coverage checks
+## 57. A direct rasteriser answers every request — `.notdef` passed both coverage checks
 
 Found while building the Cascadia PSFs
 ([SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md), SETUP-PLAN §2.8),
@@ -2258,7 +2258,7 @@ Worth stating in general, because the next font conversion will meet it too:
 **when a pipeline step is replaced, its silent guarantees go with it.** `bdf2psf`
 was not only converting — it was also refusing, and the refusal was load-bearing.
 
-## 55. The rasteriser is a container package, so rebuilding the container changes the console
+## 58. The rasteriser is a container package, so rebuilding the container changes the console
 
 Found while putting SETUP-PLAN §2.8's route into the build.
 
@@ -2356,7 +2356,7 @@ a UUID, a by-id path — is not. `StoragePlan.Disk` already took this lesson (L1
 `/dev/disk/by-id/…` and never `/dev/sdb`); the network half had to learn it
 again.
 
-## 57. `setfont` refuses a font whose glyph POSITION 32 is not blank
+## 59. `setfont` refuses a font whose glyph POSITION 32 is not blank
 
 Found by the vmscreen check on the installed console
 ([SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md)), and it is the
@@ -2394,7 +2394,7 @@ Same week, same class, three different axes:
 
 | | every check correct, but about… |
 |---|---|
-| #54 `.notdef` | the wrong **glyph** — mapped, non-blank, and a hollow rectangle |
+| #57 `.notdef` | the wrong **glyph** — mapped, non-blank, and a hollow rectangle |
 | #56 (os7-b1) | the wrong **moment** — the interface name before the medium was removed |
 | this one | the wrong **property** — coverage and shape, never position |
 

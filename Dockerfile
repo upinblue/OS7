@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 	`# container package, not an archive-pinned one, and 41 of 409 glyphs differ` \
 	`# between 2.13.2 and 2.14.2 from the same TTF. That is why the built PSFs` \
 	`# are hashed against OS7_CASCADIA_PSF_SHA256_* - rebuilding this container` \
-	`# can change the console with no version number moving. BUILD-NOTES #55.` \
+	`# can change the console with no version number moving. BUILD-NOTES #58.` \
 	python3-freetype \
 	`# os7-setup is NativeAOT C# (SETUP-PLAN 6.1). The exact list spike S2` \
 	`# established: the SDK, and the linker toolchain ILCompiler shells out to.` \

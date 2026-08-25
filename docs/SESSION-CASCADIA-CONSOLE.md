@@ -305,7 +305,7 @@ reading the built PSF said it was present. Nothing in the pipeline compared
 them; a person did.
 
 **The route must consult `cmap` and skip what is not there**, at which point
-`verify` reports the absence honestly, as a note. Recorded as BUILD-NOTES #54,
+`verify` reports the absence honestly, as a note. Recorded as BUILD-NOTES #57,
 and stated as a requirement in SETUP-PLAN §2.8 rather than left as a property of
 one prototype.
 
@@ -396,7 +396,7 @@ when something unpinned sits between them.**
 Fixed by pinning the artefact — `OS7_CASCADIA_PSF_SHA256_8x16` / `_16x32`, checked
 after `psf.py verify`, failing the build and naming the libfreetype version it
 found. Drift becomes a build failure with a diff to look at instead of a silent
-redraw. BUILD-NOTES #55.
+redraw. BUILD-NOTES #58.
 
 **And the guard was made to fire before it was trusted.** Corrupting the pinned
 hash deliberately: exit 1, the expected/got pair printed, the libfreetype version

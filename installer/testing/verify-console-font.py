@@ -235,11 +235,30 @@ def main():
         #      known. `setfont` is deliberately NOT called: if the console is
         #      showing Cascadia, console-setup already did it from the initramfs,
         #      and calling setfont here would prove only that the file loads.
-        c.send("sudo systemctl stop getty@tty1.service")
-        c.send("sleep 1")
-        c.send(r"printf '\033[H\033[2J' | sudo tee /dev/tty1 >/dev/null")
-        for n, text in enumerate(LINES):
-            c.send(f"printf '%s\\n' {shq(text)} | sudo tee /dev/tty1 >/dev/null")
+        # sudo takes the password on stdin, per command. `sudo -S -i` looked
+        # like it worked - the shell echoed it and printed a prompt - and left
+        # the session at uid 1000, so every privileged command after it silently
+        # did nothing. BUILD-NOTES #16: the echo is not the execution.
+        def sudo(cmd):
+            return f"echo '{PASSWORD}' | sudo -S -p '' {cmd} 2>&1"
+
+        ask(c, sudo("systemctl stop getty@tty1.service"), "GETTY-STOPPED")
+        # `clear`, not a printf of escape sequences. Passing \033 through
+        # Python -> the serial line -> sh -> printf lost the escape once already
+        # and painted the literal text `033[H033[2J` onto the screen, which then
+        # shifted every column and made 48 of 53 cells "differ".
+        ask(c, sudo("sh -c 'TERM=linux clear > /dev/tty1'"), "CLEARED")
+
+        # Build the test text in a FILE and then cat the file to tty1. Writing
+        # it inline meant quoting through Python -> serial -> sh -> printf, four
+        # layers, and the first attempt lost the escape and painted the literal
+        # `033[H033[2J` onto row 0 — which shifted every column and reported 48
+        # of 53 cells as font mismatches. A file has no quoting.
+        c.send("rm -f /tmp/fonttest")
+        for text in LINES:
+            c.send(f"printf '%s\\n' {shq(text)} >> /tmp/fonttest")
+        ask(c, "wc -l < /tmp/fonttest", "TEXT-READY")
+        ask(c, sudo("sh -c 'cat /tmp/fonttest > /dev/tty1'"), "PAINTED")
         ask(c, "sync", "PAINT-DONE")
 
         q = Qmp(lab.qmpsock)

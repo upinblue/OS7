@@ -151,7 +151,7 @@ PYTHONPATH="${HERE}" python3 "${HERE}/cellfont.py" build "${TTF}" "${WORK}/${PSF
 #    It is expected to emit ONE note here — U+21B5, which Cascadia does not
 #    have. That is the honest outcome and it is why cellfont.py skips a missing
 #    codepoint instead of rasterising it: rasterising would map it to .notdef, a
-#    hollow rectangle, and this verifier would then pass it (BUILD-NOTES #54).
+#    hollow rectangle, and this verifier would then pass it (BUILD-NOTES #57).
 # ---------------------------------------------------------------------------
 echo ">>> Verifying coverage"
 python3 "${HERE}/psf.py" verify --expect 8x16,16x32 \
