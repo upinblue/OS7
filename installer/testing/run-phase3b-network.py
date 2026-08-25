@@ -525,7 +525,13 @@ def main():
             print(f"\n  {phase.__name__} FAILED\n")
             return 1
 
-    print("\n  Phase 3b: every check passed.\n")
+    # `m1` ASSERTS NOTHING, so it must not be told it passed. Printing "every
+    # check passed" after a phase that made no checks is the same wrong sentence
+    # this file exists to stop: a run that could not fail reporting success.
+    if what == "m1":
+        print("\n  M1 produced a report. Nothing was asserted.\n")
+    else:
+        print("\n  Phase 3b: every check passed.\n")
     return 0
 
 

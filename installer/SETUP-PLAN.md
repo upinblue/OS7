@@ -1380,7 +1380,7 @@ been checked on an installed machine.
 | L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4). **S1 note:** the same is true of the palette and for the same reason, except that there the gap is not a few frames — `setvtrgb.service` runs *before* fbcon takes the console over, so nothing is ever displayed in the pre-userspace palette at all (BUILD-NOTES #25) |
 | L22 | **A palette change does not retint pixels already drawn.** The framebuffer is truecolor, so every cell was resolved to RGB when it was written | `F5` is a palette switch **and** a full redraw. Free on a palettised framebuffer, which is why it is easy to miss; measured 2026-08-24 |
 | L21 | Any boot-required directory split into its own dataset must be listed in `ZFS_INITRD_ADDITIONAL_DATASETS` (`/etc/default/zfs`), or the system will not boot; `canmount=off` datasets are exempt | Nothing in the D10 split needs this — the list stays empty today. Recorded because it is the trap waiting for whoever later separates `/etc`, and the failure is at boot, not at install (§4.4) |
-| L23 | **Nothing on the shipped image configures a network by itself.** `/etc/netplan/` is empty, `/etc/systemd/network/` is empty, there is no `cloud-init` to write `50-cloud-init.yaml`, and `systemd-networkd` is not enabled — only its *consumer* `networkd-dispatcher.service` is. Phase 3 left screen 9 out on the grounds that "DHCP is the default on a fresh Ubuntu install"; on Ubuntu Server that default comes from cloud-init, which this image does not carry | **Screen 9 becomes mandatory rather than owed.** On amd64-GUI the problem is masked by `network-manager`'s `10-globally-managed-devices.conf`, which is why it has never been seen; arm64 and amd64-headless have nothing equivalent. Measured from both ISOs on 2026-08-25 (§7.2) — **of the image, not of a running machine. M1 is the boot that would make this a fact about a computer** |
+| L23 | **An installed OS/7 machine comes up with no network at all.** Measured on a booted arm64 machine 2026-08-25 (M1): the interface is `state DOWN` with `qdisc noop`, `ip -o addr` shows only `lo`, the routing table is empty, `systemd-networkd` is *disabled and inactive* while its consumer `networkd-dispatcher` is *enabled*, and `/etc/netplan` and `/run/systemd/network` are both empty. The image explains it — no `cloud-init`, so nothing writes `50-cloud-init.yaml` the way Ubuntu Server does. Phase 3 left screen 9 out on the grounds that "DHCP is the default on a fresh Ubuntu install" | **Screen 9 is mandatory, not owed.** On amd64-GUI the problem is masked by `network-manager`'s `10-globally-managed-devices.conf`, which is why it was never seen; arm64 and amd64-headless have nothing equivalent. Every headless arm64 machine this installer has produced needed a keyboard and a monitor to be reached. Evidence: §10 Phase 3b, "M1, measured"; image side in §7.2. **amd64 is still unmeasured — M3** |
 | L24 | **The netplan renderer depends on a step that may not have run yet.** `SystemSteps`' headless path purges the desktop and then runs `apt-get autoremove -y --purge`, which removes `network-manager`. A NetworkManager-rendered netplan written before that purge leaves an installed machine with a config naming a backend that is no longer installed — no network, and no error at install time | The renderer comes from `plan.Mode` (§7.2), never from probing the target, and the network step runs **after** the mode step. Deriving it from the plan makes the outcome independent of step order; probing makes it depend on it |
 | L25 | **The Wi-Fi PSK and the 802.1X password reach the target in plaintext**, inside `/etc/netplan/01-os7-network.yaml`. That is netplan's design and Ubuntu does the same; it is not a defect Setup can fix | `chmod 0600` on the file, and it is named here rather than left to be discovered. Neither secret is ever serialised into the plan JSON (`[JsonIgnore]` — the third instance of that rule after the LUKS passphrase and the account password); `--unattend` takes them from `--wifi-secret-file` |
 | L26 | **A rollback un-says a local password change.** `/etc/shadow` is inside the boot environment, so a password changed after install is reverted along with `/usr` when a BE is rolled back. D10 moved the Entra/Intune/Arc agent state *out* of the BE because the tenant has no rollback; the mirror-image case — the local break-glass credential — was not considered | Not fixed here, and possibly not worth fixing: moving `/etc` out of the BE is exactly the split L21 warns about. Named so that whoever hits it recognises it, and so that "the local admin password is the credential of last resort" (§7.3) is read with this attached |
@@ -1659,13 +1659,52 @@ what is *on* the medium and not about what a computer *does*. Before any code:
 
 | # | Question | Method | Overturns what |
 |---|---|---|---|
-| **M1** | Does an installed arm64 machine really come up with no network | `run-phase3.py boot` with a virtio NIC attached, then `ip -o addr`, `networkctl status` and `systemctl is-enabled systemd-networkd` over the serial console | If it *does* get an address, L23 is wrong and screen 9 goes back to being a convenience. The whole priority of this phase rests here |
+| **M1** | Does an installed arm64 machine really come up with no network | `run-phase3b-network.py m1`: boot a disk installed by a PRE-3b build, alone, with a virtio NIC, and ask it | **MEASURED 2026-08-25, and L23 holds.** See below — this is no longer a prediction from a squashfs |
 | **M2** | What does recovery look like on a machine with a locked root | Boot an installed machine, open the GRUB menu, take the recovery entry, and see what it asks for | D11's closing sentence. If recovery is unreachable without a root password, D11 needs a mitigation, not a footnote |
 | **M3** | Does the amd64 headless purge actually remove `network-manager` | Install headless on amd64, then `dpkg -l network-manager` on the booted machine | L24's premise. If `autoremove` spares it, the renderer question is softer than stated — but the fix (derive from `plan.Mode`) is correct either way |
 
 M1 is cheap: the harness already boots an installed disk, and this adds a NIC and
 three commands. **It is also the one that decides whether this phase is urgent or
 merely owed, so it runs before the model is written, not after.**
+
+#### M1, measured 2026-08-25 — and the machine is worse off than the image said
+
+A disk installed by a **pre-Phase-3b** build (`.vm/phase3`, 2026-08-24), booted
+alone with no ISO and a virtio NIC attached, logged into over the serial console
+and asked. Verbatim:
+
+```
+2: enp0s2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN
+ip -o addr show          1: lo  inet 127.0.0.1/8      (and nothing else)
+ip route show            (empty)
+systemctl is-enabled systemd-networkd        disabled
+systemctl is-active  systemd-networkd        inactive
+systemctl is-enabled networkd-dispatcher     enabled
+ls -A /etc/netplan/                          (empty)
+ls -A /run/systemd/network/                  EMPTY
+dpkg -l network-manager                      un  (not installed)
+```
+
+**The interface is DOWN with `qdisc noop`, there is no address on it, and the
+routing table is empty.** Not "DHCP did not answer" — the link was never brought
+up at all. The machine is unreachable, and nothing on it reports a problem.
+
+And the shape L23 predicted is there in one line pair:
+`networkd-dispatcher` is **enabled** while `systemd-networkd` is **disabled and
+inactive**. The consumer is switched on and the producer is not, so an operator
+skimming the enabled units sees a networking service and concludes networking is
+configured.
+
+This upgrades L23 from a property of a squashfs to a fact about a computer, and
+it settles the phase's priority: screen 9 is not a convenience. Every headless
+arm64 machine this installer has ever produced needed a keyboard and a monitor to
+be reached.
+
+**What M1 does NOT say.** It is one machine, arm64, in QEMU, installed by one
+build. It says nothing about amd64 — where `network-manager` IS installed on the
+GUI product and would have brought the link up by itself, which is exactly why
+this went unnoticed — and nothing about hardware whose driver behaves differently
+from `virtio_net`. M3 is the amd64 half and is still owed.
 
 #### The model
 

@@ -1,13 +1,24 @@
-# The network screen, and the account model — planned, and one premise overturned
+# The network screen, and the account model — a premise overturned, then built on
 
 **Date:** 2026-08-25. Against `main` at `c4b3ddb`, "The amd64 Install entry booted
 into GNOME, and only a boot could have said so", and the two ISOs built from that
 line: `OS7-1.0.0.46-arm64.iso` and `OS7-1.0.0.47-amd64.iso`, both on archive
 snapshot `20260824T000000Z`.
 
-**This session wrote no installer code.** It measured, it planned, and it found
-one sentence in [SETUP-PLAN.md](../installer/SETUP-PLAN.md) that is true of Ubuntu
-and false of this image.
+The session went in three stages, and the middle one is the reason for the other
+two:
+
+1. **It found one sentence in [SETUP-PLAN.md](../installer/SETUP-PLAN.md) that is
+   true of Ubuntu and false of this image** — the sentence Phase 3 used to leave
+   screen 9 out.
+2. **It measured the consequence on a running computer (M1).** An installed
+   arm64 machine comes up with its interface DOWN, no address and an empty
+   routing table. Not slow, not misconfigured — unreachable, silently.
+3. **It then built screen 9**, with the Wi-Fi screens D13 puts in v1 and the
+   account-model decision D11 settles.
+
+Stage 2 is what turns this from a tidy-up into the phase's justification, and it
+is why it was done before any code was written rather than after.
 
 ---
 
@@ -55,18 +66,64 @@ This image has no `cloud-init`. On amd64-GUI the gap is invisible because
 — which is exactly why it has never been seen, and exactly why arm64 and
 amd64-headless would hit it.
 
-### What this is NOT evidence of
+### M1 — and the machine is worse off than the image said
 
-**No installed OS/7 machine has been booted with a NIC attached.** Everything
-above is a property of a squashfs. The claim "an installed arm64 machine comes up
-with no network" is a *prediction* from it, and this repo does not let a
-prediction stand where a boot is available. It is recorded as **M1** in Phase 3b
-and it runs before any code is written, because it is also the measurement that
-decides whether the phase is urgent or merely tidy.
+Everything above is a property of a squashfs, so the claim "an installed arm64
+machine comes up with no network" was a *prediction*. **It was measured the same
+day, and it holds.**
 
-Two more are owed and are recorded with it: **M2**, what recovery looks like on a
-machine with a locked root, and **M3**, whether the headless purge really takes
-`network-manager` with it.
+A disk installed by a **pre-Phase-3b** build (`.vm/phase3`, 2026-08-24), booted
+alone with no ISO attached and a virtio NIC present, logged into over the serial
+console and asked:
+
+```
+2: enp0s2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN
+ip -o addr show          1: lo  inet 127.0.0.1/8      (and nothing else)
+ip route show            (empty)
+systemctl is-enabled systemd-networkd        disabled
+systemctl is-active  systemd-networkd        inactive
+systemctl is-enabled networkd-dispatcher     enabled
+ls -A /etc/netplan/                          (empty)
+ls -A /run/systemd/network/                  EMPTY
+dpkg -l network-manager                      un  (not installed)
+```
+
+**The interface is DOWN with `qdisc noop`, it has no address, and the routing
+table is empty.** Not "DHCP did not answer" — the link was never brought up. The
+machine is unreachable and nothing on it reports a problem.
+
+And the shape this session started from is there in one line pair:
+`networkd-dispatcher` **enabled**, `systemd-networkd` **disabled and inactive**.
+The consumer is switched on and the producer is not.
+
+That settles the phase's priority. Screen 9 is not a convenience: every headless
+arm64 machine this installer has produced needed a keyboard and a monitor to be
+reached.
+
+**What M1 does not say.** One machine, arm64, in QEMU, from one build. It says
+nothing about amd64, where `network-manager` is installed on the GUI product and
+would have brought the link up by itself — which is precisely why this went
+unnoticed for so long — and nothing about hardware whose driver behaves
+differently from `virtio_net`.
+
+**M2** (what recovery looks like on a machine with a locked root) and **M3** (the
+amd64 half — whether the headless purge really takes `network-manager`) are still
+owed.
+
+### One methodological failure worth recording
+
+The first attempt at M1 was a throwaway script that drove the serial console
+itself instead of going through `vmconsole`'s `live_login` and `to_plain_bash`.
+It reached a login, and then every command came back as mojibake and a PowerShell
+error: the login shell on an installed OS/7 machine is `pwsh`, and bash syntax
+typed into it does not merely fail — an unanswered terminal query corrupts the
+session. That is BUILD-NOTES #16, which this repository already knew and had
+already wrapped in two helper functions.
+
+The measurement was obtained only after rewriting the probe to use them, which is
+what `run-phase3b-network.py m1` now is. Recorded because "a quick throwaway
+probe" is exactly how a repository's hard-won helpers get bypassed, and the
+second attempt cost more than using them would have.
 
 ---
 
