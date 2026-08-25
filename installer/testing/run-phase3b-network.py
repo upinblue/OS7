@@ -31,6 +31,7 @@ can only confirm is not a measurement.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -92,6 +93,30 @@ def ask(c, command, label, timeout=180):
     c.send(f"{command}; printf 'OK%s\\n' {n}")
     c.expect(f"OK{n}", timeout, label)
     return c.text()
+
+
+def ask_number(c, expr, label, timeout=120):
+    """Ask the guest for ONE number and read the ANSWER, not the echo of the question.
+
+    BUILD-NOTES #16, the half `ask` does not cover. `ask` returns everything the
+    console showed, which includes the shell ECHOING the command as it was typed,
+    and `ask`'s own marker is `OK<n>` with n counting up. So "the first bare
+    integer in the text" finds the marker number, in the typed line, before it
+    ever reaches the output — and it does it silently, returning a plausible
+    small number.
+
+    That is not hypothetical. On 2026-08-25 this returned 8, 10 and 11 for three
+    counts whose real values were 15, 2 and 0, and every one of those was the
+    value of `_mark` at the time. The assertion that used them reported a leak
+    in a file that had none.
+
+    The fix is the same shape as `ask`'s: the shell BUILDS the label. `printf
+    'N=%s\n'` types the four characters `N=%s`, so a search for `N=` followed by
+    DIGITS cannot match the echo — only the line printf produced.
+    """
+    out = ask(c, f"printf 'N=%s\\n' $({expr})", label, timeout)
+    m = re.search(r"N=(\d+)", out)
+    return int(m.group(1)) if m else -1
 
 
 def shut_down(c, q=None):
@@ -350,8 +375,9 @@ def phase_install():
             print("      FAIL  the network step never ran")
             return False
         print("      ok    the network step ran")
-        print("      note  the step's own proofs are in /var/log/os7-setup/setup.log")
-        print("            on the LIVE medium and are checked on the booted disk")
+        print("      note  the step's own proofs are in /var/log/os7-setup/install.log")
+        print("            ON THE TARGET - the live medium's copy goes with the")
+        print("            reboot (L31); `boot` reads the surviving one")
         return True
     finally:
         shut_down(c, q)
@@ -456,6 +482,106 @@ def phase_boot():
             ok = False
             print("      FAIL  /etc/resolv.conf does not point at systemd-resolved")
             print(f"            {out.strip()[:300]}")
+
+        # 7 — THE INSTALL LOG SURVIVED THE RESTART (L31). Setup writes its log
+        # to /var/log/os7-setup/setup.log on the LIVE system, which is casper's
+        # RAM overlay, so until 2026-08-25 the entire record of the install —
+        # every step's self-proof — was discarded by the reboot screen 12 offers,
+        # and screen 12 printed the live path on the way out. InstallLogStep
+        # copies the log onto the target before the pools are exported.
+        #
+        # ASKED OF A MACHINE THAT HAS NO ISO ATTACHED, which is the only place
+        # the question means anything: this VM cannot see the live filesystem, so
+        # a file here came off the disk.
+        #
+        # EVERY NUMBER BELOW GOES THROUGH ask_number. The first version of this
+        # block parsed "the first integer in the console text" and read the
+        # harness's own OK-marker out of the echoed command line every time.
+        L = "/var/log/os7-setup/install.log"
+        sudo = f"echo {PASSWORD} | sudo -S"
+
+        mode = ask_number(c, f"{sudo} stat -c %a {L} 2>/dev/null || echo 0", "the log's mode")
+        size = ask_number(c, f"{sudo} stat -c %s {L} 2>/dev/null || echo 0", "the log's size")
+        if mode == 600 and size > 0:
+            print(f"      ok    {L} is on the disk, mode 0600 ({size} bytes)")
+        else:
+            ok = False
+            print(f"      FAIL  the install log is not on the installed disk (L31) — "
+                  f"mode {mode}, {size} bytes")
+
+        # ...AND IT HAS THE PROOFS IN IT, not just a header. The chroot scripts
+        # are where the steps check their own work — AccountStep reads the hash
+        # length back out of /etc/shadow, NetworkStep reads back the unit netplan
+        # generated — and those lines are the reason this file is worth keeping.
+        # A file that exists and holds nothing is the likelier failure.
+        steps = ask_number(c, f"{sudo} grep -c 'step: ' {L} 2>/dev/null || echo 0", "steps")
+        proof = ask_number(c, f"{sudo} grep -c -- '-character hash' {L} 2>/dev/null || echo 0",
+                           "the account proof")
+        if steps >= 12 and proof >= 1:
+            print(f"      ok    it holds {steps} step lines and AccountStep's /etc/shadow proof")
+        else:
+            ok = False
+            print(f"      FAIL  the install log holds {steps} step lines and {proof} "
+                  "account proofs — the record did not reach the disk")
+
+        # AND IT IS THE WHOLE LOG, not its tail. The log was a 200-entry ring
+        # until 2026-08-25 and a dry run alone writes 284 lines, so a copy made
+        # from it arrived complete-looking with the storage phase already dropped
+        # off the front. `step: Generating the host identifier` is the FIRST step
+        # of the install; if it is here, nothing fell off in front of it.
+        first = ask_number(c, f"{sudo} grep -c 'Generating the host identifier' {L} "
+                              "2>/dev/null || echo 0", "the first step")
+        if first >= 1:
+            print("      ok    the first step of the install is in it — not a tail")
+        else:
+            ok = False
+            print("      FAIL  the record starts after the first step; it is a tail, not a log")
+
+        # THE REDACTION, ON A REAL DISK. `passphrase set (N characters)` is marked
+        # Log.LiveOnly: true, useful while Setup is running, and a narrowing of
+        # the search space once it sits in /var/log of a machine whose first
+        # account is in sudo. The persistent copy carries "[not kept]" instead.
+        # BOTH WAYS, because a redactor that empties the file passes the first
+        # half on its own — and the proofs check above is the second half.
+        #
+        # `characters)` with the bracket: that is the SHAPE of the lines
+        # Log.LiveOnly marks — "(26 characters)" — and it does not match the one
+        # other place the word appears, a chroot script's failure message.
+        #
+        # ANCHORED AT THE END OF THE LINE. A redacted entry IS "<prefix> [not
+        # kept]"; the transcript's header explains the marker and so contains the
+        # words too. Unanchored, this counts the header as a redaction — it would
+        # go green on a redactor that had stopped marking anything.
+        redacted = ask_number(c, f"{sudo} grep -c '\\[not kept\\]$' {L} 2>/dev/null || echo 0",
+                              "redacted lines")
+        leaked = ask_number(c, f"{sudo} grep -c 'characters)' {L} 2>/dev/null || echo 0",
+                            "leaked lengths")
+        if redacted >= 1 and leaked == 0:
+            print(f"      ok    {redacted} line(s) about a secret are redacted, none leaked (L31)")
+        else:
+            ok = False
+            print(f"      FAIL  {redacted} redaction marker(s), {leaked} line(s) still "
+                  "naming a secret's length")
+
+        # THE NEGATIVE CONTROL. The live log's path must NOT be here. If it were,
+        # everything above could be passing on a file that arrived some other way
+        # — and the claim being made is precisely that the live one is gone. It
+        # is also the check that catches the build putting one in the image:
+        # `--self-test` runs in the chroot during the ISO build, and until
+        # `Log.MemoryOnly` it opened the log file there.
+        #
+        # Through ask_number too, and for the reason the first version of this
+        # line got wrong: `test -e X && echo PRESENT || echo ABSENT` types BOTH
+        # words, so `"ABSENT" in out` matches the echo of the question whatever
+        # the answer was. Only `test`'s exit status is built by the shell.
+        live = ask_number(c, "test -e /var/log/os7-setup/setup.log; echo $?",
+                          "the live log's path")
+        if live == 1:
+            print("      ok    the live log's own path is absent — the copy is the copy")
+        else:
+            ok = False
+            print("      FAIL  /var/log/os7-setup/setup.log exists on the installed disk; "
+                  "the assertions above prove nothing")
     finally:
         shut_down(c)
     return ok
@@ -487,15 +613,30 @@ def phase_wifi():
     c, q = lab.boot(LIVE_CMDLINE, "wifi")
     ok = True
     try:
-        out = ask(c, "sudo modprobe mac80211_hwsim radios=2 && echo LOADED", "hwsim",
-                  timeout=120)
-        if "LOADED" not in out:
-            print("      SKIP  mac80211_hwsim is not available in this kernel")
+        # THROUGH ask_number, ALL OF IT, and not as tidying. The two checks that
+        # used to be here both matched a word the TYPED COMMAND contained, so
+        # neither ever asked the guest anything:
+        #
+        #   modprobe … && echo LOADED   ->  "LOADED" not in out   ALWAYS FALSE
+        #   command -v X || echo MISSING ->  "MISSING" in out      ALWAYS TRUE
+        #
+        # One was a green line that meant nothing and one was a red line that
+        # meant nothing, from the same mistake, and the green one is the worse
+        # of the two. BUILD-NOTES #16; see ask_number.
+        ask(c, "sudo modprobe mac80211_hwsim radios=2", "hwsim", timeout=120)
+
+        # AND THE RADIOS ARE COUNTED, rather than modprobe's exit code trusted.
+        # "two virtual radios" is a claim about /sys/class/net, so that is what
+        # is asked - the module loading is a diagnostic, the interfaces are the
+        # thing itself.
+        radios = ask_number(c, "ls /sys/class/net | grep -c wlan", "wlan count", timeout=60)
+        if radios < 2:
+            print(f"      SKIP  mac80211_hwsim gave {radios} radio(s), not 2")
             print("            Wi-Fi association is therefore UNMEASURED on this run.")
             return True
-        print("      ok    mac80211_hwsim loaded, two virtual radios")
+        print(f"      ok    mac80211_hwsim loaded, {radios} virtual radios")
 
-        out = ask(c, "ls /sys/class/net | tr '\\n' ' '", "wlan count", timeout=60)
+        out = ask(c, "ls /sys/class/net | tr '\\n' ' '", "wlan names", timeout=60)
         wlans = [w for w in out.split() if w.startswith("wlan")]
         print(f"      wlan interfaces: {' '.join(wlans) if wlans else '(none)'}")
         if len(wlans) < 2:
@@ -512,17 +653,28 @@ def phase_wifi():
         # A correct check answering a different question from the one asked,
         # which is the third time this phase has produced that shape. Testing
         # for the file says what is actually meant.
-        for path, what in [("/usr/sbin/wpa_supplicant", "wpasupplicant is on the image"),
-                           ("/usr/sbin/iw", "iw is on the image"),
-                           ("/usr/sbin/rfkill", "rfkill is on the image")]:
-            out = ask(c, f"test -x {path} && echo FOUND || echo MISSING {path}",
-                      what, timeout=60)
-            if "FOUND" not in out:
-                print(f"      FAIL  {what}: {path} is not there.")
+        #
+        # BOTH /usr/sbin AND /sbin, and it is not belt-and-braces: measured
+        # 2026-08-25, these land under /sbin in the shipped squashfs, and on a
+        # usrmerge system the two names are the same file only for as long as
+        # that stays true. The question is "is it in the image", so ask it of
+        # every path the image could have used.
+        for name, what in [("wpa_supplicant", "wpasupplicant is on the image"),
+                           ("iw", "iw is on the image"),
+                           ("rfkill", "rfkill is on the image")]:
+            found = ""
+            for path in (f"/usr/sbin/{name}", f"/sbin/{name}"):
+                out = ask(c, f"test -x {path} && echo FOUND || echo MISSING {path}",
+                          what, timeout=60)
+                if "FOUND" in out:
+                    found = path
+                    break
+            if not found:
+                print(f"      FAIL  {what}: not at /usr/sbin/{name} or /sbin/{name}.")
                 print("            The three-package addition to os7-base.list.chroot")
                 print("            did not reach this image.")
                 return False
-            print(f"      ok    {what}  ({path})")
+            print(f"      ok    {what}  ({found})")
 
         # -- the access point, on wlan1 ---------------------------------------
         ap = (f'network={{\\n'
@@ -548,20 +700,43 @@ def phase_wifi():
         ask(c, "sudo /usr/sbin/wpa_supplicant -B -dd -f /tmp/wpa.log "
                "-i wlan1 -c /tmp/ap.conf -D nl80211", "start ap", timeout=90)
 
-        # POLLED, not slept: bringing up an AP is asynchronous after the fork.
+        # POLLED, NOT SLEPT - the same fix as the DHCP lease in run-phase3.py,
+        # in the same file, five days' worth of the same mistake apart.
+        #
+        # This slept 5 seconds and then asserted `type AP`. Measured 2026-08-25:
+        # `wpa_supplicant -B` returns 0 and says "Successfully initialized"
+        # IMMEDIATELY, is still running five seconds later, and the interface is
+        # STILL `type managed` at that point; a foreground run with -d reaches
+        # `State: COMPLETED` before 12 seconds. So the AP was real and the phase
+        # photographed it too early - and then reported "wlan1 did not come up as
+        # an access point", which named a cause it did not have.
+        #
+        # How long it actually takes depends on how loaded this Mac is, and this
+        # repository runs several sessions on one machine. 45 seconds.
+        print("      bringing the access point up ... (polled, up to 45s)")
         got_ap = False
-        for _ in range(10):
+        out = ""
+        for _ in range(15):
             time.sleep(3)
             out = ask(c, "sudo /usr/sbin/iw dev wlan1 info", "ap info", timeout=60)
             if "type AP" in out:
                 got_ap = True
                 break
+            # STOP EARLY IF THE DAEMON IS GONE. Waiting 45 seconds for a process
+            # that exited is 45 seconds spent proving nothing, and "it died" and
+            # "it is slow" want different fixes. The pattern must not name the
+            # flags: they moved once already, when -dd -f went in.
+            if ask_number(c, "pgrep -cf 'wpa_supplicant.*wlan1' || echo 0",
+                          "ap alive", timeout=60) < 1:
+                print("      FAIL  the access point's wpa_supplicant exited")
+                got_ap = False
+                break
         if not got_ap:
-            print("      FAIL  wlan1 did not come up as an access point")
+            print("      FAIL  wlan1 did not come up as an access point within 45s")
             print("      --- what iw says ---")
             print(out[-800:])
             # ASK THE THING ITSELF. wpa_supplicant's own log is the only place
-            # its reason exists.
+            # its reason exists, and -f above is what put one there.
             for cmd, label in [("sudo /usr/sbin/wpa_cli -i wlan1 status", "wpa_cli"),
                                ("sudo tail -40 /tmp/wpa.log", "wpa_supplicant log"),
                                ("dmesg | tail -20", "kernel")]:
@@ -572,6 +747,10 @@ def phase_wifi():
                         print(f"          {line.rstrip()}")
             return False
         print(f"      ok    wlan1 is an access point broadcasting '{AP_SSID}'")
+
+        # THE ADDRESS AFTER THE MODE, not before it. Switching iftype takes the
+        # interface down and up again, so an address added first is an address
+        # that may not be there afterwards.
         ask(c, f"sudo ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
 
         # -- Setup's own scan, on wlan0 ---------------------------------------

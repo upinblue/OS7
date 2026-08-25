@@ -73,6 +73,12 @@ internal static class Program
             return 0;
         }
 
+        // A DIAGNOSTIC THAT CHANGES NOTHING. `--self-test` runs in the chroot
+        // during the ISO build, so a log file opened here is a file baked into
+        // the squashfs and shipped to every installed machine. Before the ring,
+        // because Main's own first line would otherwise open it.
+        if (options.SelfTest) Log.MemoryOnly();
+
         Log.Info($"os7-setup starting ({string.Join(' ', args)})");
         Log.Info($"release: {Release.Current.Display} "
                  + $"(manifest {(Release.Current.Known ? Release.Path : "absent")})");
@@ -154,8 +160,12 @@ internal static class Program
                 // or end with a space, and an editor will have appended a
                 // newline that was never part of it.
                 plan.Storage.Passphrase = File.ReadAllText(o.PassphraseFile).TrimEnd('\r', '\n');
-                Log.Info($"passphrase read from {o.PassphraseFile} "
-                         + $"({plan.Storage.Passphrase.Length} characters)");
+                // LiveOnly: the length is the diagnostic for exactly the trap
+                // the TrimEnd above avoids - a file one byte longer than the
+                // secret in it - and it is also the one line here worth
+                // redacting out of a log that lands on a disk that persists.
+                Log.LiveOnly($"passphrase read from {o.PassphraseFile} "
+                             + $"({plan.Storage.Passphrase.Length} characters)");
             }
             if (o.PasswordFile is not null)
             {
@@ -165,8 +175,10 @@ internal static class Program
                 // losing the second loses a login - and a fleet that rotates one
                 // should not have to rewrite the other.
                 plan.Account.Password = File.ReadAllText(o.PasswordFile).TrimEnd('\r', '\n');
-                Log.Info($"account password read from {o.PasswordFile} "
-                         + $"({plan.Account.Password.Length} characters)");
+                // LiveOnly, and here the disk it would land on is the one
+                // carrying the /etc/shadow entry this password hashes into.
+                Log.LiveOnly($"account password read from {o.PasswordFile} "
+                             + $"({plan.Account.Password.Length} characters)");
             }
             if (o.WifiSecretFile is not null)
             {
@@ -183,8 +195,13 @@ internal static class Program
                 WifiPlan w = plan.Network.Wifi ??= new WifiPlan();
                 if (w.Security == WifiSecurity.Enterprise) w.Password = secret;
                 else w.Psk = secret;
-                Log.Info($"wireless secret read from {o.WifiSecretFile} "
-                         + $"({secret.Length} characters, {w.Security})");
+                // LiveOnly for consistency rather than for effect: L25 already
+                // puts this secret on the target IN PLAINTEXT, in the netplan
+                // file, so its length is not what gives it away. The rule is
+                // "a line about a secret is live-only", and a rule with an
+                // exception in it is a rule nobody applies correctly later.
+                Log.LiveOnly($"wireless secret read from {o.WifiSecretFile} "
+                             + $"({secret.Length} characters, {w.Security})");
             }
 
             // `--storage-only` stops before the account exists, so demanding one
@@ -906,6 +923,60 @@ internal static class Program
             Check(mode >= 0 && net > mode,
                   "step order: the network is written after the desktop purge",
                   $"mode at {mode}, network at {net}");
+
+            // L31, ASSERTED THE SAME WAY. The log copy has to run after the
+            // steps whose proofs are worth keeping and before the pools are
+            // exported, and both halves are position in one list. Moving it
+            // after TeardownStep would write to a path that is no longer a
+            // mounted filesystem, and `TargetRoot.Write` would create the
+            // directory on the LIVE root instead - a file that looks right,
+            // written to the disk that is about to be discarded.
+            int boot = order.FindIndex(s => s is BootloaderStep);
+            int keep = order.FindIndex(s => s is InstallLogStep);
+            int down = order.FindIndex(s => s is TeardownStep);
+            Check(boot >= 0 && keep > boot && down > keep,
+                  "step order: the log is saved after the bootloader, before the export",
+                  $"bootloader at {boot}, log at {keep}, teardown at {down}");
+
+            // THE REDACTION, CHECKED AGAINST THE THING IT CLAIMS TO CHECK.
+            // `Log.LiveOnly` is a promise about a file on somebody's disk, and
+            // the only way to test a promise about text is to read the text.
+            // Both directions: the marked line is absent from the persistent
+            // transcript AND present in the volatile one, because a redactor
+            // that empties the log passes the first check on its own.
+            const string Canary = "passphrase set (SELFTEST-CANARY characters)";
+            Log.LiveOnly(Canary);
+            string kept = Log.Transcript(persistent: true);
+            string live = Log.Transcript(persistent: false);
+            Check(!kept.Contains("SELFTEST-CANARY") && kept.Contains("[not kept]"),
+                  "log: a live-only line is redacted out of the installation record",
+                  $"{kept.Length} bytes written to the target");
+            Check(live.Contains(Canary),
+                  "log: the same line is intact in the live log",
+                  "the error screen and F2 still see it");
+
+            // THE TRANSCRIPT IS COMPLETE, not a tail. This is the regression
+            // guard for the bug that was in here until 2026-08-25: the log was a
+            // 200-entry ring, an install logs 284 lines in a DRY run, and the
+            // copy would have reached the target with the whole storage phase
+            // and the start of AccountStep missing — a file that looks like a
+            // record and is not one. 400 lines is past any ring anybody would
+            // reintroduce; the marker is the FIRST of them.
+            const string First = "SELFTEST-FIRST-OF-MANY";
+            Log.Info(First);
+            for (int i = 0; i < 400; i++) Log.Info($"selftest filler {i}");
+            Check(Log.Transcript(persistent: true).Contains(First),
+                  "log: the transcript keeps the first line after 400 more",
+                  "the installation record is the whole log, not its tail");
+
+            // And an ordinary line survives BOTH, which is the check that stops
+            // "redact everything" from passing the two above.
+            const string Ordinary = "SELFTEST-ORDINARY-LINE";
+            Log.Info(Ordinary);
+            Check(Log.Transcript(persistent: true).Contains(Ordinary)
+                  && Log.Transcript(persistent: false).Contains(Ordinary),
+                  "log: an ordinary line is in both transcripts",
+                  "redaction is by mark, not by pattern");
 
             // The scan parser, against a captured `iw scan` rather than against
             // a radio. Strongest BSS wins, 802.1X beats PSK on a network that

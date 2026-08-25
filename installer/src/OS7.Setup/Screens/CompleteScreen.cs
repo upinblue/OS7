@@ -74,7 +74,24 @@ internal sealed class CompleteScreen : Screen
         else if (n.Method == NetworkMethod.None)
             f.Body(20, 5, "This computer has no network configuration.", Slot.Brand);
 
-        f.Body(21, 5, $"A log of this session is at {Log.Path}.");
+        // THE PATH THAT WILL STILL EXIST AFTER THE RESTART THIS SCREEN OFFERS.
+        //
+        // Until 2026-08-25 this named `Log.Path`, which is on the live medium's
+        // RAM overlay — so the sentence was true when it was read and false one
+        // keypress later, and it was false in exactly the case where somebody
+        // would go looking: a machine that came up wrong (L31).
+        //
+        // `Log.Kept` and not `Log.Installed`, because it is null when the copy
+        // did not happen. A screen that names a path from a constant is a screen
+        // that cannot be wrong on purpose.
+        if (Log.Kept is not null)
+            f.Body(21, 5, $"A record of this installation is at {Log.Kept}.");
+        else
+        {
+            f.Body(21, 5, "Setup could not save its log onto this computer.", Slot.Brand);
+            f.Body(22, 5, $"It is at {Log.Path} until the restart, and no longer.",
+                   Slot.Brand);
+        }
     }
 
     /// <summary>

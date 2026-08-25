@@ -27,7 +27,7 @@ decides what, the commands that work, and the traps that cost the most.
 | `./installer/testing/check-layering.py` | **New.** Holds ZFS-POWERSHELL-PLAN Z1 — `powershell/OS7` must reach ZFS only through `powershell/Zfs` — at a measured baseline of 3 direct invocations, all inside `New-OS7Storage`. The number may fall and may not rise. |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
 | `make build-amd64` | **Blocked locally, green in CI.** Locally still ENOSYS (§3). On a hosted x86_64 runner it now produces `OS7-1.0.0.45-amd64.iso` — 1528 packages, GNOME + Edge + `intune-portal`, `check-image.py` all green — **which cannot boot**: no El Torito entry, no Rock Ridge. [SESSION-AMD64-FIRST-ISO.md](SESSION-AMD64-FIRST-ISO.md). |
-| `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS, from `--unattend` and from the keyboard.** `run-phase3.py all` installs unattended, starts the disk with no ISO attached (LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs`), and then installs a second machine **by keypress alone** — screens 1–7 to the Complete screen. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md) and [SESSION-SCREEN6-GATE.md](SESSION-SCREEN6-GATE.md). Screen 9 (network) is the one part of 7–11 not delivered. |
+| `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS, from `--unattend` and from the keyboard.** `run-phase3.py all` installs unattended, starts the disk with no ISO attached (LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs`), and then installs a second machine **by keypress alone** — screens 1–7 to the Complete screen. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md) and [SESSION-SCREEN6-GATE.md](SESSION-SCREEN6-GATE.md). Screen 9 (network) is the one part of 7–11 not delivered. **The log of the install is now on the installed machine** at `/var/log/os7-setup/install.log`, mode 0600, with every step's self-proof in it — L31, [SESSION-INSTALL-LOG.md](SESSION-INSTALL-LOG.md). |
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 
@@ -122,6 +122,10 @@ Phase 3 is done (below); what it leaves is:
   file is mode 0600 and names `networkd`. Wi-Fi associates over `mac80211_hwsim`
   (`wlan0` to `OS7-TEST-AP` with `10.99.0.5/24`), and the interactive walk reaches
   screen 9, finds the NIC, and takes a real DHCP lease with `F4`.
+  `./installer/testing/run-phase3b-network.py all` is **green end to end** — the
+  install, the boot from the disk alone, and the WPA2-PSK association in one
+  sitting. Three of its assertions could not fail, or could not pass, until that
+  run: [SESSION-INSTALL-LOG.md](SESSION-INSTALL-LOG.md) §7 and BUILD-NOTES #16.
 
   **L30 is the finding to read first.** The interface name *changes* between
   installing and running — `enp0s5` with the setup medium attached, `enp0s2`
@@ -159,6 +163,19 @@ Phase 3 is done (below); what it leaves is:
   `./installer/testing/run-phase3.py walk`.
 * **U8** — the escrowed recovery passphrase — is still open, and still on the
   layout screen where the operator can see it.
+* **The install log now survives the restart (L31), done 2026-08-25.** It used to
+  not: `os7-setup` wrote to `/var/log/os7-setup/setup.log` on casper's RAM
+  overlay, so screen 12's reboot discarded every step's self-proof — and screen 12
+  printed *that* path on the way out. `InstallLogStep` writes the whole log to
+  `/var/log/os7-setup/install.log` **on the target**, mode 0600, before the pools
+  are exported. Two things found while fixing it, both of which had been true for
+  a while: the log was a **200-entry ring** and a dry run writes **284 lines**, so
+  a copy would have arrived complete-looking with the storage phase already
+  dropped; and `--self-test` runs in the chroot during the ISO build, so **every
+  image shipped a build-time `setup.log`** into the very directory screen 12 sends
+  the operator to. [SESSION-INSTALL-LOG.md](SESSION-INSTALL-LOG.md).
+  **Still Phase 4's:** the export to removable media, which is the case where the
+  machine will not start at all.
 
 ### What Phase 3 was (done 2026-08-24)
 

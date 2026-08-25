@@ -85,7 +85,11 @@ internal sealed class ErrorScreen : Screen
                 // saved the log" and "the log is at that path" are the same
                 // statement.
                 string target = "/tmp/os7-setup.log";
-                _exportNote = Log.Export(target, out string detail)
+                // `persistent: false` — /tmp is a tmpfs, so this copy goes with
+                // the restart too. It is for reading NOW, on the machine that is
+                // still up. When Phase 4 gives F2 removable media this becomes
+                // `true` and the live-only lines drop out of it.
+                _exportNote = Log.Export(target, persistent: false, out string detail)
                     ? $"Log written to {detail}"
                     : $"Could not write the log: {detail}";
                 return Transition.Redraw;
