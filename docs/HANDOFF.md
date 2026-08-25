@@ -23,7 +23,7 @@ decides what, the commands that work, and the traps that cost the most.
 | PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all five functions — `New-OS7Storage` and `New-OS7BootEnvironmentName` are real and are what `os7-setup` calls; the other three still throw by design. `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
 | arm64 server-only split | **Works.** No GNOME/gdm3/Edge/Intune in the arm64 image. |
-| `make build-amd64` | **Blocked locally.** See §3. |
+| `make build-amd64` | **Blocked locally, green in CI.** Locally still ENOSYS (§3). On a hosted x86_64 runner it now produces `OS7-1.0.0.45-amd64.iso` — 1528 packages, GNOME + Edge + `intune-portal`, `check-image.py` all green — **which cannot boot**: no El Torito entry, no Rock Ridge. [SESSION-AMD64-FIRST-ISO.md](SESSION-AMD64-FIRST-ISO.md). |
 | `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS, from `--unattend` and from the keyboard.** `run-phase3.py all` installs unattended, starts the disk with no ISO attached (LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs`), and then installs a second machine **by keypress alone** — screens 1–7 to the Complete screen. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md) and [SESSION-SCREEN6-GATE.md](SESSION-SCREEN6-GATE.md). Screen 9 (network) is the one part of 7–11 not delivered. |
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
@@ -66,8 +66,15 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-**Phase 4 — Authenticity and polish**, or **screen 9**, or the release plan's
-**S5**. Phase 3 is done (below); what it leaves is:
+**The amd64 EFI remaster** is the newest and best-defined piece: an amd64 ISO now
+exists and cannot boot, `build/lib/arm64-efi-remaster.sh` is the sibling to copy,
+and `shim-signed` + `grub-efi-amd64-signed` are already in the image
+([SESSION-AMD64-FIRST-ISO.md](SESSION-AMD64-FIRST-ISO.md)). Until it is written,
+nothing on amd64 can be booted, installed or walked — every Phase 1–3 result is
+arm64-only.
+
+Otherwise: **Phase 4 — Authenticity and polish**, or **screen 9**, or the release
+plan's **S5**. Phase 3 is done (below); what it leaves is:
 
 * **Screen 9, the network screen.** Deliberately not in Phase 3: DHCP is the
   default and a machine that boots can be configured, while one that does not
