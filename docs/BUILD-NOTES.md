@@ -9,6 +9,26 @@ Everything here was discovered by hitting the failure, not by reading
 documentation. Each item says what breaks if you undo it. Nothing here has been
 re-validated against the current scaffold.
 
+## Claiming a number
+
+The entries below are numbered and the numbers are referenced from CLAUDE.md,
+README, SETUP-PLAN, session documents, source comments and harnesses. **Two
+entries with the same number stop the list from being a list**, and on
+2026-08-25 that nearly happened twice in one afternoon: several Claude Code
+sessions were running at once, each picked "the next free number" independently,
+and two of them picked the same one.
+
+So: **claim the number here, in this table, in a commit, before you write the
+entry.** A number that is spoken for but not yet written looks free otherwise,
+and the next session takes it in good faith.
+
+| # | claimed for | by |
+|---|---|---|
+| 50 | `networkd-dispatcher.service` is enabled while `systemd-networkd` is not — the consumer of a unit is enabled, the producer is not, and the enable-list reads like proof that networking is configured | measured by session os7-b1 on both images; **held until measured independently**, because citing someone else's measurement as this list's evidence is the exact mistake the entry describes |
+| 51 | `iw scan` prints non-printable SSID bytes ESCAPED — a hidden network arrives as the literal four characters `\x00` per byte, so a parser testing `c == '\0'` filters nothing and writes gibberish into a picker. The byte level is not the character level; same shape as #46 | observed by session os7-b1 against a **recorded scan, not a radio** |
+
+Everything below is written. Numbers above 51 are free.
+
 ## What was kept, and what was dropped
 
 **Kept** — carried into this repo:
