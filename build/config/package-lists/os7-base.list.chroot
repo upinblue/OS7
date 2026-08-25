@@ -66,6 +66,29 @@ tpm2-tools
 # Swap must not live on ZFS.
 systemd-zram-generator
 
+# --- Network: screen 9 -------------------------------------------------------
+# netplan.io and systemd-resolved are already in the image via ubuntu-standard,
+# and are what os7-setup writes for (SETUP-PLAN 7.2). These three are NOT, on
+# arm64: the amd64 image gets them transitively through network-manager, which
+# arm64 never installs because it is server-only.
+#
+# Without wpasupplicant, screen 9W cannot associate on arm64 at all. `iw` is
+# what scans, and `rfkill` is what notices a hardware kill switch instead of
+# reporting a radio that simply never answers.
+#
+# The WIRELESS FIRMWARE is already on both images - 19 linux-firmware packages
+# covering Intel, Broadcom, Realtek, MediaTek, Qualcomm and Marvell. That is the
+# part that is large and that cannot be fetched without the network it is needed
+# for, and it is paid for already.
+#
+# NOTE FOR SPIKE S7: naming these explicitly puts them in
+# /usr/lib/os7/packages.manifest on BOTH architectures, so the manifest changes
+# with this commit. That is a deliberate change of S7's comparison baseline, not
+# drift between two builds.
+wpasupplicant
+iw
+rfkill
+
 # --- Base tooling ------------------------------------------------------------
 openssh-server
 curl

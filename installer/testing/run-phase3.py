@@ -74,7 +74,15 @@ HOSTNAME = "os7-phase3"
 USERNAME = "os7admin"
 
 # 24 GB: the §4.4 layout needs 16 as a floor, and the copied system needs room.
-lab = Lab("phase3", target_gb=24, iso_as_disk=True)
+# nic=True since Phase 3b: screen 9 does not appear on a machine with no network
+# adapter (NetworkScreen.Entry skips it), so a lab without one cannot walk it -
+# and `boot` has always had a NIC, which is how the network gap in L23 stayed
+# invisible for so long. User-mode networking is deterministic: 10.0.2.15.
+lab = Lab("phase3", target_gb=24, iso_as_disk=True, nic=True)
+
+# What QEMU's user-mode network hands out, every time. Named rather than
+# repeated, because it is asserted on the live medium AND on the installed disk.
+DHCP_ADDRESS = "10.0.2.15"
 
 CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
@@ -209,7 +217,14 @@ def write_plan(c):
             f'"storage":{{"disk":"{TARGET}","layout":"single","efiMiB":512,'
             '"bpoolGiB":2,"encrypt":true,"swap":"zram"},'
             f'"account":{{"hostname":"{HOSTNAME}","username":"{USERNAME}",'
-            '"fullName":"OS/7 Phase 3"}}')
+            '"fullName":"OS/7 Phase 3"},'
+            # `interface: auto` and not `enp0s1`, deliberately — L28. A plan file
+            # is written on one machine and replayed on another, and an interface
+            # name is a property of whichever machine was in front of the person
+            # who wrote it. `auto` becomes a netplan `match: name: "en*"`, so this
+            # is the path an unattended fleet install really takes, and therefore
+            # the one worth exercising here rather than the interactive one.
+            '"network":{"interface":"auto","kind":"Wired","method":"Dhcp"}}')
     c.drop()
     c.send(f"printf '%s' '{plan}' > /tmp/plan.json")
     c.send(f"printf '%s' '{PASSPHRASE}' > /tmp/pass")
@@ -374,7 +389,7 @@ def phase_boot():
 
 
 def phase_walk(font):
-    """THE INTERACTIVE PATH, all of it — screens 1 to 7 by hand, to the Complete
+    """THE INTERACTIVE PATH, all of it — screens 1 to 9 by hand, to the Complete
     screen, with a real install behind it.
 
     This phase exists because `--unattend` cannot stand in for it, and the reason
@@ -402,6 +417,25 @@ def phase_walk(font):
     `./run-phase3.py boot` can verify without knowing which of the two built it.
     """
     print("\n  walk — the whole flow, driven by keypresses")
+
+    # THE PRECONDITION FOR SCREEN 9, CHECKED BEFORE ANY KEY IS PRESSED.
+    #
+    # NetworkScreen.Entry SKIPS screen 9 entirely on a machine with no network
+    # adapter — deliberately, because an air-gapped appliance is a real machine
+    # and a list with one apologetic row is worse than not stopping. The
+    # consequence for this harness is that a lab without a NIC walks straight
+    # past the screen it is here to test AND REPORTS SUCCESS, because every
+    # remaining assertion still holds.
+    #
+    # That is the same class as BUILD-NOTES #45 and it is worth naming in its
+    # general form: A CHECK THAT CANNOT SEE SOMETHING MUST SAY "NOT CHECKED",
+    # NEVER "FINE". Raised by os7-d7, who hit the same shape twice in one
+    # afternoon from the other direction.
+    if not lab.nic:
+        print("      FAIL  this lab has no NIC, so screen 9 would be SKIPPED and")
+        print("            this walk would prove nothing about it. Lab(nic=True).")
+        return False
+
     rel = medium_release()
     version = rel["version"]
 
@@ -535,13 +569,73 @@ def phase_walk(font):
         # -- screen 8 does not exist here, and that is the assertion ---------
         #
         # arm64 is server-only (README), so ModeScreen.Next skips the GUI/headless
-        # question and goes straight to the executor. On amd64 there would be one
-        # more ENTER here; no amd64 ISO has ever been built.
-        w, h, rgb = shoot("48-executing", 4.0)
+        # question. On amd64 there would be one more ENTER here; no amd64 ISO has
+        # ever been walked.
+        w, h, rgb = shoot("47b-after-account", 3.0)
         page = page_of(w, h, rgb)
         if "Choose how this computer will be used" in page:
             print("      FAIL  screen 8 appeared on arm64, which ships no desktop")
             return False
+        if "Setup cannot continue" in page:
+            print("      FAIL  the plan was refused after screen 7")
+            for line in page.splitlines():
+                if line:
+                    print(f"            {line}")
+            return False
+
+        # -- screen 9: the network (Phase 3b) --------------------------------
+        #
+        # THIS IS WHERE BUILD-NOTES #45 WOULD HAVE STRUCK AGAIN. Screen 9 was
+        # inserted between screen 8 and the executor, and this walk previously
+        # went straight from screen 7's ENTER to a progress bar. A harness that
+        # was not taught about the new screen would press ENTER into it, get the
+        # executor anyway, and report success - which is exactly how the screen-6
+        # gate bug survived every automated check in the repository.
+        ok &= on_screen(w, h, rgb, "network connection", "screen 9 is the network screen")
+
+        # IN BLACK, because the adapter row is SELECTED. SelectionList draws the
+        # highlighted row black-on-grey across the full inner width, so reading
+        # only white finds nothing and would report the NIC as absent - which is
+        # the same mistake `page_of` exists to avoid for the brand-blue
+        # sentences, in a third colour.
+        ok &= on_screen(w, h, rgb, "virtio_net", "the virtio NIC is in the adapter list",
+                        fg=(0, 0, 0))
+
+        # F4 = apply it here and now (D12). The live medium has the whole stack,
+        # so this is a REAL DHCP lease on a REAL interface, and the address is
+        # known before the VM started because user-mode networking is fixed.
+        #
+        # POLLED, NOT SLEPT. NetworkProbe waits up to 30 s for a lease, and how
+        # long it actually takes depends on how loaded this Mac is. A fixed sleep
+        # would photograph a screen that has not got there yet and report "no
+        # lease" — os7-d7 hit exactly that twice in one afternoon on 2026-08-25
+        # with a probe that waited 95 s of wall-clock time for a GRUB menu, and
+        # both times the diagnosis named a cause the screen did not have.
+        press("f4")
+        print("      testing the live network … (a real DHCP lease, up to 45s)")
+        got_lease = False
+        for attempt in range(15):
+            time.sleep(3)
+            w, h, rgb = lab.shoot(q, "48-network-tested")
+            page = page_of(w, h, rgb)
+            if DHCP_ADDRESS in page:
+                got_lease = True
+                break
+            if "did not" in page or "Check the passphrase" in page:
+                break
+        if got_lease:
+            print(f"      ok    F4 took a real lease on the live medium ({DHCP_ADDRESS})")
+        else:
+            ok = False
+            print(f"      FAIL  F4 did not produce {DHCP_ADDRESS} within 45s")
+            for line in page.splitlines():
+                if line.strip():
+                    print(f"            {line.rstrip()}")
+
+        press("ret")
+
+        w, h, rgb = shoot("48b-executing", 4.0)
+        page = page_of(w, h, rgb)
         if "Setup cannot continue" in page:
             print("      FAIL  the plan was refused at the executor's gate")
             for line in page.splitlines():
@@ -549,9 +643,9 @@ def phase_walk(font):
                     print(f"            {line}")
             return False
         if "Do not turn off the computer" in page:
-            print("      ok    screen 8 is skipped on arm64 and the executor is running")
+            print("      ok    the executor is running after screen 9")
         else:
-            print("      FAIL  the executor did not start after screen 7")
+            print("      FAIL  the executor did not start after screen 9")
             for line in page.splitlines():
                 if line:
                     print(f"            {line}")

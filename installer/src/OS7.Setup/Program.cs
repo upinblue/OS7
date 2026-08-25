@@ -18,20 +18,26 @@ namespace OS7.Setup;
 ///     os7-setup --dry-run                print every command instead of running it
 ///     os7-setup --print-plan             write the default plan as JSON and exit
 ///     os7-setup --self-test              check what fails silently, and exit
+///     os7-setup --test-network p.json    apply the network HERE and report (3b)
 ///     os7-setup --geometry 80x25         force the canvas size (§2.4)
 ///
-/// PHASE 3. The flow is Welcome -> Licence -> Regional -> Disk -> Layout ->
-/// Confirm -> Account -> Mode -> (install) -> Complete. Screen 6 is the gate and
-/// screen 10 is where the writing starts, so the disk is still untouched while
-/// the account is typed.
+/// PHASE 3b. The flow is Welcome -> Licence -> Regional -> Disk -> Layout ->
+/// Confirm -> Account -> Mode -> Network -> (install) -> Complete, with two
+/// lettered screens hanging off Network: 9W for a wireless network and 9S for
+/// static addresses. Screen 6 is the gate and screen 10 is where the writing
+/// starts, so the disk is still untouched while the account and the network are
+/// typed.
 ///
 /// THE RESULT BOOTS. The system is copied, an account exists, the initramfs can
 /// unlock and import, and the bootloader menu resolves a boot environment - each
 /// of those checked by the step that did it, because "the installer said it
 /// worked" is the class of evidence this project has been bitten by repeatedly.
 ///
-/// Screen 9 (network) is not here: DHCP is the default and a machine that boots
-/// can be configured. It is the one screen of 7-11 still outstanding.
+/// AND IT IS REACHABLE. Screen 9 was added in Phase 3b because the shipped image
+/// configures no network at all: empty /etc/netplan, no cloud-init, and
+/// systemd-networkd not enabled - only networkd-dispatcher, which is its
+/// consumer (L23, measured on both ISOs 2026-08-25). Every headless install
+/// before it produced a machine nobody had chosen to make unreachable.
 /// </summary>
 internal static class Program
 {
@@ -81,6 +87,7 @@ internal static class Program
         }
 
         if (options.SelfTest) return SelfTest();
+        if (options.TestNetwork is not null) return TestNetwork(options);
         if (options.Unattend is not null) return Unattended(options);
 
         try
@@ -161,6 +168,24 @@ internal static class Program
                 Log.Info($"account password read from {o.PasswordFile} "
                          + $"({plan.Account.Password.Length} characters)");
             }
+            if (o.WifiSecretFile is not null)
+            {
+                // A THIRD FILE, and the third instance of this rule (L25). The
+                // Wi-Fi PSK and the 802.1X password are [JsonIgnore] in
+                // WifiPlan for the same reason the other two secrets are: the
+                // plan is a file that goes into `--print-plan`, a log, a
+                // screendump and a repository.
+                //
+                // One file serves both because a network is either PSK or
+                // 802.1X and never both, so which field it lands in is decided
+                // by the plan rather than by the operator remembering.
+                string secret = File.ReadAllText(o.WifiSecretFile).TrimEnd('\r', '\n');
+                WifiPlan w = plan.Network.Wifi ??= new WifiPlan();
+                if (w.Security == WifiSecurity.Enterprise) w.Password = secret;
+                else w.Psk = secret;
+                Log.Info($"wireless secret read from {o.WifiSecretFile} "
+                         + $"({secret.Length} characters, {w.Security})");
+            }
 
             // `--storage-only` stops before the account exists, so demanding one
             // would refuse a plan that is complete for what it is being asked to
@@ -214,6 +239,68 @@ internal static class Program
         {
             Console.Error.WriteLine($"OS7-SETUP-FAILED {ex.GetType().Name}: {ex.Message}");
             Log.Error($"unattended: {ex}");
+            return 3;
+        }
+    }
+
+    /// <summary>
+    /// `--test-network plan.json` — apply the network half of a plan HERE, on
+    /// the live medium, and say what happened. Nothing is installed and no disk
+    /// is touched.
+    ///
+    /// It exists for two audiences and neither is hypothetical:
+    ///
+    ///   the harness   `run-phase3b-network.py wifi` needs to prove an
+    ///                 association without doing a twenty-minute install to get
+    ///                 to it. Driving screen 9W through the framebuffer would
+    ///                 prove the screen; this proves the code the screen calls,
+    ///                 which is the half that talks to a radio.
+    ///   a person      on tty2, in front of a machine whose network does not
+    ///                 work, with Setup still on the screen behind them.
+    ///
+    /// It is the SAME `NetworkProbe.Test` that screen 9's F4 calls. A second
+    /// implementation that agreed with the first today is exactly what §6.6's
+    /// "one plan, one executor" exists to prevent.
+    /// </summary>
+    private static int TestNetwork(Options o)
+    {
+        try
+        {
+            InstallPlan? plan = InstallPlan.FromJson(File.ReadAllText(o.TestNetwork!));
+            if (plan is null)
+            {
+                Console.Error.WriteLine($"os7-setup: {o.TestNetwork} is not an install plan");
+                return 2;
+            }
+            if (o.WifiSecretFile is not null)
+            {
+                string secret = File.ReadAllText(o.WifiSecretFile).TrimEnd('\r', '\n');
+                WifiPlan w = plan.Network.Wifi ??= new WifiPlan();
+                if (w.Security == WifiSecurity.Enterprise) w.Password = secret;
+                else w.Psk = secret;
+            }
+
+            // ONLY the network half is validated. The plan handed to this option
+            // has no disk and no account in it, and demanding them would refuse
+            // a plan that is complete for what it is being asked to do — the
+            // same argument as `--storage-only`, and the same one that makes a
+            // screen validate only what it collected.
+            var problems = new List<string>();
+            plan.Network.Validate(problems);
+            if (problems.Count > 0)
+            {
+                foreach (string p in problems) Console.Error.WriteLine($"os7-setup: {p}");
+                return 2;
+            }
+
+            (bool ok, string detail) = NetworkProbe.Test(plan);
+            Console.Out.WriteLine($"OS7-NETWORK {(ok ? "OK" : "FAILED")} {detail}");
+            return ok ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"OS7-NETWORK FAILED {ex.GetType().Name}: {ex.Message}");
+            Log.Error($"--test-network: {ex}");
             return 3;
         }
     }
@@ -635,6 +722,245 @@ internal static class Program
         Check(SystemLists.Keyboards.Length > 0, "keyboard layouts", $"{SystemLists.Keyboards.Length}");
         Check(SystemLists.Timezones.Length > 0, "timezones", $"{SystemLists.Timezones.Length}");
 
+        // -------------------------------------------------------------------
+        // THE NETPLAN GENERATOR, CHECKED WITHOUT A NETWORK.
+        //
+        // `NetworkPlan.ToNetplanYaml` is a pure function of the plan, and that
+        // is what makes this possible at all: hook 0080 runs --self-test inside
+        // the chroot during the ISO build, so a generator that stops producing
+        // `dhcp4:` fails the BUILD rather than an install an hour later. A
+        // generator whose first test is an install is a generator tested once.
+        // -------------------------------------------------------------------
+        {
+            const string V = "selftest";
+
+            var dhcp = new NetworkPlan
+            {
+                Interface = "enp1s0", Kind = LinkKind.Wired, Method = NetworkMethod.Dhcp,
+            };
+            string y = dhcp.ToNetplanYaml("networkd", V);
+            Check(y.Contains("renderer: networkd") && y.Contains("  ethernets:")
+                  && y.Contains("    enp1s0:") && y.Contains("dhcp4: true"),
+                  "netplan: DHCP over Ethernet");
+
+            // L30, AND THE MOST EXPENSIVE THING THIS PHASE LEARNED. An interface
+            // name is not stable across the install: the setup medium is a PCI
+            // device, so removing it renumbers the slots that predictable names
+            // come from. Measured 2026-08-25 - enp0s5 while installing, enp0s2
+            // once booted, one machine, one NIC. A netplan file naming the
+            // install-time name matches nothing afterwards, and netplan accepts
+            // that silently: no address, no route, no error.
+            var byMac = new NetworkPlan
+            {
+                Interface = "enp0s5", MacAddress = "52:54:00:12:34:56",
+                Kind = LinkKind.Wired, Method = NetworkMethod.Dhcp,
+            };
+            y = byMac.ToNetplanYaml("networkd", V);
+            Check(y.Contains("match:") && y.Contains("macaddress: \"52:54:00:12:34:56\"")
+                  && y.Contains("    os7net:") && !y.Contains("enp0s5"),
+                  "netplan: a chosen adapter is matched by MAC, never by name");
+
+            var stat = new NetworkPlan
+            {
+                Interface = "enp1s0", Kind = LinkKind.Wired, Method = NetworkMethod.Static,
+                Address = "10.0.2.99/24", Gateway = "10.0.2.2",
+                Nameservers = new List<string> { "10.0.2.3" },
+                Search = new List<string> { "corp.example.com" },
+            };
+            y = stat.ToNetplanYaml("networkd", V);
+            Check(y.Contains("dhcp4: false") && y.Contains("- 10.0.2.99/24")
+                  && y.Contains("- to: default") && y.Contains("via: 10.0.2.2")
+                  && y.Contains("          - 10.0.2.3"),
+                  "netplan: static address, gateway and DNS");
+            // `gateway4:` is deprecated and netplan warns about it — into a log
+            // nobody on a headless machine reads. The route form is the one that
+            // does not rot.
+            Check(!y.Contains("gateway4"), "netplan: no deprecated gateway4 key");
+
+            var psk = new NetworkPlan
+            {
+                Interface = "wlp2s0", Kind = LinkKind.Wireless, Method = NetworkMethod.Dhcp,
+                Wifi = new WifiPlan { Ssid = "Branch-Office", Psk = "hunter2hunter2" },
+            };
+            y = psk.ToNetplanYaml("networkd", V);
+            Check(y.Contains("  wifis:") && y.Contains("access-points:")
+                  && y.Contains("\"Branch-Office\":") && y.Contains("key-management: psk")
+                  && y.Contains("password: \"hunter2hunter2\""),
+                  "netplan: WPA2 personal");
+
+            var eap = new NetworkPlan
+            {
+                Interface = "wlp2s0", Kind = LinkKind.Wireless, Method = NetworkMethod.Dhcp,
+                Wifi = new WifiPlan
+                {
+                    Ssid = "CORP-SECURE", Security = WifiSecurity.Enterprise,
+                    Identity = "user@corp.example.com", Password = "s3cret",
+                    CaCertificate = "/run/media/ca.pem",
+                },
+            };
+            y = eap.ToNetplanYaml("networkd", V);
+            Check(y.Contains("key-management: eap") && y.Contains("method: peap")
+                  && y.Contains("phase2-auth: MSCHAPV2")
+                  && y.Contains("identity: \"user@corp.example.com\"")
+                  && y.Contains("ca-certificate: \"/run/media/ca.pem\""),
+                  "netplan: 802.1X PEAP/MSCHAPv2");
+
+            // An SSID is arbitrary bytes. A colon, a `#`, a leading `-` or a
+            // quote each change what an unquoted YAML line means, and the result
+            // is a file netplan either misreads or refuses.
+            var odd = new NetworkPlan
+            {
+                Interface = "wlp2s0", Kind = LinkKind.Wireless, Method = NetworkMethod.Dhcp,
+                Wifi = new WifiPlan { Ssid = "we: \"guest\" #1", Psk = "passphrase" },
+            };
+            y = odd.ToNetplanYaml("networkd", V);
+            Check(y.Contains("\"we: \\\"guest\\\" #1\":"),
+                  "netplan: an SSID with quotes and a colon is escaped");
+
+            // L28: a plan replayed on another machine must not carry this
+            // machine's interface name.
+            var auto = new NetworkPlan
+            {
+                Interface = "auto", Kind = LinkKind.Wired, Method = NetworkMethod.Dhcp,
+            };
+            y = auto.ToNetplanYaml("networkd", V);
+            Check(y.Contains("match:") && y.Contains("name: \"en*\""),
+                  "netplan: interface 'auto' becomes a match glob");
+
+            // The MAC wins over the glob when both could apply: `auto` is for a
+            // plan replayed on a machine whose hardware Setup has never seen, so
+            // a plan that DOES carry a MAC is describing a specific port.
+            var both = new NetworkPlan
+            {
+                Interface = "auto", MacAddress = "aa:bb:cc:dd:ee:ff",
+                Kind = LinkKind.Wired, Method = NetworkMethod.Dhcp,
+            };
+            y = both.ToNetplanYaml("networkd", V);
+            Check(y.Contains("macaddress:") && !y.Contains("name: \"en*\""),
+                  "netplan: a MAC in the plan beats the 'auto' glob");
+
+            // Method.None writes NOTHING. The guard is here because a caller
+            // that forgets is a caller that writes an empty `ethernets:` block,
+            // which netplan accepts and which configures nothing.
+            bool threw = false;
+            try { new NetworkPlan { Method = NetworkMethod.None }.ToNetplanYaml("networkd", V); }
+            catch (InvalidOperationException) { threw = true; }
+            Check(threw, "netplan: Method.None refuses to render a file");
+
+            // D14. The renderer is a function of screen 8's answer and of
+            // nothing else, and L24 is what getting it wrong costs.
+            Check(new InstallPlan { Mode = InstallMode.Gui }.Renderer == "NetworkManager"
+                  && new InstallPlan { Mode = InstallMode.Headless }.Renderer == "networkd",
+                  "netplan: renderer follows the install mode");
+
+            // L25, AND IT IS THE ONE CHECK HERE THAT PROTECTS A SECRET RATHER
+            // THAN A CONFIGURATION.
+            //
+            // `--print-plan` writes this JSON to a terminal, `Log.Info` writes
+            // it into /var/log at the end of every install, and CompleteScreen
+            // logs it while it is on screen. A `[JsonIgnore]` that was removed
+            // in a refactor has NO symptom: the plan keeps working, the install
+            // keeps working, and a Wi-Fi passphrase is in a log file and in a
+            // screendump. So the guarantee is asserted against the serialiser's
+            // real output, and it covers all three secrets rather than the one
+            // this phase added.
+            var secretive = new InstallPlan
+            {
+                Storage = { Passphrase = "LUKS-SECRET-CANARY" },
+                Account = { Username = "u", Password = "ACCOUNT-SECRET-CANARY" },
+                Network =
+                {
+                    Interface = "wlan0", Kind = LinkKind.Wireless,
+                    Wifi = new WifiPlan
+                    {
+                        Ssid = "net", Psk = "PSK-SECRET-CANARY",
+                        Password = "EAP-SECRET-CANARY",
+                    },
+                },
+            };
+            string serialised = secretive.ToJson();
+            string[] canaries =
+                { "LUKS-SECRET-CANARY", "ACCOUNT-SECRET-CANARY",
+                  "PSK-SECRET-CANARY", "EAP-SECRET-CANARY" };
+            string[] leaked = canaries.Where(serialised.Contains).ToArray();
+            Check(leaked.Length == 0,
+                  "no secret reaches the plan file (L25 and §6.6)",
+                  leaked.Length == 0 ? "4 canaries, none serialised"
+                                     : "LEAKED: " + string.Join(", ", leaked));
+
+            Check(NetworkPlan.IsValidCidr("10.0.2.99/24")
+                  && NetworkPlan.IsValidCidr("2001:db8::1/64")
+                  && !NetworkPlan.IsValidCidr("10.0.2.99")
+                  && !NetworkPlan.IsValidCidr("10.0.2.99/33")
+                  && !NetworkPlan.IsValidCidr("not-an-address/24"),
+                  "netplan: an address must carry a prefix length");
+
+            // L24, ASSERTED RATHER THAN COMMENTED. The network step has to run
+            // after the mode step, because the headless purge removes the
+            // backend a NetworkManager-rendered file would name. A refactor that
+            // reorders this list has no other symptom than a machine that comes
+            // up with no network.
+            var order = SystemSteps.For(new InstallPlan(), new TargetRoot("/target"));
+            int mode = order.FindIndex(s => s is InstallModeStep);
+            int net = order.FindIndex(s => s is NetworkStep);
+            Check(mode >= 0 && net > mode,
+                  "step order: the network is written after the desktop purge",
+                  $"mode at {mode}, network at {net}");
+
+            // The scan parser, against a captured `iw scan` rather than against
+            // a radio. Strongest BSS wins, 802.1X beats PSK on a network that
+            // advertises both, and a NUL-padded hidden SSID is not offered as a
+            // network anybody can select.
+            const string Captured = """
+                BSS aa:bb:cc:dd:ee:01(on wlan0)
+                	signal: -70.00 dBm
+                	SSID: CORP-GUEST
+                	RSN:	 * Version: 1
+                		 * Authentication suites: PSK
+                BSS aa:bb:cc:dd:ee:02(on wlan0)
+                	signal: -42.00 dBm
+                	SSID: CORP-GUEST
+                	RSN:	 * Version: 1
+                		 * Authentication suites: PSK
+                BSS aa:bb:cc:dd:ee:03(on wlan0)
+                	signal: -55.00 dBm
+                	SSID: CORP-SECURE
+                	RSN:	 * Version: 1
+                		 * Authentication suites: IEEE 802.1X
+                BSS aa:bb:cc:dd:ee:04(on wlan0)
+                	signal: -80.00 dBm
+                	SSID: \x00\x00\x00
+                """;
+            List<WifiNetwork> scan = WifiScan.Parse(Captured);
+            WifiNetwork? guest = scan.FirstOrDefault(n => n.Ssid == "CORP-GUEST");
+            WifiNetwork? secure = scan.FirstOrDefault(n => n.Ssid == "CORP-SECURE");
+            Check(guest is not null && guest.SignalDbm == -42
+                  && guest.Security == WifiSecurity.Psk,
+                  "iw scan: the strongest BSS of a network wins",
+                  guest is null ? "not found" : $"{guest.SignalDbm} dBm");
+            Check(secure is not null && secure.Security == WifiSecurity.Enterprise,
+                  "iw scan: 802.1X is recognised as enterprise");
+            Check(scan.Count == 2,
+                  "iw scan: four BSSes become two networks, the hidden one dropped",
+                  $"{scan.Count}");
+
+            // A link-local or an autoconfiguration address is an address and is
+            // not a working network. Counting them would make the live test pass
+            // on exactly the failure it exists to catch.
+            Check(NetworkProbe.FirstGlobal(
+                      "2: enp1s0    inet6 fe80::1/64 scope link \\       valid_lft forever")
+                  is null,
+                  "live test: a link-local address does not count as connected");
+            Check(NetworkProbe.FirstGlobal(
+                      "2: enp1s0    inet 169.254.7.7/16 scope global \\  valid_lft forever")
+                  is null,
+                  "live test: an autoconfiguration address does not count");
+            Check(NetworkProbe.FirstGlobal(
+                      "2: enp1s0    inet 10.0.2.15/24 scope global dynamic enp1s0")
+                  == "10.0.2.15/24",
+                  "live test: a global address is reported with its prefix");
+        }
+
         // Rendering must not depend on a terminal existing. Every screen is
         // drawn into an off-screen frame at the reference geometry, which is
         // what makes the golden-frame tests in §6.5 possible at all.
@@ -649,6 +975,13 @@ internal static class Program
                 new WelcomeScreen(p2), new LicenceScreen(p2), new RegionalScreen(p2),
                 new DiskScreen(p2), new LayoutScreen(p2, disk), new ConfirmScreen(p2, disk),
                 new AccountScreen(p2), new ModeScreen(p2),
+                // Screens 9, 9S and 9W. NetworkScreen enumerates adapters and
+                // WifiScreen scans, and BOTH have to render on a machine that
+                // has neither — this runs in the chroot during the ISO build,
+                // where there is no radio and `iw` may not exist. A screen that
+                // throws on an empty list is a screen that throws on an
+                // air-gapped appliance.
+                new NetworkScreen(p2), new StaticScreen(p2), new WifiScreen(p2),
                 new CompleteScreen(p2), ErrorScreen.ForCommand(
                     "Setup could not import the pool.",
                     "zpool import -f -N -R /target rpool",
@@ -678,6 +1011,16 @@ internal static class Program
             {
                 var f = new Frame(80, 25);
                 s.Layout(80, 25);
+
+                // A TICKING SCREEN GETS ITS TICK. SetupFlow passes Key.None
+                // through to any screen that opted in with `Ticks`, and for
+                // WifiScreen that tick IS the scan — so without it this would
+                // only ever render the "scanning…" frame and the box check
+                // below would silently find no box to measure. Driving it here
+                // exercises the idle-tick path of every screen that has one,
+                // which is a path nothing else in --self-test touches.
+                if (s.Ticks) s.Handle(KeyPress.None);
+
                 f.Chrome(s.Title, s.Status, Release.Current.TitleBar);
                 s.Draw(f);
                 string rendered = f.Render();
@@ -709,6 +1052,8 @@ internal static class Program
           --unattend <plan.json>     run from a plan file, without the UI
           --passphrase-file <path>   the disk passphrase (never in the plan file)
           --password-file <path>     the account password (never in the plan file)
+          --wifi-secret-file <path>  the Wi-Fi PSK or 802.1X password (ditto)
+          --test-network <plan.json> apply the network here and report; install nothing
           --storage-only             prepare the disk and stop; do not install a system
           --dry-run                  print every command instead of running it
           --geometry <cols>x<rows>   force the canvas size (SETUP-PLAN §2.4)
@@ -732,6 +1077,8 @@ internal static class Program
         public string? Unattend { get; init; }
         public string? PassphraseFile { get; init; }
         public string? PasswordFile { get; init; }
+        public string? WifiSecretFile { get; init; }
+        public string? TestNetwork { get; init; }
         public bool StorageOnly { get; init; }
         public string? Error { get; init; }
 
@@ -740,7 +1087,7 @@ internal static class Program
             bool help = false, print = false, self = false, dryRun = false;
             bool version = false;
             string? geometry = null, unattend = null, passphraseFile = null;
-            string? passwordFile = null;
+            string? passwordFile = null, wifiSecretFile = null, testNetwork = null;
             bool storageOnly = false;
             for (int i = 0; i < args.Length; i++)
             {
@@ -756,6 +1103,16 @@ internal static class Program
                         if (++i >= args.Length)
                             return new Options { Error = "--password-file needs a path" };
                         passwordFile = args[i];
+                        break;
+                    case "--test-network":
+                        if (++i >= args.Length)
+                            return new Options { Error = "--test-network needs a plan file" };
+                        testNetwork = args[i];
+                        break;
+                    case "--wifi-secret-file":
+                        if (++i >= args.Length)
+                            return new Options { Error = "--wifi-secret-file needs a path" };
+                        wifiSecretFile = args[i];
                         break;
                     case "--unattend":
                         if (++i >= args.Length)
@@ -780,12 +1137,16 @@ internal static class Program
                 return new Options { Error = "--passphrase-file only means something with --unattend" };
             if (passwordFile is not null && unattend is null)
                 return new Options { Error = "--password-file only means something with --unattend" };
+            if (wifiSecretFile is not null && unattend is null && testNetwork is null)
+                return new Options { Error = "--wifi-secret-file needs --unattend or --test-network" };
             return new Options
             {
                 Help = help, Version = version, PrintPlan = print,
                 SelfTest = self, Geometry = geometry,
                 DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,
-                PasswordFile = passwordFile, StorageOnly = storageOnly,
+                PasswordFile = passwordFile, WifiSecretFile = wifiSecretFile,
+                TestNetwork = testNetwork,
+                StorageOnly = storageOnly,
             };
         }
     }
