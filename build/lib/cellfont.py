@@ -264,7 +264,7 @@ def build(font, out, W, H, hinting=True):
     # the erase character. Packing the codepoints in table order put U+0040 '@'
     # there and the kernel would not load the font at all — while `psf.py verify`
     # passed everything, because it asks about coverage, shapes and tiling and
-    # this is a question about POSITIONS. BUILD-NOTES #56.
+    # this is a question about POSITIONS. BUILD-NOTES #57.
     #
     # Laying ASCII out at position == codepoint fixes it structurally rather
     # than by special-casing one slot: 32 is U+0020 and a space is blank by
@@ -315,7 +315,7 @@ def build(font, out, W, H, hinting=True):
 
     if glyphs and any(any(r) for r in glyphs[32]):
         sys.stderr.write("!!! glyph position 32 is not blank; setfont would "
-                         "refuse this font (BUILD-NOTES #56)\n")
+                         "refuse this font (BUILD-NOTES #57)\n")
         sys.exit(1)
 
     if len(glyphs) > psfmod.PSF_MAX_GLYPHS:
@@ -339,7 +339,7 @@ def build(font, out, W, H, hinting=True):
     print(f"      baseline row {baseline}, {len(synthesised)} synthesised, "
           f"{len(skipped)} skipped"
           + (" (" + " ".join(f"U+{c:04X}" for c in skipped) + ")" if skipped else "")
-          + f"; position 32 blank (setfont, #56)")
+          + f"; position 32 blank (setfont, #57)")
     return len(glyphs)
 
 

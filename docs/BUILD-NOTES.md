@@ -22,9 +22,15 @@ So: **claim the number here, in this table, in a commit, before you write the
 entry.** A number that is spoken for but not yet written looks free otherwise,
 and the next session takes it in good faith.
 
+**And check against `origin/main`, not against your own tree.** The rule above
+failed once on 2026-08-25 anyway: a claim existed for eight minutes in a branch
+that had not been pushed, and the other session read the state it had, which was
+correct and out of date. `git fetch` first — a commit nobody can see is the same
+as a conversation.
+
 *No number is currently claimed but unwritten.*
 
-Everything below is written. Numbers above 56 are free.
+Everything below is written. Numbers above 57 are free.
 
 ## What was kept, and what was dropped
 
@@ -2349,3 +2355,60 @@ numbering is suspect; anything derived from the device itself — a MAC, a seria
 a UUID, a by-id path — is not. `StoragePlan.Disk` already took this lesson (L12,
 `/dev/disk/by-id/…` and never `/dev/sdb`); the network half had to learn it
 again.
+
+## 57. `setfont` refuses a font whose glyph POSITION 32 is not blank
+
+Found by the vmscreen check on the installed console
+([SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md)), and it is the
+reason that check exists.
+
+The installed machine came up showing the **8×16 kernel font**, not Cascadia at
+16×32 — while `console-setup.service` was `enabled`, `active (exited)`,
+`status=0/SUCCESS`. The service reported success and the screen said otherwise.
+
+Asking `setfont` directly, on tty1, is what produced the answer:
+
+```
+# setfont /usr/share/consolefonts/os7-console-16x32.psf.gz < /dev/tty1 > /dev/tty1
+setfont: ERROR setfont.c:142 try_loadfont: font position 32 is nonblank
+setfont: ERROR setfont.c:154 try_loadfont: background will look funny
+  exit 71
+
+# the same command with the Fixedsys PSF
+  exit 0        and `stty size < /dev/tty1` then reads  25 80
+```
+
+**`kbd` requires glyph position 32 to be empty**, because the console uses that
+slot as its erase character — a screen clear paints position 32, so a font with
+ink there fills the background with it. `cellfont.py` had packed the codepoints
+in `psf.py` table order, which put `U+0040 @` at position 32, and the kernel
+refused the whole font.
+
+**Every check that existed was green, and every one of them was right.**
+`psf.py verify` asks about coverage, about shapes that must differ, and about
+cell tiling. This is a question about **positions**, and nothing asked it. The
+build was green, the ISO carried the right bytes, the hash on the disk matched
+the pin — and the console displayed a different font.
+
+Same week, same class, three different axes:
+
+| | every check correct, but about… |
+|---|---|
+| #54 `.notdef` | the wrong **glyph** — mapped, non-blank, and a hollow rectangle |
+| #56 (os7-b1) | the wrong **moment** — the interface name before the medium was removed |
+| this one | the wrong **property** — coverage and shape, never position |
+
+None of them would have been caught by checking harder. Each needed an axis
+nobody had thought to measure.
+
+**Fix, structural rather than a guard.** ASCII now sits at position == codepoint,
+so slot 32 is `U+0020` and blank by construction; 0–31 are left empty and the
+rest follows from 127. `cellfont.py` also asserts position 32 is blank before
+writing, so a future layout change cannot reintroduce it quietly — but the
+assertion is the second line of defence, not the first.
+
+**And the lesson that generalises past fonts:** a build artefact can satisfy
+every property its own verifier knows about and still be rejected by the thing
+that consumes it. The only check that closes that gap is handing the artefact to
+the real consumer. Here that meant booting a machine, and nothing cheaper would
+have done.
