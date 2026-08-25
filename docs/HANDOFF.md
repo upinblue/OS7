@@ -66,14 +66,28 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-**The amd64 EFI remaster** is the newest and best-defined piece: an amd64 ISO now
-**DONE 2026-08-25** — `build/lib/efi-remaster.sh` now re-masters both
-architectures ([SESSION-AMD64-EFI-REMASTER.md](SESSION-AMD64-EFI-REMASTER.md)).
-What that leaves is the first amd64 BOOT: nothing on amd64 has been booted,
-installed or walked, so every Phase 1–3 result is still arm64-only.
+Two pieces landed on 2026-08-25 and each leaves a different next step.
 
-Otherwise: **Phase 4 — Authenticity and polish**, or **screen 9**, or the release
-plan's **S5**. Phase 3 is done (below); what it leaves is:
+**The amd64 EFI remaster is DONE**, and both halves are proved separately:
+`build/lib/efi-remaster.sh` re-masters both architectures, the boot line works
+(shown in a VM) and the built ISO carries it (read out of the artefact with
+`xorriso`) — [SESSION-AMD64-EFI-REMASTER.md](SESSION-AMD64-EFI-REMASTER.md).
+What it leaves: **the first amd64 INSTALLATION**, which needs an x86_64 harness
+that does not exist — `run-phase1/2/3` are `qemu-system-aarch64` with
+`accel=hvf` throughout — and **a Secure-Boot-capable medium**: the GRUB on the
+ISO is unsigned, on both architectures, and always has been.
+
+**Phase 3b — the network — is DONE on arm64 and measured**, below. What it
+leaves is amd64 (same missing harness), 802.1X, and M2.
+
+**So every Phase 1–3b result is still arm64-only.** The two next steps share one
+blocker, and it is the same one: there is no way to drive an x86_64 machine here.
+An amd64 harness that synchronises on markers the way `vmconsole`/`vmscreen` do —
+rather than on wall-clock time, which cost a peer session two wrong diagnoses in
+one afternoon — is the single piece that unblocks both.
+
+Otherwise: **Phase 4 — Authenticity and polish**, or the release plan's **S5**.
+Phase 3 is done (below); what it leaves is:
 
 * **Screen 9, the network screen — Phase 3b, WRITTEN and NOT OPTIONAL. M1 is
   measured and it is worse than the image suggested.** An installed arm64 machine
@@ -99,9 +113,26 @@ plan's **S5**. Phase 3 is done (below); what it leaves is:
   [SESSION-NETWORK-ACCOUNTS-PLAN.md](SESSION-NETWORK-ACCOUNTS-PLAN.md).
   Run it with `./installer/testing/run-phase3b-network.py`.
 
-  **Still owed: M3, the amd64 half.** M1 is one machine, arm64, in QEMU. On amd64
-  `network-manager` is installed on the GUI product and would have brought the
-  link up by itself — which is exactly why nobody saw this.
+  **PROVED 2026-08-25 on ISO 1.0.0.65**, from a machine booted with no ISO
+  attached: the interface has `10.0.2.99/24` — the address that was typed — the
+  default route goes via `10.0.2.2`, `systemd-networkd` is *running*, the netplan
+  file is mode 0600 and names `networkd`. Wi-Fi associates over `mac80211_hwsim`
+  (`wlan0` to `OS7-TEST-AP` with `10.99.0.5/24`), and the interactive walk reaches
+  screen 9, finds the NIC, and takes a real DHCP lease with `F4`.
+
+  **L30 is the finding to read first.** The interface name *changes* between
+  installing and running — `enp0s5` with the setup medium attached, `enp0s2`
+  without, same MAC — because the medium is a PCI device and predictable names
+  come from the PCI topology. netplan accepts a match that matches nothing in
+  silence, so the first version of this screen produced exactly the machine it
+  was built to prevent. It matches on the MAC now. BUILD-NOTES #56.
+
+  **Still owed: M2, M3, 802.1X, and any real radio.** M1 is one machine, arm64,
+  in QEMU. On amd64 `network-manager` is installed on the GUI product and would
+  have brought the link up by itself — which is exactly why nobody saw this. The
+  Wi-Fi test runs on `mac80211_hwsim`, which simulates the hardware layer away
+  and loads no firmware: not one of the 19 firmware packages or 197 wireless
+  drivers on the image has been exercised.
 * **The account model is decided and needs no code (D11).** Root stays locked and
   the first account stays in `sudo`, which is what `SystemSteps` already does.
   What is owed is one sentence on screen 7 naming the role — the local account is

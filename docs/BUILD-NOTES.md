@@ -22,12 +22,9 @@ So: **claim the number here, in this table, in a commit, before you write the
 entry.** A number that is spoken for but not yet written looks free otherwise,
 and the next session takes it in good faith.
 
-| # | claimed for | by |
-|---|---|---|
-| 50 | `networkd-dispatcher.service` is enabled while `systemd-networkd` is not — the consumer of a unit is enabled, the producer is not, and the enable-list reads like proof that networking is configured | measured by session os7-b1 on both images; **held until measured independently**, because citing someone else's measurement as this list's evidence is the exact mistake the entry describes |
-| 51 | `iw scan` prints non-printable SSID bytes ESCAPED — a hidden network arrives as the literal four characters `\x00` per byte, so a parser testing `c == '\0'` filters nothing and writes gibberish into a picker. The byte level is not the character level; same shape as #46 | observed by session os7-b1 against a **recorded scan, not a radio** |
+*No number is currently claimed but unwritten.*
 
-Everything below is written. Numbers above 53 are free.
+Everything below is written. Numbers above 56 are free.
 
 ## What was kept, and what was dropped
 
@@ -2047,6 +2044,98 @@ not because the code differs but because the *image* does. Whenever the two
 package sets diverge — and they diverge by 979 packages — any claim about
 behaviour has to name which image it was measured on.
 
+## 50. The consumer of a unit is enabled and the producer is not — and the enable-list reads like proof
+
+`systemctl is-enabled` was asked of a machine installed by os7-setup, booted from
+its own disk with a NIC attached, on 2026-08-25:
+
+```
+systemctl is-enabled networkd-dispatcher     enabled
+systemctl is-enabled systemd-networkd        disabled
+systemctl is-active  systemd-networkd        inactive
+```
+
+`networkd-dispatcher` exists to run scripts when `systemd-networkd` changes an
+interface's state. It is a **consumer**. It was in
+`/etc/systemd/system/multi-user.target.wants/` and the thing it consumes was not
+enabled at all.
+
+The machine's actual state:
+
+```
+2: enp0s2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN
+ip -o addr show    1: lo  inet 127.0.0.1/8     (and nothing else)
+ip route show      (empty)
+```
+
+`qdisc noop` is the queueing discipline of an interface nothing has ever
+configured. Not "DHCP did not answer" — that leaves a link UP and an empty
+address. The link was never brought up, there was no route, and **nothing on the
+machine reported a problem.**
+
+**Why this is a trap and not just a bug.** Anyone diagnosing "why is this server
+unreachable" looks at what is enabled. `networkd-dispatcher.service` is there,
+its name contains `networkd`, and the natural reading is that networking is
+configured and something else is wrong. The wrong conclusion is available before
+the right question is asked.
+
+It is the same family as #48 and #49 — a diagnostic that answers a neighbouring
+question — but from a new direction: not a program reporting success without
+changing anything, but a **status word about component A being read as a
+statement about component B.** Two more instances turned up the same afternoon:
+a peer session read a CI run's `completed/success` as "normal" without
+subtracting the timestamps (it had taken four times as long), and an idle
+notification about a *session* was nearly read as a statement about the *VM* that
+session had started.
+
+**The guard:** ask the producer, and ask it for behaviour rather than for
+configuration. `is-enabled` is a statement about a symlink. `ip -o addr` and
+`ip route` are statements about a computer. Where a unit's presence is the
+evidence, name which unit does the work.
+
+**How it got there:** the shipped image enables `networkd-dispatcher` because
+Ubuntu's package does, and nothing enabled `systemd-networkd` because nothing had
+ever needed to — `/etc/netplan/` is empty, there is no `cloud-init`, and on the
+amd64 desktop `network-manager` takes every device and hides the whole question.
+Fixed by SETUP-PLAN Phase 3b's `NetworkStep`, which enables it and then checks
+the symlinks rather than `systemctl`'s exit code. L23.
+
+---
+
+## 51. `iw scan` escapes non-printable SSID bytes — the byte level is not the character level
+
+A hidden network advertises a zero-length or zero-filled SSID. `iw dev … scan`
+does not print those bytes; it prints them **escaped**, four characters per byte:
+
+```
+BSS aa:bb:cc:dd:ee:04(on wlan0)
+	signal: -80.00 dBm
+	SSID: \x00\x00\x00
+```
+
+A parser filtering `ssid.All(c => c == '\0')` therefore filters nothing. The
+network reaches the picker as a row of literal backslash-x-zero-zero, which
+nobody can select and nobody can remove.
+
+Same shape as #46, where `read_text` decoded a plain hyphen as U+00AD because
+eight bitmaps in the console font belong to more than one codepoint. Both times
+the byte level and the character level were confused; both times the result
+looked plausible.
+
+**Evidence, and its limit.** Found by feeding a *recorded* `iw scan` to the
+parser in `os7-setup --self-test` on 2026-08-25, not by scanning with a radio.
+The Wi-Fi association test that exists (`run-phase3b-network.py wifi`, over
+`mac80211_hwsim`) does a real scan but does not broadcast a hidden network, so
+the escaping itself is still lab evidence rather than field evidence.
+
+**The guard:** separate the parser from the command that produces the text, and
+test it against captured output. `WifiScan.Parse` in
+`installer/src/OS7.Setup/Model/NetworkLinks.cs` is a pure function for exactly
+this reason — a parser whose only test is a wireless card is a parser tested on
+one network, once.
+
+---
+
 ## 52. `otf2bdf` scales uniformly, so a font whose em is not its cell can never hit an 8×16
 
 Found while evaluating Cascadia Mono for the installed console
@@ -2124,3 +2213,57 @@ Same shape as #26: the codepoint is mapped, the picture is different. The guard
 is the same too — **pin the file, not the version**, and treat the source as
 part of the pin. SETUP-PLAN §2.8 records the SHA256 of the exact TTF, not just
 the package version.
+
+---
+
+## 56. The interface name changes between installing and running, and netplan says nothing
+
+The same machine, the same NIC, the same MAC — two names, measured 2026-08-25:
+
+```
+installing, setup medium attached      enp0s5
+booted from the disk, medium removed   enp0s2
+MAC, throughout                        52:54:00:12:34:56
+```
+
+Predictable interface names are derived from the PCI topology, and **the setup
+medium is a PCI device**. Removing it renumbers the slots. So the name Setup sees
+while it is installing is not the name the installed machine will use.
+
+os7-setup wrote `/etc/netplan/01-os7-network.yaml` naming `enp0s5`. After the
+reboot that interface does not exist, netplan matched nothing, and **netplan
+accepts a match that matches nothing in silence.** The machine came up:
+
+```
+2: enp0s2: <BROADCAST,MULTICAST> qdisc noop state DOWN
+ip -o addr show    1: lo  inet 127.0.0.1/8    (and nothing else)
+ip route show      (empty)
+```
+
+— which is, line for line, the failure #50 describes. The screen built to prevent
+it would have produced it.
+
+**Every check was correct, and every check was about the wrong moment:**
+
+| check | said | why it did not help |
+|---|---|---|
+| `--self-test` on the generated YAML | correct | it named a real interface — just not the one that would exist later |
+| `netplan generate` in the chroot | a valid networkd unit | a unit that matches nothing is still a unit |
+| reading that unit back for `Address=` | present | on an interface that would not exist |
+
+**The only instrument that could see it was a machine booted with the medium
+removed.** That split — `run-phase3.py boot` and `run-phase3b-network.py boot`
+attach no ISO — came from spike S3 for a completely different reason: a VM that
+still has the setup medium in it can boot *from the medium* and look exactly like
+a successful install. It has now paid for itself twice, for reasons that have
+nothing to do with each other.
+
+**The guard:** match on the MAC, never on the name — `NetworkPlan.MacAddress`,
+SETUP-PLAN L30. And the general form, which is the part worth carrying: **a
+property read from the install environment is not automatically a property of the
+installed machine.** The medium is part of the hardware while Setup runs and is
+gone afterwards. Anything derived from PCI enumeration, device order or slot
+numbering is suspect; anything derived from the device itself — a MAC, a serial,
+a UUID, a by-id path — is not. `StoragePlan.Disk` already took this lesson (L12,
+`/dev/disk/by-id/…` and never `/dev/sdb`); the network half had to learn it
+again.
