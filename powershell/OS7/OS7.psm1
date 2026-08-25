@@ -284,6 +284,189 @@ function New-OS7Storage {
 	} | ConvertTo-Json -Compress
 }
 
+# ---------------------------------------------------------------------------
+# Desktop appearance
+#
+# Implemented, not a stub. These exist for a reason beyond convenience: OS/7
+# ships a non-default desktop appearance on a fleet that Intune manages, and a
+# look that cannot be turned off is indistinguishable from a bug when somebody
+# opens a support case. One documented command turns it off and on again.
+#
+# THE KEY LIST IS NOT DUPLICATED HERE. It is read out of the dconf keyfile the
+# theme package installs, so adding a default to the theme automatically brings
+# it under Set-OS7Theme instead of leaving a key nobody can reset.
+# ---------------------------------------------------------------------------
+
+$script:OS7ThemeKeyfile = '/etc/dconf/db/os7.d/00-os7-classic'
+$script:OS7ThemeUserSetup = '/usr/libexec/os7-theme-user-setup'
+
+function Get-OS7ThemeKeys {
+	<#
+	.SYNOPSIS
+		Internal. The (schema, key) pairs OS/7's desktop defaults cover.
+	#>
+	param([string]$Keyfile = $script:OS7ThemeKeyfile)
+
+	if (-not (Test-Path -PathType Leaf $Keyfile)) { return @() }
+
+	$schema = $null
+	$pairs = foreach ($line in (Get-Content -LiteralPath $Keyfile)) {
+		$trimmed = $line.Trim()
+		if ($trimmed -match '^\[(.+)\]$') {
+			# dconf paths are org/gnome/...; GSettings schemas are org.gnome...
+			$schema = $Matches[1].Trim('/') -replace '/', '.'
+		}
+		elseif ($schema -and $trimmed -match '^([A-Za-z0-9-]+)\s*=') {
+			[pscustomobject]@{ Schema = $schema; Key = $Matches[1] }
+		}
+	}
+	return @($pairs)
+}
+
+function Get-OS7Theme {
+	<#
+	.SYNOPSIS
+		Reports which desktop appearance this session is actually using.
+
+	.DESCRIPTION
+		Asks the session, not the package. `dpkg -s os7-desktop-theme` says a
+		theme is installed; it does not say a session is wearing it, and those
+		two have come apart before — a dconf key removed by a GNOME upgrade
+		leaves the package installed and the setting inert.
+
+		Returns an object with the effective GTK theme, the Shell theme, whether
+		the GTK 4 overrides are linked into this user's home, and which of the
+		theme's own defaults are currently overridden by this user.
+
+	.EXAMPLE
+		Get-OS7Theme
+
+	.EXAMPLE
+		(Get-OS7Theme).Overridden
+		The defaults this user has changed away from OS/7's.
+	#>
+	[CmdletBinding()]
+	param()
+
+	function Read-Setting([string]$schema, [string]$key) {
+		try { (Invoke-OS7Native -Command 'gsettings' -Arguments @('get', $schema, $key)).Trim() }
+		catch { $null }
+	}
+
+	$gtk = Read-Setting 'org.gnome.desktop.interface' 'gtk-theme'
+	$shell = Read-Setting 'org.gnome.shell.extensions.user-theme' 'name'
+
+	$gtk4 = Join-Path ($env:XDG_CONFIG_HOME ?? (Join-Path $HOME '.config')) 'gtk-4.0/gtk.css'
+	$gtk4Linked = $false
+	if (Test-Path -LiteralPath $gtk4) {
+		$item = Get-Item -LiteralPath $gtk4 -Force
+		$gtk4Linked = $item.LinkTarget -and $item.LinkTarget.StartsWith('/usr/share/os7-theme/')
+	}
+
+	# A default is "overridden" when the effective value differs from what the
+	# system database alone would give. Reading the system database directly is
+	# what makes this an answer rather than a guess.
+	$overridden = foreach ($pair in (Get-OS7ThemeKeys)) {
+		$effective = Read-Setting $pair.Schema $pair.Key
+		$system = $null
+		try {
+			$system = (& env "DCONF_PROFILE=/etc/dconf/profile/user" dconf read `
+				"/$($pair.Schema -replace '\.', '/')/$($pair.Key)" 2>$null)
+		}
+		catch { }
+		if ($system -and $effective -and $effective -ne $system.Trim()) {
+			[pscustomobject]@{
+				Schema = $pair.Schema; Key = $pair.Key
+				Effective = $effective; Default = $system.Trim()
+			}
+		}
+	}
+
+	[pscustomobject]@{
+		Name             = if ($gtk -match 'OS7-Classic') { 'Classic' } else { 'Stock' }
+		GtkTheme         = $gtk
+		ShellTheme       = $shell
+		Gtk4OverridesSet = $gtk4Linked
+		DefaultsCovered  = (Get-OS7ThemeKeys).Count
+		Overridden       = @($overridden)
+	}
+}
+
+function Set-OS7Theme {
+	<#
+	.SYNOPSIS
+		Switches this user's desktop between OS/7 Classic and stock GNOME.
+
+	.DESCRIPTION
+		Classic RESETS every key the theme's dconf database covers, rather than
+		writing OS/7's values into the user's own database. Resetting hands the
+		keys back to the system database, so the user tracks the shipped theme
+		as it changes instead of freezing today's copy of it.
+
+		Stock writes each of those keys to its SCHEMA default — read with the
+		memory GSettings backend, which bypasses dconf entirely — so stock means
+		"what GNOME would do here without OS/7", with no Ubuntu values hardcoded
+		into this module.
+
+		Both take effect for the running session. The Shell has to be restarted
+		to repaint the panel, which under Wayland means logging out.
+
+	.PARAMETER Name
+		'Classic' or 'Stock'.
+
+	.EXAMPLE
+		Set-OS7Theme -Name Stock
+		Hand this user a stock GNOME desktop, e.g. to reproduce a support case.
+
+	.EXAMPLE
+		Set-OS7Theme -Name Classic
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)]
+		[ValidateSet('Classic', 'Stock')]
+		[string]$Name
+	)
+
+	$keys = Get-OS7ThemeKeys
+	if ($keys.Count -eq 0) {
+		throw [System.InvalidOperationException]::new(
+			"No desktop defaults found at $($script:OS7ThemeKeyfile). Is os7-desktop-theme installed?")
+	}
+
+	$dry = -not $PSCmdlet.ShouldProcess("this user's desktop", "switch to $Name")
+
+	foreach ($pair in $keys) {
+		if ($Name -eq 'Classic') {
+			Invoke-OS7Native -Command 'gsettings' -WhatIf:$dry `
+				-Arguments @('reset', $pair.Schema, $pair.Key) | Out-Null
+		}
+		else {
+			# The schema default, uncontaminated by any dconf database.
+			$default = & env GSETTINGS_BACKEND=memory gsettings get $pair.Schema $pair.Key 2>$null
+			if ($LASTEXITCODE -ne 0 -or -not $default) {
+				Write-OS7Step "skip: $($pair.Schema) $($pair.Key) - no schema default readable"
+				continue
+			}
+			Invoke-OS7Native -Command 'gsettings' -WhatIf:$dry `
+				-Arguments @('set', $pair.Schema, $pair.Key, $default.Trim()) | Out-Null
+		}
+	}
+
+	# The GTK 4 overrides live in the user's home and are not a dconf key.
+	if (Test-Path -PathType Leaf $script:OS7ThemeUserSetup) {
+		$action = if ($Name -eq 'Classic') { '--install' } else { '--remove' }
+		Invoke-OS7Native -Command $script:OS7ThemeUserSetup -WhatIf:$dry `
+			-Arguments @($action) | Out-Null
+	}
+
+	if (-not $dry) {
+		Write-OS7Step "desktop set to $Name; log out and back in to repaint the Shell"
+	}
+
+	Get-OS7Theme
+}
+
 function Set-OS7Mode {
 	<#
 	.SYNOPSIS
@@ -387,4 +570,5 @@ function Restore-OS7 {
 }
 
 Export-ModuleMember -Function New-OS7Storage, New-OS7BootEnvironmentName,
+	Get-OS7Theme, Set-OS7Theme,
 	Set-OS7Mode, Update-OS7, Restore-OS7

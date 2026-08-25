@@ -1,0 +1,130 @@
+# =============================================================================
+# OS/7 Classic — desktop defaults.
+#
+# WHY dconf AND NOT A gsettings OVERRIDE. Both can set a system default. They
+# differ in what happens when GNOME removes a key on the next generation:
+#
+#   a .gschema.override naming a key that no longer exists makes
+#   glib-compile-schemas warn, and fail outright under --strict — so a stale
+#   line becomes a BUILD failure two years from now;
+#
+#   this file's stale line is silently inert.
+#
+# Silent-and-inert is the correct failure mode for cosmetics. Anything that
+# must not fail silently does not belong in this file.
+#
+# It also reaches users that /etc/skel never sees: authd creates home
+# directories for Entra ID accounts that were never on this machine at install
+# time, and a system dconf database applies to them on first login.
+#
+# NOTHING HERE IS LOCKED. There is no locks/ directory in this package, on
+# purpose: these are defaults an operator may override, and a fleet-wide
+# enforcement belongs in an Intune policy where it can be seen and audited —
+# not baked into an image where a support case cannot tell it from a bug.
+#
+# Applied with `dconf update`, run by the package's postinst.
+# =============================================================================
+
+[org/gnome/desktop/interface]
+# The GTK 3 theme. GTK 4 / libadwaita ignores this by design and is handled by
+# /usr/libexec/os7-theme-user-setup instead.
+gtk-theme='OS7-Classic'
+# Classic is a LIGHT surface with a black desktop behind it. 'default' rather
+# than 'prefer-light' so applications that offer a dark mode still can.
+color-scheme='default'
+icon-theme='Adwaita'
+cursor-theme='Adwaita'
+# Tahoma 8 is the historically exact Windows 2000 UI font size at 96 dpi.
+# 9 is used here because GNOME's padding is larger than Windows 2000's and 8
+# reads as broken rather than as authentic. This is the line to change.
+# The name resolves through fontconfig; without fonts-wine installed it falls
+# back to the default sans face and the theme still works.
+font-name='Tahoma 9'
+document-font-name='Tahoma 9'
+monospace-font-name='Monospace 10'
+# Classic had no animation and no hot corner.
+enable-animations=false
+enable-hot-corners=false
+# Hinting full, antialiasing off: this is what makes a small UI font look like
+# 1999 instead of like a blurry modern one.
+font-antialiasing='none'
+font-hinting='full'
+clock-format='24h'
+clock-show-weekday=true
+show-battery-percentage=true
+
+[org/gnome/desktop/wm/preferences]
+theme='OS7-Classic'
+# Windows 2000 order and side. No app menu button on the left.
+button-layout=':minimize,maximize,close'
+titlebar-font='Tahoma Bold 9'
+titlebar-uses-system-font=false
+action-double-click-titlebar='toggle-maximize'
+focus-mode='click'
+auto-raise=false
+# Four static workspaces, the way a classic desktop behaves. Paired with
+# org/gnome/mutter dynamic-workspaces=false below.
+num-workspaces=4
+
+[org/gnome/desktop/background]
+# The black desktop. picture-uri must be emptied or it wins over the colour.
+picture-uri=''
+picture-uri-dark=''
+picture-options='none'
+primary-color='#000000'
+secondary-color='#000000'
+color-shading-type='solid'
+
+[org/gnome/desktop/screensaver]
+picture-uri=''
+picture-options='none'
+primary-color='#000000'
+secondary-color='#000000'
+color-shading-type='solid'
+
+[org/gnome/shell]
+# GNOME's OWN extensions, and only GNOME's own. Every UUID below ships in the
+# gnome-shell-extensions source package, which Ubuntu updates in lockstep with
+# gnome-shell (50.0-1 against gnome-shell 50.1, Depends: gnome-shell (>= 50~),
+# (<< 51~)). A third-party taskbar does not have that guarantee, which is
+# exactly why dash-to-panel and ArcMenu are absent from the resolute archive
+# and this list does not name them.
+#
+#   apps-menu     the Applications menu, top left
+#   places-menu   the Places menu beside it
+#   window-list   the taskbar along the bottom edge
+#   user-theme    what loads gnome-shell/gnome-shell.css from the theme
+enabled-extensions=['apps-menu@gnome-shell-extensions.gcampax.github.com', 'places-menu@gnome-shell-extensions.gcampax.github.com', 'window-list@gnome-shell-extensions.gcampax.github.com', 'launch-new-instance@gnome-shell-extensions.gcampax.github.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com']
+# Ubuntu's dock is the one thing that would fight the window list for the same
+# screen edge. Listed explicitly as well as omitted above, because Ubuntu
+# enables it from its own session configuration, not only from this key.
+disabled-extensions=['ubuntu-dock@ubuntu.com']
+favorite-apps=['microsoft-edge.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop', 'intune-portal.desktop']
+
+[org/gnome/shell/extensions/user-theme]
+name='OS7-Classic'
+
+[org/gnome/shell/extensions/window-list]
+# Group nothing: one button per window is what a classic taskbar does.
+grouping-mode='never'
+show-on-all-monitors=true
+display-all-workspaces=false
+
+[org/gnome/mutter]
+# Static workspaces, the way a classic desktop behaves. Four of them.
+dynamic-workspaces=false
+edge-tiling=true
+attach-modal-dialogs=false
+center-new-windows=false
+
+[org/gnome/desktop/sound]
+event-sounds=false
+
+[org/gnome/nautilus/preferences]
+# List view, not icons: the Windows Explorer default.
+default-folder-viewer='list-view'
+show-image-thumbnails='local-only'
+
+[org/gnome/nautilus/list-view]
+use-tree-view=true
+default-zoom-level='small'

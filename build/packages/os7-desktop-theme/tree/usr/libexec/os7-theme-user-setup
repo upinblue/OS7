@@ -1,0 +1,101 @@
+#!/bin/sh
+# =============================================================================
+# OS/7 — put the libadwaita colour overrides where libadwaita will read them.
+#
+# libadwaita reads exactly one user stylesheet, ~/.config/gtk-4.0/gtk.css, and
+# no system-wide path at all. A system theme therefore cannot reach GTK 4
+# applications without placing something in the user's own home directory.
+# This script is that placement, run once per session by
+# os7-theme-user-setup.service.
+#
+# It links rather than copies, so a package update changes every user's GTK 4
+# colours without a per-user migration.
+#
+# THE RULE: it never overwrites a file it did not create. If the user has their
+# own gtk.css, this script leaves it alone and says so. The check is on the
+# symlink TARGET, not on the file's presence — an ordinary file there means a
+# human wrote it.
+#
+# Reverse it with `os7-theme-user-setup --remove`, which is what
+# Set-OS7Theme -Name Stock calls.
+# =============================================================================
+set -eu
+
+SRC="/usr/share/os7-theme/gtk-4.0/os7-classic.css"
+CFG="${XDG_CONFIG_HOME:-${HOME}/.config}/gtk-4.0"
+DST="${CFG}/gtk.css"
+TAG="os7-theme"
+
+log() { echo "os7-theme-user-setup: $*"; }
+
+# Is DST a symlink we own? Anything under /usr/share/os7-theme/ is ours.
+ours() {
+	[ -L "${DST}" ] || return 1
+	case "$(readlink "${DST}")" in
+		/usr/share/os7-theme/*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+remove() {
+	if ours; then
+		rm -f "${DST}"
+		log "removed ${DST}"
+	elif [ -e "${DST}" ]; then
+		log "left ${DST} alone - not ours"
+	fi
+}
+
+case "${1:-}" in
+	--remove)
+		remove
+		exit 0
+		;;
+	"" | --install) ;;
+	*)
+		echo "usage: $0 [--install|--remove]" >&2
+		exit 2
+		;;
+esac
+
+# Only install the overrides while the classic theme is actually selected.
+# Without this check, switching to stock GNOME would leave GTK 4 applications
+# wearing classic colours and nothing else — worse than either state.
+theme=""
+if command -v gsettings >/dev/null 2>&1; then
+	theme="$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || true)"
+fi
+case "${theme}" in
+	*OS7-Classic*) ;;
+	"")
+		# gsettings unavailable (no session bus): assume classic, since that is
+		# what the system database says by default. A wrong guess here is
+		# cosmetic and self-corrects at the next login.
+		;;
+	*)
+		log "gtk-theme is ${theme}, not OS7-Classic - removing overrides"
+		remove
+		exit 0
+		;;
+esac
+
+if [ ! -r "${SRC}" ]; then
+	log "missing ${SRC} - nothing to install"
+	exit 0
+fi
+
+if [ -e "${DST}" ] || [ -L "${DST}" ]; then
+	if ours; then
+		# Re-link: the package may have moved the file between versions.
+		ln -sfn "${SRC}" "${DST}"
+		log "refreshed ${DST} -> ${SRC}"
+		exit 0
+	fi
+	log "${DST} exists and is not ours - leaving it alone"
+	log "run '${0} --remove' is a no-op here; delete it yourself to opt in"
+	exit 0
+fi
+
+mkdir -p "${CFG}"
+ln -sfn "${SRC}" "${DST}"
+log "linked ${DST} -> ${SRC} (${TAG})"

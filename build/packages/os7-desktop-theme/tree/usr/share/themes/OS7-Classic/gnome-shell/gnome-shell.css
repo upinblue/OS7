@@ -1,0 +1,257 @@
+/* =========================================================================
+ * OS/7 Classic — GNOME Shell theme.
+ *
+ * This is the LEAST durable file in the package and it is written that way on
+ * purpose. GNOME Shell's stylesheet is internal: node names and class names
+ * change between Shell generations with no deprecation. So this file does the
+ * minimum that produces the classic surface and nothing more:
+ *
+ *   - it imports the Shell's own stylesheet and repaints it,
+ *   - it touches colour, border and radius only, never layout or geometry,
+ *   - it styles the two things the classic desktop is actually made of: the
+ *     panel and the window list.
+ *
+ * When a Shell generation renames something, the worst case is that one
+ * surface falls back to stock GNOME colours — not an unusable desktop. That
+ * trade is the reason for the rule.
+ *
+ * Loaded through gnome-shell-extension-user-theme, which is part of GNOME's
+ * own gnome-shell-extensions source package (50.0-1 in the pinned archive,
+ * Depends: gnome-shell (>= 50~), (<< 51~)) — so it moves generation-for-
+ * generation with the Shell instead of trailing it the way a third-party
+ * extension does.
+ * ========================================================================= */
+
+@import url("resource:///org/gnome/shell/theme/gnome-shell.css");
+
+/* Windows 2000 "Windows Standard". Kept identical to gtk-3.0/gtk.css by hand:
+ * GNOME Shell's CSS parser has no @define-color and no cross-file variables,
+ * so there is no way to share them. Change one, change the other. */
+
+/* --- The panel ---------------------------------------------------------- */
+#panel {
+	background-color: #d4d0c8;
+	background-gradient-direction: none;
+	color: #000000;
+	border: 0;
+	border-bottom: 1px solid #808080;
+	box-shadow: none;
+	font-weight: normal;
+	height: 26px;
+}
+
+#panel:overview {
+	background-color: #d4d0c8;
+}
+
+#panel .panel-button {
+	color: #000000;
+	border-radius: 0;
+	border: 1px solid transparent;
+	padding: 0 6px;
+	font-weight: normal;
+}
+
+#panel .panel-button:hover,
+#panel .panel-button:focus {
+	background-color: #d4d0c8;
+	color: #000000;
+	border-color: #ffffff #404040 #404040 #ffffff;
+}
+
+#panel .panel-button:active,
+#panel .panel-button:checked,
+#panel .panel-button:overview {
+	background-color: #0a246a;
+	color: #ffffff;
+	border-color: #404040 #ffffff #ffffff #404040;
+}
+
+#panel .panel-status-indicators-box,
+#panel .panel-status-menu-box {
+	spacing: 2px;
+}
+
+/* --- Menus: square, bevelled, face-coloured ----------------------------- */
+.popup-menu-boxpointer,
+.candidate-popup-boxpointer {
+	-arrow-border-radius: 0;
+	-arrow-background-color: #d4d0c8;
+	-arrow-border-color: #404040;
+	-arrow-border-width: 1px;
+}
+
+.popup-menu {
+	color: #000000;
+}
+
+.popup-menu-content,
+.candidate-popup-content {
+	background-color: #d4d0c8;
+	border: 1px solid #404040;
+	border-radius: 0;
+	box-shadow: none;
+	padding: 2px;
+}
+
+.popup-menu-item {
+	border-radius: 0;
+	padding: 3px 10px;
+	color: #000000;
+}
+
+.popup-menu-item:hover,
+.popup-menu-item:focus,
+.popup-menu-item.selected {
+	background-color: #0a246a;
+	color: #ffffff;
+}
+
+.popup-menu-item:insensitive {
+	color: #808080;
+}
+
+.popup-separator-menu-item .popup-separator-menu-item-separator {
+	background-color: #808080;
+	height: 1px;
+}
+
+/* --- The window list (GNOME Classic's taskbar) -------------------------- */
+#panel .window-list,
+.window-list,
+#panel-window-list {
+	background-color: #d4d0c8;
+}
+
+.window-list .window-button > StWidget,
+.window-list .window-button {
+	border-radius: 0;
+	font-weight: normal;
+}
+
+.window-list .window-button > StWidget {
+	background-color: #d4d0c8;
+	color: #000000;
+	border: 1px solid;
+	border-color: #ffffff #404040 #404040 #ffffff;
+	padding: 1px 6px;
+}
+
+.window-list .window-button:active > StWidget,
+.window-list .window-button:checked > StWidget,
+.window-list .window-button:focus > StWidget {
+	background-color: #c8c4bc;
+	border-color: #404040 #ffffff #ffffff #404040;
+	font-weight: bold;
+}
+
+.window-list .window-button:hover > StWidget {
+	background-color: #dedad2;
+	color: #000000;
+}
+
+.window-list-workspace-indicator,
+.window-list .workspace-indicator {
+	background-color: #d4d0c8;
+	color: #000000;
+	border-radius: 0;
+}
+
+/* --- Applications / Places menus (GNOME Classic) ------------------------ */
+.panel-menu,
+#panel .apps-menu,
+#panel .places-menu {
+	color: #000000;
+}
+
+/* --- Everything else: square, unanimated, no glow ----------------------- */
+.modal-dialog,
+.notification-banner,
+.osd-window,
+.candidate-box {
+	border-radius: 0;
+	background-color: #d4d0c8;
+	color: #000000;
+	border: 1px solid #404040;
+	box-shadow: none;
+}
+
+.modal-dialog-linked-button,
+.notification-banner .notification-button {
+	background-color: #d4d0c8;
+	color: #000000;
+	border: 1px solid;
+	border-color: #ffffff #404040 #404040 #ffffff;
+	border-radius: 0;
+}
+
+.button,
+.modal-dialog .button {
+	border-radius: 0;
+	background-color: #d4d0c8;
+	color: #000000;
+	border: 1px solid;
+	border-color: #ffffff #404040 #404040 #ffffff;
+}
+
+.button:hover, .modal-dialog .button:hover {
+	background-color: #dedad2;
+	color: #000000;
+}
+
+.button:active, .modal-dialog .button:active {
+	border-color: #404040 #ffffff #ffffff #404040;
+}
+
+/* Entries: sunken, white, black text. */
+StEntry {
+	background-color: #ffffff;
+	color: #000000;
+	border-radius: 0;
+	border: 1px solid;
+	border-color: #808080 #ffffff #ffffff #808080;
+	selection-background-color: #0a246a;
+	selected-color: #ffffff;
+	padding: 2px 4px;
+}
+
+StEntry:focus {
+	border-color: #808080 #ffffff #ffffff #808080;
+	box-shadow: none;
+}
+
+/* The overview stays functional but stops being the visual centre. */
+#overviewGroup,
+#overview {
+	background-color: #000000;
+}
+
+.search-entry {
+	border-radius: 0;
+}
+
+.workspace-thumbnail-indicator {
+	border-radius: 0;
+	border: 2px solid #0a246a;
+}
+
+/* Calendar and date menu. */
+.datemenu-today-button,
+.calendar,
+.message-list,
+.datemenu-displays-box {
+	border-radius: 0;
+	color: #000000;
+}
+
+.calendar-day-base {
+	border-radius: 0;
+	color: #000000;
+}
+
+.calendar-day-base:selected,
+.calendar-today {
+	background-color: #0a246a;
+	color: #ffffff;
+	border-radius: 0;
+}

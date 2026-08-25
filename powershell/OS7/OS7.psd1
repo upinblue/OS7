@@ -17,6 +17,8 @@
 	FunctionsToExport = @(
 		# Implemented — the ZFS layer os7-setup and Update-OS7 share (SETUP-PLAN §6.3)
 		'New-OS7Storage', 'New-OS7BootEnvironmentName',
+		# Implemented — the classic desktop, amd64 GUI mode
+		'Get-OS7Theme', 'Set-OS7Theme',
 		# Stubs — the command surface README.md documents
 		'Set-OS7Mode', 'Update-OS7', 'Restore-OS7')
 	CmdletsToExport   = @()

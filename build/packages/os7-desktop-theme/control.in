@@ -1,0 +1,24 @@
+Package: os7-desktop-theme
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: gnome
+Priority: optional
+Depends: dconf-cli, dconf-gsettings-backend, gnome-shell-extension-user-theme, gnome-shell-extension-window-list, gnome-shell-extension-apps-menu, gnome-shell-extension-places-menu, gnome-shell-extension-launch-new-instance, fontconfig
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 Classic — the Windows 2000 desktop surface for GNOME
+ A GTK 3 theme, a GNOME Shell theme, a set of libadwaita colour overrides and
+ the desktop defaults that select them, giving OS/7's GUI mode the look a
+ Windows administrator already knows: the "Windows Standard" palette, square
+ bevelled controls, a caption gradient, a taskbar along the bottom edge and a
+ black desktop.
+ .
+ It is built only from parts Ubuntu itself keeps in step with GNOME — the
+ Classic session extensions from GNOME's own gnome-shell-extensions source
+ package — plus this package's own files, and it overwrites no file belonging
+ to another package. That is what lets it survive a distribution upgrade
+ instead of being reapplied after every one.
+ .
+ GTK 4 / libadwaita applications receive the classic COLOURS only. libadwaita
+ ignores widget themes by design and no supported mechanism exists to give
+ them classic shapes; see /usr/share/doc/os7-desktop-theme/README.md.

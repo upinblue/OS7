@@ -1,0 +1,88 @@
+/* =========================================================================
+ * OS/7 Classic — GTK 4 / libadwaita colour overrides.
+ *
+ * READ THIS BEFORE ADDING A RULE.
+ *
+ * libadwaita ignores `gtk-theme-name` by design. There is no supported way to
+ * give a GTK 4 application a classic widget shape, and every project that has
+ * tried has produced a broken UI on the next libadwaita release. The single
+ * lever libadwaita does honour is @define-color in the user's own
+ * ~/.config/gtk-4.0/gtk.css — and that is all this file uses.
+ *
+ * So GTK 4 applications (Nautilus, Settings, and most of GNOME's own) come out
+ * classic in COLOUR and modern in SHAPE. That is a stated limitation of the
+ * theme, not a bug to be fixed by adding selectors here. Adding structural CSS
+ * to this file is how the theme starts breaking on upgrades.
+ *
+ * Installed to the user by /usr/libexec/os7-theme-user-setup, which symlinks
+ * ~/.config/gtk-4.0/gtk.css here — libadwaita reads no system-wide path.
+ * ========================================================================= */
+
+/* Windows 2000 "Windows Standard" — the same constants as gtk-3.0/gtk.css. */
+@define-color window_bg_color             #d4d0c8;
+@define-color window_fg_color             #000000;
+@define-color view_bg_color               #ffffff;
+@define-color view_fg_color               #000000;
+
+@define-color headerbar_bg_color          #0a246a;
+@define-color headerbar_fg_color          #ffffff;
+@define-color headerbar_border_color      #808080;
+@define-color headerbar_backdrop_color    #808080;
+@define-color headerbar_shade_color       rgba(0, 0, 0, 0);
+@define-color headerbar_darker_shade_color rgba(0, 0, 0, 0);
+
+@define-color sidebar_bg_color            #d4d0c8;
+@define-color sidebar_fg_color            #000000;
+@define-color sidebar_backdrop_color      #d4d0c8;
+@define-color sidebar_border_color        #808080;
+@define-color sidebar_shade_color         rgba(0, 0, 0, 0);
+
+@define-color secondary_sidebar_bg_color  #d4d0c8;
+@define-color secondary_sidebar_fg_color  #000000;
+@define-color secondary_sidebar_border_color #808080;
+@define-color secondary_sidebar_backdrop_color #d4d0c8;
+@define-color secondary_sidebar_shade_color rgba(0, 0, 0, 0);
+
+@define-color card_bg_color               #ffffff;
+@define-color card_fg_color               #000000;
+@define-color card_shade_color            rgba(0, 0, 0, 0);
+
+@define-color dialog_bg_color             #d4d0c8;
+@define-color dialog_fg_color             #000000;
+
+@define-color popover_bg_color            #d4d0c8;
+@define-color popover_fg_color            #000000;
+@define-color popover_shade_color         rgba(0, 0, 0, 0);
+
+@define-color thumbnail_bg_color          #ffffff;
+@define-color thumbnail_fg_color          #000000;
+
+@define-color shade_color                 rgba(0, 0, 0, 0);
+@define-color scrollbar_outline_color     #808080;
+
+@define-color accent_bg_color             #0a246a;
+@define-color accent_fg_color             #ffffff;
+@define-color accent_color                #0a246a;
+
+@define-color destructive_bg_color        #800000;
+@define-color destructive_fg_color        #ffffff;
+@define-color destructive_color           #800000;
+
+@define-color success_bg_color            #008080;
+@define-color success_fg_color            #ffffff;
+@define-color success_color               #008080;
+
+@define-color warning_bg_color            #808000;
+@define-color warning_fg_color            #ffffff;
+@define-color warning_color               #808000;
+
+@define-color error_bg_color              #800000;
+@define-color error_fg_color              #ffffff;
+@define-color error_color                 #800000;
+
+/* The only two non-colour rules in this file, and both are safe because they
+ * name no internal node: square corners, and no animation. */
+* {
+	border-radius: 0;
+	transition: none;
+}
