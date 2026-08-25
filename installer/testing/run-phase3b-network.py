@@ -220,6 +220,15 @@ def write_plan(c):
 
 def phase_install():
     print("\n  install — unattended, with a static address")
+
+    # The same precondition run-phase3.py's walk makes, and for the same reason:
+    # a lab with no NIC would install a plan whose netplan file matches no
+    # interface, which netplan accepts. Every later assertion in this file would
+    # then fail with a message about an address, pointing at the wrong thing.
+    if not lab.nic:
+        print("      FAIL  this lab has no NIC. Lab(nic=True).")
+        return False
+
     lab.prepare()
     c, q = lab.boot(LIVE_CMDLINE, "install")
     try:

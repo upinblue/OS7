@@ -417,6 +417,25 @@ def phase_walk(font):
     `./run-phase3.py boot` can verify without knowing which of the two built it.
     """
     print("\n  walk — the whole flow, driven by keypresses")
+
+    # THE PRECONDITION FOR SCREEN 9, CHECKED BEFORE ANY KEY IS PRESSED.
+    #
+    # NetworkScreen.Entry SKIPS screen 9 entirely on a machine with no network
+    # adapter — deliberately, because an air-gapped appliance is a real machine
+    # and a list with one apologetic row is worse than not stopping. The
+    # consequence for this harness is that a lab without a NIC walks straight
+    # past the screen it is here to test AND REPORTS SUCCESS, because every
+    # remaining assertion still holds.
+    #
+    # That is the same class as BUILD-NOTES #45 and it is worth naming in its
+    # general form: A CHECK THAT CANNOT SEE SOMETHING MUST SAY "NOT CHECKED",
+    # NEVER "FINE". Raised by os7-d7, who hit the same shape twice in one
+    # afternoon from the other direction.
+    if not lab.nic:
+        print("      FAIL  this lab has no NIC, so screen 9 would be SKIPPED and")
+        print("            this walk would prove nothing about it. Lab(nic=True).")
+        return False
+
     rel = medium_release()
     version = rel["version"]
 
