@@ -133,6 +133,20 @@ lb config noauto \
 	`# The amd64 medium needs that treatment too; this flag only stops the build` \
 	`# from dying before there is anything to treat.` \
 	--syslinux-theme live-build \
+	`# THE DECISION UNDER THE FLAG ABOVE: amd64 stops running live-build's` \
+	`# bootloader stages at all, because arm64 already does not run them and OS/7` \
+	`# owns its medium's boot path either way. Measured: LB_BOOTLOADER defaults to` \
+	`# "syslinux" on amd64 and to "" (EMPTY) on arm64 - which is the whole reason` \
+	`# build/lib/arm64-efi-remaster.sh exists. Every bootloader stage guards on` \
+	`# [ "${LB_BOOTLOADER}" != "<its own name>" ] and lb_binary_iso's case has no` \
+	`# branch for an unknown value, so "none" is inert on BOTH arches and puts` \
+	`# amd64 in exactly the position arm64 has been in since the first build.` \
+	`# syslinux is BIOS and OS/7 boots UEFI (README, locked decisions), so nothing` \
+	`# that stage produces was ever going to ship. BUILD-NOTES #47.` \
+	`# WHAT THIS COSTS: live-build now emits an ISO with no El Torito entry on` \
+	`# amd64 - contents without a boot path, which check-image.py can still read` \
+	`# in full. Making it boot is an amd64 EFI remaster, and it is not written.` \
+	--bootloader none \
 	`# HARVESTED FIX 5: Ubuntu-mode live-build expects the casper initramfs at` \
 	`# binary/casper/initrd.img; without boot=casper (and the casper package in` \
 	`# the base list) lb_binary_disk fails.` \

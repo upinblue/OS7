@@ -1741,10 +1741,54 @@ it is not the amd64 boot story.
 `os7-<arch>.iso` symlink beside it, and `upload-artifact` follows the symlink:
 the arm64 artifact came out at **3974 MiB for one 2 GB image.** `out/OS7-*.iso`.
 
+### The third death, in the same stage, and why the poking stopped
+
+[Run 32833370939](https://github.com/upinblue/OS7/actions/runs/32833370939), with
+`--syslinux-theme live-build` in place: the theme packages were gone, the stage
+got further, and it fell over on the next line.
+
+```
+P: Begin installing syslinux...
+cp: cannot stat '/root/isolinux/vesamenu.c32': No such file or directory
+```
+
+arm64 was green again in the same run — 15m21s — and the artifact came out at
+**1987 MiB**, half the previous one, which is the `out/OS7-*.iso` fix measured.
+
+At this point the interesting measurement is not the next missing file. It is
+this pair:
+
+```
+amd64: LB_BOOTLOADER="syslinux"
+arm64: LB_BOOTLOADER=""
+```
+
+**arm64 has been building with no bootloader stage at all since the first ISO**,
+and that is precisely why `build/lib/arm64-efi-remaster.sh` exists — OS/7 already
+owns its medium's boot path on one architecture. Every bootloader stage guards on
+`[ "${LB_BOOTLOADER}" != "<its own name>" ]`, and `lb_binary_iso`'s
+`case "${LB_BOOTLOADER}"` has no branch for an unknown value, so `none` is inert
+on both. `--bootloader none` therefore does not disable something amd64 needed;
+it puts amd64 in the position arm64 has been in all along.
+
+And the thing being disabled was never shippable: syslinux is a **BIOS**
+bootloader, OS/7 boots UEFI with shim and a Canonical-signed GRUB, and this
+live-build has no grub-efi stage to offer instead. Three fixes into
+`lb_binary_syslinux` would have produced a boot path OS/7 cannot use.
+
+**What it costs, stated plainly:** live-build now emits an amd64 ISO with no El
+Torito entry — contents without a boot path. `check-image.py` reads all of it
+without booting, which is where the unanswered amd64 questions actually live
+(does the rootfs carry GNOME, Edge and Intune; does `os7-setup` run on x86_64;
+did the pin hold). Making that medium boot is an **amd64 EFI remaster**, the
+sibling of the arm64 one, and it is not written.
+
 ### Worth carrying
 
-**Each dispatch buys exactly one stage.** Two amd64 attempts now, two different
-deaths, both in `lb_binary_*` and both in code that has not been touched since
-Ubuntu renamed the thing it asks for. The rootfs is not the hard part on amd64 —
-assembling the medium is, and every stage in that phase has to be checked
-against a 2026 archive one at a time.
+**Each dispatch buys exactly one stage — until you ask why you are in the stage
+at all.** Three amd64 deaths, all in `lb_binary_*` code that has not been touched
+since Ubuntu renamed what it asks for, and the third one was in a stage whose
+output the product had already decided it would not use. The rootfs is not the
+hard part on amd64; assembling the medium is. And the cheapest way through a
+stale stage is to establish that you never wanted it — which the *other*
+architecture's config had been saying the whole time, in one empty variable.
