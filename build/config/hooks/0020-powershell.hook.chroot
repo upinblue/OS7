@@ -56,9 +56,14 @@ echo "OS/7 hook 0020: installing PowerShell ${PWSH_VERSION} (${PWSH_ARCH})"
 #   Couldn't find a valid ICU package installed on the system.
 #   Process terminated.
 #
-# dotnet-sdk-10.0 in the base package list happens to pull libicu78 in today,
+# The .NET packages in the base package list happen to pull libicu78 in today,
 # but depending on that transitively means PowerShell breaks mysteriously the
 # day .NET moves or is dropped. Install it here, next to the thing that needs it.
+#
+# .NET DID move, on 2026-08-25: dotnet-sdk-10.0 left the image (C2) and
+# dotnet-runtime-10.0 replaced it. The runtime Depends libicu78 as well, so the
+# transitive path still happens to exist - which is exactly the situation this
+# paragraph was written about, and exactly why this hook does not rely on it.
 #
 # Resolved from the archive rather than hardcoded: the soname version changes
 # between Ubuntu releases (resolute is on 78), and a stale pin fails as an

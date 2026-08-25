@@ -1,8 +1,12 @@
 # OS/7 — what the product contains, and how a version of it is delivered
 
-**Status: definition only. Nothing below is implemented, and no file outside
-this one was changed.** §16 lists what it *would* change, so the edits can be
-reviewed before they are made.
+**Status: definition, with two of its decisions now built.** C2 (.NET) and §4.2
+(the kernel) were implemented on 2026-08-25 and are measured on a shipped
+image and a booted machine — §4.1, §4.2, and
+[SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md) §6. Everything
+else below is still definition only: there is no OS/7 package repository, no
+signing key and no release index. §16 lists what it *would* change, with the
+rows that have been done marked.
 
 This answers three questions asked on 2026-08-25:
 
@@ -29,8 +33,8 @@ release comes from* — and corrects one step of its §4.2 (§9 below).
 | Question | Answer |
 |---|---|
 | Fewer packages on an Ubuntu base | **Yes — by selection, never by re-cutting packages.** Azure Linux builds every package from source and owns its archive; OS/7 chooses from Ubuntu's. That is a different kind of control, and pretending otherwise would commit OS/7 to becoming a distribution. |
-| How much is actually there | **Measured: 2.86 GiB installed, 549 packages** (arm64, server-only, `OS7-1.0.0.46`). Four decisions take it to **1.19 GiB**. §2, §4. |
-| Does that shrink the package *count* too | **No — and this matters.** The same four decisions remove 58 % of the bytes and 6 % of the packages. Size, count and the kernel's 8544-module surface are three different problems with three different levers, and for a security-curated product it is the last two that govern attack surface and CVE volume. §2.3, §4.5. |
+| How much is actually there | **Measured: 2.86 GiB installed, 549 packages** (arm64, server-only, `OS7-1.0.0.46`). Four decisions take it to **1.19 GiB**. §2, §4. **Two of the four are now built** (2026-08-25): −1 089.3 MiB and −36 packages, measured against the shipped manifests of two builds. |
+| Does that shrink the package *count* too | **Less than the bytes, but more than predicted.** The same four decisions were expected to remove 58 % of the bytes and 6 % of the packages; the two that were built removed 36 packages rather than the 12 they were costed at, because live-build installs *Recommends* and the kernel meta-package's chain is long (§4.2). Size, count and the kernel's 8544-module surface are three different problems with three different levers, and for a security-curated product it is the last two that govern attack surface and CVE volume. §2.3, §4.5. |
 | Is the version scheme sound | **Yes, and it is already decided** (U2/U3/U4) **and proven** — spike S7 built twice from one pin and got identical package sets. The requested `1.0.1.<build>` is field-for-field the scheme already locked. |
 | So what is missing | **The delivery half, entirely.** No OS/7 package repository, no signing, no release index, and — the sharpest one — **no OS/7-specific file on a running system belongs to any package**, so no update can reach them. §5, §6. |
 | Would `apt full-upgrade` deliver a curated release | **No.** It converges *versions*, not *membership*. A machine installed at 1.0.0 keeps what 1.0.5 dropped, and two differently-shaped systems then report one number. §5. |
@@ -162,14 +166,33 @@ support case cannot tell whether a CVE is OS/7's problem or Canonical's.
 
 ### 4.1 .NET — SDK out, runtime stays (C2)
 
-**DECIDED 2026-08-25.** Measured:
+**DECIDED 2026-08-25. BUILT AND MEASURED THE SAME DAY** — see
+[SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md) §6. Predicted, and
+then what the two shipped manifests actually differed by:
 
-| | packages | size |
-|---|---|---|
-| .NET as shipped today | 10 | 625.5 MiB |
-| llvm/clang pulled by the AOT recommendation | 3 | 216.0 MiB |
-| kept: `dotnet-runtime-10.0`, `aspnetcore-runtime-10.0`, host, hostfxr | 4 | 105.6 MiB |
-| **removed** | **9** | **735.8 MiB** |
+| | packages | size | |
+|---|---|---|---|
+| .NET as shipped before | 10 | 625.5 MiB | |
+| llvm/clang pulled by the AOT recommendation | 3 | 216.0 MiB | **not present on arm64** — see below |
+| kept: `dotnet-runtime-10.0`, `aspnetcore-runtime-10.0`, host, hostfxr | 4 | 106.1 MiB | as predicted |
+| **predicted removal** | **9** | **735.8 MiB** | |
+| **measured removal, arm64** | **6** | **519.1 MiB** | `dotnet-sdk-10.0`, `dotnet-sdk-aot-10.0`, both targeting packs, apphost-pack, templates |
+
+**The prediction was 216 MiB too generous HERE, and the 216 MiB was real — it
+just belonged to something else.** Two builds, an hour apart, settle it:
+
+* build 1 removed the .NET SDK **including `dotnet-sdk-aot-10.0`**, and
+  `libllvm21`, `libclang-cpp21` and `libclang1-21` were **still in the image**.
+* build 2 additionally stopped live-build installing `linux-generic` (§4.2), and
+  all three left.
+
+So llvm and clang were held by the **kernel** meta-package's Recommends chain —
+`linux-generic` Recommends `linux-tools-<abi>-generic` and
+`ubuntu-kernel-accessories`, which reach `bpftrace`, which links LLVM — and not
+by the .NET AOT recommendation this document attributed them to. **The size was
+right and the cause was wrong**, which is only visible because the two removals
+were made in separate builds and both manifests were kept. Their 216.0 MiB is
+counted under §4.2 below, where it was earned.
 
 Nothing in the image needs the SDK. `os7-setup` is NativeAOT and runs with .NET
 deleted (S2, measured); PowerShell 7.6.5 is the self-contained upstream tarball
@@ -191,9 +214,34 @@ Measured on the dependency graph of the pinned snapshot:
 `linux-firmware`. So the prebuilt ZFS module survives the swap; only the headers
 leave.
 
-**−268.1 MiB, −3 packages. UNPROVEN:** the dependency chain is measured, a build
-and a boot are not. This must be verified by `check-image.py` plus a `run-phase3
-boot`, not by the build exiting 0 — BUILD-NOTES' standing rule.
+**−268.1 MiB, −3 packages** predicted. **−570.2 MiB, −30 packages** measured,
+and the difference is entirely *Recommends*, which live-build installs:
+`linux-generic` Recommends `linux-tools-<abi>-generic` and
+`ubuntu-kernel-accessories`, and behind those came `linux-perf`, `bpftool`,
+`bpftrace`, `bpfcc-tools`, **`libllvm21` + `libclang-cpp21` + `libclang1-21`
+(216.0 MiB — see §4.1)**, `libc6-dev` and the rest of the C development headers,
+`hwdata`, `ieee-data`, `python3-netaddr`. The headers themselves were exactly the
+predicted 268.1 MiB across four packages rather than three, the fourth being
+`linux-headers-7.0.0-30` (`Architecture: all`, 90.3 MiB), which the count of the
+`-generic` chain missed.
+
+**Both changes together: 554 → 518 packages, −1 089.3 MiB installed, and the ISO
+goes 2 149 740 544 → 1 835 249 664 bytes (−300 MiB compressed).**
+
+**AND THE FIRST ATTEMPT REMOVED NOTHING, with a green build.** Editing this
+package list does not change which kernel is installed: in `--mode ubuntu`
+live-build derives `LB_LINUX_PACKAGES="linux"` and installs `linux-generic`
+beside whatever the lists name. The shipped manifest still carried both
+metapackages and all three header packages. The fix is `--linux-packages
+"linux-image"` in `build/config/auto/config`, and the reason it was caught at all
+is that two manifests were diffed instead of the build being believed —
+[BUILD-NOTES.md](BUILD-NOTES.md) #62.
+
+CL9 asked for `check-image.py` plus a boot before this is believed. Both were
+done: `check-image.py` now asserts the membership on the artefact
+(no `dotnet-sdk*`, no `linux-headers*`, no `linux-generic`,
+`linux-main-modules-zfs-*` present), and `run-s5.py boot` asks a machine running
+from ZFS with the swapped kernel.
 
 ### 4.3 Firmware — the one to be careful with (C4)
 
@@ -609,7 +657,7 @@ the one place where this architecture is straightforwardly better than upstream'
 | CL7 | **A signed package set with an unsigned index permits a replay** of an older, validly-signed release. | Sign the release index; use apt's `Valid-Until`; treat freshness as separate from authenticity (§6.3). |
 | CL8 | **Migrations run twice** whenever a rollback is followed by a re-update. | Idempotence is a requirement, not a quality goal (§9). |
 | CL10 | **Package curation does not reach the kernel module surface** — 8544 modules ship inside one package (§4.5). | A different mechanism entirely: blacklisting and initramfs trimming, whose failures appear at boot on one machine rather than at build time. Out of scope here; open question 7. |
-| CL9 | **`linux-image-generic` instead of `linux-generic` is unproven** — measured on the dependency graph, not on a booted machine. | `check-image.py` plus `run-phase3.py boot` before it is believed. BUILD-NOTES' rule: an exit code is a diagnostic, not evidence. |
+| ~~CL9~~ | ~~**`linux-image-generic` instead of `linux-generic` is unproven**~~ — **CLOSED 2026-08-25, and it was worse than unproven: the first attempt changed nothing at all** because live-build installs the kernel beside the package lists (BUILD-NOTES #62). Now built, asserted on the artefact by `check-image.py`, and booted by `run-s5.py`. |
 
 ---
 
@@ -618,7 +666,7 @@ the one place where this architecture is straightforwardly better than upstream'
 | # | Decision | Outcome |
 |---|---|---|
 | C1 | Degrees of curation | **DECIDED — pin / re-host / rebuild**, chosen per package, and the degree is recorded in the manifest (§3). |
-| C2 | .NET in the image | **DECIDED 2026-08-25 — SDK out, runtime stays.** −735.8 MiB, −9 packages, measured (§4.1). |
+| C2 | .NET in the image | **DONE 2026-08-25 — SDK out, runtime stays.** Predicted −735.8 MiB / −9 packages; **built and measured at −519.1 MiB / −6 packages** on arm64, the difference being llvm/clang that were never in this image (§4.1). |
 | C3 | Foundation Framework | **DECIDED 2026-08-25 — a .NET library and services**, shipped as `os7-foundation`, framework-dependent against the pinned runtime C2 keeps. Its own version line in the manifest. |
 | C4 | Firmware | **DECIDED in shape, OPEN in extent** (§4.3). Network firmware always ships; graphics/audio (396.2 MiB) decided per architecture. |
 | C5 | `ubuntu-standard` and Recommends | **PROPOSED, not decided** (§4.4). The lever that moves the package count, and the one that needs a boot behind every removal. |
@@ -694,7 +742,9 @@ asks a built ISO what it *is*, this asks what it *costs*.
 | [../README.md](../README.md) | "Microsoft technology scope": .NET **SDK**/Runtime → **Runtime** (C2). Locked decisions: the update train gains the OS/7 repository and the metapackage contract (C6, C7). Open questions: add C7a, C8a. |
 | [RELEASE-AND-UPDATE-PLAN.md](RELEASE-AND-UPDATE-PLAN.md) | §4.2 steps 5, 6 and 6′ (C10). §5 gains a fourth drift hole: OS/7's own unowned files, until C7. §8: UL10 closes via §6.2; add the signing and index limitations (CL6, CL7). §9: reference C1–C12. |
 | [../build/config/os7-release.conf](../build/config/os7-release.conf) | Gains the OS/7 suite name and the repository base URL — the same "nothing else in the repo may carry a version number or an archive URL" rule, extended to OS/7's own archive. |
-| [../build/config/package-lists/os7-base.list.chroot](../build/config/package-lists/os7-base.list.chroot) | `dotnet-sdk-10.0` → `dotnet-runtime-10.0` + `aspnetcore-runtime-10.0` (C2); `linux-generic` → `linux-image-generic` (C3). Eventually the whole file becomes `os7-base`'s `Depends` (C6). **Owned by another session at the time of writing — not to be edited without asking.** |
+| [../build/config/package-lists/os7-base.list.chroot](../build/config/package-lists/os7-base.list.chroot) | **DONE 2026-08-25.** `dotnet-sdk-10.0` → `dotnet-runtime-10.0` + `aspnetcore-runtime-10.0` (C2); `linux-generic` → `linux-image-generic` (§4.2) — though the kernel half needed `--linux-packages` in `auto/config` as well, because this file never decided it (BUILD-NOTES #62). Eventually the whole file becomes `os7-base`'s `Depends` (C6). |
+| [../build/config/auto/config](../build/config/auto/config) | **DONE 2026-08-25.** `--linux-packages "linux-image"`, without which §4.2 is inert. |
+| [../installer/testing/check-image.py](../installer/testing/check-image.py) | **DONE 2026-08-25.** Asserts the C2 and §4.2 membership on the shipped manifest, so neither can quietly come back. |
 | `build/config/auto/config` | `--apt-recommends false` once C5's explicit list exists, and not before. |
 | `build/config/hooks/0020, 0060, 0075, 0080` | Become package builds rather than chroot writers (C7). Their existing verification steps become the packages' tests. |
 | [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md) | Phase 6 (`R=Repair`) gains C11's three answers. **Owned by another session — not to be edited without asking.** |

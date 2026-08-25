@@ -758,13 +758,56 @@ internal sealed class TpmEnrolStep : IStep
             # BUILD-NOTES #20: the libraries systemd DLOPENS are the half that
             # goes missing, and their absence is invisible until a boot that
             # asks for a passphrase nobody expected.
-            for want in libtss2-esys libtss2-rc systemd-cryptsetup; do
+            for want in libtss2-esys libtss2-rc; do
                 if grep -q "$want" /tmp/initrd2.list; then
                     echo "    ok       $want"
                 else
                     echo "    MISSING  $want - TPM unlock will not work at boot"
                 fi
             done
+
+            # THE ONE THAT DECIDES WHETHER ANY OF THIS WORKS. `cryptsetup open
+            # --token-only` needs the LUKS2 token handler, which lives in a
+            # directory the stock initramfs hook does not touch. Without it the
+            # unlock cannot succeed, however correct the enrolment is —
+            # BUILD-NOTES #19, #20, #66.
+            if grep -q 'libcryptsetup-token-systemd-tpm2.so' /tmp/initrd2.list; then
+                echo "    ok       libcryptsetup-token-systemd-tpm2.so"
+            else
+                echo "    MISSING  libcryptsetup-token-systemd-tpm2.so - the TPM cannot unlock"
+            fi
+            # The TCTI backend that talks to /dev/tpmrm0, dlopened by name.
+            if grep -q 'libtss2-tcti-device' /tmp/initrd2.list; then
+                echo "    ok       libtss2-tcti-device"
+            else
+                echo "    MISSING  libtss2-tcti-device - nothing can reach /dev/tpmrm0"
+            fi
+
+            # And the handler script itself, which nothing else checks.
+            if grep -q '^scripts/local-top/os7-tpm2$' /tmp/initrd2.list; then
+                echo "    ok       scripts/local-top/os7-tpm2"
+            else
+                echo "    MISSING  scripts/local-top/os7-tpm2 - nothing will try the TPM"
+            fi
+
+            # THE ORDER, OBSERVED. initramfs-tools computes it at build time with
+            # `get_prereq_pairs | tsort`, and reasoning about how tsort breaks
+            # ties predicted the opposite of the truth once already. Read the
+            # ORDER file out of the image that was just built.
+            rm -rf /tmp/os7-ird && mkdir -p /tmp/os7-ird
+            if unmkinitramfs "$IMG" /tmp/os7-ird 2>/dev/null; then
+                R=/tmp/os7-ird
+                [ -d "$R/main" ] && R="$R/main"
+                O="$R/scripts/local-top/ORDER"
+                t=$(grep -n 'local-top/os7-tpm2' "$O" 2>/dev/null | head -1 | cut -d: -f1)
+                c=$(grep -n 'local-top/cryptroot' "$O" 2>/dev/null | head -1 | cut -d: -f1)
+                if [ -n "$t" ] && [ -n "$c" ] && [ "$t" -lt "$c" ]; then
+                    echo "    ok       os7-tpm2 runs before cryptroot"
+                else
+                    echo "    WRONG    os7-tpm2 ($t) does not precede cryptroot ($c)"
+                    sed 's/^/             /' "$O" 2>/dev/null
+                fi
+            fi
             """;
 
         try
@@ -808,13 +851,35 @@ internal sealed class TpmEnrolStep : IStep
         case "$1" in prereqs) prereqs; exit 0;; esac
         . /usr/share/initramfs-tools/hook-functions
 
-        for b in /usr/lib/systemd/systemd-cryptsetup /usr/bin/systemd-cryptenroll; do
-            [ -x "$b" ] && copy_exec "$b"
+        # THE TOKEN HANDLER IS THE POINT, and this step did not carry it for a
+        # release. `cryptsetup` loads external LUKS2 token handlers from a
+        # compiled-in directory, /usr/lib/<triplet>/cryptsetup, and the stock
+        # cryptsetup-initramfs hook copies NONE of them — so `cryptsetup open
+        # --token-only` inside the initramfs can only fail. That is what
+        # BUILD-NOTES #19 and #20 are about, and installer/spikes/s4-tpm-enroll.sh
+        # is the version that was proved to boot. This step had diverged from it
+        # (BUILD-NOTES #66).
+        found=
+        for so in /usr/lib/*/cryptsetup/libcryptsetup-token-systemd-tpm2.so; do
+            [ -e "$so" ] || continue
+            copy_exec "$so"
+            found=y
         done
+        [ -n "$found" ] && echo "os7-tpm2: token handler copied" \
+                        || echo "os7-tpm2: libcryptsetup-token-systemd-tpm2.so NOT FOUND" >&2
 
-        # The dlopened half, by path.
-        for lib in $(ls /usr/lib/*/libtss2-*.so.* /usr/lib/*/libcryptsetup.so.* 2>/dev/null); do
-            copy_exec "$lib"
+        # copy_exec follows ELF NEEDED and that is not enough. The handler links
+        # libsystemd-shared, which DLOPENS the TPM stack as an optional feature,
+        # and libtss2-tctildr dlopens a TCTI backend by name — /dev/tpmrm0 is
+        # served by libtss2-tcti-device.so.0. Nothing walking NEEDED sees any of
+        # them, so they are named. BUILD-NOTES #20.
+        for lib in libtss2-esys.so.0 libtss2-mu.so.0 libtss2-rc.so.0 \
+                   libtss2-tcti-device.so.0; do
+            for cand in /usr/lib/*/"$lib" /usr/lib/"$lib"; do
+                [ -e "$cand" ] || continue
+                copy_exec "$cand"
+                break
+            done
         done
 
         # And the TPM device nodes' udev rules, so /dev/tpmrm0 exists in time.
@@ -840,20 +905,49 @@ internal sealed class TpmEnrolStep : IStep
         prereqs() { echo "$PREREQ"; }
         case "$1" in prereqs) prereqs; exit 0;; esac
 
-        [ -e /dev/tpmrm0 ] || exit 0
-        [ -x /usr/lib/systemd/systemd-cryptsetup ] || exit 0
+        # EVERY REASON TO GIVE UP SAYS SO. This script used to fail at its second
+        # line and exit 0, which is indistinguishable at boot from a machine that
+        # has no TPM - and that is exactly what happened for one whole release:
+        # the enrolment was perfect, the token was in the header, the handler and
+        # the libraries were in the initramfs, and this asked for a path that
+        # does not exist any more. BUILD-NOTES #64.
+        say() { echo "OS/7 TPM: $1" >&2; }
 
-        # Already open (a re-run, or cryptroot got there first): nothing to do.
-        [ -e /dev/mapper/os7_root ] && exit 0
+        [ -e /dev/tpmrm0 ] || { say "no /dev/tpmrm0 - falling back to the passphrase"; exit 0; }
 
-        SRC=$(sed -n 's/^os7_root[[:space:]]\+\([^[:space:]]\+\).*/\1/p' \
-              /cryptroot/crypttab 2>/dev/null | head -1)
-        [ -n "$SRC" ] || exit 0
+        # READ WITH THE SHELL, not with sed. The initramfs's sed is busybox's,
+        # and `\+` is a GNU extension that its build need not carry - a regex
+        # that works perfectly on the installed system matches nothing here and
+        # says nothing about why. `while read` has no dialect.
+        TAB=/cryptroot/crypttab
+        [ -s "$TAB" ] || { say "$TAB is missing or empty"; exit 0; }
 
-        # Best effort, always. A failure here must fall through to the passphrase
-        # prompt rather than stop the boot - S6 measured that path and it works.
-        /usr/lib/systemd/systemd-cryptsetup attach os7_root "$SRC" - \
-            tpm2-device=auto,headless=1 >/dev/null 2>&1 || true
+        mkdir -pm0700 /run/cryptsetup
+
+        # `cryptsetup open --token-only`, NOT `systemd-cryptsetup attach`. This
+        # is the invocation spike S4 proved boots (installer/spikes/s4-tpm-enroll.sh),
+        # and it is the one the hook above carries the token handler for.
+        # --token-only never falls back to a passphrase, so a TPM that is absent,
+        # sealed against different PCRs, or simply unwilling leaves this a no-op
+        # and the stock cryptroot script prompts exactly as it always did. That
+        # IS the recovery path, and S6 measured it.
+        opened=
+        while read -r name source key options; do
+            case "$name" in ''|\#*) continue ;; esac
+            case "$source" in
+                UUID=*) dev="/dev/disk/by-uuid/${source#UUID=}" ;;
+                *)      dev="$source" ;;
+            esac
+            [ -b "$dev" ] || { say "$name: $dev is not there"; continue; }
+            [ -e "/dev/mapper/$name" ] && { opened=y; continue; }
+            if /sbin/cryptsetup open --token-only -- "$dev" "$name" 2>/dev/null; then
+                say "unlocked $name from the TPM"
+                opened=y
+            else
+                say "the TPM would not unlock $name - the passphrase still works"
+            fi
+        done < "$TAB"
+        [ -n "$opened" ] || say "nothing was unlocked from the TPM"
         exit 0
         """;
 }
@@ -906,8 +1000,20 @@ internal sealed class BootloaderStep : IStep
         // whole boot over a serial line; an installed machine gets whatever its
         // firmware gives it, and pinning ttyAMA0 on hardware that has none
         // produces a boot with no visible output at all.
+        // GRUB_DEFAULT=saved, NOT 0. `saved` is the only setting under which
+        // GRUB reads `saved_entry` out of grubenv, and `saved_entry` is the only
+        // place a boot environment can be NAMED as the default. It matters
+        // because 10_linux_zfs sorts the menu by last-used and hands the running
+        // system the current time, so the environment that generated the menu is
+        // always its first entry — and with GRUB_DEFAULT=0 a rollback could
+        // therefore never take effect. See powershell/OS7/OS7.psm1,
+        // Set-OS7BootEnvironment, which is the code that depends on this.
+        //
+        // It is set here rather than repaired at the first rollback on purpose:
+        // the first rollback happens on a machine that has just stopped working,
+        // and that is the wrong moment to be editing /etc/default/grub.
         _t.Write(x, "etc/default/grub", $"""
-            GRUB_DEFAULT=0
+            GRUB_DEFAULT=saved
             GRUB_TIMEOUT=5
             GRUB_TIMEOUT_STYLE=menu
             GRUB_DISTRIBUTOR="OS/7"
@@ -946,6 +1052,25 @@ internal sealed class BootloaderStep : IStep
                 echo "    10_linux_zfs produced no ZFS entry - falling back to 10_linux"
                 chmod -x /etc/grub.d/10_linux_zfs 2>/dev/null || true
                 update-grub
+            fi
+
+            # GRUB_DEFAULT=saved above means the default is whatever grubenv
+            # names, so it has to be named. Read out of the menu that was just
+            # generated rather than constructed: the id carries the kernel
+            # version, and a constructed one would be stale the first time this
+            # machine takes a new kernel. There is exactly one boot environment
+            # at install time, so the first entry naming rpool/ROOT is it.
+            echo ">>> naming the default menu entry"
+            ENTRY="$(grep -oE "'gnulinux-rpool/ROOT/[^']+'" /boot/grub/grub.cfg \
+                     | head -1 | tr -d "'")"
+            if [ -n "$ENTRY" ]; then
+                grub-editenv /boot/grub/grubenv set "saved_entry=$ENTRY"
+                echo "    default: $ENTRY"
+            else
+                # Not fatal: an unset saved_entry leaves GRUB on the first entry,
+                # which on a one-environment machine is the same entry. Said out
+                # loud because on a machine with two it would not be.
+                echo "    NOTE: no boot-environment entry found to name as default"
             fi
 
             echo ">>> checking the menu can actually boot this system"

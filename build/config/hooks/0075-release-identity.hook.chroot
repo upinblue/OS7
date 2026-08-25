@@ -204,8 +204,12 @@ echo "OS/7 hook 0075:   ${MANIFEST}: $(wc -l < "${MANIFEST}") packages, sha256 $
 pkgver() { dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true; }
 
 # The kernel by the name `uname -r` will report, taken from the artefact rather
-# than from the meta-package version - linux-generic's version and the kernel
+# than from a meta-package version - linux-image-generic's version and the kernel
 # ABI string are different things and only one of them appears in a bug report.
+#
+# Reading the artefact is also what keeps this correct across BUILD-NOTES #62,
+# where which meta-package installs the kernel turned out to be decided by
+# live-build's mode rather than by the package list.
 KERNEL_RELEASE="$(ls -1 /boot/vmlinuz-* 2>/dev/null | LC_ALL=C sort -V | tail -n1 | sed 's|.*/vmlinuz-||')"
 [ -n "${KERNEL_RELEASE}" ] || {
 	echo "OS/7 hook 0075: no kernel in /boot - the image cannot boot" >&2

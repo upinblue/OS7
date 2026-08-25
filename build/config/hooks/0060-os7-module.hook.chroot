@@ -79,7 +79,13 @@ check_module() {
 
 check_module Zfs Get-Zpool Get-ZpoolStatus Get-ZfsDataset Get-ZfsSnapshot \
 	Get-ZfsProperty Get-ZfsSpace Format-ZfsSize Test-ZfsModule
-check_module OS7 Set-OS7Mode Update-OS7 Restore-OS7
+# The boot-environment cmdlets are named here rather than left to the two stubs:
+# they are what Restore-OS7 is built out of (docs/SESSION-BOOT-ENVIRONMENTS.md),
+# they are staged from the same one source, and a check that only ever asked
+# about the stubs would have gone on passing if they vanished.
+check_module OS7 Set-OS7Mode Update-OS7 Restore-OS7 \
+	Get-OS7BootEnvironment New-OS7BootEnvironment \
+	Set-OS7BootEnvironment Remove-OS7BootEnvironment
 
 # The fixtures travel with the Zfs module so that Test-ZfsModule can run without
 # ZFS. Their absence would not break an import, so it is checked separately -
