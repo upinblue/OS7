@@ -613,21 +613,40 @@ def phase_wifi():
     c, q = lab.boot(LIVE_CMDLINE, "wifi")
     ok = True
     try:
-        out = ask(c, "sudo modprobe mac80211_hwsim radios=2 && echo LOADED", "hwsim",
-                  timeout=120)
-        if "LOADED" not in out:
-            print("      SKIP  mac80211_hwsim is not available in this kernel")
+        # THROUGH ask_number, ALL OF IT, and not as tidying. The two checks that
+        # used to be here both matched a word the TYPED COMMAND contained, so
+        # neither ever asked the guest anything:
+        #
+        #   modprobe … && echo LOADED   ->  "LOADED" not in out   ALWAYS FALSE
+        #   command -v X || echo MISSING ->  "MISSING" in out      ALWAYS TRUE
+        #
+        # One was a green line that meant nothing and one was a red line that
+        # meant nothing, from the same mistake, and the green one is the worse
+        # of the two. BUILD-NOTES #16; see ask_number.
+        ask(c, "sudo modprobe mac80211_hwsim radios=2", "hwsim", timeout=120)
+
+        # AND THE RADIOS ARE COUNTED, rather than modprobe's exit code trusted.
+        # "two virtual radios" is a claim about /sys/class/net, so that is what
+        # is asked - the module loading is a diagnostic, the interfaces are the
+        # thing itself.
+        radios = ask_number(c, "ls /sys/class/net | grep -c wlan", "wlan count", timeout=60)
+        if radios < 2:
+            print(f"      SKIP  mac80211_hwsim gave {radios} radio(s), not 2")
             print("            Wi-Fi association is therefore UNMEASURED on this run.")
             return True
-        print("      ok    mac80211_hwsim loaded, two virtual radios")
+        print(f"      ok    mac80211_hwsim loaded, {radios} virtual radios")
 
-        out = ask(c, "ls /sys/class/net | grep -c wlan", "wlan count", timeout=60)
-        print(f"      wlan interfaces: {out.strip().splitlines()[-2:]}")
-
+        # `command -v` AND the sbin paths: wpa_supplicant and iw install to
+        # /sbin (measured in the shipped squashfs, 2026-08-25), and whether that
+        # is on a non-root PATH is a property of the login shell rather than of
+        # the image. The question is "is it in the image", so ask that.
         for want, what in [("wpa_supplicant", "wpasupplicant is on the image"),
                            ("iw", "iw is on the image")]:
-            out = ask(c, f"command -v {want} || echo MISSING", what, timeout=60)
-            if "MISSING" in out:
+            missing = ask_number(
+                c, f"command -v {want} >/dev/null 2>&1 "
+                   f"|| test -x /usr/sbin/{want} || test -x /sbin/{want}; echo $?",
+                what, timeout=60)
+            if missing != 0:
                 print(f"      FAIL  {what}: not found. The package list did not take.")
                 return False
             print(f"      ok    {what}")
@@ -650,14 +669,45 @@ def phase_wifi():
             timeout=60)
         ask(c, "sudo wpa_supplicant -B -i wlan1 -c /tmp/ap.conf -D nl80211",
             "start ap", timeout=90)
-        time.sleep(5)
-        ask(c, f"sudo ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
-        out = ask(c, "iw dev wlan1 info", "ap info", timeout=60)
-        if "type AP" not in out:
-            print("      FAIL  wlan1 did not come up as an access point")
-            print(out[-1200:])
+
+        # POLLED, NOT SLEPT — the same fix as the DHCP lease in run-phase3.py,
+        # in the same file, five days' worth of the same mistake apart.
+        #
+        # This slept 5 seconds and then asserted `type AP`. Measured 2026-08-25:
+        # `wpa_supplicant -B` returns 0 and says "Successfully initialized"
+        # IMMEDIATELY, is still running five seconds later, and the interface is
+        # STILL `type managed` at that point; a foreground run with -d reaches
+        # `State: COMPLETED` before 12 seconds. So the AP was real and the phase
+        # photographed it too early — and then reported "wlan1 did not come up as
+        # an access point", which named a cause it did not have.
+        #
+        # How long it actually takes depends on how loaded this Mac is, and this
+        # repository runs several sessions on one machine.
+        print("      bringing the access point up … (polled, up to 45s)")
+        up = False
+        for _ in range(15):
+            time.sleep(3)
+            if ask_number(c, "sudo iw dev wlan1 info | grep -c 'type AP'",
+                          "ap mode", timeout=60) >= 1:
+                up = True
+                break
+            # STOP EARLY IF THE DAEMON IS GONE. Waiting 45 seconds for a process
+            # that exited is 45 seconds spent proving nothing, and "it died" and
+            # "it is slow" want different fixes.
+            if ask_number(c, "pgrep -cf 'wpa_supplicant -B -i wlan1' || echo 0",
+                          "ap alive", timeout=60) < 1:
+                print("      FAIL  the access point's wpa_supplicant exited")
+                return False
+        if not up:
+            print("      FAIL  wlan1 did not come up as an access point within 45s")
+            print(ask(c, "sudo iw dev wlan1 info", "ap info", timeout=60)[-1200:])
             return False
         print(f"      ok    wlan1 is an access point broadcasting '{AP_SSID}'")
+
+        # THE ADDRESS AFTER THE MODE, not before it. Switching iftype takes the
+        # interface down and up again, so an address added first is an address
+        # that may not be there afterwards.
+        ask(c, f"sudo ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
 
         # -- Setup's own scan, on wlan0 ---------------------------------------
         #

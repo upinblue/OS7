@@ -416,6 +416,24 @@ for a command that never ran. Two rules fall out:
 * never expect a marker the typed command itself contains — split it
   (`echo OS7-"READY"`) so the echo cannot be mistaken for the output.
 
+**And the same trap applies to what you do with the text afterwards**, which is
+where it keeps coming back. A helper that returns everything the console showed
+returns the shell's echo of the question along with the answer, so *any* test
+against that text can be answered by the question:
+
+* `command -v X || echo MISSING` → `"MISSING" in out` is **always true**;
+* `modprobe … && echo LOADED` → `"LOADED" not in out` is **always false** — a
+  green line that means nothing, which is the worse of the two;
+* `test -e X && echo PRESENT || echo ABSENT` types **both** words;
+* "the first integer in the text" finds the harness's own `OK<n>` marker. On
+  2026-08-25 that reported 8, 10 and 11 for counts whose real values were 15, 2
+  and 0, and called a leak in a file that had none.
+
+Five instances in one file. The fix is the same shape as the rule above — let the
+**shell** build what you match on: `printf 'N=%s\n' $(…)` types `N=%s`, which has
+no digits in it, so a search for `N=` followed by digits cannot match the echo.
+`installer/testing/run-phase3b-network.py`'s `ask_number()` is that.
+
 **Unanswered terminal queries kill the session.** With nothing on the far end of
 the line, PSReadLine's startup DSR/OSC probes go unanswered and pwsh exits
 within a second of printing its prompt; agetty respawns a fresh `login:`.

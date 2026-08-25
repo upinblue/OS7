@@ -246,7 +246,64 @@ file off the machine and comparing, not by re-reading the assertion.
 
 ---
 
-## 7. What this does not do
+## 7. The wifi phase, run afterwards — three more of the same bug
+
+Asked to run `run-phase3b-network.py wifi` as well. It failed, and none of the
+first two failures were about Wi-Fi.
+
+**`command -v X || echo MISSING` → `"MISSING" in out`.** Always true: the typed
+command contains the word. The check could never pass. `wpa_supplicant`,
+`wpa_cli`, `iw` and `rfkill` are all in the shipped squashfs, at `/sbin`, and
+dpkg agrees — asked of `OS7-1.0.0.69-arm64.iso` directly rather than of the
+running guest.
+
+**`modprobe … && echo LOADED` → `"LOADED" not in out`.** Always false. The
+opposite direction and the worse one: a green line that could not go red. It now
+counts the radios in `/sys/class/net`, because "two virtual radios" is a claim
+about interfaces and the module loading is only a diagnostic.
+
+**And then a real failure, with a wrong diagnosis attached.** `wlan1 did not come
+up as an access point`. Measured instead of believed:
+
+| Question | Answer |
+|---|---|
+| Did the config land intact? | Yes — `cat -A`, exactly the ten intended lines |
+| Does the phy support AP mode? | Yes — `iw phy phy1 info` lists `AP` |
+| Did `wpa_supplicant -B` fail? | No — RC=0, "Successfully initialized", still running (PID 1080) five seconds later |
+| Was the interface AP at 5 s? | **No — still `type managed`** |
+| Does it get there at all? | Yes — a foreground run with `-d` reaches `State: COMPLETED` inside 12 s |
+
+So the AP was real and the phase photographed it too early. It slept a fixed 5
+seconds and then asserted. That is the same bug the branch had already fixed once
+— "The walk slept 12 seconds for a DHCP lease instead of watching for one",
+`a2b36ae`, the same file — and the fix is the pattern that commit established:
+poll up to 45 s in 3-second steps, stop early if the daemon we started is gone,
+print what `iw` says if neither happens. The address is now added **after** the
+mode switch, since changing iftype takes the interface down and up.
+
+With those three fixed, the phase passes end to end:
+
+```
+      ok    mac80211_hwsim loaded, 2 virtual radios
+      ok    wpasupplicant is on the image
+      ok    iw is on the image
+      ok    wlan1 is an access point broadcasting 'OS7-TEST-AP'
+      ok    wlan0's scan finds 'OS7-TEST-AP'
+      ok    os7-setup associated and configured wlan0
+      ok    wlan0 is associated to 'OS7-TEST-AP' with 10.99.0.5/24
+```
+
+None of it touched the product. Added to BUILD-NOTES #16, which had the rule for
+`expect` and not for what you do with the text afterwards — which is where it
+keeps coming back.
+
+**`wifi` wipes the installed disk.** `lab.prepare()` recreates `target.qcow2`, so
+a `boot` after a `wifi` needs a fresh `install` first. The §5 results above were
+taken before this ran.
+
+---
+
+## 8. What this does not do
 
 * **No export to removable media.** Still Phase 4's, and still worth having: this
   puts the log where the *machine* is, which is no use if the machine will not
