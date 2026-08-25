@@ -17,8 +17,8 @@ matters most here — **what was not measured.**
 | **Session** | GNOME Classic's extensions, from GNOME's **own** `gnome-shell-extensions` source package — not dash-to-panel, not ArcMenu |
 | **Defaults** | a dconf system database, `/etc/dconf/db/os7.d/`, 49 keys across 11 schemas |
 | **Reversible** | `Set-OS7Theme -Name Classic|Stock`, implemented, not a stub |
-| **Measured** | package builds, fonts extract and identify themselves, 46 of 49 defaults verified against GNOME's real schemas, GTK parses both stylesheets, no file collides with another package |
-| **NOT measured** | **what it looks like.** No amd64 image has been built with it and no session has been photographed |
+| **Measured** | package builds; fonts extract and identify themselves; 46 of 49 defaults verified against GNOME's real schemas; GTK parses both stylesheets; no file collides with another package; **and the GTK half renders in the Windows 2000 palette — measured from the pixels** |
+| **NOT measured** | **the GNOME Shell half.** The panel, the taskbar along the bottom edge and the black desktop need a session, and no amd64 image has been built |
 
 The one-sentence rule the whole thing obeys:
 
@@ -195,25 +195,51 @@ and fontconfig substitutes silently.
 
 ---
 
-## 7. What was NOT measured
+### The GTK half, rendered and read back
 
-**How it looks.** This is the honest gap and it is the largest one.
+`./build/testing/render-theme.sh` starts an X server, runs
+`gtk3-widget-factory` under the theme, screenshots it and counts pixels. The
+expected colours are typed into the test, not read from the theme — §6's
+lesson, applied.
 
-No amd64 ISO has been built with this package, no GNOME session has started
-with it, and no pixel has been read back. Everything in §6 is about
-correctness of construction — that the files are right, parse, resolve and
-belong to us. None of it says the desktop looks like Windows 2000, or even that
-it looks deliberate.
+```
+                              OS7-Classic          stock Adwaita
+3D face          #d4d0c8      410 055 px  52.14%          0.04%
+3D highlight     #ffffff      216 878 px  27.58%
+caption start    #0a246a        9 614 px   1.22%          0.00%
+caption gradient              82 distinct steps, reaching 96% of the way to #a6caf0
+```
+
+The stock-Adwaita column is what makes the first one mean anything: without it,
+a render where no theme loaded at all could pass on a grey default.
+
+Two things came out of looking at the picture rather than the numbers. Several
+widget classes were still Adwaita — checkboxes and radios filled with accent
+blue, round switch and scale handles, an accent underline on the current
+notebook tab, hairline progress bars — because Adwaita states those rules more
+specifically than the generic ones and therefore wins. They are fixed in a
+clearly marked section at the bottom of `gtk-3.0/gtk.css`. And the first
+version of the gradient check demanded the exact end colour `#a6caf0` and
+measured 0.00%: the right-hand end of the caption bar is covered by the window
+buttons, so that stop is never painted. The check now measures the gradient
+instead of one of its endpoints.
+
+## 7. What is still NOT measured
+
+**The GNOME Shell half.** The panel, the taskbar and the desktop background are
+drawn by gnome-shell, which needs a session — not an X server with one
+application in it.
 
 Specifically unproven:
 
 * that `user-theme` loads `gnome-shell.css` and the panel turns grey
 * that the window list appears along the bottom edge
-* that the caption gradient renders at `#0A246A → #A6CAF0`
 * that the desktop is black rather than Ubuntu's default background
-* that Tahoma at 9 points is legible rather than merely authentic
+* that the Applications and Places menus appear and are usable
 * that Edge and `intune-portal` — the two applications that decide whether this
   product is usable — do not look broken inside it
+* that Tahoma at 9 points is legible on a real display at real DPI. The render
+  says it draws; it does not say it reads well.
 
 Also unmeasured, and worth naming: **the upgrade claim itself.** The argument
 in §5 is structural, not empirical. Nobody has run this theme across an actual
@@ -249,6 +275,7 @@ build/packages/os7-desktop-theme/     the package: tree/, control.in, postinst, 
 build/lib/build-desktop-theme.sh      builds the .deb, extracts and asserts the fonts
 build/lib/ttf-family.py               reads a TTF's name table; the font assertion
 build/testing/verify-theme-package.sh the container test in §6
+build/testing/render-theme.sh         renders the GTK half and counts pixels
 build/config/hooks-amd64/0090-…       verifies the installed image (replaces 0070)
 build/config/package-lists-amd64/     GNOME Classic's extensions
 build/config/os7-release.conf         the font pin: pool path + SHA-256

@@ -446,3 +446,150 @@ statusbar { background-color: @os7_face; color: @os7_text; padding: 1px 4px; }
 
 /* --- Infobars ----------------------------------------------------------- */
 infobar, .infobar { background-color: @os7_face; color: @os7_text; border: 0; }
+
+/* =========================================================================
+ * Adwaita hold-outs.
+ *
+ * Everything below overrides a rule Adwaita states MORE SPECIFICALLY than the
+ * generic ones above, so the generic ones lose. Each was found by rendering
+ * gtk3-widget-factory under this theme and looking at the result
+ * (build/testing/render-theme.sh) — not by reading Adwaita's source and
+ * guessing which selectors would win.
+ *
+ * This section is the one most likely to need attention after a GTK update.
+ * It is deliberately at the bottom, deliberately last, and deliberately made
+ * of colour rules only.
+ * ========================================================================= */
+
+/* Selection everywhere: Adwaita's accent blue is not Windows' #0a246a. */
+selection,
+*:selected,
+entry selection,
+textview text selection {
+	background-color: @os7_select;
+	color: @os7_selecttext;
+}
+
+/* Check and radio: Adwaita fills them with the accent colour and paints its
+ * own image. Classic ones are a white sunken well with a black mark. */
+check, radio,
+check:checked, radio:checked,
+check:indeterminate, radio:indeterminate {
+	background-image: none;
+	background-color: @os7_window;
+	color: @os7_text;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow, inset -1px -1px 0 @os7_light;
+}
+check:disabled, radio:disabled,
+check:checked:disabled, radio:checked:disabled {
+	background-color: @os7_face;
+	color: @os7_graytext;
+}
+
+/* Switches: Windows 2000 had none, so this is a judgement call rather than a
+ * reproduction — a square sunken well with a bevelled bar in it, which is at
+ * least of the same family as everything around it. */
+switch {
+	border-radius: 0;
+	background-image: none;
+	background-color: @os7_light;
+	border: 1px solid;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow;
+	min-height: 18px;
+}
+switch:checked {
+	background-color: @os7_select;
+	background-image: none;
+}
+switch > slider, switch slider {
+	border-radius: 0;
+	background-image: none;
+	background-color: @os7_face;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	min-width: 16px;
+}
+
+/* Scales: Adwaita paints the filled part of the trough in the accent colour
+ * and rounds the handle. Classic scales have a plain sunken trough and a
+ * rectangular bevelled handle. */
+scale trough, scale trough:disabled {
+	background-image: none;
+	background-color: @os7_light;
+	border-radius: 0;
+}
+scale highlight, scale fill, scale trough > highlight {
+	background-image: none;
+	background-color: @os7_shadow;
+	border-radius: 0;
+}
+scale slider, scale > contents > trough > slider {
+	border-radius: 0;
+	background-image: none;
+	background-color: @os7_face;
+}
+
+/* Progress: a solid caption-blue bar in a sunken white well. */
+progressbar > trough > progress,
+progressbar progress {
+	background-image: none;
+	background-color: @os7_select;
+	border-radius: 0;
+	border: 0;
+	box-shadow: none;
+}
+
+/* Notebook tabs: Adwaita marks the current tab with an inset accent underline,
+ * stated per tab POSITION (header.top, .bottom, .left, .right), which is more
+ * specific than the generic selector above and therefore wins. A classic tab
+ * shows which one is current by its bevel, not by a coloured bar. */
+notebook > header > tabs > tab:checked,
+notebook > header > tabs > tab:hover,
+notebook > header.top > tabs > tab:checked,
+notebook > header.bottom > tabs > tab:checked,
+notebook > header.left > tabs > tab:checked,
+notebook > header.right > tabs > tab:checked,
+notebook > header.top > tabs > tab:hover,
+notebook > header.bottom > tabs > tab:hover,
+notebook > header.left > tabs > tab:hover,
+notebook > header.right > tabs > tab:hover {
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	background-image: none;
+	background-color: @os7_face;
+}
+
+/* Progress bars: Adwaita's trough carries the height, so setting it on the
+ * progressbar alone leaves a hairline. Classic ones are chunky. */
+progressbar > trough,
+progressbar trough {
+	min-height: 14px;
+	background-color: @os7_window;
+	background-image: none;
+	border-radius: 0;
+}
+progressbar.horizontal > trough > progress { min-height: 12px; }
+progressbar.vertical > trough > progress { min-width: 12px; }
+
+/* Entries: Adwaita draws focus as a coloured ring in box-shadow. Classic
+ * entries do not change at all when focused — the caret says it instead. */
+entry:focus, entry:focus-within,
+spinbutton:focus-within,
+textview:focus {
+	box-shadow: inset 1px 1px 0 @os7_dkshadow, inset -1px -1px 0 @os7_light;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	outline: none;
+}
+
+/* Level bars and the odd accent-coloured block Adwaita uses for "selected
+ * colour" swatches. */
+levelbar block.filled {
+	background-image: none;
+	background-color: @os7_select;
+	border-radius: 0;
+}
+levelbar trough {
+	background-color: @os7_window;
+	border-radius: 0;
+}

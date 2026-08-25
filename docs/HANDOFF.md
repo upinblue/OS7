@@ -451,10 +451,12 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
   `places-menu`, `user-theme` — all `50.0-1`, all `Depends: gnome-shell (>= 50~),
   (<< 51~)`), which Ubuntu updates together with `gnome-shell` 50.1. Hook 0070
   is replaced by `0090-desktop-theme-verify.hook.chroot`, which verifies instead
-  of recording. The desktop also carries OS/7 Classic, a Windows 2000 theme —
-  **built and mechanically verified, but never seen on a screen**, because no
-  amd64 ISO has been built with it. [SESSION-CLASSIC-DESKTOP.md](SESSION-CLASSIC-DESKTOP.md)
-  §7 lists exactly what that leaves unproven.
+  of recording. The desktop also carries OS/7 Classic, a Windows 2000 theme. Its
+  **GTK half is measured from rendered pixels** (`build/testing/render-theme.sh`);
+  its **GNOME Shell half — panel, taskbar, black desktop — has never been seen**,
+  because that needs a session and no amd64 ISO has been built with it.
+  [SESSION-CLASSIC-DESKTOP.md](SESSION-CLASSIC-DESKTOP.md) §7 lists exactly what
+  that leaves unproven.
 - **D8/L16 — `/etc/os-release` identity.** D8 is *decided* (`IMAGE_ID` /
   `IMAGE_VERSION`, leaving `ID` alone for Intune) but **nothing writes it yet**,
   so the GRUB menu entry is still titled from `PRETTY_NAME` and reads "Ubuntu
