@@ -1,0 +1,27 @@
+#!/bin/sh
+# =============================================================================
+# OS/7 Classic — post-removal.
+#
+# Takes back exactly what postinst added to a file it does not own, and
+# recompiles the dconf databases so the defaults stop applying. The package's
+# own files are dpkg's problem, not this script's.
+# =============================================================================
+set -e
+
+PROFILE="/etc/dconf/profile/user"
+
+case "$1" in
+	remove | purge)
+		if [ -f "${PROFILE}" ]; then
+			sed -i -e '/^system-db:os7$/d' \
+			       -e '\|^# OS/7: added by os7-desktop-theme$|d' \
+			       "${PROFILE}"
+		fi
+		if command -v dconf >/dev/null 2>&1; then
+			dconf update || true
+		fi
+		;;
+	*) ;;
+esac
+
+exit 0

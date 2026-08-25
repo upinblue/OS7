@@ -1,0 +1,595 @@
+/* =========================================================================
+ * OS/7 Classic — GTK 3 theme.
+ *
+ * A Windows 2000 "Windows Standard" surface over GNOME's own widget tree.
+ *
+ * THE RULE THIS FILE OBEYS: colour and edge, never structure. The first line
+ * imports Adwaita and everything below repaints it. A theme that rebuilds
+ * GTK's node structure breaks on the next GTK release; one that only recolours
+ * it does not. GTK 3 has been API- and CSS-frozen at 3.24 for years
+ * (3.24.52-0ubuntu1 in the pinned resolute archive, snapshot 20260824T000000Z),
+ * which is exactly why the classic look is built on GTK 3 and not on GTK 4.
+ *
+ * If a widget is not mentioned here, it is meant to fall through to Adwaita
+ * wearing our colours. That is not an omission, it is the design.
+ * ========================================================================= */
+
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained.css");
+
+/* --- The palette --------------------------------------------------------
+ * Windows 2000, "Windows Standard" scheme. These are the system colour
+ * constants, not approximations:
+ *
+ *   3DFACE #D4D0C8   3DSHADOW #808080   3DDKSHADOW #404040   3DHILIGHT #FFFFFF
+ *   ACTIVECAPTION #0A246A    GRADIENTACTIVECAPTION #A6CAF0
+ *   INACTIVECAPTION #808080  GRADIENTINACTIVECAPTION #B5B5B5
+ *   WINDOW #FFFFFF   WINDOWTEXT #000000   GRAYTEXT #808080
+ *   HIGHLIGHT #0A246A   HIGHLIGHTTEXT #FFFFFF   INFOWINDOW #FFFFE1
+ *
+ * Two deliberate departures, both recorded rather than hidden:
+ *
+ *   os7_light   DERIVED, not a Windows constant. Windows 2000 carries 3DLIGHT
+ *               in the scheme; on a #D4D0C8 face the classic inner highlight
+ *               sits between face and white, and this is that value. Anyone
+ *               with a better source should replace it here, in one place.
+ *   desktop     BLACK, where Windows 2000 shipped #3A6EA5. Product decision:
+ *               OS/7 wants a black desktop. It is set in the dconf database,
+ *               not here — a background is not a widget colour.
+ */
+@define-color os7_face        #d4d0c8;
+@define-color os7_shadow      #808080;
+@define-color os7_dkshadow    #404040;
+@define-color os7_hilight     #ffffff;
+@define-color os7_light       #e8e5de;
+@define-color os7_window      #ffffff;
+@define-color os7_text        #000000;
+@define-color os7_graytext    #808080;
+@define-color os7_select      #0a246a;
+@define-color os7_selecttext  #ffffff;
+@define-color os7_title       #0a246a;
+@define-color os7_title2      #a6caf0;
+@define-color os7_ititle      #808080;
+@define-color os7_ititle2     #b5b5b5;
+@define-color os7_titletext   #ffffff;
+@define-color os7_ititletext  #d4d0c8;
+@define-color os7_tooltip     #ffffe1;
+
+/* Adwaita's own names, repointed. Anything in Adwaita that we did not think
+ * to override still lands on the classic palette because of these. */
+@define-color theme_bg_color             @os7_face;
+@define-color theme_fg_color             @os7_text;
+@define-color theme_base_color           @os7_window;
+@define-color theme_text_color           @os7_text;
+@define-color theme_selected_bg_color    @os7_select;
+@define-color theme_selected_fg_color    @os7_selecttext;
+@define-color insensitive_fg_color       @os7_graytext;
+@define-color insensitive_bg_color       @os7_face;
+@define-color insensitive_base_color     @os7_face;
+@define-color borders                    @os7_shadow;
+@define-color unfocused_borders          @os7_shadow;
+@define-color theme_unfocused_bg_color   @os7_face;
+@define-color theme_unfocused_fg_color   @os7_text;
+@define-color theme_unfocused_base_color @os7_window;
+@define-color theme_unfocused_text_color @os7_text;
+@define-color wm_bg                      @os7_face;
+@define-color content_view_bg            @os7_window;
+@define-color tooltip_background         @os7_tooltip;
+@define-color tooltip_fg_color           @os7_text;
+
+/* --- The one rule that makes it look like 1999 -------------------------- */
+* {
+	border-radius: 0;
+	outline-style: dotted;
+	outline-width: 1px;
+	outline-offset: -3px;
+	outline-color: @os7_text;
+	-gtk-outline-radius: 0;
+	text-shadow: none;
+	-gtk-icon-shadow: none;
+	box-shadow: none;
+	transition: none;
+}
+
+window, dialog, .background, popover, messagedialog {
+	background-color: @os7_face;
+	color: @os7_text;
+	background-image: none;
+}
+
+/* --- The classic 2px bevel ---------------------------------------------
+ * Outer edge: hilight top-left, dkshadow bottom-right (the `border-color`
+ * shorthand runs top right bottom left). Inner edge: light top-left, shadow
+ * bottom-right, drawn with inset shadows so no extra node is needed.
+ * Pressed reverses both. This is the whole visual grammar of the theme. */
+
+button,
+button.text-button,
+button.image-button,
+headerbar button,
+spinbutton button,
+notebook > header > tabs > tab,
+scrollbar button,
+combobox button {
+	background-image: none;
+	background-color: @os7_face;
+	color: @os7_text;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	padding: 3px 10px;
+	min-height: 18px;
+	min-width: 16px;
+	font-weight: normal;
+}
+
+button:hover,
+combobox button:hover {
+	background-color: @os7_face;
+	color: @os7_text;
+}
+
+button:active, button:checked,
+combobox button:active,
+scrollbar button:active {
+	background-color: @os7_face;
+	border-color: @os7_dkshadow @os7_hilight @os7_hilight @os7_dkshadow;
+	box-shadow: inset 1px 1px 0 @os7_shadow, inset -1px -1px 0 @os7_light;
+	padding: 4px 9px 2px 11px;
+}
+
+button:disabled, button:disabled label {
+	color: @os7_graytext;
+	background-color: @os7_face;
+}
+
+button.flat, button.flat:hover {
+	border-color: transparent;
+	box-shadow: none;
+	background-color: transparent;
+}
+button.flat:hover {
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+}
+
+/* Default (Enter) button: the extra black ring, exactly as Windows drew it. */
+button.suggested-action,
+dialog button.default {
+	border-color: @os7_text;
+	box-shadow: inset 1px 1px 0 @os7_hilight, inset -1px -1px 0 @os7_shadow;
+}
+
+/* --- Sunken: entries, views, frames ------------------------------------ */
+entry, spinbutton:not(.vertical), textview, treeview.view, iconview,
+frame > border, scrolledwindow > viewport, .frame, notebook > stack {
+	background-color: @os7_window;
+	color: @os7_text;
+	border: 1px solid;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow, inset -1px -1px 0 @os7_light;
+	border-radius: 0;
+}
+
+entry {
+	padding: 2px 4px;
+	min-height: 18px;
+}
+
+entry:focus, textview:focus {
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+}
+
+entry:disabled, textview:disabled {
+	background-color: @os7_face;
+	color: @os7_graytext;
+}
+
+entry selection, textview selection, label selection, treeview.view:selected,
+iconview:selected, list row:selected, .view:selected {
+	background-color: @os7_select;
+	color: @os7_selecttext;
+}
+
+/* --- Title bars ---------------------------------------------------------
+ * Client-side decorations are what GTK 3 apps actually draw. They cannot be
+ * turned back into server-side title bars, so they are painted to look like
+ * one: the Windows 2000 caption gradient, square, 22px, bold white text. */
+headerbar, .titlebar, headerbar.default-decoration {
+	background-image: linear-gradient(to right, @os7_title, @os7_title2);
+	background-color: @os7_title;
+	color: @os7_titletext;
+	border: 0;
+	border-bottom: 1px solid @os7_shadow;
+	box-shadow: none;
+	min-height: 22px;
+	padding: 0 2px;
+	border-radius: 0;
+}
+
+headerbar:backdrop, .titlebar:backdrop {
+	background-image: linear-gradient(to right, @os7_ititle, @os7_ititle2);
+	background-color: @os7_ititle;
+	color: @os7_ititletext;
+}
+
+headerbar .title, .titlebar .title {
+	font-weight: bold;
+	color: @os7_titletext;
+	padding: 0 4px;
+}
+headerbar:backdrop .title, .titlebar:backdrop .title {
+	color: @os7_ititletext;
+}
+headerbar .subtitle, .titlebar .subtitle { font-size: smaller; }
+
+/* Caption buttons: square, face-coloured, bevelled — never circular. */
+headerbar button.titlebutton, .titlebar button.titlebutton {
+	min-height: 14px;
+	min-width: 16px;
+	padding: 0;
+	margin: 2px 1px;
+	background-color: @os7_face;
+	color: @os7_text;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	border-radius: 0;
+}
+headerbar button.titlebutton:active, .titlebar button.titlebutton:active {
+	border-color: @os7_dkshadow @os7_hilight @os7_hilight @os7_dkshadow;
+	box-shadow: inset 1px 1px 0 @os7_shadow, inset -1px -1px 0 @os7_light;
+}
+
+/* Mutter draws server-side decorations for X11/Xwayland clients from these. */
+decoration {
+	border-radius: 0;
+	box-shadow: none;
+	border: 1px solid @os7_face;
+	background-color: @os7_face;
+}
+decoration:backdrop { box-shadow: none; }
+
+/* --- Menus -------------------------------------------------------------- */
+menubar, headerbar menubar, .menubar {
+	background-color: @os7_face;
+	background-image: none;
+	color: @os7_text;
+	border: 0;
+	padding: 0;
+	box-shadow: none;
+}
+
+menubar > menuitem {
+	padding: 3px 8px;
+	color: @os7_text;
+	border-radius: 0;
+}
+menubar > menuitem:hover, menubar > menuitem:selected {
+	background-color: @os7_select;
+	color: @os7_selecttext;
+}
+
+menu, .menu, popover.background.menu {
+	background-color: @os7_face;
+	color: @os7_text;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	padding: 2px;
+	border-radius: 0;
+}
+
+menu menuitem, popover modelbutton {
+	padding: 3px 10px;
+	min-height: 18px;
+	color: @os7_text;
+	border-radius: 0;
+}
+menu menuitem:hover, popover modelbutton:hover {
+	background-color: @os7_select;
+	color: @os7_selecttext;
+	background-image: none;
+}
+menu menuitem:disabled, popover modelbutton:disabled { color: @os7_graytext; }
+menu separator, popover separator {
+	background-color: @os7_shadow;
+	border-top: 1px solid @os7_hilight;
+	min-height: 1px;
+	margin: 2px 1px;
+	padding: 0;
+}
+
+/* --- Scrollbars: wide, bevelled, with a stepper at each end ------------- */
+scrollbar {
+	background-color: @os7_light;
+	border: 0;
+}
+scrollbar.vertical { border-left: 1px solid @os7_face; }
+scrollbar.horizontal { border-top: 1px solid @os7_face; }
+
+scrollbar trough {
+	background-color: @os7_light;
+	background-image: none;
+	border: 0;
+	border-radius: 0;
+	margin: 0;
+}
+
+scrollbar slider {
+	background-color: @os7_face;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	border-radius: 0;
+	margin: 0;
+	min-width: 14px;
+	min-height: 14px;
+}
+scrollbar slider:hover, scrollbar slider:active {
+	background-color: @os7_face;
+}
+scrollbar.vertical slider { min-height: 20px; }
+scrollbar.horizontal slider { min-width: 20px; }
+
+/* --- Check and radio: square, sunken, black tick ------------------------ */
+check, radio {
+	background-color: @os7_window;
+	border: 1px solid;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow, inset -1px -1px 0 @os7_light;
+	border-radius: 0;
+	min-height: 13px;
+	min-width: 13px;
+	color: @os7_text;
+}
+radio { border-radius: 50%; }
+check:checked, radio:checked {
+	background-color: @os7_window;
+	color: @os7_text;
+}
+check:disabled, radio:disabled { background-color: @os7_face; color: @os7_graytext; }
+
+/* --- Notebook tabs ------------------------------------------------------ */
+notebook > header {
+	background-color: @os7_face;
+	border: 0;
+	box-shadow: none;
+}
+notebook > header > tabs > tab {
+	padding: 3px 10px;
+	min-height: 18px;
+	color: @os7_text;
+	border-color: @os7_hilight @os7_dkshadow @os7_shadow @os7_hilight;
+}
+notebook > header > tabs > tab:checked {
+	background-color: @os7_face;
+	font-weight: normal;
+	border-color: @os7_hilight @os7_dkshadow transparent @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px 0 0 @os7_shadow;
+	padding: 4px 10px;
+}
+
+/* --- Progress, sliders, panes ------------------------------------------ */
+progressbar trough {
+	background-color: @os7_window;
+	border: 1px solid;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow;
+	border-radius: 0;
+	min-height: 16px;
+}
+progressbar progress {
+	background-color: @os7_select;
+	background-image: none;
+	border: 0;
+	border-radius: 0;
+}
+
+scale trough {
+	background-color: @os7_light;
+	border: 1px solid;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow;
+	border-radius: 0;
+	min-height: 4px;
+	min-width: 4px;
+}
+scale slider {
+	background-color: @os7_face;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	border-radius: 0;
+	min-height: 18px;
+	min-width: 10px;
+}
+
+paned > separator {
+	background-color: @os7_face;
+	background-image: none;
+	min-width: 3px;
+	min-height: 3px;
+}
+
+/* --- Tooltips ----------------------------------------------------------- */
+tooltip, tooltip.background {
+	background-color: @os7_tooltip;
+	color: @os7_text;
+	border: 1px solid @os7_text;
+	border-radius: 0;
+	box-shadow: none;
+}
+tooltip label { color: @os7_text; padding: 1px 3px; }
+
+/* --- Lists, sidebars, toolbars ----------------------------------------- */
+list, list row { background-color: @os7_window; color: @os7_text; }
+list row:selected { background-color: @os7_select; color: @os7_selecttext; }
+.sidebar, placessidebar, stacksidebar { background-color: @os7_face; color: @os7_text; }
+.sidebar list row:selected, placessidebar row:selected {
+	background-color: @os7_select; color: @os7_selecttext;
+}
+toolbar, .toolbar, actionbar > revealer > box, searchbar > revealer > box {
+	background-color: @os7_face;
+	background-image: none;
+	border: 0;
+	box-shadow: none;
+	padding: 2px;
+}
+treeview.view header button {
+	padding: 2px 6px;
+	min-height: 16px;
+}
+statusbar { background-color: @os7_face; color: @os7_text; padding: 1px 4px; }
+
+/* --- Selection colour in the file chooser and everywhere else ---------- */
+:selected, :selected:focus { background-color: @os7_select; color: @os7_selecttext; }
+
+/* --- Infobars ----------------------------------------------------------- */
+infobar, .infobar { background-color: @os7_face; color: @os7_text; border: 0; }
+
+/* =========================================================================
+ * Adwaita hold-outs.
+ *
+ * Everything below overrides a rule Adwaita states MORE SPECIFICALLY than the
+ * generic ones above, so the generic ones lose. Each was found by rendering
+ * gtk3-widget-factory under this theme and looking at the result
+ * (build/testing/render-theme.sh) — not by reading Adwaita's source and
+ * guessing which selectors would win.
+ *
+ * This section is the one most likely to need attention after a GTK update.
+ * It is deliberately at the bottom, deliberately last, and deliberately made
+ * of colour rules only.
+ * ========================================================================= */
+
+/* Selection everywhere: Adwaita's accent blue is not Windows' #0a246a. */
+selection,
+*:selected,
+entry selection,
+textview text selection {
+	background-color: @os7_select;
+	color: @os7_selecttext;
+}
+
+/* Check and radio: Adwaita fills them with the accent colour and paints its
+ * own image. Classic ones are a white sunken well with a black mark. */
+check, radio,
+check:checked, radio:checked,
+check:indeterminate, radio:indeterminate {
+	background-image: none;
+	background-color: @os7_window;
+	color: @os7_text;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow, inset -1px -1px 0 @os7_light;
+}
+check:disabled, radio:disabled,
+check:checked:disabled, radio:checked:disabled {
+	background-color: @os7_face;
+	color: @os7_graytext;
+}
+
+/* Switches: Windows 2000 had none, so this is a judgement call rather than a
+ * reproduction — a square sunken well with a bevelled bar in it, which is at
+ * least of the same family as everything around it. */
+switch {
+	border-radius: 0;
+	background-image: none;
+	background-color: @os7_light;
+	border: 1px solid;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	box-shadow: inset 1px 1px 0 @os7_dkshadow;
+	min-height: 18px;
+}
+switch:checked {
+	background-color: @os7_select;
+	background-image: none;
+}
+switch > slider, switch slider {
+	border-radius: 0;
+	background-image: none;
+	background-color: @os7_face;
+	border: 1px solid;
+	border-color: @os7_hilight @os7_dkshadow @os7_dkshadow @os7_hilight;
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	min-width: 16px;
+}
+
+/* Scales: Adwaita paints the filled part of the trough in the accent colour
+ * and rounds the handle. Classic scales have a plain sunken trough and a
+ * rectangular bevelled handle. */
+scale trough, scale trough:disabled {
+	background-image: none;
+	background-color: @os7_light;
+	border-radius: 0;
+}
+scale highlight, scale fill, scale trough > highlight {
+	background-image: none;
+	background-color: @os7_shadow;
+	border-radius: 0;
+}
+scale slider, scale > contents > trough > slider {
+	border-radius: 0;
+	background-image: none;
+	background-color: @os7_face;
+}
+
+/* Progress: a solid caption-blue bar in a sunken white well. */
+progressbar > trough > progress,
+progressbar progress {
+	background-image: none;
+	background-color: @os7_select;
+	border-radius: 0;
+	border: 0;
+	box-shadow: none;
+}
+
+/* Notebook tabs: Adwaita marks the current tab with an inset accent underline,
+ * stated per tab POSITION (header.top, .bottom, .left, .right), which is more
+ * specific than the generic selector above and therefore wins. A classic tab
+ * shows which one is current by its bevel, not by a coloured bar. */
+notebook > header > tabs > tab:checked,
+notebook > header > tabs > tab:hover,
+notebook > header.top > tabs > tab:checked,
+notebook > header.bottom > tabs > tab:checked,
+notebook > header.left > tabs > tab:checked,
+notebook > header.right > tabs > tab:checked,
+notebook > header.top > tabs > tab:hover,
+notebook > header.bottom > tabs > tab:hover,
+notebook > header.left > tabs > tab:hover,
+notebook > header.right > tabs > tab:hover {
+	box-shadow: inset 1px 1px 0 @os7_light, inset -1px -1px 0 @os7_shadow;
+	background-image: none;
+	background-color: @os7_face;
+}
+
+/* Progress bars: Adwaita's trough carries the height, so setting it on the
+ * progressbar alone leaves a hairline. Classic ones are chunky. */
+progressbar > trough,
+progressbar trough {
+	min-height: 14px;
+	background-color: @os7_window;
+	background-image: none;
+	border-radius: 0;
+}
+progressbar.horizontal > trough > progress { min-height: 12px; }
+progressbar.vertical > trough > progress { min-width: 12px; }
+
+/* Entries: Adwaita draws focus as a coloured ring in box-shadow. Classic
+ * entries do not change at all when focused — the caret says it instead. */
+entry:focus, entry:focus-within,
+spinbutton:focus-within,
+textview:focus {
+	box-shadow: inset 1px 1px 0 @os7_dkshadow, inset -1px -1px 0 @os7_light;
+	border-color: @os7_shadow @os7_hilight @os7_hilight @os7_shadow;
+	outline: none;
+}
+
+/* Level bars and the odd accent-coloured block Adwaita uses for "selected
+ * colour" swatches. */
+levelbar block.filled {
+	background-image: none;
+	background-color: @os7_select;
+	border-radius: 0;
+}
+levelbar trough {
+	background-color: @os7_window;
+	border-radius: 0;
+}

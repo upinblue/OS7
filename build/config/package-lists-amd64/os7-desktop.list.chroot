@@ -32,6 +32,49 @@ gnome-terminal
 # (C#/.NET, text mode) and is not an archive package. See
 # installer/SETUP-PLAN.md. Calamares was removed on 2026-08-23.
 
-# The "familiar feel" extensions (dash-to-panel taskbar, ArcMenu start menu) are
-# deliberately absent: neither has a GNOME-50-compatible build in the resolute
-# archive. Hook 0070 logs this gap rather than failing the build.
+# --- The familiar feel: GNOME's OWN Classic session ---------------------------
+# README used to call for dash-to-panel plus ArcMenu. They are not here, and
+# the reason is a measurement rather than a preference. Against the pinned
+# snapshot 20260824T000000Z, resolute main+universe amd64:
+#
+#   gnome-shell-extension-dash-to-panel   ABSENT
+#   gnome-shell-extension-arc-menu        ABSENT
+#   gnome-shell-extension-dashtodock      ABSENT
+#   gnome-shell-extensions          50.0-1, Recommends: gnome-classic
+#   gnome-shell-extension-window-list     50.0-1
+#   gnome-shell-extension-apps-menu       50.0-1
+#   gnome-shell-extension-places-menu     50.0-1
+#   gnome-shell-extension-user-theme      50.0-1
+#
+# Every 50.0-1 package above declares `Depends: gnome-shell (>= 50~), (<< 51~)`
+# and ships from GNOME's own gnome-shell-extensions source package, so Ubuntu
+# moves them in lockstep with gnome-shell 50.1. A third-party Shell extension
+# has no such coupling - which is precisely why the first three are missing
+# from a released archive four months after GNOME 50, and why building OS/7's
+# desktop on them would mean rebuilding it every generation.
+#
+# The taskbar is window-list; the start menu is apps-menu plus places-menu.
+# os7-desktop-theme selects them through /etc/dconf/db/os7.d/.
+gnome-shell-extension-window-list
+gnome-shell-extension-apps-menu
+gnome-shell-extension-places-menu
+gnome-shell-extension-launch-new-instance
+
+# user-theme is what loads a Shell stylesheet from /usr/share/themes. Without
+# it the GTK side of the theme applies and the panel stays stock GNOME.
+gnome-shell-extension-user-theme
+
+# The GNOME Classic session itself, so the tested upstream combination is
+# available at the login screen as well as through the dconf defaults.
+gnome-classic
+
+# dconf-cli is what compiles /etc/dconf/db/os7.d into the binary database the
+# defaults actually come from. os7-desktop-theme depends on it; naming it here
+# keeps the theme package's install from depending on dependency resolution
+# order inside live-build.
+dconf-cli
+
+# The theme itself is NOT in this list. It is built from
+# build/packages/os7-desktop-theme/ into config/packages.chroot-amd64/ by
+# build/lib/build-desktop-theme.sh, because it is OS/7's own component with
+# OS/7's version on it, not an archive package.

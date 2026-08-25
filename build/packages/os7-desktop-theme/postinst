@@ -1,0 +1,69 @@
+#!/bin/sh
+# =============================================================================
+# OS/7 Classic — post-installation.
+#
+# Three jobs, and each one FAILS LOUDLY rather than leaving a half-applied
+# theme behind. A theme that silently did not apply is the exact failure shape
+# this repository keeps paying for: a program reports success and the thing it
+# was meant to change did not change.
+#
+#   1. compile the dconf database that carries the defaults
+#   2. make sure a dconf user profile actually reads it
+#   3. register the shipped fonts with fontconfig
+# =============================================================================
+set -e
+
+case "$1" in
+	configure) ;;
+	abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+	*) exit 0 ;;
+esac
+
+PROFILE="/etc/dconf/profile/user"
+MARKER="# OS/7: added by os7-desktop-theme"
+
+# --- 2. The dconf profile -----------------------------------------------
+# Written here rather than shipped as a package file, because Ubuntu or GDM may
+# ship this path too and two packages cannot own one file. Additive and
+# idempotent: an existing profile keeps its lines and gains ours.
+if [ ! -e "${PROFILE}" ]; then
+	mkdir -p /etc/dconf/profile
+	{
+		echo "${MARKER}"
+		echo "user-db:user"
+		echo "system-db:os7"
+	} > "${PROFILE}"
+elif ! grep -q '^system-db:os7$' "${PROFILE}"; then
+	{
+		echo "${MARKER}"
+		echo "system-db:os7"
+	} >> "${PROFILE}"
+fi
+
+# --- 1. Compile the database --------------------------------------------
+# `dconf update` reads /etc/dconf/db/*.d/ and writes the binary databases.
+dconf update
+
+# ASK THE THING ITSELF. `dconf update` is a diagnostic, and a diagnostic is not
+# the thing it diagnoses: it exits 0 for a keyfile it could not parse. The
+# question that cannot be answered wrongly is whether the compiled binary
+# database now contains the value we wrote.
+if [ ! -s /etc/dconf/db/os7 ]; then
+	echo "os7-desktop-theme: /etc/dconf/db/os7 was not written by dconf update" >&2
+	exit 1
+fi
+
+if ! DCONF_PROFILE=/etc/dconf/profile/user dconf read /org/gnome/desktop/interface/gtk-theme \
+	| grep -q "OS7-Classic"; then
+	echo "os7-desktop-theme: the compiled dconf database does not carry gtk-theme=OS7-Classic" >&2
+	echo "os7-desktop-theme: check /etc/dconf/db/os7.d/00-os7-classic for a syntax error -" >&2
+	echo "os7-desktop-theme: dconf update accepts an unparseable keyfile and exits 0." >&2
+	exit 1
+fi
+
+# --- 3. Fonts ------------------------------------------------------------
+if [ -d /usr/share/fonts/truetype/os7-classic ]; then
+	fc-cache -f /usr/share/fonts/truetype/os7-classic >/dev/null 2>&1 || true
+fi
+
+exit 0

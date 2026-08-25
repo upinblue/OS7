@@ -203,7 +203,7 @@ cp -a "${SRC_CONFIG}/auto" "${WORK}/auto"
 # authored tree inside the directory this created.
 install -Dm644 "${RELEASE_CONF}" "${WORK}/auto/os7-release.conf"
 
-for sub in package-lists hooks includes.chroot; do
+for sub in package-lists hooks includes.chroot packages.chroot; do
 	if [[ -d "${SRC_CONFIG}/${sub}" ]]; then
 		cp -a "${SRC_CONFIG}/${sub}" "${WORK}/config/${sub}"
 	else
@@ -224,7 +224,7 @@ done
 # preprocessing: the staging is visible, greppable, and does not depend on
 # undocumented behaviour.
 # ---------------------------------------------------------------------------
-for sub in package-lists hooks includes.chroot; do
+for sub in package-lists hooks includes.chroot packages.chroot; do
 	ARCH_SUB="${SRC_CONFIG}/${sub}-${ARCH}"
 	if [[ -d "${ARCH_SUB}" ]]; then
 		mkdir -p "${WORK}/config/${sub}"
@@ -441,6 +441,28 @@ install -Dm644 "${HERE}/../LICENSE" \
 	"${WORK}/config/includes.chroot/usr/share/os7/LICENSE"
 install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
 	"${WORK}/config/includes.chroot/usr/share/os7/SETUP-PLAN.md"
+
+# ---------------------------------------------------------------------------
+# The desktop theme, amd64 only.
+#
+# The CONDITION IS AROUND THE BUILD, NOT AROUND THE STAGING. packages.chroot is
+# in both staging loops above, exactly like package-lists and hooks, so "amd64
+# gets a desktop and arm64 does not" is still said in one place. What is
+# architecture-specific here is only whether there is anything to build: arm64
+# is server-only and has no desktop to theme.
+#
+# Built straight into the staged tree rather than into the source tree: it is a
+# build artefact, and build/config/ is checked in.
+# ---------------------------------------------------------------------------
+if [[ "${ARCH}" == "amd64" ]]; then
+	# OS7_VERSION is passed in rather than left to the environment: it is not
+	# exported until just before `lb config`, and the theme package must carry
+	# the same four-field version as the ISO, not a defaulted one.
+	OS7_VERSION="${OS7_VERSION}" "${HERE}/lib/build-desktop-theme.sh" \
+		"${RELEASE_CONF}" "${WORK}/config/packages.chroot"
+else
+	echo ">>> Desktop theme: skipped (${ARCH} is server-only, no GUI target)"
+fi
 
 # ---------------------------------------------------------------------------
 # GUARD: live-build 3.0 globs hooks at config/hooks/*.chroot - FLAT. The older

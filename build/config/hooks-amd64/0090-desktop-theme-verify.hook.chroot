@@ -1,0 +1,184 @@
+#!/bin/bash
+# OS/7 — the classic desktop is present and selected. VERIFY, do not assume.
+#
+# This hook replaces 0070-gnome-familiarity, which recorded a gap: README asked
+# for a dash-to-panel taskbar and an ArcMenu start menu, and neither had a
+# GNOME-50-compatible build in the archive. That gap is now CLOSED, from the
+# other side: the taskbar and the start menu come from GNOME's own Classic
+# extensions, which ship in the same source package as gnome-shell and are
+# therefore always in step with it. See
+# build/packages/os7-desktop-theme/README.md.
+#
+# WHAT THIS HOOK IS FOR. Everything the theme needs is declared - in a package
+# list, in a .deb's Depends, in a dconf keyfile. Every one of those declarations
+# can be satisfied on paper and wrong in the image:
+#
+#   * live-build runs no hook at all and still exits 0 (BUILD-NOTES #13)
+#   * `dconf update` exits 0 for a keyfile it could not parse
+#   * fontconfig resolves a missing font family to the default sans face and
+#     reports nothing
+#
+# So each check below asks the installed system a question whose answer cannot
+# be produced by the thing being checked.
+
+set -euo pipefail
+
+# One stream, in order. Failures go to stderr and successes to stdout, and when
+# live-build redirects both into a log the two buffer independently — measured
+# in a container dry run, where "the classic desktop is NOT correctly installed"
+# printed BEFORE the last check that had not run yet. A verification log that
+# reorders itself is worse than no log.
+exec 1>&2
+
+ARCH="$(dpkg --print-architecture)"
+if [ "${ARCH}" != "amd64" ]; then
+	echo "OS/7 hook 0090: staged on ${ARCH} but this hook is amd64-only - skipping." >&2
+	exit 0
+fi
+
+echo "OS/7 hook 0090: verifying the classic desktop"
+
+fail=0
+note() { echo "OS/7 hook 0090: FAIL: $*" >&2; fail=1; }
+ok()   { echo "OS/7 hook 0090:   ok: $*"; }
+
+# --- 1. GNOME's own Classic extensions ----------------------------------
+# Ask for the extension DIRECTORY, not for the package: a package can be
+# installed and its files diverted, and it is the directory gnome-shell loads.
+EXT_DIR="/usr/share/gnome-shell/extensions"
+for uuid in \
+	window-list@gnome-shell-extensions.gcampax.github.com \
+	apps-menu@gnome-shell-extensions.gcampax.github.com \
+	places-menu@gnome-shell-extensions.gcampax.github.com \
+	user-theme@gnome-shell-extensions.gcampax.github.com
+do
+	if [ -f "${EXT_DIR}/${uuid}/metadata.json" ]; then
+		ok "extension ${uuid%%@*}"
+	else
+		note "extension missing: ${EXT_DIR}/${uuid}/metadata.json"
+	fi
+done
+
+# The Shell generation the extensions declare must be the Shell that is here.
+# A mismatch is what makes an extension silently refuse to load at login.
+SHELL_VER="$(gnome-shell --version 2>/dev/null | sed 's/[^0-9.]//g' | cut -d. -f1 || true)"
+META="${EXT_DIR}/window-list@gnome-shell-extensions.gcampax.github.com/metadata.json"
+if [ -n "${SHELL_VER}" ] && [ -f "${META}" ]; then
+	if grep -q "\"${SHELL_VER}" "${META}"; then
+		ok "window-list declares support for GNOME Shell ${SHELL_VER}"
+	else
+		note "window-list does not list shell-version ${SHELL_VER} - it will not load"
+		sed -n 's/.*"shell-version"\(.*\)/  declared:\1/p' "${META}" >&2 || true
+	fi
+fi
+
+# --- 2. The theme package ------------------------------------------------
+# NOTE ON ORDERING: the theme arrives through config/packages.chroot, which
+# live-build installs in its own stage. If this check fails while the .deb is
+# demonstrably in the staged tree, the cause is that local-packages runs AFTER
+# hooks - in which case move this block to check-image.py rather than deleting
+# it. Do not "fix" it by making it a warning.
+if dpkg -s os7-desktop-theme >/dev/null 2>&1; then
+	ok "os7-desktop-theme $(dpkg-query -W -f='${Version}' os7-desktop-theme) installed"
+else
+	note "os7-desktop-theme is not installed - see the ordering note in this hook"
+fi
+
+for f in \
+	/usr/share/themes/OS7-Classic/gtk-3.0/gtk.css \
+	/usr/share/themes/OS7-Classic/gnome-shell/gnome-shell.css \
+	/usr/share/os7-theme/gtk-4.0/os7-classic.css \
+	/usr/lib/systemd/user/default.target.wants/os7-theme-user-setup.service
+do
+	[ -e "${f}" ] && ok "${f}" || note "missing ${f}"
+done
+
+# --- 3. The defaults, read back out of the COMPILED database ------------
+# Not the keyfile: the keyfile is the input. dconf's binary database is what a
+# session actually reads, and it is the only thing that proves the keyfile
+# parsed.
+if [ -s /etc/dconf/db/os7 ]; then
+	ok "/etc/dconf/db/os7 compiled ($(stat -c%s /etc/dconf/db/os7) bytes)"
+
+	check_key() {
+		want="$2"
+		got="$(DCONF_PROFILE=/etc/dconf/profile/user dconf read "$1" 2>/dev/null || true)"
+		if [ "${got}" = "${want}" ]; then
+			ok "$1 = ${got}"
+		else
+			note "$1 reads ${got:-<unset>}, expected ${want}"
+		fi
+	}
+	check_key /org/gnome/desktop/interface/gtk-theme "'OS7-Classic'"
+	check_key /org/gnome/shell/extensions/user-theme/name "'OS7-Classic'"
+	check_key /org/gnome/desktop/background/primary-color "'#000000'"
+	check_key /org/gnome/desktop/wm/preferences/button-layout "':minimize,maximize,close'"
+else
+	note "/etc/dconf/db/os7 was not compiled"
+fi
+
+# --- 3b. Every key we set is a key GNOME actually has -------------------
+# BUILD-NOTES #54. dconf is a key-value store with no knowledge of GSettings
+# schemas: a misspelled group or key compiles, stores, and reads back
+# perfectly, while GNOME goes on using the default. Reading our own keys back
+# out of our own database cannot catch that - both sides come from the same
+# file. GSettings is the independent authority, because GSettings is what
+# reads these values at login.
+#
+# This also catches the slow version: a key a future GNOME generation drops,
+# leaving a line here that compiles, stores, and does nothing.
+# Written in plain shell rather than python3: this hook must not be the reason
+# the image needs an interpreter it would not otherwise carry.
+echo "OS/7 hook 0090: checking every default against the installed schemas"
+
+KEYFILE="/etc/dconf/db/os7.d/00-os7-classic"
+ALL_SCHEMAS="$(gsettings list-schemas 2>/dev/null || true)"
+if [ -z "${ALL_SCHEMAS}" ]; then
+	note "gsettings lists no schemas at all - cannot verify the defaults"
+else
+	checked=0
+	group=""
+	while IFS= read -r line || [ -n "${line}" ]; do
+		case "${line}" in
+			\[*\])
+				group="$(printf '%s' "${line}" | tr -d '[]' | sed 's|^/||; s|/$||; s|/|.|g')"
+				;;
+			""|\#*)
+				;;
+			*=*)
+				[ -n "${group}" ] || continue
+				key="${line%%=*}"
+				key="$(printf '%s' "${key}" | tr -d '[:space:]')"
+				checked=$((checked + 1))
+				if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${group}"; then
+					note "no such schema: ${group} (for key ${key})"
+					continue
+				fi
+				if ! gsettings list-keys "${group}" 2>/dev/null | grep -qx "${key}"; then
+					note "schema ${group} has no key '${key}'"
+				fi
+				;;
+		esac
+	done < "${KEYFILE}"
+	ok "${checked} defaults checked against GNOME's own schema list"
+fi
+
+# --- 4. The font ---------------------------------------------------------
+# fc-match answers with the face fontconfig WOULD actually use. Asking dpkg
+# whether a font package is installed does not answer this question, because a
+# font can be present and its family name be something else entirely.
+if command -v fc-match >/dev/null 2>&1; then
+	MATCH="$(fc-match -f '%{family}' Tahoma 2>/dev/null || true)"
+	if [ "${MATCH}" = "Tahoma" ]; then
+		ok "fc-match Tahoma -> Tahoma"
+	else
+		note "fc-match Tahoma -> '${MATCH}': the UI font would silently substitute"
+	fi
+fi
+
+if [ "${fail}" -ne 0 ]; then
+	echo "OS/7 hook 0090: the classic desktop is NOT correctly installed." >&2
+	exit 1
+fi
+
+echo "OS/7 hook 0090: done - classic desktop verified"

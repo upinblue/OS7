@@ -2304,6 +2304,118 @@ Silicon dies with `Cannot open: Function not implemented` on every file — trap
 cannot run for amd64 on this Mac, exactly like `debootstrap`. It fails loudly
 rather than producing a short font, and CI is unaffected.
 
+## 54. dconf does not know what a GSettings key is — a typo compiles, stores, and reads back correctly
+
+The classic desktop's defaults — theme name, black background, window button
+layout, which GNOME extensions are on — are a keyfile at
+`/etc/dconf/db/os7.d/00-os7-classic`, compiled into a binary database by
+`dconf update`.
+
+**The claim this entry started as was wrong, and the measurement is what said
+so.** The guess was that `dconf update` exits 0 for a keyfile it cannot parse.
+It does not. Measured in a container against the pinned archive
+(`20260824T000000Z`, `dconf-cli 0.49.0-4`):
+
+```
+well-formed keyfile          exit=0   database 339 B   both keys read back
+duplicated group header      exit=0   database 442 B   both keys read back
+line with no '='             exit=1   database ABSENT  "not a key-value pair"
+unquoted string value        exit=1   database ABSENT  "invalid value: 0:expected value"
+```
+
+So syntax is checked, loudly, and a duplicated group header is not even an
+error — GKeyFile merges the two. `set -e` in a postinst is enough for that
+whole class.
+
+**What is not checked is whether any of it means anything.** dconf is a
+key-value store with no knowledge of GSettings schemas. Same container, one
+keyfile with a misspelled key and a misspelled group, no syntax error anywhere:
+
+```
+[org/gnome/desktop/interface]
+gtk-theme='OS7-Classic'
+gtk-theme-name='OS7-Classic'        <- no such key
+
+[org/gnome/desktop/interfase]       <- no such schema
+font-name='Tahoma 9'
+```
+```
+dconf update                             exit=0, database 446 bytes
+dconf read …/interface/gtk-theme         ['OS7-Classic']
+dconf read …/interface/gtk-theme-name    ['OS7-Classic']   <- stored happily
+dconf read …/interfase/font-name         ['Tahoma 9']      <- stored happily
+dconf read …/interface/font-name         []                <- where it was meant
+gsettings get …interface font-name       'Adwaita Sans 11' <- what GNOME uses
+```
+
+Every layer reads as healthy. The package installed, `dpkg -V` is clean, the
+keyfile is right there, `dconf update` succeeded, a database exists, and the
+values read back — from the paths that are wrong. The desktop comes up stock
+and nothing anywhere says why.
+
+**The part worth remembering is what this did to the guard.** The first version
+of `build/testing/verify-theme-package.sh` walked every group in the keyfile and
+checked that each one reached the database. Against this failure it passes:
+both sides of the comparison come from the same misspelled file, so it proves
+the keyfile agrees with itself. That is exactly the rule at the top of this
+repository — *a diagnostic must not depend on the subsystem it is diagnosing* —
+being broken by the person who wrote the rule down that morning.
+
+The independent authority is GSettings, because GSettings is what actually
+reads these values, and it knows which schemas and keys exist:
+
+```
+gsettings list-schemas | grep -qx "$schema"      does the schema exist
+gsettings list-keys "$schema" | grep -qx "$key"  does the key exist in it
+```
+
+Both `build/config/hooks-amd64/0090-desktop-theme-verify.hook.chroot` and
+`verify-theme-package.sh` now run every `(schema, key)` pair from the keyfile
+through that, which also catches the slow version of the same failure: a key
+GNOME removes in a future generation, leaving a line in our keyfile that
+compiles, stores, reads back, and does nothing.
+
+## 55. `fonts-wine` contains no fonts
+
+Windows 2000's UI font is Tahoma, which is not redistributable. Wine ships a
+metrically compatible replacement under LGPL-2.1+, which is — so `fonts-wine`
+looks like the obvious dependency for a classic theme.
+
+It is not. Measured by unpacking both packages from the pinned snapshot:
+
+```
+fonts-wine_10.0~repack-12ubuntu1_all.deb        4418 B download, 56 KB installed
+  usr/share/fonts/truetype/wine/tahoma.ttf   -> ../../../wine/fonts/tahoma.ttf
+  usr/share/fonts/truetype/wine/tahomabd.ttf -> ../../../wine/fonts/tahomabd.ttf
+  … 13 files, ALL symlinks, zero bytes of font data
+
+wine-common_10.0~repack-12ubuntu1_all.deb    1866768 B download, 11 MB installed
+  usr/share/wine/fonts/tahoma.ttf                145040 B   <- the actual font
+  usr/share/wine/fonts/tahomabd.ttf              139144 B
+```
+
+A 4 KB package named `fonts-*` that installs 13 `.ttf` paths reads exactly like
+a font package. It is a symlink farm, and its `Depends: wine-common` is the
+only thing that makes the links resolve. Copy the files out of `fonts-wine`
+alone — the obvious way to avoid putting `wine-common` on a managed corporate
+desktop — and you ship 13 dangling symlinks. **fontconfig then substitutes the
+default sans face and reports nothing**, which is the same silence as #26 and
+#53: the request is satisfied by something that is not what was asked for.
+
+Two consequences, both now in the build:
+
+* `build/lib/build-desktop-theme.sh` extracts the two faces from `wine-common`
+  and ships them in OS/7's own package with the LGPL notice beside them. Nothing
+  called `wine` is installed on the running system.
+* Neither the filename nor the package version is evidence of what a font is.
+  `build/lib/ttf-family.py` reads the `name` table out of each extracted file
+  and fails the build unless it says `family='Tahoma'`, `subfamily='Regular'`
+  and `'Bold'` — because `font-name='Tahoma 9'` in the dconf database resolves
+  by family name and by nothing else. Hook 0090 asks the same question of the
+  installed image from the other end, with `fc-match`.
+---
+
+
 ## 56. The interface name changes between installing and running, and netplan says nothing
 
 The same machine, the same NIC, the same MAC — two names, measured 2026-08-25:

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=OS7-Classic
+Comment=OS/7 Classic — the Windows 2000 "Windows Standard" surface
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=OS7-Classic
+MetacityTheme=OS7-Classic
+IconTheme=Adwaita
+CursorTheme=Adwaita
+ButtonLayout=:minimize,maximize,close

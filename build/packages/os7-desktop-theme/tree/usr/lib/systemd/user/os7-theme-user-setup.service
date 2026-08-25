@@ -1,0 +1,18 @@
+[Unit]
+# Places the libadwaita colour overrides in the user's home directory, because
+# libadwaita reads no system-wide stylesheet. See
+# /usr/libexec/os7-theme-user-setup for why this cannot be done from /etc.
+Description=OS/7 Classic — user-side GTK 4 theme overrides
+Documentation=file:///usr/share/doc/os7-desktop-theme/README.md
+ConditionPathExists=/usr/share/os7-theme/gtk-4.0/os7-classic.css
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/os7-theme-user-setup --install
+RemainAfterExit=yes
+# A failure here costs GTK 4 colours, nothing else. It must never keep a
+# session from starting.
+SuccessExitStatus=0 2
+
+[Install]
+WantedBy=default.target
