@@ -1783,6 +1783,51 @@ without booting, which is where the unanswered amd64 questions actually live
 did the pin hold). Making that medium boot is an **amd64 EFI remaster**, the
 sibling of the arm64 one, and it is not written.
 
+### The fourth: `isohybrid`, exit 127, and the same asymmetry a third time
+
+[Run 32835838228](https://github.com/upinblue/OS7/actions/runs/32835838228), with
+`--bootloader none`: **every bootloader stage passed straight through** —
+`lb_binary_memtest`, `lb_binary_grub`, `lb_binary_grub2`, `lb_binary_syslinux`,
+four stage markers inside 105 ms and not one line of work between them — and the
+build reached `lb_binary_iso`, wrote the medium to **99.97%**, removed its build
+depends, and then died with no message at all:
+
+```
+make: *** [Makefile:126: build-amd64] Error 127
+```
+
+127 is *command not found*, and nothing in the log names the command. It is in
+live-build's source: `lb_binary_iso` writes a `binary.sh`, and when
+`LB_BINARY_IMAGES` is `iso-hybrid` it appends one more line to it —
+
+```sh
+isohybrid ${ISOHYBRID_OPTIONS} ${IMAGE}
+```
+
+`isohybrid` is in **syslinux-utils**. The stage installs **syslinux**. So the
+script runs `genisoimage` successfully and then calls a command that was never
+there; `sh binary.sh` returns 127, and `set -euo pipefail` in `build/build.sh`
+carries it all the way to make. **The ISO had already been written when the build
+failed.**
+
+The defaults, measured:
+
+```
+amd64: LB_BINARY_IMAGES="iso-hybrid"
+arm64: LB_BINARY_IMAGES="iso"
+```
+
+Third time in one afternoon: the amd64 default is the BIOS-flavoured one, the
+arm64 default is the plain one, and OS/7 wants the arm64 shape on both.
+`isohybrid` writes an MBR so a stick boots under legacy BIOS — a thing a UEFI
+product does not want, on a medium that is going to be re-mastered anyway.
+
+One more consequence to keep, because it is not free: with no `LB_BOOTLOADER`
+case matching, `lb_binary_iso` never adds `-r`, and genisoimage says so —
+*"creating filesystem with Joliet extensions but without Rock Ridge"*. The amd64
+ISO live-build now emits has no Rock Ridge and no boot path. It is an artefact to
+**read**, not to boot, until the amd64 remaster exists.
+
 ### Worth carrying
 
 **Each dispatch buys exactly one stage — until you ask why you are in the stage

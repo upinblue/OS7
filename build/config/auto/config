@@ -147,6 +147,15 @@ lb config noauto \
 	`# amd64 - contents without a boot path, which check-image.py can still read` \
 	`# in full. Making it boot is an amd64 EFI remaster, and it is not written.` \
 	--bootloader none \
+	`# Same shape, one stage later, and found the same way. lb_binary_iso writes` \
+	`# a binary.sh and appends "isohybrid ${IMAGE}" when LB_BINARY_IMAGES is` \
+	`# "iso-hybrid" - and isohybrid ships in syslinux-UTILS while live-build` \
+	`# installs syslinux, so the command is absent and the whole build exits 127.` \
+	`# Measured defaults: amd64 "iso-hybrid", arm64 "iso". Again the BIOS-flavoured` \
+	`# default on amd64 and the plain one on arm64; isohybrid writes an MBR so a` \
+	`# stick boots legacy BIOS, which a UEFI product does not want and a` \
+	`# re-mastered medium would discard anyway. BUILD-NOTES #47.` \
+	--binary-images iso \
 	`# HARVESTED FIX 5: Ubuntu-mode live-build expects the casper initramfs at` \
 	`# binary/casper/initrd.img; without boot=casper (and the casper package in` \
 	`# the base list) lb_binary_disk fails.` \
