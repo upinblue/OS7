@@ -824,6 +824,41 @@ internal static class Program
                   && new InstallPlan { Mode = InstallMode.Headless }.Renderer == "networkd",
                   "netplan: renderer follows the install mode");
 
+            // L25, AND IT IS THE ONE CHECK HERE THAT PROTECTS A SECRET RATHER
+            // THAN A CONFIGURATION.
+            //
+            // `--print-plan` writes this JSON to a terminal, `Log.Info` writes
+            // it into /var/log at the end of every install, and CompleteScreen
+            // logs it while it is on screen. A `[JsonIgnore]` that was removed
+            // in a refactor has NO symptom: the plan keeps working, the install
+            // keeps working, and a Wi-Fi passphrase is in a log file and in a
+            // screendump. So the guarantee is asserted against the serialiser's
+            // real output, and it covers all three secrets rather than the one
+            // this phase added.
+            var secretive = new InstallPlan
+            {
+                Storage = { Passphrase = "LUKS-SECRET-CANARY" },
+                Account = { Username = "u", Password = "ACCOUNT-SECRET-CANARY" },
+                Network =
+                {
+                    Interface = "wlan0", Kind = LinkKind.Wireless,
+                    Wifi = new WifiPlan
+                    {
+                        Ssid = "net", Psk = "PSK-SECRET-CANARY",
+                        Password = "EAP-SECRET-CANARY",
+                    },
+                },
+            };
+            string serialised = secretive.ToJson();
+            string[] canaries =
+                { "LUKS-SECRET-CANARY", "ACCOUNT-SECRET-CANARY",
+                  "PSK-SECRET-CANARY", "EAP-SECRET-CANARY" };
+            string[] leaked = canaries.Where(serialised.Contains).ToArray();
+            Check(leaked.Length == 0,
+                  "no secret reaches the plan file (L25 and §6.6)",
+                  leaked.Length == 0 ? "4 canaries, none serialised"
+                                     : "LEAKED: " + string.Join(", ", leaked));
+
             Check(NetworkPlan.IsValidCidr("10.0.2.99/24")
                   && NetworkPlan.IsValidCidr("2001:db8::1/64")
                   && !NetworkPlan.IsValidCidr("10.0.2.99")
