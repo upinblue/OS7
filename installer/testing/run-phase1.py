@@ -58,7 +58,7 @@ CELL = (16, 32)
 # The Install entry's command line, verbatim from build/lib/efi-remaster.sh
 # plus a serial console so the harness can log in. If these ever disagree, the
 # harness is testing something the ISO does not do.
-CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service "
+CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
            "console=ttyAMA0,115200")
 

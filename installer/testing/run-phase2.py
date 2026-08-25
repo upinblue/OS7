@@ -72,7 +72,7 @@ lab = Lab("phase2", target_gb=24, iso_as_disk=True)
 FONT = os.path.join(lab.dir, "os7-fixedsys-16x32.psf.gz")
 CELL = (16, 32)
 
-CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service "
+CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
            "console=ttyAMA0,115200")
 

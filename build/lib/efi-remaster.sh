@@ -132,6 +132,7 @@ echo ">>> ${ARCH} EFI: kernel=${VMLINUZ} initrd=${INITRD}"
 # What is left earns its place:
 #   systemd.wants=...      what actually starts Setup; the unit has no [Install]
 #   os7.setup=1            os7-setup.service's ConditionKernelCommandLine, as a belt
+#   systemd.unit=multi-user.target   amd64 has a DISPLAY MANAGER and arm64 does not
 #   fbcon=font:TER16x32    the closest built-in match until setfont runs (L20)
 #   fbcon=nodefer          the framebuffer console exists from the start
 #   plymouth.enable=0      nothing scrolls over the field
@@ -142,6 +143,23 @@ echo ">>> ${ARCH} EFI: kernel=${VMLINUZ} initrd=${INITRD}"
 # stays the kernel's dummy device - on which KDFONTOP returns ENOSYS, so no font
 # can be loaded and no palette applies. Setup recovers from that on its own
 # (BUILD-NOTES #31), but recovering from a race is worse than not having one.
+#
+# `systemd.unit=multi-user.target` is the amd64 lesson and it cost a boot to
+# learn. The Install entry pulls in os7-setup.service, which takes tty1 - and on
+# amd64 the image also has gdm3, enabled, pulled in by graphical.target. Both
+# want the screen; the display manager wins. Measured 2026-08-25 by booting the
+# first re-mastered amd64 ISO: GRUB fine, kernel fine, and then a GNOME desktop
+# where Setup should have been, with tty1 blank grey (GDM's) and a plain
+# `ubuntu login:` on tty3. BUILD-NOTES #49.
+#
+# Asking for multi-user.target is better than fighting graphical.target with
+# another Conflicts=: the Install entry is a text-mode installer and simply has
+# no business reaching the graphical target. It is INERT on arm64, which is
+# server-only and never reaches it anyway - so both architectures carry the same
+# line and it does something on exactly one of them.
+#
+# The LIVE entry deliberately does NOT get this. On amd64 "try before you
+# install" means a desktop (L14), and that is the entry that promises it.
 mkdir -p "${BIN}/boot/grub"
 cat > "${BIN}/boot/grub/grub.cfg" <<EOF
 set default=0
@@ -149,7 +167,7 @@ set timeout=10
 insmod all_video
 menuentry "Install OS/7 (${ARCH})" {
     search --no-floppy --set=root --file /.disk/info
-    linux  /casper/${VMLINUZ} boot=casper os7.setup=1 systemd.wants=os7-setup.service fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 ---
+    linux  /casper/${VMLINUZ} boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 ---
     initrd /casper/${INITRD}
 }
 menuentry "OS/7 (${ARCH}) — live session, without installing" {

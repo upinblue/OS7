@@ -1906,3 +1906,78 @@ other approach are already in the image (`shim-signed` 1.59+15.8,
 that a signed GRUB has a fixed prefix and loads only signed modules, so the
 embedded-config trick above cannot be used. Open item, recorded here rather than
 in a fix.
+
+## 49. The Install entry booted amd64 into GNOME, and only a boot could have said so
+
+2026-08-25, the first boot of a re-mastered amd64 ISO — `OS7-1.0.0.47-amd64.iso`,
+under `qemu-system-x86_64` with edk2, TCG, on Apple Silicon.
+
+Everything the remaster is responsible for worked, and the serial log says so:
+
+```
+BdsDxe: starting Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+GNU GRUB  version 2.14
+*Install OS/7 (amd64)
+```
+
+Firmware found `/EFI/BOOT/BOOTX64.EFI`, GRUB loaded, the menu is OS/7's, the
+default entry is Install. Then the ten-second timeout ran out, the entry booted —
+and at 160 s the screen held **a GNOME desktop**.
+
+Walking the VTs settles what that means, because a photograph of a desktop cannot
+tell two different bugs apart:
+
+| VT | what is on it |
+|---|---|
+| tty1 | blank grey — the display manager's |
+| tty2 | the GNOME session |
+| tty3 | `Ubuntu 26.04 LTS ubuntu tty3` / `ubuntu login:` |
+
+**os7-setup is on none of them.** Not hidden behind the desktop, not on a spare
+console: absent.
+
+### Why
+
+Read out of the image itself, no VM involved:
+
+```
+/usr/lib/systemd/system/os7-setup.service          present
+  ConditionKernelCommandLine=os7.setup=1           satisfied by the Install entry
+  Conflicts=getty@tty1.service   TTYPath=/dev/tty1
+/etc/systemd/system/display-manager.service -> gdm3   ENABLED
+```
+
+Both are correct in isolation. The Install entry pulls in `os7-setup.service`,
+which takes tty1; `graphical.target` pulls in gdm3, which takes the screen; the
+display manager wins. **arm64 is server-only and has no display manager at all,
+so nothing on arm64 could ever have exposed this** — the entry has worked there
+since Phase 1, and every screenshot in `.vm/phase1/shots/` was taken on a machine
+with nothing to lose the race to.
+
+### The fix, and why it is a command line rather than another `Conflicts=`
+
+`systemd.unit=multi-user.target` on the Install entry. The entry is a text-mode
+installer and has no business reaching the graphical target; not asking for it
+beats out-fighting it. The line is **inert on arm64**, which never reaches that
+target anyway, so both architectures carry the same command line and it does
+something on exactly one of them.
+
+The **live** entry deliberately does not get it. On amd64 "try before you
+install" (L14) means a desktop, and the live entry is what promises one.
+
+### The copies
+
+`run-phase1.py`, `run-phase2.py` and `run-phase3.py` each carry the Install
+command line verbatim, with a comment in phase 1 that says why: *"If these ever
+disagree, the harness is testing something the ISO does not do."* All three were
+updated with the remaster. Four copies of one string is a standing invitation to
+the bug that comment describes — the harnesses need to read the line off the ISO
+rather than restate it, and that is not done here.
+
+### Worth carrying
+
+**A result on the architecture without the competing component is not a result.**
+This is #12 and #23 in a third costume: an arm64 pass said nothing about amd64,
+not because the code differs but because the *image* does. Whenever the two
+package sets diverge — and they diverge by 979 packages — any claim about
+behaviour has to name which image it was measured on.

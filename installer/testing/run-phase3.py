@@ -76,7 +76,7 @@ USERNAME = "os7admin"
 # 24 GB: the §4.4 layout needs 16 as a floor, and the copied system needs room.
 lab = Lab("phase3", target_gb=24, iso_as_disk=True)
 
-CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service "
+CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
            "console=ttyAMA0,115200")
 LIVE_CMDLINE = "boot=casper fbcon=nodefer quiet console=ttyAMA0,115200"
