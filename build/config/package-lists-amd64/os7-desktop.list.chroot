@@ -80,5 +80,5 @@ dconf-cli
 #
 # It no longer goes into config/packages.chroot-amd64/ - live-build signs any
 # local package repository with gnupg 1.x code that gnupg 2.x cannot satisfy,
-# and the build dies mid-chroot (BUILD-NOTES #63). It is staged into
+# and the build dies mid-chroot (BUILD-NOTES #71). It is staged into
 # config/includes.chroot instead and installed by hook 0085.

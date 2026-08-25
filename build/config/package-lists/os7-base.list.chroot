@@ -26,9 +26,26 @@ casper
 zfsutils-linux
 zfs-initramfs
 
-# linux-generic carries the matching prebuilt zfs.ko. Do NOT swap this for a
-# -virtual or -kvm flavour: those do not ship the ZFS module.
-linux-generic
+# The kernel. Do NOT swap this for a -virtual or -kvm flavour: those do not
+# ship the ZFS module.
+#
+# linux-image-generic AND NOT linux-generic since 2026-08-25
+# (docs/CURATION-AND-DELIVERY-PLAN.md §4.2). linux-generic is a two-line
+# metapackage: linux-image-generic + linux-headers-generic. The headers exist to
+# build DKMS modules and OS/7 has none to build - the ZFS module is the
+# GA-kernel-matched PREBUILT one by locked decision.
+#
+# WHAT CARRIES THE ZFS MODULE, read out of the pinned archive's own index rather
+# than reasoned about:
+#   linux-generic       Depends: linux-image-generic, linux-headers-generic
+#   linux-image-generic Depends: linux-image-<abi>-generic,
+#                                linux-modules-<abi>-generic,
+#                                linux-main-modules-zfs-<abi>-generic,
+#                                linux-firmware
+# So zfs.ko hangs off linux-image-generic and survives; only the headers leave.
+# linux-modules-<abi>-generic is untouched, which is where the wireless drivers
+# live - the thing this swap could plausibly have broken and does not.
+linux-image-generic
 
 # --- Identity: Entra ID login ------------------------------------------------
 # authd is in the archive. Its Entra broker (authd-msentraid) is NOT - it is a
@@ -39,7 +56,21 @@ authd
 # --- .NET (README: Core, non-negotiable, both modes) --------------------------
 # resolute ships .NET 10, not 9. Canonical packages this now; it does not come
 # from packages.microsoft.com any more.
-dotnet-sdk-10.0
+#
+# THE RUNTIME, NOT THE SDK, since 2026-08-25 - C2 in
+# docs/CURATION-AND-DELIVERY-PLAN.md §4.1. Nothing in the image needs a
+# compiler: os7-setup is NativeAOT and runs with .NET deleted (spike S2,
+# measured), and PowerShell 7 is the self-contained upstream tarball hook 0020
+# installs. The SDK was serving a product intention rather than a dependency,
+# and it brought 216 MiB of llvm and clang in behind a Recommends
+# (dotnet-sdk-aot-10.0) that nobody chose.
+#
+# The runtime stays because the Foundation Framework (C3) is a .NET library and
+# set of services, so the product will have a first-party consumer for it.
+# Installed-Size in the pinned archive: sdk 355 MiB against runtime 79 MiB plus
+# aspnetcore 26 MiB.
+dotnet-runtime-10.0
+aspnetcore-runtime-10.0
 
 # --- What Setup needs to install the system ----------------------------------
 # From installer/SETUP-PLAN.md 7.1. These are needed at INSTALL time, so they

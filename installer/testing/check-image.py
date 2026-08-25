@@ -75,6 +75,10 @@ emit os-release        cat /mnt/sq/etc/os-release
 emit sources.list      cat /mnt/sq/etc/apt/sources.list
 emit sources.list.d    bash -c 'cat /mnt/sq/etc/apt/sources.list.d/*.sources 2>/dev/null || true'
 emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
+# The membership decisions, read out of the SHIPPED manifest. Two of them were
+# made on a dependency graph and one of them was wrong about what installs the
+# kernel (BUILD-NOTES #62), so they are asked of the artefact from now on.
+emit packages.curated  bash -c "grep -E '^(dotnet|aspnetcore|linux-(generic|image-generic|headers|main-modules-zfs))' /mnt/sq/usr/lib/os7/packages.manifest | cut -f1 | sort || true"
 emit setup.version     chroot /mnt/root /usr/lib/os7-setup/os7-setup --version
 emit setup.selftest    bash -c 'chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/lib/os7-setup/os7-setup --self-test | tail -3'
 
@@ -258,6 +262,33 @@ def main() -> None:
 
     lines = int(img.get("packages.count") or 0)
     check(lines > 200, "the package manifest is populated", f"{lines} packages")
+
+    # -- what the image is CURATED to contain, and not to ---------------------
+    #
+    # CURATION-AND-DELIVERY-PLAN C2 (the .NET SDK leaves, the runtime stays) and
+    # §4.2 (kernel headers leave, the prebuilt ZFS module must not). Both were
+    # decided on the pinned archive's dependency graph, and §4.2's first attempt
+    # changed nothing at all because live-build installs a kernel of its own
+    # beside the package list — BUILD-NOTES #62. A graph is a prediction; this is
+    # the artefact.
+    curated = set((img.get("packages.curated") or "").split())
+    check(not any(p.startswith("dotnet-sdk") for p in curated),
+          "no .NET SDK in the image (C2)",
+          " ".join(sorted(p for p in curated if p.startswith("dotnet-sdk"))) or "none")
+    check({"dotnet-runtime-10.0", "aspnetcore-runtime-10.0"} <= curated,
+          "the .NET runtime is in the image (C2)")
+    check(not any(p.startswith("linux-headers") for p in curated),
+          "no kernel headers in the image (§4.2)",
+          " ".join(sorted(p for p in curated if p.startswith("linux-headers"))) or "none")
+    check("linux-generic" not in curated,
+          "linux-generic is gone, so nothing pulls the headers back (#62)")
+    check("linux-image-generic" in curated, "linux-image-generic is the kernel")
+    # THE ONE THAT COULD HAVE MADE THE MACHINE UNBOOTABLE. The prebuilt ZFS
+    # module hangs off linux-image-generic, not off linux-generic — asserted
+    # here rather than believed.
+    check(any(p.startswith("linux-main-modules-zfs") for p in curated),
+          "the prebuilt ZFS module survived the kernel swap (§4.2)",
+          " ".join(sorted(p for p in curated if p.startswith("linux-main-modules-zfs"))))
 
     # -- os-release ---------------------------------------------------------
     osr = dict(

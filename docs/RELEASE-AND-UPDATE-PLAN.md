@@ -85,7 +85,8 @@ Every pin that would have to move, and where it lives today:
 |---|---|
 | `OS7_DISTRIBUTION="resolute"` | [../build/config/auto/config](../build/config/auto/config) |
 | `archive.ubuntu.com` / `ports.ubuntu.com` split | same file |
-| `dotnet-sdk-10.0` | [../build/config/package-lists/os7-base.list.chroot](../build/config/package-lists/os7-base.list.chroot) |
+| `dotnet-runtime-10.0` + `aspnetcore-runtime-10.0` (was `dotnet-sdk-10.0` until C2, 2026-08-25) | [../build/config/package-lists/os7-base.list.chroot](../build/config/package-lists/os7-base.list.chroot) |
+| `--linux-packages "linux-image"` — **not** the package list; live-build installs the kernel itself in `--mode ubuntu` (BUILD-NOTES #62) | [../build/config/auto/config](../build/config/auto/config) |
 | `Suites: resolute`, two GPG fingerprints | [../build/config/hooks/0010-microsoft-repos.hook.chroot](../build/config/hooks/0010-microsoft-repos.hook.chroot) |
 | `PWSH_VERSION` + two SHA256 | [../build/config/hooks/0020-powershell.hook.chroot](../build/config/hooks/0020-powershell.hook.chroot) |
 | `VERSION_ID="26.04"` | wherever os-release is branded (§3.5) |
@@ -484,16 +485,26 @@ and boots an arm64 system — the expensive part is built.
 
 | Spike | Question | Method | Done when |
 |---|---|---|---|
-| **S5** | Does the clone-update-activate-rollback cycle work at all | On the S3 target: snapshot + clone both BE datasets, chroot, `apt full-upgrade` against a pinned snapshot, `update-initramfs`, `update-grub`, activate, reboot; then `Restore-OS7` back | Boots into the new BE with the new kernel; rollback returns to the old BE; both remain bootable throughout |
+| **S5** | Does the clone-update-activate-rollback cycle work at all | On a machine Setup installed: snapshot + clone both BE datasets, assemble the clone and change it, `update-initramfs`, activate, reboot; then `Restore-OS7` back | **PASS 2026-08-25 (arm64)** — nine checks, three boots: the machine booted the clone with `/boot` and `/var/lib/dpkg` from the clone and the change present, and came back to the original with the change un-said, both environments still complete. — `installer/testing/run-s5.py`, findings in [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md). **The method changed in one place and it matters:** the spike as written applies `apt full-upgrade` against a *pinned* snapshot, which is a no-op against the snapshot the machine was built from — so the change applied to the clone is one package it does not have, which makes the two package databases genuinely differ and a rollback something that can be seen to un-say. A new *kernel* in the clone is still untested |
 | **S6** | **Does TPM2 auto-unlock survive an update** | Six boots on a copy of the S4 target (disk + variable store + swtpm state): rebuild the initramfs and boot; swap the variable store to change Secure Boot policy and boot; re-enrol and boot again | **PASS 2026-08-23 (arm64).** Survives an initramfs rebuild with PCR 7 byte-identical; a policy change moves PCR 7 and breaks the seal *loudly and recoverably*; one `systemd-cryptenroll` restores it. `installer/spikes/run-s6.py` + `s6-update-cycle.sh`; findings in [SESSION-S6-UPDATE-CYCLE.md](SESSION-S6-UPDATE-CYCLE.md) |
 | **S7** | Is the version number true | Build the same release twice from the same snapshot; diff the package manifest | **PASS 2026-08-24 (arm64).** Two builds from `20260824T000000Z` hold identical package sets — 549 packages, manifest `sha256:ffd05e12c9cb3d08…` both times. `installer/spikes/run-s7.py`; findings in [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). **The method had to change:** §3.4's `dpkg --get-selections` carries no versions, so two builds holding different kernels compare EQUAL and this spike would have passed without testing anything (BUILD-NOTES #37). The manifest records `package<TAB>version<TAB>arch` |
+
+**S5's method changed in one place, and the change is the finding.** The spike as
+written applies `apt full-upgrade` against a pinned snapshot, which against the
+snapshot the machine was built from is a no-op — so what the clone gets instead is
+one package it does not have, which makes the two package databases genuinely
+differ and a rollback something that can be seen to un-say. A new *kernel* in the
+clone is still untested, and that is the case where §4.3's paired-dataset hazard
+is sharpest.
 
 **Gate: S5 and S7 pass, and S6's failure mode is characterised, before Phase 1.**
 **S6 is done** (2026-08-23) and **S7 passed on 2026-08-24**, so the gate on the
 version number itself is open: the archive pin holds, and `1.0.0.32` names a
-package set rather than a moment. **S5 — does the clone-update-activate-rollback
-cycle boot at all — remains**, and it gates `Update-OS7`, not the release
-engineering S7 covers.
+package set rather than a moment. ~~**S5 — does the clone-update-activate-rollback
+cycle boot at all — remains**~~ — **S5 PASSED 2026-08-25**, so the gate on
+`Update-OS7` is open too; what stands in its way now is the release itself
+([CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md) C7), not the
+mechanism.
 
 Phase 1 was therefore run ahead of S5, deliberately: nothing it does clones a
 boot environment, and SETUP-PLAN Phase 3 needed the version number that did not
@@ -536,6 +547,15 @@ until now did not exist anywhere in the repository.
 The paired clone/activate/list/destroy operations (§4.3), written once so
 `os7-setup` and `Update-OS7` share them — SETUP-PLAN §6.3 already routes Setup's
 ZFS work through PowerShell for exactly this reason.
+
+**DONE 2026-08-25**, and the phase name turned out to be half right:
+`Get-`/`New-`/`Set-`/`Remove-OS7BootEnvironment` and `Restore-OS7` are in
+`powershell/OS7/OS7.psm1`, but **only the clone half is a ZFS operation**.
+Activation is a bootloader operation — OS/7 writes its own GRUB entries, because
+`10_linux_zfs` lists exactly one boot environment per machine without `zsys`
+([BUILD-NOTES.md](BUILD-NOTES.md) #67); a file on the ESP names whose menu is
+read; and `saved_entry` names the entry. Nothing in ZFS decides what boots.
+Findings: [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md).
 
 ### Phase 3 — `Update-OS7` / `Restore-OS7`
 

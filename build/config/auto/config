@@ -88,12 +88,12 @@ OS7_MIRROR="${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}/"
 # that no code path can pick up a different archive. Backports stay "none".
 # --- gnupg in the BASE system -------------------------------------------------
 #
-# BUILD-NOTES #63. No CLI flag exists for this: LB_BOOTSTRAP_INCLUDE is read by
+# BUILD-NOTES #71. No CLI flag exists for this: LB_BOOTSTRAP_INCLUDE is read by
 # lb_config out of the ENVIRONMENT and written into config/bootstrap, from where
 # lb_bootstrap_debootstrap turns it into debootstrap --include=. Hence an export
 # and not another line in the `lb config` call below.
 #
-# This was the fix for the FIRST half of #63: lb_chroot_archives signs a local
+# This was the fix for the FIRST half of #71: lb_chroot_archives signs a local
 # apt repository by running `gpg` inside the chroot, and debootstrap installs
 # only gpgv, the verify-only half. It stopped being load-bearing when the second
 # half turned out to be unfixable - live-build's signing code is gnupg 1.x and
@@ -127,6 +127,21 @@ lb config noauto \
 	--mirror-binary-security "${OS7_MIRROR}" \
 	--mirror-binary-volatile "${OS7_MIRROR}" \
 	--archive-areas "main restricted universe multiverse" \
+	`# THE KERNEL IS INSTALLED BY LIVE-BUILD, NOT BY OUR PACKAGE LIST, and in` \
+	`# --mode ubuntu it derives LB_LINUX_PACKAGES="linux" against` \
+	`# LB_LINUX_FLAVOURS="generic". lb_chroot_linux-image then writes` \
+	`# "<packages>-<flavour>" into chroot/root/packages.chroot, so the image gets` \
+	`# linux-generic - which Depends linux-headers-generic, 90 MiB of headers for` \
+	`# DKMS modules OS/7 does not build (the ZFS module is the prebuilt one, by` \
+	`# locked decision). In --mode debian the derived value is "linux-image"` \
+	`# already; the ubuntu branch is the one that differs.` \
+	`#` \
+	`# MEASURED 2026-08-25, not reasoned: os7-base.list.chroot was changed from` \
+	`# linux-generic to linux-image-generic, the build succeeded, and the SHIPPED` \
+	`# manifest still listed linux-generic and all three header packages. A` \
+	`# package list cannot remove what live-build adds beside it.` \
+	`# docs/BUILD-NOTES.md #62.` \
+	--linux-packages "linux-image" \
 	`# HARVESTED FIX 4: "none" is REJECTED by this live-build ("flavour none` \
 	`# not supported"). "false" is the value that actually disables it.` \
 	--debian-installer false \

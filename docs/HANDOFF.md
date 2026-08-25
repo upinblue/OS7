@@ -13,7 +13,7 @@ decides what, the commands that work, and the traps that cost the most.
 
 | Thing | State |
 |---|---|
-| `make build-arm64` | **Works.** Produces `out/os7-arm64.iso`, ~2 GB. |
+| `make build-arm64` | **Works.** Produces `out/os7-arm64.iso`, **1.83 GB / 518 packages** since 2026-08-25 (was 2.15 GB / 554): the .NET SDK and the kernel headers are gone, C2 and §4.2 of [CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md). Note that the package list did not decide the kernel — live-build installs one of its own, BUILD-NOTES #62. |
 | That ISO boots | **Yes.** UEFI → GRUB → casper → systemd → login prompt, in QEMU. |
 | **Installing to a disk** | **Works on arm64, proven end to end.** ZFS-on-LUKS root, installed from the live ISO and booted from the disk alone. See [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md). |
 | **Secure Boot + TPM2** | **Works on arm64.** Boots with SB enabled against the Microsoft UEFI CA; TPM2 auto-unlock works and a TPM-less machine still prompts. See [SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md). |
@@ -22,6 +22,7 @@ decides what, the commands that work, and the traps that cost the most.
 | **The console font** | **Two fonts, both built by the ISO build, neither displayed yet for the second.** `build/lib/build-console-font.sh` converts the pinned Fixedsys Excelsior TTF for **os7-setup** (D9), asserting coverage *and shape*. `build/lib/build-installed-console-font.sh` converts Cascadia Mono for the **installed console** (D15, 2026-08-25), from the .deb already in the pinned snapshot. Both stage into `/usr/share/consolefonts` with a matching `/etc/default/console-setup`, which selects Cascadia. **Proven on a booted machine 2026-08-25** by `./installer/testing/verify-console-font.py`: the installed disk with no ISO attached, 107 of 107 cells matching the shipped PSF bitmap for bitmap. Getting there cost two kernel rejections nothing here could see (BUILD-NOTES #59). See [SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md). |
 | PowerShell | **Works.** Login lands at `PS /home/…>`, on the live ISO and on the installed system. `Import-Module OS7` resolves by name and exports all five functions — `New-OS7Storage` and `New-OS7BootEnvironmentName` are real and are what `os7-setup` calls; the other three still throw by design. `bash` is still the login shell; `pwsh` is deliberately *not* in `/etc/shells`. |
 | ZFS | **Works and is safe.** `zfs.target` reached on boot. See [SESSION-0-ZFS-VALIDATION.md](SESSION-0-ZFS-VALIDATION.md). |
+| **Boot environments** | **Real since 2026-08-25, and activation is a BOOTLOADER operation.** `Get-`/`New-`/`Set-`/`Remove-OS7BootEnvironment` and a real `Restore-OS7` in `powershell/OS7/`. Three measured facts shape all of it: `10_linux_zfs` emits entries for exactly ONE environment per machine without `zsys` (BUILD-NOTES #67), so **OS/7 writes its own menu**; a file on the **ESP** names whose menu GRUB reads; and `saved_entry` names the entry. `zfs clone` carries none of the origin's local properties, so both `canmount` and `mountpoint` are set explicitly (#63). `installer/testing/check-be-logic.py` checks the decisions in three seconds without a VM; `run-s5.py` checks the machine. [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md). |
 | **ZFS from PowerShell** | **v1 READ surface exists and is checked against real ZFS output.** `powershell/Zfs/` — `Get-Zpool`, `Get-ZpoolStatus`, `Get-ZfsDataset`, `Get-ZfsSnapshot`, `Get-ZfsProperty`, `Get-ZfsSpace`. Sizes are `[uint64]` bytes, dates are `[datetime]`, and `zpool status` comes back as a **vdev object tree**. **23 cmdlets**, read and write. `Test-ZfsModule` replays 18 captures taken from a VM where ZFS is loaded (**56 checks**) and `-LiveWrite` exercises create/snapshot/clone/promote/rollback/destroy against real pools. `New-OS7Storage` now goes through it — `check-layering.py` reports 0 direct `zfs`/`zpool` calls in `powershell/OS7`, and **`run-phase3.py all` passed on that code**: install, boot-with-no-ISO-attached, and a second install by keypress. The shipped OS7 module contains no `zfs`/`zpool` invocation at all, so the pools on that disk were created through the Zfs layer and no other. [ZFS-POWERSHELL-PLAN.md](ZFS-POWERSHELL-PLAN.md), [SESSION-ZFS-POWERSHELL.md](SESSION-ZFS-POWERSHELL.md). |
 | `./installer/testing/run-zfs.py` | **New.** `capture` builds a ZFS world on file-backed vdevs in a VM and brings its output home as fixtures; `test` runs `Test-ZfsModule -Live` against real ZFS. A VM and not a chroot, because **the chroot has no ZFS kernel module** and a probe run there answered ten questions confidently and wrongly (BUILD-NOTES §M-Z1 in the plan). |
 | `./installer/testing/check-layering.py` | **New.** Holds ZFS-POWERSHELL-PLAN Z1 — `powershell/OS7` must reach ZFS only through `powershell/Zfs` — at a measured baseline of 3 direct invocations, all inside `New-OS7Storage`. The number may fall and may not rise. |
@@ -68,6 +69,20 @@ not `initramfs-tools`, not `grub.d/10_linux_zfs`. Without it the machine drops
 to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
+
+**SPIKE S5 PASSED on 2026-08-25** — the last open gate in
+[RELEASE-AND-UPDATE-PLAN.md](RELEASE-AND-UPDATE-PLAN.md) §10. A machine
+`os7-setup` installed cloned its boot environment, took a change into the clone,
+booted it, and rolled back with the change un-said. Nine checks, three boots:
+`./installer/testing/run-s5.py`.
+
+**Read [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md) first if you
+are anywhere near the bootloader.** The one-sentence version: **activation is a
+bootloader operation, not a ZFS one**, and OS/7 writes its own GRUB entries
+because the stock generator lists exactly one environment per machine without
+`zsys`. Five spike runs, eight new BUILD-NOTES entries (#62–#69), and a check
+that runs the module without a VM (`installer/testing/check-be-logic.py`).
+
 
 Two pieces landed on 2026-08-25 and each leaves a different next step.
 
@@ -146,11 +161,17 @@ Phase 3 is done (below); what it leaves is:
   the *break-glass* credential for when Entra is unreachable — plus L26, found on
   the way: `/etc/shadow` is inside the boot environment, so **a rollback un-says a
   local password change.**
-* **TPM2 enrolment has never actually enrolled.** The code is written and the
-  initramfs pieces are S4's, but every Phase 3 run so far was on a VM with no
-  TPM, so the step took its "no TPM on this machine" path. `run-s4.py` shows how
-  to attach `swtpm`; until that is done, the enrolment path is written and
-  unproven.
+* ~~**TPM2 enrolment has never actually enrolled.**~~ **It has, on 2026-08-25.**
+  `./installer/testing/run-s5.py install` attaches `swtpm` and checks the guest
+  can see `/sys/class/tpm/tpm0` BEFORE trusting the run — every Phase 3 run
+  before this took the step's "no TPM on this machine" path and reported success
+  for a path it never entered. What the first real run found:
+  **the enrolment is correct and the boot was not.** Token in key slot 1, sealed
+  to PCR 7, handler and libtss2 in the initramfs, `os7-tpm2` ordered ahead of
+  `cryptroot` — and the machine asked for the passphrase anyway, because the
+  handler looked for `systemd-cryptsetup` at a path resolute does not use
+  (BUILD-NOTES #64). Fixed and re-run; see
+  [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md) for the verdict.
 * **The GUI half of screen 8 has never run**, because no amd64 ISO has ever been
   built. `InstallModeStep`'s desktop-removal branch is in the same position, and
   so is screen 8's own ENTER — the arm64 flow skips the screen entirely.
@@ -547,10 +568,15 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
   altroot leakage — but there is no `zfs-list.cache`, so ordering under load has
   not been tested. Phase 2 created many more `rpool/DATA` datasets than S3 did,
   which makes this more worth checking, not less.
-- **No TPM2 enrolment in the installer.** Spikes S4 and S6 proved it works and
-  what it costs; `os7-setup` does not do it. It needs the initramfs pieces from
-  `installer/spikes/s4-tpm-enroll.sh` (BUILD-NOTES #19, #20) and belongs with
-  Phase 3's initramfs step.
+- ~~**No TPM2 enrolment in the installer.**~~ **Wrong since Phase 3, and
+  MEASURED for the first time on 2026-08-25.** `TpmEnrolStep` exists, it runs,
+  and on a VM with a TPM attached it enrols correctly: `New TPM2 token enrolled
+  as key slot 1`, sealed to PCR 7, with the handler and the libtss2 libraries in
+  the initramfs. What it did *not* do was unlock the disk, because the handler
+  asked for `/usr/lib/systemd/systemd-cryptsetup` and resolute has it at
+  `/usr/bin/` — an early `exit 0` that is indistinguishable at boot from a
+  machine with no TPM. BUILD-NOTES #64;
+  [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md).
 
 ## 7. Repo orientation
 

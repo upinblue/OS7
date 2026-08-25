@@ -2724,7 +2724,396 @@ tar. `hdiutil makehybrid -iso -joliet` is only safe for a handful of lower-case
 files at the top level, which is exactly the shape the existing spikes use and
 exactly why they never revealed the limit.
 
-## 62. Git for Windows checks the repo out with CRLF, and the shebang stops naming an interpreter
+## 62. `--mode ubuntu` makes live-build install the kernel, and it is not the one the package list names
+
+**Found 2026-08-25** while implementing decision §4.2 of
+[CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md) — swap
+`linux-generic` for `linux-image-generic` and drop 90 MiB of kernel headers that
+exist to build DKMS modules OS/7 does not build.
+
+`build/config/package-lists/os7-base.list.chroot` was changed from
+`linux-generic` to `linux-image-generic`. **The build succeeded.** The shipped
+manifest then said:
+
+```
+linux-generic                        7.0.0-30.30
+linux-headers-7.0.0-30               7.0.0-30.30
+linux-headers-7.0.0-30-generic       7.0.0-30.30
+linux-headers-generic                7.0.0-30.30
+linux-image-7.0.0-30-generic         7.0.0-30.30
+linux-image-generic                  7.0.0-30.30
+```
+
+Both metapackages, and every header package the change was made to remove.
+
+**Live-build installs a kernel of its own, beside the package lists.**
+`lb_chroot_linux-image` writes `"${LB_LINUX_PACKAGES}-${LB_LINUX_FLAVOURS}"`
+into `chroot/root/packages.chroot`, and the derived value differs by mode. Read
+back out of the generated `config/chroot`:
+
+```
+--mode ubuntu   LB_LINUX_PACKAGES="linux"         ->  linux-generic
+--mode debian   LB_LINUX_PACKAGES="linux-image"   ->  linux-image-generic
+```
+
+OS/7 is `--mode ubuntu`. So the package list was adding `linux-image-generic`,
+live-build was adding `linux-generic`, apt satisfied both, and nothing anywhere
+was wrong enough to complain. **A package list cannot remove what live-build adds
+beside it.**
+
+**The fix is one flag**, in `build/config/auto/config`:
+
+```
+--linux-packages "linux-image"
+```
+
+and it is verified the way BUILD-NOTES #36 says to verify every other flag —
+by running `lb config` and reading `config/chroot` back, rather than by
+reasoning about what live-build derives.
+
+**Why this is worth a number.** The change was measured on the pinned archive's
+own dependency graph beforehand, correctly; the graph said exactly what would
+happen *if the package list were the thing that decided*. It was not. The only
+reason this was caught is that the two manifests were diffed rather than the
+build being believed — which is the standing rule in this repository, and this is
+the fourth time it has paid: an exit code is a diagnostic, and so is a package
+list.
+
+**Related:** #13 (hooks that do not run and exit 0), #36 (fourteen mirror flags,
+not five — read `config/bootstrap` back), #39 (`unsquashfs` exits 0 for a file
+that is not there).
+
+## 63. A `zfs clone` does not carry the origin's local properties, and a boot environment IS its properties
+
+**Found 2026-08-25** by spike S5, on the first attempt to activate a cloned boot
+environment.
+
+`New-OS7BootEnvironment` cloned `rpool/ROOT/<be>` and its children and inferred
+what to set: *if the source is `canmount=on`, make the clone `noauto`; otherwise
+leave it alone.* The clone came out like this:
+
+```
+rpool/ROOT/os7_1.0.1.0_202608252123            on        <- source was noauto
+rpool/ROOT/os7_1.0.1.0_202608252123/var        on        <- source was off
+rpool/ROOT/os7_1.0.1.0_202608252123/var/lib    on        <- source was off
+rpool/ROOT/os7_1.0.1.0_202608252123/var/cache  noauto
+```
+
+**A clone is created the way `zfs create` is** — properties come from its place
+in the hierarchy, not from the origin. And **`canmount` does not inherit at
+all**: a dataset that is not told takes the default, which is `on`. So every
+inference about "the source was X, so the clone is X" is wrong, in both
+directions.
+
+Two consequences, and the second is the one that stopped the spike:
+
+* **`canmount=on` with `mountpoint=/`** is a dataset the next `zfs mount -a`
+  would mount over the running root. The same for `/var` and `/var/lib`.
+* **`mountpoint` was `none`**, inherited from `rpool/ROOT`, because the source's
+  `/` was a *local* property and local properties are not copied. GRUB's
+  `10_linux_zfs` finds boot environments by looking for `mountpoint=/`, so **the
+  clone was not a boot environment at all.** `update-grub` listed the origin
+  snapshot and never the clone:
+
+  ```
+  Found linux image: vmlinuz-7.0.0-30-generic in rpool/ROOT/os7_1.0.0.95_202608251919
+  Found linux image: vmlinuz-7.0.0-30-generic in rpool/ROOT/os7_1.0.0.95_202608251919@os7_1.0.1.0_202608252123
+  ```
+
+**What saved the machine was the guard, not the code.**
+`Set-OS7BootEnvironment` reads the generated menu and refuses to point the ESP at
+an environment that has no entry in it. It refused. Without that step the ESP
+would have been aimed at a dataset GRUB cannot boot, and the next start would
+have been a GRUB prompt on a machine that had been working a minute earlier.
+
+**The fix is to stop inferring.** Both properties are read off the source WITH
+THEIR SOURCE and set explicitly on every clone: `mountpoint` where the source
+holds it locally, `canmount` always — mirrored, except that `on` becomes `noauto`
+because a new environment is inactive until it is activated. And the function
+then asks ZFS what it actually holds, because `zfs clone` exiting 0 says nothing
+about either property.
+
+**The check that let it through was worse than the bug.** The harness asserted
+"no dataset in the clone is `canmount=on`" with a regex anchored `^\S+\ton$`
+under `re.MULTILINE` — against text from a **serial console, which ends every
+line with CR LF**. `$` never matched, the assertion was green, and the clone had
+three such datasets. `body_of()` now strips CR once for every check in the file,
+and the assertion counts and prints the offending lines rather than testing for
+absence. Compare #16: the same class of harness bug, from the other end.
+
+## 64. `systemd-cryptsetup` moved to `/usr/bin`, and the TPM handler asked for the old path
+
+**Found 2026-08-25**, the first time TPM2 enrolment was ever actually performed
+(spike S5). Everything worked except the boot:
+
+```
+install log   New TPM2 token enrolled as key slot 1
+              sealed to PCR 7
+              ok       libtss2-esys
+              ok       libtss2-rc
+              ok       systemd-cryptsetup
+luksDump      Tokens:  0: systemd-tpm2   tpm2-hash-pcrs: 7   tpm2-srk: true
+initramfs     scripts/local-top/os7-tpm2      present
+              usr/bin/systemd-cryptsetup      present
+              usr/lib/.../libtss2-*.so.*      present
+ORDER         cryptopensc, os7-tpm2, zfs, cryptroot     <- ours runs BEFORE cryptroot
+```
+
+and the machine asked for the passphrase anyway.
+
+**`scripts/local-top/os7-tpm2` began with**
+
+```sh
+[ -x /usr/lib/systemd/systemd-cryptsetup ] || exit 0
+```
+
+**On resolute (systemd 258) the binary is `/usr/bin/systemd-cryptsetup`.** So the
+handler exited at its second line, every boot, silently — and an early `exit 0`
+in a local-top script is indistinguishable at boot from a machine that has no
+TPM at all.
+
+**Three checks were in place and none of them could see it.** The enrolment step
+greps the initramfs listing for `libtss2-esys`, `libtss2-rc` and
+`systemd-cryptsetup`; the third one matched `usr/bin/systemd-cryptsetup` and
+reported `ok`. The question it asked was "is it in there". The question that
+mattered was "is it at a path the handler looks in", and those are different
+questions about the same string. The grep is now **anchored to exactly the paths
+the handler tries**, the handler's presence is asserted separately, and the
+handler *searches* the candidate paths rather than naming one.
+
+**And the handler now says why it gave up.** Every `exit 0` prints a line to the
+console first. The reason this cost a whole install-and-boot cycle to find is
+that the failing path produced no output at all — the correct diagnosis was
+indistinguishable from "this machine has no TPM", which is a supported state.
+
+**The hypothesis that was wrong, recorded because it was expensive to hold:**
+that our script ran *after* `cryptroot` and therefore found the disk already
+unlocked. `initramfs-tools` builds `scripts/local-top/ORDER` at image-build time
+with `get_prereq_pairs | tsort`, and reasoning about tsort's tie-breaking from a
+Mac (whose `tsort` orders differently) predicted the opposite of the truth. The
+ORDER file inside the shipped initramfs is the answer, and reading it took two
+minutes.
+
+## 65. `$from` IS `-From`: a PowerShell variable name collided with a parameter, and the error named neither
+
+**Found 2026-08-25** by spike S5, twenty-five minutes into a VM run.
+`New-OS7BootEnvironment` took its two snapshots and then died with:
+
+```
+New-OS7BootEnvironment: Cannot convert value "mountpoint" to type "System.Int32".
+Error: "The input string 'mountpoint' was not in a correct format."
+```
+
+The code:
+
+```powershell
+param([string]$Name, [string]$From, [string]$Release)
+...
+    $from = $props[$d.Name]              # a hashtable of this dataset's properties
+    $mp   = if ($from) { $from['mountpoint'] } else { $null }
+```
+
+**PowerShell variable names are case-insensitive, so `$from` is `$From`** — the
+parameter. It is declared `[string]`, and assigning to a type-constrained
+variable *coerces silently*: the hashtable became the string
+`"System.Collections.Hashtable"`. The next line then indexes a **string** with
+the word `mountpoint`, and a string's indexer wants an `Int32`.
+
+So the message is about the right value at the wrong place, names no variable,
+points at a line that is correct in isolation, and describes a type that appears
+nowhere in the function. It also silently corrupted `$From` for everything after
+it — the second half of the loop would have cloned from
+`rpool/ROOT/System.Collections.Hashtable`.
+
+**Two things to carry out of this:**
+
+1. **Never reuse a parameter's name for a local**, in any case. `$From` /
+   `$from` / `$FROM` are one variable, and a typed parameter turns the mistake
+   into a coercion rather than an error.
+2. **This is why `installer/testing/check-be-logic.py` exists.** The bug is
+   three lines of decision logic and it cost a 25-minute install-and-boot cycle
+   to reach. Running the real module against a fake `zfs` finds it in three
+   seconds — and found a second one in the same run, where
+   `(Get-ZfsProperty … -Property mountpoint).Value` trusted that exactly one
+   object comes back.
+
+**Related:** #60 (`Write-Verbose` goes to stdout and breaks a JSON contract) —
+the same shape of PowerShell behaviour that is correct, documented, and lethal
+in a place nobody looks.
+
+## 67. `10_linux_zfs` lists ONE boot environment per machine, unless zsys is installed
+
+**Found 2026-08-25** by spike S5, on its third run, after two other bugs had been
+fixed out of the way.
+
+`Set-OS7BootEnvironment` clones a boot environment, runs `update-grub`, and looks
+for the clone's entry in the generated menu before pointing the machine at it.
+`update-grub` said:
+
+```
+Found linux image: vmlinuz-7.0.0-30-generic in rpool/ROOT/os7_1.0.0.95_202608252004
+Found linux image: vmlinuz-7.0.0-30-generic in rpool/ROOT/os7_1.0.0.95_202608252004@os7_1.0.1.0_202608252207
+Found linux image: vmlinuz-7.0.0-30-generic in rpool/ROOT/os7_1.0.1.0_202608252207
+```
+
+— it found the clone — and the guard still refused, because **the menu contained
+no entry for it.**
+
+In `/etc/grub.d/10_linux_zfs`:
+
+```sh
+if [ "${section}" = "history" ]; then
+    if [ "${iszsys}" != "yes" ] || [ "${iszsys}" = "yes" -a -z "${have_zsys}" ]; then
+        continue
+    fi
+fi
+```
+
+`iszsys` is `zfs get com.ubuntu.zsys:bootfs` on the base dataset. **OS/7 has no
+zsys and never will** — it was retired upstream, and the layout in SETUP-PLAN
+§4.4 deliberately replaces its property-based scheme with structure. So the whole
+`history` section is skipped, and `main` and `advanced` are emitted for exactly
+one dataset per machine-id: the one that sorts first by `last_used`. The running
+environment is handed `date +%s` by the same generator, so **it always sorts
+first, and a second boot environment can never appear in a menu generated from
+the first.**
+
+**Everything downstream of that was correct and useless.** The ESP stub names an
+environment (#M3), `saved_entry` names an entry, submenu paths are joined with
+`>` — all of it works, and none of it can point GRUB at an entry that is not in
+the file.
+
+**So OS/7 generates its own entries.** `Set-OS7BootEnvironment` writes
+`/etc/os7/grub-boot-environments.cfg` and a two-line `/etc/grub.d/09_os7-boot-
+environments` that emits it, then runs `update-grub`. The entries are **built by
+substitution into the running environment's own entry** rather than written from
+scratch: both environments live in the same two pools, so the `search --fs-uuid`
+line, the `insmod`s and the ordering are identical, and only the dataset name and
+the kernel filenames differ. A hand-written menuentry would be a guess about a
+bootloader; a substitution into a known-good one is not.
+
+**Why this matters beyond activation:** with the stock generator the menu holds
+only the active environment, so an environment that fails to boot leaves the
+operator with no way to choose the other one from the console. A rollback that
+requires a working system is not a rollback. OS/7's fragment lists every complete
+environment, every time.
+
+**Two smaller things the same code needed, both PowerShell rather than GRUB:**
+`[regex]::Replace` anchors `^`/`$` to the whole string unless `(?m)` is given —
+without it the id substitution silently replaced nothing and two entries claimed
+the same id — and `$` in a .NET replacement string is a group reference, so a
+literal one is `$$`.
+
+**And one that only the SECOND activation could show.** Once an environment OS/7
+created is the running one, `10_linux_zfs` has no `gnulinux-<dataset>-…` entry
+for it — its only entry is OS/7's own `os7-be-…`. Every lookup over the menu
+therefore has to know both shapes, and the one that had not been taught was the
+*template* lookup, so a rollback refused with "the running system has no entry of
+its own": true of the shape, false of the menu. The lesson is not the line; it is
+that **a check which activates once passes while a rollback cannot run at all**,
+which is why `installer/testing/check-be-logic.py` now performs both.
+
+## 68. In PowerShell the comma binds tighter than `+`
+
+```powershell
+$wanted = @("gnulinux-" + $ds + "-", "os7-be-" + $leaf)
+```
+
+is **one** element, not two. The comma builds `("-", "os7-be-")`, adding an array
+to a string joins it with `$OFS`, and the result is
+
+```
+gnulinux-rpool/ROOT/os7_b- os7-be-os7_b
+```
+
+— a single string with a space in the middle of it, which matches nothing and
+reports no error. Parenthesise each element:
+
+```powershell
+$wanted = @(("gnulinux-" + $ds + "-"), ("os7-be-" + $leaf))
+```
+
+Found 2026-08-25 when a menu lookup that had passed its unit test the hour before
+started returning nothing. It cost three minutes because
+`installer/testing/check-be-logic.py` runs the real module on the host; in a VM
+it would have cost a boot cycle. Same family as #65 and #60: PowerShell doing
+exactly what it documents, somewhere nobody looks.
+
+## 69. Sealing to PCR 7 from the installer seals against the INSTALLER's PCR 7
+
+**Found 2026-08-25**, on the fourth S5 run, once the two bugs in front of it
+(#64, and a busybox `sed` dialect) had been cleared and `cryptsetup` could
+finally say what it thought:
+
+```
+Begin: Running /scripts/local-top ... OS/7 TPM: the TPM would not unlock os7_root
+Please unlock disk os7_root: TPM policy does not match current system state.
+Either system has been tempered with or policy out-of-date: Operation not permitted.
+```
+
+Everything is in place at that point: the token is enrolled in key slot 1 sealed
+to PCR 7, the `libcryptsetup-token-systemd-tpm2.so` handler and the libtss2
+libraries are in the initramfs, `/dev/tpmrm0` is there, the handler runs before
+`cryptroot`, and it calls the invocation spike S4 proved. **The seal simply does
+not match the machine that is trying to open it.**
+
+**PCR 7 is Secure Boot policy, and the two boots do not measure the same one.**
+`TpmEnrolStep` runs during the install, from a live session the harness starts
+with QEMU's `-kernel`/`-initrd` — no EFI loader takes part. The installed machine
+starts from its own ESP through `shim` and GRUB, and shim extends PCR 7 with its
+own certificate measurements. Same TPM, same disk, different PCR 7.
+
+**Spike S4 does not have this problem because it enrols from the INSTALLED
+machine** — `s4-tpm-enroll.sh` runs on a booted system, so the PCR 7 it seals
+against is the PCR 7 that will be presented at the next boot. Nothing in S4 was
+wrong; the installer put the same code in a different world.
+
+**So enrolment cannot be an install-time step.** It has to happen in a boot that
+measures what the target boots measure, which means **first boot**: a one-shot
+service that enrols and disables itself, with the passphrase available to it
+exactly once. That is a Phase 4 mechanism — a unit, a state file, an idempotent
+path, and a decision about where the passphrase lives for the length of one boot
+— and not something to bolt onto the install.
+
+**What the installer should do meanwhile** is say so rather than report a sealed
+key that will not open. The step's own log now carries the enrolment and the
+initramfs checks; the sentence it still owes the operator is that the seal is
+made against the installer's measurements and will be re-made on first boot.
+
+**Related:** #19 and #20 (what the initramfs needs), #64 (the handler's path),
+S4 and S6 in `installer/spikes/`.
+
+## 66. The installer's TPM step had diverged from the spike that proved it
+
+**Found 2026-08-25.** `installer/spikes/s4-tpm-enroll.sh` is named in HANDOFF as
+"the working version" of TPM2 unlock, and it is. `TpmEnrolStep` in `os7-setup`
+was written from the same notes and did something else:
+
+| | spike S4 | the installer step |
+|---|---|---|
+| unlocks with | `cryptsetup open --token-only` | `systemd-cryptsetup attach` |
+| carries into the initramfs | `libcryptsetup-token-systemd-tpm2.so` + four named libtss2 | `systemd-cryptsetup` + a glob of libtss2 |
+| checks the ORDER file | yes, reads it back | no |
+
+**The token handler is the part that matters.** `cryptsetup` loads external LUKS2
+token handlers from a compiled-in directory, `/usr/lib/<triplet>/cryptsetup`, and
+the stock `cryptsetup-initramfs` hook copies none of them — so `--token-only`
+inside the initramfs can only fail, and the installer's initramfs did not have it
+at all. That is exactly what #19 and #20 are about; the step was written against
+the right notes and then took a different route.
+
+**Corrected**: the hook copies the handler and names `libtss2-esys`, `-mu`,
+`-rc` and `-tcti-device` (the last is dlopened by `libtss2-tctildr` to reach
+`/dev/tpmrm0`); the local-top script uses `cryptsetup open --token-only`; and the
+enrolment step asserts the handler, the TCTI backend, the script and the ORDER —
+the last by unpacking the initramfs it just built and reading the file, rather
+than by trusting a name to sort.
+
+**The rule this is an instance of:** *a spike is evidence, not a template* —
+and the corollary that had not been written down until now is that **code which
+replaces a spike has to be diffed against it**, not merely inspired by it. The
+spike boots; the paraphrase had never been booted, and it did not.
+## 70. Git for Windows checks the repo out with CRLF, and the shebang stops naming an interpreter
 
 *Found 2026-08-25, on Windows 11 + WSL2 + Docker Desktop, first attempt at
 `make build-amd64` on that host.*
@@ -2829,7 +3218,7 @@ stops. Reaching `usage()` means `env` resolved the shebang and bash parsed the
 whole file — proven **inside the container that will run it**, and without
 starting a build.
 
-## 63. A local package repository is signed with gnupg 1.x code, and only amd64 has one
+## 71. A local package repository is signed with gnupg 1.x code, and only amd64 has one
 
 *Found 2026-08-25 on Windows 11 + WSL2 + Docker Desktop, native x86_64 — the
 first amd64 build attempted anywhere since the desktop theme landed.*
@@ -2911,7 +3300,7 @@ SESSION-AMD64-FIRST-ISO.md. So `OS7-1.0.0.45-amd64.iso` was built when
 `packages.chroot` was still empty (1528 packages, no theme), and the very change
 that gave amd64 a desktop also gave it a build that could not finish. Between
 those two commits no amd64 build ran anywhere: CI was not dispatched again,
-Apple Silicon is blocked by #12, and Windows was blocked by #62. The trap was
+Apple Silicon is blocked by #12, and Windows was blocked by #70. The trap was
 armed for 50 commits with nothing to spring it.
 
 **What it produced.** `OS7-1.0.0.95-amd64.iso`, 3.26 GB, **1539** packages -
@@ -2933,5 +3322,5 @@ what happens next for this build.
 `wsl.exe -- bash -lc '… ; rc=$?'` and came back `0`, then empty, for builds that
 had failed — the log said `make: *** Error 127` and `out/` was empty. Do not
 trust an exit status marshalled back through `wsl.exe`; ask for the artefact.
-And Git Bash's `sed` strips CR (#62), so neither is a reliable witness on this
+And Git Bash's `sed` strips CR (#70), so neither is a reliable witness on this
 host.

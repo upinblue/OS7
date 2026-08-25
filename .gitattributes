@@ -16,7 +16,7 @@
 #
 # `eol=lf` here OVERRIDES core.autocrlf, so the repo defends itself on any
 # clone rather than depending on how each machine's Git was installed.
-# docs/BUILD-NOTES.md #62.
+# docs/BUILD-NOTES.md #70.
 # =============================================================================
 
 # Everything Git detects as text is LF in the working tree, on every platform.

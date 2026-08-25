@@ -24,7 +24,7 @@ and the second could not have been found until the first was gone.
 
 ---
 
-## #62 — the checkout, not the build
+## #70 — the checkout, not the build
 
 Git for Windows ships `core.autocrlf = true` in its **system** config, so 166
 files landed on disk with CRLF and `#!/usr/bin/env bash\r` stopped naming an
@@ -47,7 +47,7 @@ is the proof that the history was always clean.
 
 ---
 
-## #63 — a local apt repository signed with gnupg 1.x code
+## #71 — a local apt repository signed with gnupg 1.x code
 
 With the shebangs fixed the build ran ~1500 lines further and died in
 `lb_chroot_archives`, first with `env: 'gpg': No such file or directory` and
@@ -65,7 +65,7 @@ theme package landed in `eb5d600`, a **descendant** of `c395e4c`
 still empty — 1528 packages, no theme. The change that gave amd64 a desktop is
 the change that broke its build, and in the 50 commits since, no amd64 build ran
 anywhere: CI was not dispatched again, Apple Silicon is blocked by #12, Windows
-by #62.
+by #70.
 
 **Three ways out, each measured and rejected:**
 

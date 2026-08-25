@@ -9,7 +9,7 @@
 # gnupg >= 2.1 ignores, and its `gpg --batch --gen-key` parameter file has no
 # %no-protection, so gpg 2.x wants a passphrase, finds no tty, and the build
 # dies with "Inappropriate ioctl for device" and then "signing failed: No secret
-# key". BUILD-NOTES #63. Nothing in live-build's configuration turns that off
+# key". BUILD-NOTES #71. Nothing in live-build's configuration turns that off
 # without also turning off verification of the pinned snapshot, and no stage
 # runs early enough to intervene: chroot_archives is stage 52, ahead of
 # chroot_early_hooks (57), chroot_includes (77) and chroot_hooks (78).

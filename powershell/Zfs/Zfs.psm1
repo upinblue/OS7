@@ -53,6 +53,51 @@ $ErrorActionPreference = 'Stop'
 # production signatures.
 $script:ZfsCommandOverride = $null
 
+# The ssh options every remote read is made with (Z14). Not negotiable and not
+# a parameter:
+#
+#   BatchMode=yes      never prompt. A verification that BLOCKS on a password
+#                      prompt is worse than one that fails, because nothing
+#                      times out and nothing says why - the same shape
+#                      BUILD-NOTES #16 records for a serial console.
+#   ConnectTimeout     a target that is off must fail in seconds, not in the
+#                      TCP default.
+#   StrictHostKeyChecking=yes
+#                      the host key must already be known. A backup target
+#                      whose identity is accepted on first sight is a target
+#                      anything on the path can impersonate, and this reads the
+#                      answer to "is my data really over there".
+$script:ZfsSshOptions = @(
+	'-o', 'BatchMode=yes',
+	'-o', 'ConnectTimeout=10',
+	'-o', 'StrictHostKeyChecking=yes')
+
+function ConvertTo-ZfsShellWord {
+	<#
+	.SYNOPSIS
+		Quote one argument for the REMOTE shell (Z14).
+
+	.DESCRIPTION
+		`ssh host zfs list x` does not pass an argv: sshd hands the joined
+		string to a login shell, which re-splits and re-globs it. Locally
+		`& zfs @args` has no shell in it at all, so the two paths do not
+		escape the same and the remote one has to be made explicit.
+
+		ZFS names may contain `:` and `@`, which are shell-safe, but a
+		mountpoint or a property value is not guaranteed to be - and a name that
+		round-trips locally and word-splits remotely is a bug that only appears
+		against one particular target.
+
+		Words matching the safe set are passed through so that a command line in
+		a log or in the self-test stays readable; anything else is single-quoted
+		with the standard `'\''` escape.
+	#>
+	param([Parameter(Mandatory)][AllowEmptyString()][string]$Word)
+
+	if ($Word -match "^[A-Za-z0-9_@%+=:,./-]+$") { return $Word }
+	return "'" + $Word.Replace("'", "'\''") + "'"
+}
+
 function Write-ZfsStep {
 	<#
 	.SYNOPSIS
@@ -88,18 +133,46 @@ function Invoke-ZfsNative {
 	.PARAMETER AllowFail
 		Return the exit code instead of throwing — for the reads where "no such
 		dataset" is an answer rather than a failure.
+
+	.PARAMETER ComputerName
+		Run the command on ANOTHER host, over ssh (Z14). The seam stays one
+		function: `ssh <host> zfs …` is still the only place this module starts
+		a process, and Test-ZfsModule still replaces exactly this.
+
+		READ ONLY BY CONVENTION IS NOT ENOUGH, so it is enforced: the mutating
+		cmdlets do not take -ComputerName at all. What this exists for is
+		answering "is the snapshot actually on the target" from the target's own
+		ZFS rather than from the replication tool's exit code — the repeated bug
+		shape in docs/BUILD-NOTES.md is a program reporting success while the
+		thing it was meant to change did not change, and a backup is the worst
+		possible place to make that mistake.
 	#>
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)][ValidateSet('zfs', 'zpool')][string]$Command,
 		[Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Arguments,
-		[switch]$AllowFail
+		[switch]$AllowFail,
+		[string]$ComputerName,
+		[string[]]$SshArgument
 	)
 
-	$line = "$Command $($Arguments -join ' ')"
+	# LOCAL: argv straight to the process, no shell anywhere.
+	# REMOTE: sshd joins what it is given and hands it to a login shell, so the
+	# remote words are quoted here and the local ones are not. Two paths, and
+	# they escape differently on purpose.
+	$exe = $Command
+	$argv = @($Arguments)
+	if ($ComputerName) {
+		$remote = @($Command) + @($Arguments) |
+			ForEach-Object { ConvertTo-ZfsShellWord -Word $_ }
+		$exe = 'ssh'
+		$argv = @($script:ZfsSshOptions) + @($SshArgument) + @($ComputerName) + $remote
+	}
+
+	$line = "$exe $($argv -join ' ')"
 
 	if ($null -ne $script:ZfsCommandOverride) {
-		$r = & $script:ZfsCommandOverride $Command $Arguments
+		$r = & $script:ZfsCommandOverride $exe $argv
 		if (-not $AllowFail -and $r.ExitCode -ne 0) {
 			throw [System.Management.Automation.RuntimeException]::new(
 				"$line`nexited $($r.ExitCode)`n$($r.StdErr)")
@@ -111,7 +184,7 @@ function Invoke-ZfsNative {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
-		$out = & $Command @Arguments 2> $errFile
+		$out = & $exe @argv 2> $errFile
 		$code = $LASTEXITCODE
 		$err = (Get-Content -Raw -ErrorAction SilentlyContinue $errFile)
 		if (-not $AllowFail -and $code -ne 0) {
@@ -146,10 +219,13 @@ function Invoke-ZfsJson {
 	param(
 		[Parameter(Mandatory)][ValidateSet('zfs', 'zpool')][string]$Command,
 		[Parameter(Mandatory)][string[]]$Arguments,
-		[switch]$AllowFail
+		[switch]$AllowFail,
+		[string]$ComputerName,
+		[string[]]$SshArgument
 	)
 
-	$r = Invoke-ZfsNative -Command $Command -Arguments $Arguments -AllowFail:$AllowFail
+	$r = Invoke-ZfsNative -Command $Command -Arguments $Arguments -AllowFail:$AllowFail `
+		-ComputerName $ComputerName -SshArgument $SshArgument
 	if ($r.ExitCode -ne 0) { return $null }
 	if ([string]::IsNullOrWhiteSpace($r.Output)) { return $null }
 
@@ -360,18 +436,27 @@ function Get-Zpool {
 	.PARAMETER Name
 		Limit to these pools. Without it, every imported pool.
 
+	.PARAMETER ComputerName
+		Ask another host over ssh instead of this one (Z14).
+
 	.EXAMPLE
 		Get-Zpool
 
 	.EXAMPLE
 		Get-Zpool | Where-Object { $_.CapacityPct -gt 80 }
 		Pools worth worrying about. The comparison is why the type matters.
+
+	.EXAMPLE
+		Get-Zpool -ComputerName backup@nas.example.net
+		The pools on a replication target, as objects.
 	#>
 	[CmdletBinding()]
 	[OutputType('OS7.Zfs.Pool')]
 	param(
 		[Parameter(Position = 0, ValueFromPipelineByPropertyName)]
-		[string[]]$Name
+		[string[]]$Name,
+		[string]$ComputerName,
+		[string[]]$SshArgument
 	)
 
 	process {
@@ -381,7 +466,8 @@ function Get-Zpool {
 		$zargs = @('list', '-j', '--json-int')
 		if ($Name) { $zargs += $Name }
 
-		$j = Invoke-ZfsJson -Command zpool -Arguments $zargs
+		$j = Invoke-ZfsJson -Command zpool -Arguments $zargs `
+			-ComputerName $ComputerName -SshArgument $SshArgument
 		if ($null -eq $j -or -not $j.Contains('pools')) { return }
 
 		foreach ($key in $j['pools'].Keys) {

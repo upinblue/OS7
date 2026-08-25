@@ -475,7 +475,7 @@ install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
 # Built straight into the staged tree rather than into the source tree: it is a
 # build artefact, and build/config/ is checked in.
 #
-# NOT config/packages.chroot, WHICH IS WHERE THIS USED TO GO. BUILD-NOTES #63.
+# NOT config/packages.chroot, WHICH IS WHERE THIS USED TO GO. BUILD-NOTES #71.
 # A non-empty packages.chroot makes lb_chroot_archives build a local apt
 # repository in the chroot and sign it, and its signing code is gnupg 1.x:
 # it passes --secret-keyring/--keyring, which gnupg >= 2.1 IGNORES, and its
@@ -509,7 +509,7 @@ fi
 
 # GUARD: nothing may reach config/packages.chroot. If a later change puts a .deb
 # back there, live-build resurrects the local repository and the build dies in
-# gnupg with a message that names neither this file nor the theme (#63).
+# gnupg with a message that names neither this file nor the theme (#71).
 shopt -s nullglob
 STRAY_LOCAL_PKGS=( "${WORK}"/config/packages.chroot/* "${WORK}"/config/packages/* )
 shopt -u nullglob
@@ -517,7 +517,7 @@ if (( ${#STRAY_LOCAL_PKGS[@]} > 0 )); then
 	echo "!!! ${#STRAY_LOCAL_PKGS[@]} file(s) staged into config/packages.chroot:" >&2
 	for _p in "${STRAY_LOCAL_PKGS[@]}"; do echo "!!!   ${_p}" >&2; done
 	echo "!!! live-build would build and SIGN a local apt repo, and its signing" >&2
-	echo "!!! code cannot work with gnupg 2.x. BUILD-NOTES #63." >&2
+	echo "!!! code cannot work with gnupg 2.x. BUILD-NOTES #71." >&2
 	exit 1
 fi
 
@@ -552,7 +552,7 @@ lb config
 # ---------------------------------------------------------------------------
 # GUARD: did gnupg actually reach the base system?
 #
-# auto/config exports LB_BOOTSTRAP_INCLUDE=gnupg (BUILD-NOTES #63, and see the
+# auto/config exports LB_BOOTSTRAP_INCLUDE=gnupg (BUILD-NOTES #71, and see the
 # comment there for why it is kept now that hook 0085 has replaced the local
 # package repository). The export is not a `lb config` flag - there is none - so
 # nothing on the command line proves it took, and lb_config SOURCES an existing
@@ -565,10 +565,10 @@ lb config
 if ! grep -qE '^LB_BOOTSTRAP_INCLUDE="[^"]*gnupg' config/bootstrap; then
 	echo "!!! LB_BOOTSTRAP_INCLUDE did not survive into config/bootstrap:" >&2
 	grep '^LB_BOOTSTRAP_INCLUDE=' config/bootstrap >&2 || echo "!!!   (no such line at all)" >&2
-	echo "!!! see auto/config and BUILD-NOTES #63." >&2
+	echo "!!! see auto/config and BUILD-NOTES #71." >&2
 	exit 1
 fi
-echo "    base system includes gnupg (config/bootstrap) - BUILD-NOTES #63"
+echo "    base system includes gnupg (config/bootstrap) - BUILD-NOTES #71"
 
 echo ">>> Running live-build (needs network access to the Ubuntu archives)"
 lb build 2>&1 | tee "${WORK}/build-${ARCH}.log"

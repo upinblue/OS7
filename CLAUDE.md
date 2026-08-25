@@ -49,11 +49,25 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 ./installer/spikes/run-s4.py all          # Secure Boot + TPM2 unlock (budget 1h)
 ./installer/spikes/run-s6.py all          # TPM2 unlock across an update
 ./installer/spikes/run-s7.py all          # is the version number true (two builds)
+./installer/testing/run-s5.py all         # S5: install WITH A TPM, boot with no
+                                          #   passphrase typed, then clone a boot
+                                          #   environment, activate it, roll back
+./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, 3s
 
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
 ./installer/testing/check-layering.py     # Z1: does OS7 still reach ZFS directly
 ```
+
+**Boot environments are real since 2026-08-25**, and none of it is a ZFS
+operation. `Get-/New-/Set-/Remove-OS7BootEnvironment` and `Restore-OS7` live in
+`powershell/OS7/`. Three facts decide what a machine boots, all measured:
+**OS/7 writes its own menu** (`/etc/grub.d/09_os7-boot-environments`, one entry
+per environment) because `10_linux_zfs` emits only one without `zsys` (#67); a
+file on the **ESP** names which environment's menu is read
+(`set prefix=($root)'/BOOT/<be>@/grub'`); and `saved_entry` in that
+environment's `grubenv` names the entry. No ZFS property takes part.
+[docs/SESSION-BOOT-ENVIRONMENTS.md](docs/SESSION-BOOT-ENVIRONMENTS.md).
 
 **Two PowerShell modules, and the direction between them matters.**
 `powershell/Zfs/` is the generic ZFS layer — it knows nothing about OS/7 and
@@ -162,6 +176,42 @@ the ones a fresh session hits first.
   was unreachable for a whole commit. `--unattend`, `--storage-only` and the
   screen-walking harness each missed it for a different reason. The whole plan is
   checked once, at `ExecuteScreen.Start`.
+- **#66 — code that replaces a spike must be DIFFED against it.** The installer's
+  TPM step was written from the same notes as `s4-tpm-enroll.sh` and took a
+  different route: no LUKS2 token handler in the initramfs, and
+  `systemd-cryptsetup attach` instead of `cryptsetup open --token-only`. The
+  spike boots; the paraphrase never had.
+- **#69 — sealing to PCR 7 from the installer seals against the INSTALLER's
+  PCR 7.** The live session boots with `-kernel`; the installed machine boots
+  through shim, which extends PCR 7. Same TPM, different measurement, and
+  `cryptsetup` says "TPM policy does not match current system state". Enrolment
+  belongs on FIRST BOOT, which is why spike S4 worked and the install step does
+  not.
+- **#67 — `10_linux_zfs` lists ONE boot environment per machine without zsys.**
+  Its `history` section is zsys-only, and the running environment always sorts
+  first, so a second one can never appear in a menu generated from the first.
+  OS/7 writes its own entries (`/etc/grub.d/09_os7-boot-environments`), built by
+  substitution into the running entry.
+- **#65 — `$from` IS the `-From` parameter.** PowerShell variable names are
+  case-insensitive and a typed parameter coerces silently, so a hashtable
+  assigned to `$from` became the string "System.Collections.Hashtable". Never
+  reuse a parameter name for a local. `installer/testing/check-be-logic.py`
+  finds this class in seconds instead of a VM cycle.
+- **#64 — an early `exit 0` in an initramfs script is invisible.** The TPM
+  handler asked for `/usr/lib/systemd/systemd-cryptsetup`, which is
+  `/usr/bin/systemd-cryptsetup` on resolute, and gave up silently on every boot
+  while three checks reported it present. Search for a binary, never name it,
+  and say why you gave up.
+- **#63 — a `zfs clone` does not carry the origin's local properties**, and
+  `canmount` does not inherit at all, so a cloned boot environment comes out
+  `canmount=on mountpoint=none` — mountable over the running root, and invisible
+  to `10_linux_zfs`, which finds boot environments by `mountpoint=/`. Set both
+  explicitly and ask ZFS back.
+- **#62 — the package lists do not decide which kernel is installed.** In
+  `--mode ubuntu` live-build derives `LB_LINUX_PACKAGES="linux"` and installs
+  `linux-generic` beside whatever the lists name, so swapping the list entry
+  removed nothing and the build was green. Set `--linux-packages` in
+  `auto/config`, and read `config/chroot` back — the same rule as #36.
 
 ---
 
