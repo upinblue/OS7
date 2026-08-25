@@ -232,7 +232,12 @@ def write_psf2(path, glyphs, codepoints, W, H):
             for bit in row:
                 v = (v << 1) | bit
             out += (v << (stride * 8 - W)).to_bytes(stride, "big")
-    out += b"".join(chr(cp).encode("utf-8") + b"\xff" for cp in codepoints)
+    # One entry per POSITION, in order. A position with no codepoint gets an
+    # empty sequence — legal PSF2, and it is what keeps every later position at
+    # the index build() computed for it. Dropping the empty entries instead
+    # would shift the whole table by however many slots are unused.
+    out += b"".join((b"" if cp is None else chr(cp).encode("utf-8")) + b"\xff"
+                    for cp in codepoints)
     with open(path, "wb") as f:
         f.write(out)
     return len(out)
@@ -247,8 +252,52 @@ def build(font, out, W, H, hinting=True):
             seen.add(cp)
             wanted.append(cp)
 
-    codepoints, glyphs, synthesised, skipped = [], [], [], []
+    # ---------------------------------------------------------------------
+    # ASCII SITS AT ITS OWN POSITION. This is not tidiness — `setfont` refuses
+    # the font otherwise:
+    #
+    #     setfont: ERROR setfont.c:142 try_loadfont: font position 32 is nonblank
+    #     setfont: ERROR setfont.c:154 try_loadfont: background will look funny
+    #     exit 71
+    #
+    # kbd checks that glyph POSITION 32 is blank, because the console uses it as
+    # the erase character. Packing the codepoints in table order put U+0040 '@'
+    # there and the kernel would not load the font at all — while `psf.py verify`
+    # passed everything, because it asks about coverage, shapes and tiling and
+    # this is a question about POSITIONS. BUILD-NOTES #56.
+    #
+    # Laying ASCII out at position == codepoint fixes it structurally rather
+    # than by special-casing one slot: 32 is U+0020 and a space is blank by
+    # construction. It is also the classic layout, so anything that renders
+    # without consulting the Unicode table still gets ASCII right.
+    #
+    # Positions 0-31 are left empty. 512 - 32 = 480 slots remain against ~408
+    # glyphs, so the cap (L19) is still not close to binding.
+    # ---------------------------------------------------------------------
+    ASCII_LO, ASCII_HI = 0x20, 0x7E
+    slots = {}
+    rest = []
     for cp in wanted:
+        if ASCII_LO <= cp <= ASCII_HI:
+            slots[cp] = cp          # position == codepoint
+        else:
+            rest.append(cp)
+    nxt = ASCII_HI + 1
+    for cp in rest:
+        slots[cp] = nxt
+        nxt += 1
+
+    ordered = sorted(slots, key=lambda cp: slots[cp])
+    codepoints, glyphs, synthesised, skipped = [], [], [], []
+    blank = [[0] * W for _ in range(H)]
+    for pos in range(max(slots.values()) + 1 if slots else 0):
+        cp = next((c for c in ordered if slots[c] == pos), None)
+        if cp is None:
+            # An unused slot below ASCII. It must still exist so the positions
+            # of everything after it are the ones computed above.
+            codepoints.append(None)
+            glyphs.append(blank)
+            continue
         bm = blocks(cp, W, H)
         if bm is not None:
             synthesised.append(cp)
@@ -256,11 +305,18 @@ def build(font, out, W, H, hinting=True):
             # #54: rasterising this would map it to .notdef and every coverage
             # check downstream would then pass on a hollow rectangle.
             skipped.append(cp)
+            codepoints.append(None)
+            glyphs.append(blank)
             continue
         else:
             bm = glyph(cp)
         codepoints.append(cp)
         glyphs.append(bm)
+
+    if glyphs and any(any(r) for r in glyphs[32]):
+        sys.stderr.write("!!! glyph position 32 is not blank; setfont would "
+                         "refuse this font (BUILD-NOTES #56)\n")
+        sys.exit(1)
 
     if len(glyphs) > psfmod.PSF_MAX_GLYPHS:
         sys.stderr.write(f"!!! {len(glyphs)} glyphs exceeds the PSF cap of "
@@ -278,10 +334,12 @@ def build(font, out, W, H, hinting=True):
         sys.exit(1)
 
     size = write_psf2(out, glyphs, codepoints, W, H)
-    print(f"    {out}  {W}x{H}  {len(glyphs)} glyphs  {size} bytes")
+    mapped = sum(1 for c in codepoints if c is not None)
+    print(f"    {out}  {W}x{H}  {len(glyphs)} positions, {mapped} mapped  {size} bytes")
     print(f"      baseline row {baseline}, {len(synthesised)} synthesised, "
           f"{len(skipped)} skipped"
-          + (" (" + " ".join(f"U+{c:04X}" for c in skipped) + ")" if skipped else ""))
+          + (" (" + " ".join(f"U+{c:04X}" for c in skipped) + ")" if skipped else "")
+          + f"; position 32 blank (setfont, #56)")
     return len(glyphs)
 
 
