@@ -30,7 +30,7 @@ release comes from* — and corrects one step of its §4.2 (§9 below).
 |---|---|
 | Fewer packages on an Ubuntu base | **Yes — by selection, never by re-cutting packages.** Azure Linux builds every package from source and owns its archive; OS/7 chooses from Ubuntu's. That is a different kind of control, and pretending otherwise would commit OS/7 to becoming a distribution. |
 | How much is actually there | **Measured: 2.86 GiB installed, 549 packages** (arm64, server-only, `OS7-1.0.0.46`). Four decisions take it to **1.19 GiB**. §2, §4. |
-| Does that shrink the package *count* too | **No — and this matters.** The same four decisions remove 58 % of the bytes and 6 % of the packages. Size and count are different problems with different levers, and for a security-curated product the count is the one that governs attack surface and CVE volume. §2.3. |
+| Does that shrink the package *count* too | **No — and this matters.** The same four decisions remove 58 % of the bytes and 6 % of the packages. Size, count and the kernel's 8544-module surface are three different problems with three different levers, and for a security-curated product it is the last two that govern attack surface and CVE volume. §2.3, §4.5. |
 | Is the version scheme sound | **Yes, and it is already decided** (U2/U3/U4) **and proven** — spike S7 built twice from one pin and got identical package sets. The requested `1.0.1.<build>` is field-for-field the scheme already locked. |
 | So what is missing | **The delivery half, entirely.** No OS/7 package repository, no signing, no release index, and — the sharpest one — **no OS/7-specific file on a running system belongs to any package**, so no update can reach them. §5, §6. |
 | Would `apt full-upgrade` deliver a curated release | **No.** It converges *versions*, not *membership*. A machine installed at 1.0.0 keeps what 1.0.5 dropped, and two differently-shaped systems then report one number. §5. |
@@ -104,7 +104,7 @@ measurement proving `APT::Install-Recommends` is on in this build — no flag ha
 to be read to know it. `ubuntu-standard` says the same thing a second time: all
 27 of its `Depends` **and all 22 of its `Recommends`** are in the image.
 
-### 2.3 Size and count are two different problems
+### 2.3 Size, count and module surface are three different problems
 
 Applying every size decision in §4:
 
@@ -123,13 +123,15 @@ This matters for the reason the product exists. Bytes are a download and a disk;
 second. `telnet`, `ftp`, `wget`, `command-not-found` and `plymouth` are each
 under a megabyte and each is a line in a vulnerability report.
 
-So the two goals need saying separately, and they are not achieved by the same
-work:
+So the goals need saying separately, because they are not achieved by the same
+work — and the third one is not reached by package curation at all:
 
 * **Size** — four decisions, §4.1–§4.3, mostly mechanical.
 * **Count** — the `ubuntu-standard` / Recommends layer, §4.4, which is many small
   judgements rather than one big one, and where the risk of removing something a
   running system quietly needs is real.
+* **Neither** — the kernel module surface, §4.5. 8544 modules inside one package,
+  which no package decision reaches at all.
 
 ---
 
@@ -248,7 +250,40 @@ needs a boot behind every removal rather than a table.
 `python3`**. Python is in the image because of ZFS, not by accident. 51 packages,
 50.9 MiB, and they stay.
 
-### 4.5 The floor — what cannot come out
+### 4.5 Kernel modules are a third axis, and packages do not reach it
+
+**Measured 2026-08-25 by the Phase 3b session, by reading the squashfs of
+`OS7-1.0.0.46-arm64` — not from the package manifest:**
+
+| | |
+|---|---|
+| kernel modules in the image | **8544** |
+| wireless driver modules | **197**, across 20 vendor directories (`ath`, `intel`, `broadcom`, `marvell`, `mediatek`, `ralink`, `realtek`, `ti`, …) |
+| `cfg80211.ko.zst`, `mac80211.ko.zst` | present |
+| `mac80211_hwsim.ko.zst` | present |
+
+That measurement was taken to check a plausible inference, and it **refuted**
+it. The manifest lists `linux-modules-7.0.0-30-generic` and **no
+`linux-modules-extra`**, and on older Ubuntu layouts the wireless drivers live in
+`-extra`. The obvious reading — this image has wireless firmware and no wireless
+drivers — is wrong for this release: the drivers are in `linux-modules`.
+
+**The rule worth keeping is the general one: the package list is not the module
+list.** It is the same error class as the `mac80211_hwsim` limit in §15, running
+the other way. There, a test proves less than it appears to; here, a package list
+is credited with more than it says. Both are answered the same way — ask the
+thing itself, which is why this number came out of the squashfs and not out of a
+`Depends` field.
+
+**What it means for curation:** 8544 modules are an attack surface that **no
+package decision in §4 touches**. `linux-modules` is one package; CL1 applies
+exactly here — OS/7 takes it whole or not at all. If the module surface is to be
+reduced, the lever is module blacklisting and a trimmed initramfs, which is a
+different mechanism with a different failure mode: a wrongly blacklisted module
+does not fail at build time, it fails at boot on the one machine that needed it.
+Open question 7 (§14).
+
+### 4.6 The floor — what cannot come out
 
 * **`ubuntu-minimal`'s closure**: dpkg, apt, systemd, netplan, sudo, tzdata,
   locales. Below this there is no Ubuntu left to be compatible with.
@@ -573,6 +608,7 @@ the one place where this architecture is straightforwardly better than upstream'
 | CL6 | **A signing key is a permanent operational responsibility**, and its compromise is worse than any bug this project can ship. | C7a. Key custody answered before the first published repo, not after. |
 | CL7 | **A signed package set with an unsigned index permits a replay** of an older, validly-signed release. | Sign the release index; use apt's `Valid-Until`; treat freshness as separate from authenticity (§6.3). |
 | CL8 | **Migrations run twice** whenever a rollback is followed by a re-update. | Idempotence is a requirement, not a quality goal (§9). |
+| CL10 | **Package curation does not reach the kernel module surface** — 8544 modules ship inside one package (§4.5). | A different mechanism entirely: blacklisting and initramfs trimming, whose failures appear at boot on one machine rather than at build time. Out of scope here; open question 7. |
 | CL9 | **`linux-image-generic` instead of `linux-generic` is unproven** — measured on the dependency graph, not on a booted machine. | `check-image.py` plus `run-phase3.py boot` before it is believed. BUILD-NOTES' rule: an exit code is a diagnostic, not evidence. |
 
 ---
@@ -611,6 +647,10 @@ the one place where this architecture is straightforwardly better than upstream'
 6. **Ubuntu Pro / ESM / Livepatch** (UL7). C8 reduces the exposure to four
    packages but does not remove the question — Livepatch in particular changes a
    running kernel underneath a version number that claims to describe it.
+7. **Is the kernel module surface in scope at all?** 8544 modules (§4.5), one
+   package, no apt lever. Reducing it is defensible for a hardened product and
+   its failure mode is a machine that does not boot. Not a v1 question, but it
+   should be answered deliberately rather than by never asking.
 
 ---
 
@@ -635,7 +675,9 @@ Stated so nobody reads a number here as covering more than it does.
   simulates the hardware layer away and loads no firmware — so it proves Setup's
   scan and association path works and proves **nothing** about whether a real
   wireless chip comes up in this image. That session flagged this itself, against
-  its own interest.
+  its own interest. The 197 wireless drivers measured in §4.5 do not change that:
+  they are a statement about what the image contains, not about a chip that ever
+  came up. Both are measurements; neither is a field test.
 
 Reproducing §2: the join script is in this session's scratchpad
 (`measure-pkgs.py`). It is not in the repo; if these numbers are going to be
