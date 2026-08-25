@@ -99,6 +99,12 @@ plan's **S5**. Phase 3 is done (below); what it leaves is:
   [SESSION-NETWORK-ACCOUNTS-PLAN.md](SESSION-NETWORK-ACCOUNTS-PLAN.md).
   Run it with `./installer/testing/run-phase3b-network.py`.
 
+  **`./installer/testing/run-phase3b-network.py all` is green end to end** as of
+  2026-08-25 — install, boot from the disk alone, and a real WPA2-PSK
+  association over `mac80211_hwsim`. Three of its assertions could not fail (or
+  could not pass) until that run; see [SESSION-INSTALL-LOG.md](SESSION-INSTALL-LOG.md) §7
+  and BUILD-NOTES #16.
+
   **Still owed: M3, the amd64 half.** M1 is one machine, arm64, in QEMU. On amd64
   `network-manager` is installed on the GUI product and would have brought the
   link up by itself — which is exactly why nobody saw this.

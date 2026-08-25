@@ -206,6 +206,11 @@ Then the only evidence that counts — `run-phase3b-network.py install`, then
 16 528 bytes, 179 lines, 15 steps — `Generating the host identifier` through
 `Saving the installation record`. Built from `OS7-1.0.0.69-arm64.iso`.
 
+**Re-run as `run-phase3b-network.py all` once §7's harness bugs were fixed, and
+the whole suite is green in one sitting** — install, boot and wifi in sequence,
+on a disk `install` had just created rather than one left over from an earlier
+run. Same 16 528 bytes, same 15 steps, same 2 redactions. Roughly 45 minutes.
+
 The last line is the negative control. Without it every assertion above could be
 passing on a file that arrived some other way, and the claim being made is
 precisely that the live one is gone. It is also what would catch §2.2 coming back.
@@ -298,8 +303,9 @@ None of it touched the product. Added to BUILD-NOTES #16, which had the rule for
 keeps coming back.
 
 **`wifi` wipes the installed disk.** `lab.prepare()` recreates `target.qcow2`, so
-a `boot` after a `wifi` needs a fresh `install` first. The §5 results above were
-taken before this ran.
+a `boot` after a `wifi` needs a fresh `install` first. That is why `all` runs
+install, boot, wifi in that order and not another — worth knowing before running
+the phases by hand and wondering where the machine went.
 
 ---
 
