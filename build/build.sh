@@ -57,18 +57,48 @@ source "${RELEASE_CONF}"
 
 REPO="$(cd "${HERE}/.." && pwd)"
 
-# BUILD = commit count. `git rev-list` needs the repo marked safe: /work is a
-# bind mount owned by the host user and git refuses to read a repository it
-# thinks belongs to somebody else, with an error that looks like corruption.
+# BUILD = commit count (release plan §3.3), and there are two ways to learn it.
+#
+#   HANDED IN by the caller, in OS7_VERSION_BUILD / OS7_GIT_COMMIT /
+#     OS7_GIT_DIRTY. This is the NORMAL path: the Makefile and
+#     scripts/build-amd64-vm.sh both run scripts/os7-source-facts.sh on the HOST
+#     and pass the answers, because neither this container nor that VM can ask
+#     git for itself - the VM has no .git (it is excluded from the copy) and a
+#     bind-mounted git WORKTREE has a .git FILE pointing outside the mount.
+#
+#   ASKED HERE, when nothing was handed in and /work is a repository this
+#     container can actually read - a plain checkout, built by hand.
+#
+# `git rev-list` needs the repo marked safe: /work is a bind mount owned by the
+# host user and git refuses to read a repository it thinks belongs to somebody
+# else, with an error that looks like corruption.
 GIT="git -c safe.directory=${REPO} -C ${REPO}"
-if [[ -n "${OS7_VERSION_BUILD:-}" && -n "${OS7_GIT_COMMIT:-}" ]]; then
-	# HANDED IN BY THE CALLER. scripts/build-amd64-vm.sh copies the tree into a
-	# QEMU VM with --exclude=.git, so git inside the VM would answer "not a
-	# repository" and every amd64 ISO would be version x.y.z.0 with
-	# reproducible=false - permanently, and for a reason that has nothing to do
-	# with the build. The host computes the three values and passes them in.
+if [[ -n "${OS7_VERSION_BUILD:-}" || -n "${OS7_GIT_COMMIT:-}" ]]; then
+	# Half a hand-in is a caller bug, and a silent one: with only the commit,
+	# BUILD falls back to 0 and the ISO still gets a well-formed name. Say it.
+	if [[ -z "${OS7_VERSION_BUILD:-}" || -z "${OS7_GIT_COMMIT:-}" ]]; then
+		echo "!!! only half the source facts were handed in:" >&2
+		echo "!!!   OS7_VERSION_BUILD='${OS7_VERSION_BUILD:-}'  OS7_GIT_COMMIT='${OS7_GIT_COMMIT:-}'" >&2
+		echo "!!! set both, or neither. scripts/os7-source-facts.sh prints all three." >&2
+		exit 1
+	fi
 	OS7_GIT_DIRTY="${OS7_GIT_DIRTY:-true}"
-	echo "    source facts supplied by the caller (no .git in this tree)"
+
+	# Check what was handed in before building a version out of it. BUILD is
+	# interpolated into the version string and into the ISO filename, and hook
+	# 0075 compares OS7_GIT_DIRTY against the literal "true" - so "yes" would
+	# read as CLEAN and the manifest would claim reproducible=true. A value that
+	# is merely non-empty is not a value that is right.
+	if [[ ! "${OS7_VERSION_BUILD}" =~ ^[0-9]+$ ]]; then
+		echo "!!! OS7_VERSION_BUILD='${OS7_VERSION_BUILD}' is not a number" >&2; exit 1
+	fi
+	if [[ ! "${OS7_GIT_COMMIT}" =~ ^[0-9a-f]{7,40}$ ]]; then
+		echo "!!! OS7_GIT_COMMIT='${OS7_GIT_COMMIT}' is not a commit hash" >&2; exit 1
+	fi
+	if [[ ! "${OS7_GIT_DIRTY}" =~ ^(true|false)$ ]]; then
+		echo "!!! OS7_GIT_DIRTY='${OS7_GIT_DIRTY}' is neither true nor false" >&2; exit 1
+	fi
+	echo "    source facts supplied by the caller"
 elif OS7_GIT_COMMIT="$(${GIT} rev-parse --short=12 HEAD 2>/dev/null)"; then
 	OS7_VERSION_BUILD="$(${GIT} rev-list --count HEAD)"
 	if [[ -n "$(${GIT} status --porcelain 2>/dev/null)" ]]; then
@@ -76,11 +106,50 @@ elif OS7_GIT_COMMIT="$(${GIT} rev-parse --short=12 HEAD 2>/dev/null)"; then
 	else
 		OS7_GIT_DIRTY=false
 	fi
+elif [[ -e "${REPO}/.git" ]]; then
+	# There IS a repository here and git cannot read it. That is not the same as
+	# there being no repository, and it must not produce an ISO.
+	#
+	# The known cause is a git WORKTREE: ${REPO}/.git is a FILE holding
+	#     gitdir: /Users/…/OS7/.git/worktrees/<name>
+	# an absolute HOST path that is not inside the bind mount, so git in here
+	# reports "not a git repository" about a directory that exists perfectly well
+	# outside. Falling through to BUILD=0 is what this script used to do, and the
+	# result was an ISO called OS7-<major>.<minor>.<patch>.0-<arch>.iso: a name
+	# that identifies no source, collides with every other build made the same
+	# way, and takes over the out/os7-<arch>.iso symlink the harnesses open.
+	# (docs/BUILD-NOTES.md #43.)
+	#
+	# Print what GIT said, not what this script guesses: "not a git repository"
+	# (the worktree case), "dubious ownership" and "does not have any commits yet"
+	# need three different fixes, and a message that picked one would send the
+	# next person after the wrong one.
+	GIT_WHY="$(${GIT} rev-parse --git-dir 2>&1 >/dev/null || true)"
+	[[ -n "${GIT_WHY}" ]] || GIT_WHY="$(${GIT} rev-parse HEAD 2>&1 >/dev/null || true)"
+	[[ -n "${GIT_WHY}" ]] || GIT_WHY="git gave no reason"
+	echo "!!! ${REPO}/.git exists, but git here cannot answer for the source:" >&2
+	echo "!!!   ${GIT_WHY}" >&2
+	if [[ -f "${REPO}/.git" ]]; then
+		echo "!!! ${REPO}/.git is a FILE - this is a git worktree, and it says:" >&2
+		echo "!!!   $(head -n1 "${REPO}/.git")" >&2
+		echo "!!! that path is outside this container. Build through the Makefile," >&2
+		echo "!!! which asks git on the HOST and hands the answers in:" >&2
+		echo "!!!   make build-${ARCH}" >&2
+	else
+		echo "!!! build through the Makefile, which asks git on the HOST:" >&2
+		echo "!!!   make build-${ARCH}" >&2
+	fi
+	echo "!!! or set OS7_VERSION_BUILD, OS7_GIT_COMMIT and OS7_GIT_DIRTY yourself" >&2
+	echo "!!!   eval \"\$(scripts/os7-source-facts.sh)\"" >&2
+	echo "!!! refusing to build an ISO whose version identifies nothing." >&2
+	exit 1
 else
-	# Neither a git checkout nor told. Say so in the manifest rather than
-	# inventing a number: a build that cannot identify its source must not claim
-	# to, and `reproducible: false` is how it says so where somebody will read it.
-	echo "    NOTE: no git repository at ${REPO} and no OS7_VERSION_BUILD - BUILD field is 0"
+	# No repository at all, and nothing handed in: an exported tarball, which is a
+	# legitimate thing to build from. Say so in the manifest rather than inventing
+	# a number - a build that cannot identify its source must not claim to, and
+	# `reproducible: false` is how it says so where somebody will read it.
+	echo "    NOTE: ${REPO} is not a git repository and no source facts were handed in"
+	echo "    NOTE: BUILD field is 0 and the manifest will record reproducible=false"
 	OS7_VERSION_BUILD=0
 	OS7_GIT_COMMIT="unknown"
 	OS7_GIT_DIRTY=true

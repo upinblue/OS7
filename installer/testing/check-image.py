@@ -188,6 +188,23 @@ def main() -> None:
 
     version = rel.get("version", "")
     check(bool(version) and version != "0.0.0.0", "the image knows its version", version)
+
+    # The BUILD field, checked SEPARATELY — because "1.0.0.0" passes the line
+    # above while meaning the build could not read the repository at all. Every
+    # ISO built from a git WORKTREE carried exactly that until 2026-08-24, and
+    # this tool looked straight at one and reported that the image knew its
+    # version (BUILD-NOTES #43).
+    #
+    # BUILD is `git rev-list --count HEAD` (§3.3), which is at least 1 for any
+    # repository that has a commit — so 0 is the "could not tell" value and can
+    # never be a release. The commit is checked alongside it because build.sh
+    # sets the two together: one without the other means they came from two
+    # different places.
+    build_field = version.split(".")[-1] if version.count(".") == 3 else ""
+    commit = (rel.get("source") or {}).get("commit", "")
+    check(build_field not in ("", "0") and commit not in ("", "unknown"),
+          "the image knows what source it was built from",
+          f"BUILD={build_field or '?'} commit={commit or '?'}")
     check(rel.get("channel") not in (None, "", "unknown"), "channel", rel.get("channel", ""))
     check(rel.get("architecture") == arch, "architecture", str(rel.get("architecture")))
     snapshot = (rel.get("base") or {}).get("archive_snapshot", "")
@@ -204,7 +221,7 @@ def main() -> None:
     # A flat FAIL here would make this tool useless on every development build,
     # which is the same as not having it.
     repro = rel.get("reproducible") is True
-    src = (rel.get("source") or {}).get("commit", "?")
+    src = commit or "?"
     if rel.get("channel") == "stable":
         check(repro, "a stable build is reproducible", f"commit={src}")
     elif repro:

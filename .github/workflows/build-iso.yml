@@ -27,7 +27,14 @@ jobs:
     # Standard x86_64 hosted runner — native, no emulation.
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 - the BUILD field of the version is
+      # `git rev-list --count HEAD` (RELEASE-AND-UPDATE-PLAN.md §3.3), and the
+      # default depth-1 checkout would answer 1 on every run, forever, without
+      # anything looking wrong. scripts/os7-source-facts.sh refuses a shallow
+      # clone rather than counting one.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Build ISO
         run: make build-amd64
@@ -48,7 +55,10 @@ jobs:
     # `resolute` inside the build container regardless.
     runs-on: ubuntu-24.04-arm
     steps:
+      # fetch-depth: 0 - see the amd64 job.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Build ISO
         run: make build-arm64

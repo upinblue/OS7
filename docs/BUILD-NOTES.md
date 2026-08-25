@@ -1312,3 +1312,101 @@ what is still mounted below the target AND which processes have a cwd or root
 inside it. "Pool is busy" names no culprit, and the two candidates need different
 fixes — and `-f` does not help against a mount held in another namespace, which
 is what the chroot's `unshare` exists to avoid (#18).
+
+## 43. A git WORKTREE has no repository inside the build container — and the build blamed the wrong thing
+
+Found on 2026-08-24, building from `.claude/worktrees/<name>` rather than from
+the main checkout. `make build-arm64` produced `out/OS7-1.0.0.0-arm64.iso`:
+BUILD `0`, commit `unknown`, `"reproducible": false` — from a tree whose HEAD was
+`1d764e0ed080`, commit count 34, and clean.
+
+`build/build.sh` derives the BUILD field (release plan §3.3) by asking git inside
+the container, across the bind mount:
+
+```
+git -c safe.directory=/work -C /work rev-list --count HEAD
+```
+
+In a normal checkout `/work/.git` is a directory and that works. In a **git
+worktree** `.git` is a FILE holding a single line:
+
+```
+gitdir: /Users/…/OS7/.git/worktrees/<name>
+```
+
+— an absolute path to the *main* repository's admin directory, which is not under
+the bind mount. Measured in the build container:
+
+```
+$ ls -la /work/.git
+-rw-r--r-- 1 root root 89 Aug 24 18:50 /work/.git
+
+$ git -c safe.directory=/work -C /work rev-parse --short=12 HEAD
+fatal: not a git repository: /Users/…/OS7/.git/worktrees/<name>
+exit=128
+```
+
+`safe.directory` is irrelevant here; so is the mount being read-write. git
+resolves the pointer, finds nothing at the far end, and stops.
+
+Two separate failures, and only one of them is about git.
+
+**The version was wrong.** Every ISO built from a worktree — and Claude Code
+sessions run in one by default — was `1.0.0.0`, no matter what was in it. That
+number is not merely uninformative: two such builds share a filename, they
+overwrite each other in `out/`, and each takes over the `out/os7-<arch>.iso`
+symlink that six harnesses open by name. A version that identifies nothing is
+worse than no version, which is §3.1's whole argument.
+
+**The message was wrong about why.** The build said:
+
+```
+NOTE: no git repository at /work and no OS7_VERSION_BUILD - BUILD field is 0
+```
+
+There *is* a repository at `/work`. What is missing is the admin directory it
+points at, on the other side of a mount boundary. The note was true enough to be
+believed and wrong enough to send you looking at `safe.directory`, at file
+ownership, at the Dockerfile's git — anywhere except at the one line in `.git`.
+
+**The fix is the one that was already there for amd64.** `build.sh` has always
+accepted `OS7_VERSION_BUILD` / `OS7_GIT_COMMIT` / `OS7_GIT_DIRTY` from its
+caller, because `scripts/build-amd64-vm.sh` copies the tree into a QEMU VM with
+`--exclude=.git` and has to. The host can always answer — a worktree is a
+first-class repository *there* — so the host answers, and hands the facts in:
+
+```
+scripts/os7-source-facts.sh     # the three questions, asked once, on the host
+Makefile                        # -e OS7_VERSION_BUILD=… -e OS7_GIT_COMMIT=… …
+```
+
+The script prints facts and **never a version string**: §3 gives that job to
+`build/config/os7-release.conf` plus `build/build.sh`, and a second place that
+assembled `MAJOR.MINOR.PATCH.BUILD` would be a second thing to keep in step.
+
+`build.sh` no longer falls through to `0` when `/work/.git` exists and git cannot
+use it. That is a broken environment, not a legitimate state, and it now **stops
+the build** with git's own error, the `gitdir:` line, and the command that fixes
+it. The tarball case — no `.git` at all, which is what an export or the amd64 VM
+looks like — still builds with BUILD 0 and `reproducible: false`, as designed.
+Handed-in values are checked for shape first: hook 0075 tests `OS7_GIT_DIRTY`
+against the literal `"true"`, so `yes` would have read as *clean* and put
+`"reproducible": true` in the manifest of a dirty build.
+
+`check-image.py` had a `version != "0.0.0.0"` guard and it did not fire: the
+worktree ISOs were `1.0.0.0`, since MAJOR.MINOR.PATCH come from the pin file and
+only BUILD comes from git. The guard was written against *no manifest at all*.
+It now checks the BUILD field and the commit on their own, so the tool that
+exists to ask the artefact what it is can no longer answer "it knows its
+version" about an image that does not know what it was built from.
+
+Two things worth carrying beyond this bug:
+
+* **`.git` is not always a directory, and "git says no" is not "there is no
+  repository."** Worktrees, submodules and `GIT_DIR` all make `.git` a pointer.
+  Anything that asks git across a mount, a container or a copy has to assume the
+  pointer leads out of the box, and to tell the two answers apart.
+* **A diagnostic that names a cause has to have checked that cause.** This one
+  reported the *branch it had taken* — "no git repository" — as if it were the
+  reason, which is the same shape as every other expensive bug here: a program
+  reporting confidently about something it never asked.

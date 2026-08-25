@@ -32,6 +32,24 @@ docker run --rm --platform linux/$(1) \
   $(2) $(IMAGE):$(1)
 endef
 
+# The three SOURCE FACTS - commit count, commit, dirty - asked of git ON THE HOST
+# and handed to build.sh as environment (scripts/os7-source-facts.sh). build.sh
+# accepts them and remains the only place that composes a version STRING, which
+# is what docs/RELEASE-AND-UPDATE-PLAN.md §3 requires: this hands over facts, it
+# does not build a number.
+#
+# The container cannot ask git for itself. In a git WORKTREE, `.git` is a FILE
+# holding an absolute path to <main>/.git/worktrees/<name> - a path that is NOT
+# inside the bind mount - so git at /work answers "not a git repository" and the
+# ISO comes out as x.y.z.0, commit "unknown", reproducible=false, whatever the
+# worktree actually contains. (docs/BUILD-NOTES.md #43.)
+#
+# Recursively expanded (=, not :=) deliberately: `make help` and `make clean`
+# never run git, and each build target expands it exactly once. Empty when git
+# cannot answer at all - build.sh decides what that means, and it is the one
+# place that decision lives.
+SOURCE_FACTS = $(addprefix -e ,$(shell $(CURDIR)/scripts/os7-source-facts.sh $(CURDIR)))
+
 .PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
         build-amd64-vm build-amd64-vm-reset \
         lb-config shell-amd64 shell-arm64 clean
@@ -81,7 +99,7 @@ check-amd64-host:
 # On an x86_64 host this is native and fast - the right way to build amd64.
 build-amd64: check-amd64-host image-amd64
 	mkdir -p $(OUT)
-	$(call DOCKER_RUN,amd64,) /work/build/build.sh amd64
+	$(call DOCKER_RUN,amd64,$(SOURCE_FACTS)) /work/build/build.sh amd64
 
 # amd64 ISO via full x86 system emulation. Needed only on ARM hosts.
 # Not Docker: QEMU emulates a whole x86 machine, so no syscall translation and
@@ -94,7 +112,7 @@ build-amd64-vm-reset:
 
 build-arm64: image-arm64
 	mkdir -p $(OUT)
-	$(call DOCKER_RUN,arm64,) /work/build/build.sh arm64
+	$(call DOCKER_RUN,arm64,$(SOURCE_FACTS)) /work/build/build.sh arm64
 
 # Config-only smoke test: stages the tree and runs `lb config`, no `lb build`.
 #

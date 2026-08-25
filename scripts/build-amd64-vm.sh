@@ -184,18 +184,23 @@ tar -C "${REPO}" -cf - \
 # accepts them precisely for this path. Without it every amd64 ISO would carry
 # BUILD=0 and reproducible=false for a reason that has nothing to do with the
 # build (docs/RELEASE-AND-UPDATE-PLAN.md §3.3).
-GIT_COMMIT="$(git -C "${REPO}" rev-parse --short=12 HEAD)"
-GIT_COUNT="$(git -C "${REPO}" rev-list --count HEAD)"
-if [[ -n "$(git -C "${REPO}" status --porcelain)" ]]; then GIT_DIRTY=true; else GIT_DIRTY=false; fi
-log "source: ${GIT_COMMIT}, build ${GIT_COUNT}$( [[ "${GIT_DIRTY}" = true ]] && echo ' (DIRTY)' )"
+#
+# The three git questions live in ONE host-side script, shared with the Makefile
+# (which needs them for the same reason from a git worktree - BUILD-NOTES #43).
+# Two copies of "how OS/7 asks git what it was built from" would drift, and the
+# only symptom would be two ISOs of one commit disagreeing about their version.
+FACTS="$("${HERE}/os7-source-facts.sh" "${REPO}")" \
+	|| die "cannot read the source facts from ${REPO} - see the message above"
+eval "${FACTS}"
+log "source: ${OS7_GIT_COMMIT}, build ${OS7_VERSION_BUILD}$( [[ "${OS7_GIT_DIRTY}" = true ]] && echo ' (DIRTY)' )"
 
 log "running the build in the VM (hours under TCG)"
 ssh "${SSH_OPTS[@]}" builder@127.0.0.1 \
 	"set -e; mkdir -p ~/out; sudo \
 	   OS7_OUT_DIR=/home/builder/out \
-	   OS7_VERSION_BUILD='${GIT_COUNT}' \
-	   OS7_GIT_COMMIT='${GIT_COMMIT}' \
-	   OS7_GIT_DIRTY='${GIT_DIRTY}' \
+	   OS7_VERSION_BUILD='${OS7_VERSION_BUILD}' \
+	   OS7_GIT_COMMIT='${OS7_GIT_COMMIT}' \
+	   OS7_GIT_DIRTY='${OS7_GIT_DIRTY}' \
 	   bash ~/os7/build/build.sh amd64"
 
 # The VERSIONED artefacts, and the manifests beside them - not just the stable

@@ -134,6 +134,12 @@ the ones a fresh session hits first.
 - **#33 — `Conflicts=` is resolved when systemd builds the transaction;
   `Condition…=` when the job runs.** An enabled unit with a failing condition has
   already conflicted its target away.
+- **#43 — in a git WORKTREE, `.git` is a FILE pointing outside the bind mount**,
+  so git in the build container cannot answer and every ISO came out `1.0.0.0`,
+  commit "unknown". Build through the **Makefile**, which asks git on the host
+  (`scripts/os7-source-facts.sh`) and hands the three facts in; `build.sh` now
+  refuses rather than inventing a version. Claude Code sessions run in a
+  worktree by default, so this is hit on the first build, not the tenth.
 
 ---
 
