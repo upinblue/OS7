@@ -1253,6 +1253,26 @@ network — is already on both images, via `linux-firmware` and its 19 companion
 packages. What arm64 lacks is the userspace: `wpasupplicant` to associate, `iw`
 to scan, `rfkill` to notice a hardware kill switch.
 
+**And the drivers are there too — checked, because the opposite was assumed.**
+The manifest carries `linux-modules-7.0.0-30-generic` and **no
+`linux-modules-extra`**, which on older Ubuntu layouts is where the wireless
+drivers lived; the natural conclusion is that this image has Wi-Fi firmware and
+no Wi-Fi drivers, which would make D13 unbuildable. Looking inside the squashfs
+on 2026-08-25 says otherwise:
+
+| | |
+|---|---|
+| `kernel/net/wireless/cfg80211.ko.zst`, `kernel/net/mac80211/mac80211.ko.zst` | present |
+| `drivers/net/wireless/` | 20 vendor directories — ath, intel, broadcom, marvell, mediatek, ralink, realtek, ti, … |
+| wireless driver modules | **197** |
+| named spot checks | `ath9k`, `ath11k` (and their `_pci`/`_ahb` variants) |
+| `drivers/net/wireless/virtual/mac80211_hwsim.ko.zst` | **present** — which is what makes Phase 3b's Wi-Fi test possible at all |
+| modules in the image, total | 8 544 |
+
+Recorded with the wrong guess still attached, because "no `linux-modules-extra`,
+therefore no wireless drivers" is a plausible inference from a package list and
+it is wrong for this release. The package list is not the module list.
+
 #### The renderer is decided by screen 8, never by what is installed
 
 | Product | Renderer | Why |
@@ -1403,6 +1423,13 @@ needs in order to keep being one.
 **L30**. If you take one, move this line in the same commit. The same rule and
 the same table live at the top of [../docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md)
 for its numbers.
+
+`D15` and `L29` are the Cascadia console decision, claimed by a different session
+on the same day. **If the table below has no `D15` row, that work has not landed
+yet and the number is still spoken for, not free** — check with
+`grep -c '^| D15 |' installer/SETUP-PLAN.md`, and look for it in the diff rather
+than reusing the number. This is the one weakness the rule still has: a claim can
+be recorded here a few minutes before the entry it points at.
 
 | # | Decision | Outcome |
 |---|---|---|
