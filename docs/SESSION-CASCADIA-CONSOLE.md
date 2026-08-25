@@ -8,9 +8,13 @@ than against the documentation, because a font is exactly the kind of component
 that reports success and renders the wrong picture (BUILD-NOTES #26).
 
 Decided as D15, specified in [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md)
-§2.8, and **in the build as of the same day** — §6a covers what implementing it
-turned up, including one pin that measuring had not predicted. Sections 1-6 are
-the evidence the decision was taken on, written before any of `build/` changed.
+§2.8, in the build the same day, and **proven on a booted machine** — §6b.
+
+Sections 1–6 are the evidence the decision was taken on, written before any of
+`build/` changed. §6a is what implementing it turned up; §6b is what booting it
+turned up, which was more. The short version of §6b: the font was rejected by
+the kernel twice, `psf.py verify` was green through both rejections, and both
+times it was right to be.
 
 **Scope decided during the session:** Cascadia is for the **installed console
 only**. `os7-setup` keeps Fixedsys Excelsior — the installer is a deliberate
@@ -450,22 +454,125 @@ unaffected.
 
 ---
 
+## 6b. Booted — and the two rejections that came first
+
+`installer/testing/verify-console-font.py`. It boots **the installed disk with
+no ISO attached**, hashes the PSF on that disk against the pin, and then reads
+the framebuffer back through the font — the mechanism S1 built for Fixedsys,
+pointed at the other font.
+
+**It boots the disk, not the live medium, and that was decided before it was
+written.** The live image carries the same `/etc/default/console-setup`, so a
+live run would have gone green while proving something about a different code
+path (§2.4, L20: on the installed system the font is applied from the
+initramfs). Session os7-b1 lost a netplan file to that exact shape the same
+afternoon — every check correct, every check before the medium was removed
+(BUILD-NOTES #56).
+
+### The first run failed, and it was right to
+
+```
+FAIL  4/5  95 of 107 cells differ from the font's own bitmaps
+```
+
+The installed console was showing the **8×16 kernel font**. And
+`console-setup.service` was `enabled`, `active (exited)`,
+`status=0/SUCCESS` — the service reported success and the screen said otherwise.
+
+Asking `setfont` directly, on tty1, produced the answer in one line:
+
+```
+setfont: ERROR setfont.c:142 try_loadfont: font position 32 is nonblank
+  exit 71
+```
+
+`kbd` requires glyph **position** 32 to be blank — the console paints that slot
+to erase. `cellfont.py` packed codepoints in `psf.py` table order, so `U+0040 @`
+landed there and the kernel never loaded the font.
+
+### Fixing that produced a different refusal
+
+```
+setfont: ERROR kdfontop.c:240 put_font_kdfontop: ioctl(KDFONTOP): Invalid argument
+  exit 71
+```
+
+`fbcon_set_font()` accepts glyph counts of 256 or 512 **and nothing else**. The
+font had 441.
+
+The number was in this repo all along, written down as the wrong kind of fact:
+`build-console-font.sh` passes `512` to `bdf2psf`, `psf.py` names the constant
+`PSF_MAX_GLYPHS`, and §2.5 says *"PSF caps at 512 glyphs"*. All three read as an
+upper bound, so 441 looked safely inside one. It is not a cap — it is one of two
+permitted values, and Fixedsys only ever worked because `bdf2psf` was told 512
+and pads to fill it.
+
+Measured on the running machine after padding, which is what settled it before
+another ISO was built:
+
+```
+setfont ... ; echo $?                    0
+stty size < /dev/tty1     before      50 160        (8×16)
+                          after       25 80         (16×32)
+```
+
+`25 80` at 1280×800 is the reference geometry §2.4 anchors the whole layout rule
+on.
+
+### The run that passed
+
+```
+ok  1/5   the installed disk booted to a login prompt
+ok  2/5   the PSF on the disk hashes to the pin — ab0baad35dfcee5e…
+ok  2b/5  the OFL licence is on the installed system
+ok  3/5   console-setup applied it — no setfont was called
+ok  4/5   all 107 cells match the PSF bitmap for bitmap
+ok  5/5   ▲▼ renders as Cascadia draws it — glyphs Fixedsys does not have
+```
+
+Check 5 exists because check 4 alone cannot identify a font: both PSFs ship in
+the image and both draw `A` at 16×32. `U+25B2`/`U+25BC` are in Cascadia and
+absent from Fixedsys, so those two cells can only match if the console is
+showing *this* font.
+
+Check 3 is worth reading twice. The test never calls `setfont`; it stops getty,
+clears tty1 and paints. The font is already loaded, so `console-setup` applied it
+on its own — which also means trap #31 (`fbcon` deferring its console take-over)
+was never the problem here, though it looked like a prime suspect while the
+screen was wrong.
+
+### What the two rejections have in common
+
+Both requirements belong to the **consumer** — `kbd` and the kernel — and
+neither appears in this repo's definition of a correct PSF. `psf.py verify` was
+green through both, entirely correctly: it asks about coverage, about shapes
+that must differ, and about cell tiling. Position and count are different
+questions, and nothing asked them.
+
+That is the same shape as §5.2's `.notdef` and as os7-b1's L30, on three
+different axes:
+
+| | every check correct, but about… |
+|---|---|
+| `.notdef` (#57) | the wrong **glyph** — mapped, non-blank, a hollow rectangle |
+| netplan (#56) | the wrong **moment** — before the medium was removed |
+| `setfont` (#59) | the wrong **property** — coverage and shape, never position or count |
+
+None would have been caught by checking harder. **An artefact can satisfy every
+property its own verifier knows and still be rejected by the thing that consumes
+it**, and the only test that closes that gap is handing it to the real consumer.
+Here that meant booting a machine and reading `$?`.
+
+---
+
 ## 7. What this does not answer
 
-* **Nothing was booted.** The arm64 ISO builds with the font in it, and every
-  check up to that point is green — but no console has displayed a single glyph.
-  Everything here is the artefact measured on the host and in the build
-  container: the font file, the BDF, the PSF, `psf.py verify`'s reading of the
-  PSF, and the SHA256 of what the build produced. The repo's own rule says an
-  exit code and a verifier are both diagnostics. The check that would close it is
-  the one S1 already built: `installer/testing/vmscreen` reads the screen back
-  through the console font, so pointing it at a Cascadia console is a small job
-  on top of existing machinery — and until it is done, D15 rests on files.
-* **No `console-setup` round trip.** `setupcon` takes `FONT=` verbatim
-  (build/config/includes.chroot/etc/default/console-setup explains why), and
-  `FONT=` now names `os7-console-16x32.psf.gz`, which the build stages and
-  checks — but nothing has watched `setupcon` actually load it from the
-  initramfs. This is the same gap as the point above and closes with it.
+* **~~Nothing was booted.~~ Closed the same day — see §6b.** It was not a small
+  job on top of existing machinery: the font was rejected by the kernel twice,
+  and every check in this repo passed through both rejections.
+* **~~No `console-setup` round trip.~~ Closed with it.** Check 3 of §6b is
+  exactly this: the console shows the font and **no `setfont` was called** by the
+  test, so `console-setup` applied it on its own.
 * **`fbcon` accepts the geometry** — 8×16 and 16×32 are both already in use in
   this image, so nothing new is asked of the kernel. This is inherited, not
   re-measured.

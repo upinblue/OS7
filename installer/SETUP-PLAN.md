@@ -488,12 +488,38 @@ the script **cannot run for amd64 on an Apple Silicon Mac**: `dpkg-deb` shells
 out to GNU tar and hits trap #12's `ENOSYS`. It fails loudly rather than
 producing a short font, and CI is unaffected.
 
-**Not yet booted.** The ISO builds with the font in it and every check above is
-green, but no console has displayed it. `psf.py verify` is a diagnostic like any
-other, and this repo's rule is to check a diagnostic against the thing it claims
-to check — so the outstanding work is to point `installer/testing/vmscreen` at a
-console running this font and read the screen back through it, the way S1 did for
-Fixedsys. Until then this is a claim about a file, not about a computer.
+#### Proven on a booted machine, 2026-08-25
+
+`installer/testing/verify-console-font.py` installs nothing and asserts
+everything: it boots **the installed disk with no ISO attached**, hashes the PSF
+on that disk against the pin, then reads the framebuffer back through the font
+the way S1 did for Fixedsys.
+
+```
+ok  1/5   the installed disk booted to a login prompt
+ok  2/5   the PSF on the disk hashes to the pin — ab0baad35dfcee5e…
+ok  2b/5  the OFL licence is on the installed system
+ok  3/5   console-setup applied it — no setfont was called
+ok  4/5   all 107 cells match the PSF bitmap for bitmap
+ok  5/5   ▲▼ renders as Cascadia draws it — glyphs Fixedsys does not have
+```
+
+Check 5 is the one nothing else can make. **Both** fonts are in the image and
+both draw `A` at 16×32, so a screen full of matching letters would not say
+*which* font is loaded. `U+25B2`/`U+25BC` are in Cascadia and absent from
+Fixedsys (§2.2), so those two cells can only match if the console is showing
+this font.
+
+**It boots the disk rather than the live medium deliberately.** D15 is a claim
+about the installed system; the live image also carries
+`/etc/default/console-setup`, so a live boot would have gone green while proving
+something else. Session os7-b1 lost a netplan file to that exact shape the same
+day (BUILD-NOTES #56).
+
+**And it failed twice before it passed**, both times because the CONSUMER has
+requirements no verifier here knew about — glyph position 32 must be blank, and
+the glyph count must be exactly 256 or 512. `psf.py verify` was green through
+both. BUILD-NOTES #59.
 
 ---
 
@@ -1589,7 +1615,7 @@ be recorded here a few minutes before the entry it points at.
 | D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty. **S1 gave it a mechanism and made it free:** the palette has to be shipped as `/etc/vtrgb` for Setup to work at all (§2.1), Ubuntu already enables `setvtrgb.service` to apply it, and that same file is what the installed console reads. Keeping the palette is now the default outcome and *removing* it would be the extra work |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3). **Scope narrowed 2026-08-25 by D15:** the second half of that — the installed system in non-GUI mode — is now Cascadia Mono. Fixedsys keeps Setup, which is the half the DOS reproduction depends on |
-| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against **eleven** missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures and a single note. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **In the build since 2026-08-25**, which added a third pin nobody predicted: `libfreetype` is a container package, so the same TTF gives 41 different glyphs of 409 across two of its versions and the built PSFs have to be hashed too (BUILD-NOTES #58). **Not yet booted** — the ISO carries it, no console has displayed it |
+| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against **eleven** missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures and a single note. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **In the build, and PROVEN ON A BOOTED MACHINE 2026-08-25**: the installed disk, no ISO attached, all 107 test cells matching the shipped PSF bitmap for bitmap, and `▲▼` — which Fixedsys lacks — confirming it is this font and not the other one. Getting there needed a third pin nobody predicted (`libfreetype` is a container package, 41 glyphs of 409 differ across two of its versions, BUILD-NOTES #58) and cost two rejections by the kernel that every verifier here passed (#59) |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
 | D10 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split, not placed (§4.4).** Package state (`dpkg`, `apt`, `cache`) stays inside the BE, because it describes the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and — the OS/7-specific part — the state of the agents that hold a device identity in Entra, Intune and Arc, because the tenant on the other end has no rollback. Out-of-BE datasets hang under `rpool/DATA` rather than carrying a do-not-clone property, so the mistake is structurally impossible rather than merely discouraged |
 
