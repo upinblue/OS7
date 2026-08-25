@@ -1609,9 +1609,12 @@ screens D13 puts in v1 and the screen-7 wording D11 makes necessary.
 
 The distinction in that first line is the whole of this repository's discipline
 and it is not modesty. The code exists, compiles with zero warnings, and passes
-19 new `--self-test` assertions; every shell string it generates has been parsed
-as bash *and* executed in the condition its error message was written for; every
-plan file the harnesses build has been parsed as JSON and fed to the real binary.
+**24 new `--self-test` assertions** — 18 on the netplan generator, the `iw scan`
+parser, the secret canaries and the step order, and six on the three new screens
+— taking the suite from 85 to 109. Every shell string it generates has been
+parsed as bash *and* executed in the condition its error message was written for;
+every plan file the harnesses build has been parsed as JSON and fed to the real
+binary.
 **None of that is a boot.** No ISO carries this code, no VM has run it, and M1 —
 the measurement that justifies the phase at all — is unmade. Until then every
 claim here is a claim about code.
