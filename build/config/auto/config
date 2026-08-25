@@ -120,6 +120,19 @@ lb config noauto \
 	`# UNPROVEN: that an amd64 ISO now builds. This removes the next failure,` \
 	`# not demonstrably the last one.` \
 	--memtest none \
+	`# amd64 ONLY, and a STOPGAP. lb_binary_syslinux's Ubuntu branch installs` \
+	`# syslinux-themes-${LB_SYSLINUX_THEME} AND gfxboot-theme-ubuntu; the default` \
+	`# theme name is "ubuntu-oneiric", a package last seen in Ubuntu 11.10, and` \
+	`# neither exists in resolute - so the stage dies with "Unable to locate` \
+	`# package syslinux-themes-ubuntu-oneiric". BUILD-NOTES #47. The literal` \
+	`# value "live-build" takes a different branch that needs only librsvg2-bin.` \
+	`# WHY THIS IS A STOPGAP: syslinux is a BIOS bootloader, and OS/7 boots UEFI` \
+	`# with shim and a Canonical-signed GRUB (README, locked decisions). This` \
+	`# live-build has NO grub-efi stage at all - grub, grub2, syslinux, yaboot,` \
+	`# silo - which is the same hole arm64-efi-remaster.sh already fills on arm64.` \
+	`# The amd64 medium needs that treatment too; this flag only stops the build` \
+	`# from dying before there is anything to treat.` \
+	--syslinux-theme live-build \
 	`# HARVESTED FIX 5: Ubuntu-mode live-build expects the casper initramfs at` \
 	`# binary/casper/initrd.img; without boot=casper (and the casper package in` \
 	`# the base list) lb_binary_disk fails.` \

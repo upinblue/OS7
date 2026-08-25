@@ -1,8 +1,14 @@
 # =============================================================================
 # OS/7 — ISO build CI
 #
-#   *** THIS FILE HAS NEVER RUN. ITS PREDECESSOR RAN ONCE, AND MEASURED TWO
-#       THINGS THIS HISTORY HAD FORGOTTEN. ***
+#   *** THIS FILE BUILDS arm64. amd64 HAS NEVER FINISHED. ***
+#
+# Run 32830869552 (2026-08-25, the first dispatch of this file): arm64 SUCCESS
+# in 15m57s with an ISO artifact, amd64 FAILURE in 23m2s in `lb_binary_syslinux`
+# - one stage past the `lb_binary_memtest` that stopped the June attempt, which
+# is how docs/BUILD-NOTES.md #44's fix was confirmed. #47 has both.
+#
+# The history below is why this file distrusts the word "never":
 #
 # On 2026-06-24, a workflow at `.github/workflows/build.yml` ran on push from
 # the history this repository replaced: commit 716be695 is not an object here
@@ -34,9 +40,9 @@
 # under QEMU emulation — there is deliberately no setup-qemu-action /
 # docker/setup-buildx cross-build step, and none should be added.
 #
-# Trigger is workflow_dispatch only: no run of THIS file has ever been
-# dispatched, so a `push:` trigger would put an unread red X on every push.
-# Add `push:` once one dispatched run has gone green.
+# Trigger is workflow_dispatch only, and stays that way until amd64 finishes:
+# a `push:` trigger today would put a red X on every push for a job that is
+# known to fail. Add `push:` once ONE dispatched run has gone green whole.
 # =============================================================================
 
 name: build-iso
@@ -69,7 +75,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: os7-amd64-iso
-          path: out/*.iso
+          # NOT out/*.iso: build.sh leaves os7-amd64.iso as a symlink beside the
+          # versioned file, upload-artifact follows it, and the artifact comes
+          # out at twice the size. Measured on run 32830869552: 3974 MiB for one
+          # 2 GB ISO. BUILD-NOTES #47.
+          path: out/OS7-*.iso
           if-no-files-found: error
 
   build-arm64:
@@ -94,5 +104,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: os7-arm64-iso
-          path: out/*.iso
+          # see the amd64 job: the symlink would be uploaded as a second copy.
+          path: out/OS7-*.iso
           if-no-files-found: error

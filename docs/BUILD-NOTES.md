@@ -1661,3 +1661,90 @@ Two things worth carrying:
   since spike S1 and had been right every time, because every needle anyone had
   ever written happened to avoid the eight ambiguous glyphs. The first assertion
   about a typed computer name found it in one run.
+
+## 47. CI builds arm64, and amd64 buys exactly one stage per dispatch
+
+2026-08-25, [run 32830869552](https://github.com/upinblue/OS7/actions/runs/32830869552)
+— the first `workflow_dispatch` of `.github/workflows/build-iso.yml` in this
+history, from `main` at cfdc0bf.
+
+**arm64: SUCCESS, 15m57s, artifact uploaded.** An OS/7 ISO — `OS7-1.0.0.42-arm64.iso`
+— now builds on a hosted runner and not only on this Mac. The `ubuntu-24.04-arm`
+label scheduled the job, which is the second measurement of the thing #44 said
+was never unverified.
+
+**amd64: FAILURE, 23m2s — and it confirmed #44's fix before it died.** The
+binary stage reads:
+
+```
+[2026-08-25 09:37:19] lb_binary_memtest
+[2026-08-25 09:37:19] lb_binary_grub
+```
+
+Thirty-five milliseconds, no `P: Begin installing memtest...`, no
+`cp chroot/boot/.bin`. `--memtest none` reached the early `exit 0` on a real
+native x86_64 build, which is the check #44 said had not been made. The same log
+carries `--memtest none` on the `lb_config` line, so the flag arrived where it
+was aimed.
+
+Then, one stage later:
+
+```
+[2026-08-25 09:37:19] lb_binary_syslinux
+P: Begin installing syslinux...
+Package gfxboot-theme-ubuntu is not available, but is referred to by another package.
+E: Unable to locate package syslinux-themes-ubuntu-oneiric
+E: Package 'gfxboot-theme-ubuntu' has no installation candidate
+make: *** [Makefile:126: build-amd64] Error 100
+```
+
+### The mechanism
+
+`lb_binary_syslinux`, Ubuntu branch:
+
+```sh
+case "${LB_SYSLINUX_THEME}" in
+	live-build)   Check_package chroot/usr/bin/rsvg librsvg2-bin ;;
+	*)            Check_package …/themes/${LB_SYSLINUX_THEME} syslinux-themes-${LB_SYSLINUX_THEME}
+	              case "${LB_MODE}" in ubuntu) Check_package … gfxboot-theme-ubuntu ;; esac ;;
+esac
+```
+
+The default theme name is **`ubuntu-oneiric`**. Oneiric Ocelot is Ubuntu 11.10.
+The stage asks a 2026 archive for a package named after a release from 2011, and
+`gfxboot-theme-ubuntu` is gone as well. The literal string `live-build` is the
+one value that takes the other branch. Measured after the change: `lb config`
+yields `LB_SYSLINUX_THEME="live-build"` on both architectures, and arm64 does not
+care either way — `lb_binary_syslinux` exits at `[ "${LB_BOOTLOADER}" != "syslinux" ]`
+long before the theme is read.
+
+### The larger thing this exposed
+
+`LB_BOOTLOADER` is **`syslinux`** on amd64 today, and syslinux is a BIOS
+bootloader. OS/7 boots UEFI, with shim and a Canonical-signed GRUB (README,
+locked decisions), and this live-build has **no grub-efi stage at all**:
+
+```
+lb_binary_grub  lb_binary_grub2  lb_binary_syslinux  lb_binary_yaboot  lb_binary_silo
+```
+
+— `--bootloader` accepts `grub|syslinux|yaboot`, and nothing there emits an EFI
+boot path. That is the *same hole* `build/lib/arm64-efi-remaster.sh` was written
+to fill on arm64, and it means **the amd64 medium needs its own remaster before
+it can boot the way the product requires.** `--syslinux-theme live-build` is a
+stopgap that lets the build reach a point where there is something to remaster;
+it is not the amd64 boot story.
+
+### Also measured, and cheap
+
+`path: out/*.iso` in the upload step matches the versioned ISO **and** the
+`os7-<arch>.iso` symlink beside it, and `upload-artifact` follows the symlink:
+the arm64 artifact came out at **3974 MiB for one 2 GB image.** `out/OS7-*.iso`.
+
+### Worth carrying
+
+**Each dispatch buys exactly one stage.** Two amd64 attempts now, two different
+deaths, both in `lb_binary_*` and both in code that has not been touched since
+Ubuntu renamed the thing it asks for. The rootfs is not the hard part on amd64 —
+assembling the medium is, and every stage in that phase has to be checked
+against a 2026 archive one at a time.
