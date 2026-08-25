@@ -232,7 +232,30 @@ Full detail in the two session documents. The ones that will bite again:
 * **L18 is still untouched.** Whether Intune's encryption check accepts the
   unencrypted `bpool` needs a real enrolment, not a VM.
 
-## 3. amd64 — why it fails here, and the two local options
+## 3. amd64 — why it fails here, what a native runner already got past, and the two local options
+
+**Read this first, because three documents used to say the opposite.** amd64 has
+been attempted on a native x86_64 machine, once, on 2026-06-24, by the session
+this repository harvested rather than inherited — the run is in GitHub Actions
+and not in git (BUILD-NOTES #44,
+[run 28103636078](https://github.com/upinblue/OS7/actions/runs/28103636078)). On
+`ubuntu-24.04` it debootstrapped, built the chroot and ran the package stages
+with none of the trouble below, then died assembling the medium:
+
+```
+P: Begin installing memtest...
+cp: cannot stat 'chroot/boot/.bin': No such file or directory
+```
+
+That is a live-build defect in `lb_binary_memtest`, it is amd64-only by
+construction, and `--memtest none` disables the stage. The same run built an
+**arm64** ISO successfully on `ubuntu-24.04-arm` in 15m2s, so the free native
+arm64 runner is real. What none of this says is that amd64 now builds: nothing
+in either history has run past that line. It is the next blocker removed, not
+the last one.
+
+The rest of this section is about **this Mac**, where the failure is earlier and
+different.
 
 `make build-amd64` dies unpacking the base system:
 
@@ -277,7 +300,9 @@ again.
 
 Until an amd64 ISO is actually built, **amd64 is unvalidated** — and since GUI
 mode is amd64-only, the entire GUI path is unvalidated with it. **S3 is an arm64
-result only**, for the same reason.
+result only**, for the same reason. The cheapest attempt available today is a
+`workflow_dispatch` of `.github/workflows/build-iso.yml`, which is the only path
+that has ever reached the binary stage on amd64.
 
 ## 4. Traps that already cost time — read before debugging
 

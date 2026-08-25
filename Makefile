@@ -1,7 +1,24 @@
 # =============================================================================
 # OS/7 — build entrypoints
 #
-#   *** STUB — no target here has produced an OS/7 ISO. ***
+#   *** arm64 BUILDS AND BOOTS. NO amd64 ISO HAS EVER BEEN BUILT. ***
+#
+# `make build-arm64` produces a bootable OS/7 ISO, and has since before the
+# handoff of 2026-08-24 (docs/HANDOFF.md §1). The evidence is not its exit
+# code: installer/testing/check-image.py reads the SHIPPED image back — its apt
+# sources, its branded os-release, its volume label, and os7-setup run by
+# chrooting into it — and installer/testing/run-phase3.py installs from that
+# ISO and then boots the installed disk with NO ISO ATTACHED.
+#
+# What is unvalidated is amd64. `make build-amd64` has never produced an ISO on
+# any host, and neither has `make build-amd64-vm`: Docker's amd64 emulation
+# cannot unpack a Debian rootfs on Apple Silicon (ENOSYS in GNU tar —
+# docs/BUILD-NOTES.md #12, and #23 for what that does NOT extend to). A native
+# x86_64 runner HAS run this target once, in the history this repo replaced: it
+# got through debootstrap and the entire chroot and stopped in live-build's
+# `lb_binary_memtest` (docs/BUILD-NOTES.md #44). Until an amd64 ISO actually
+# exists amd64 is unvalidated, and with it the GUI path, which is amd64-only.
+# docs/HANDOFF.md §3.
 #
 # The container/invocation shape is HARVESTED FROM A PRIOR BUILD SESSION
 # (2026-06-24). See docs/BUILD-NOTES.md.
@@ -55,19 +72,26 @@ SOURCE_FACTS = $(addprefix -e ,$(shell $(CURDIR)/scripts/os7-source-facts.sh $(C
         lb-config shell-amd64 shell-arm64 clean
 
 help:
-	@echo "OS/7 build targets (STUBS - none has produced an OS/7 ISO yet):"
+	@echo "OS/7 build targets:"
 	@echo "  make build-amd64  Build the x86_64 ISO -> ./out/os7-amd64.iso"
 	@echo "                    (x86_64 hosts only; on Apple Silicon use build-amd64-vm)"
+	@echo "                    NEVER BUILT: no amd64 ISO exists. A native x86_64"
+	@echo "                    runner got as far as lb_binary_memtest - BUILD-NOTES #44"
 	@echo "  make build-amd64-vm  Build the x86_64 ISO in a QEMU x86 VM (ARM hosts; slow)"
+	@echo "                    Also never yet produced an ISO."
 	@echo "  make build-arm64  Build the arm64 ISO  -> ./out/os7-arm64.iso"
+	@echo "                    Works: the ISO boots, installs, and the installed"
+	@echo "                    disk boots on its own. Check it with"
+	@echo "                    installer/testing/check-image.py"
 	@echo "  make lb-config    Run 'lb config' only (validates auto/config)"
 	@echo "  make shell-amd64  Interactive shell in the amd64 build container"
 	@echo "  make shell-arm64  Interactive shell in the arm64 build container"
 	@echo "  make clean        Remove build artifacts"
 	@echo ""
 	@echo "NOTE (Apple Silicon): build-amd64 runs under Docker Desktop's x86"
-	@echo "emulation and is slow. CI uses native runners per arch - see"
-	@echo ".github/workflows/build-iso.yml."
+	@echo "emulation and is slow. CI is CONFIGURED for native runners per arch;"
+	@echo "the current workflow has never been dispatched, but its predecessor"
+	@echo "ran once and built arm64 - see .github/workflows/build-iso.yml."
 
 # --provenance=false: keeps BuildKit from adding an attestation manifest, which
 # turns the single-arch image into an index and confuses --platform pinning.

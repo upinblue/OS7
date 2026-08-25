@@ -1,16 +1,42 @@
 # =============================================================================
 # OS/7 — ISO build CI
 #
-#   *** STUB — UNVALIDATED, EXPECTED TO FAIL ***
+#   *** THIS FILE HAS NEVER RUN. ITS PREDECESSOR RAN ONCE, AND MEASURED TWO
+#       THINGS THIS HISTORY HAD FORGOTTEN. ***
+#
+# On 2026-06-24, a workflow at `.github/workflows/build.yml` ran on push from
+# the history this repository replaced: commit 716be695 is not an object here
+# and that file has never existed on any branch here, but GitHub kept the run —
+# https://github.com/upinblue/OS7/actions/runs/28103636078. It is the session
+# commit e1a63f9 harvested. What it measured:
+#
+#   * build-arm64 on `ubuntu-24.04-arm` — SUCCEEDED in 15m2s and uploaded an
+#     ISO artifact. The label is real, the free native arm64 runner scheduled
+#     a job on it, and an OS/7 ISO came out. What is unproven here is THIS
+#     FILE, not the runner.
+#   * build-amd64 on `ubuntu-24.04` — FAILED in 10m22s, and failed nowhere
+#     near where Apple Silicon fails. A native x86_64 runner debootstraps and
+#     builds the chroot without the ENOSYS that stops Docker's emulation on
+#     this Mac (docs/BUILD-NOTES.md #12). It reached the BINARY stage and died
+#     in `lb_binary_memtest`:
+#
+#         cp: cannot stat 'chroot/boot/.bin': No such file or directory
+#
+#     That is docs/BUILD-NOTES.md #44 — a live-build defect that only amd64
+#     can reach, in a stage OS/7 does not want anything from. Whether it is
+#     the LAST amd64 blocker is unknown: nothing has ever run past it.
+#
+# So amd64 has been attempted natively, and the honest statement is not "never
+# tried" but "got through the rootfs and fell over assembling the medium".
 #
 # Per README.md ("CI"): amd64 on standard hosted runners, arm64 on the free
 # NATIVE arm64 hosted runners available to public repos. Nothing here builds
 # under QEMU emulation — there is deliberately no setup-qemu-action /
 # docker/setup-buildx cross-build step, and none should be added.
 #
-# Trigger is workflow_dispatch only for now: the build is a known-failing stub,
-# and a red X on every push is noise. Add `push:` once `make build-amd64`
-# actually produces an ISO.
+# Trigger is workflow_dispatch only: no run of THIS file has ever been
+# dispatched, so a `push:` trigger would put an unread red X on every push.
+# Add `push:` once one dispatched run has gone green.
 # =============================================================================
 
 name: build-iso
@@ -49,9 +75,10 @@ jobs:
   build-arm64:
     name: ISO (arm64)
     # Free NATIVE arm64 hosted runner for public repos — no QEMU.
-    # STUB: label unverified. GitHub currently documents `ubuntu-24.04-arm`;
-    # if a `ubuntu-26.04-arm` label exists by build time, prefer it. The runner
-    # OS does not need to match the target distribution — live-build bootstraps
+    # The label is MEASURED, not assumed: the 2026-06-24 run scheduled on
+    # `ubuntu-24.04-arm` and built an arm64 ISO on it in 15m2s. If a
+    # `ubuntu-26.04-arm` label exists by build time, prefer it. The runner OS
+    # does not need to match the target distribution — live-build bootstraps
     # `resolute` inside the build container regardless.
     runs-on: ubuntu-24.04-arm
     steps:

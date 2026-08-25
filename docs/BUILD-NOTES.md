@@ -1410,3 +1410,94 @@ Two things worth carrying beyond this bug:
   reported the *branch it had taken* — "no git repository" — as if it were the
   reason, which is the same shape as every other expensive bug here: a program
   reporting confidently about something it never asked.
+
+## 44. `lb_binary_memtest` copies `chroot/boot/.bin` — an amd64-only trap arm64 can never hit
+
+Found on 2026-08-25, not by building, but by **asking GitHub what it remembers**.
+`gh run list` returned one run this repository has no commit for: 2026-06-24,
+`.github/workflows/build.yml`, head `716be695` — an object `git cat-file` cannot
+find here, from the history that commit e1a63f9 harvested and replaced. GitHub
+kept it: [run 28103636078](https://github.com/upinblue/OS7/actions/runs/28103636078).
+
+It changes two sentences that had been repeated in README, Makefile and HANDOFF
+since the scaffold:
+
+* `build-arm64` on `ubuntu-24.04-arm` **succeeded** — 15m2s, ISO artifact
+  uploaded. The runner label was never unverified; nobody had looked.
+* `build-amd64` on a native `ubuntu-24.04` runner **got past everything Apple
+  Silicon blocks**. No ENOSYS, no tar failure (#12): debootstrap, chroot and the
+  package stages all completed, and it died in the *binary* stage:
+
+```
+P: Begin installing memtest...
+cp: cannot stat 'chroot/boot/.bin': No such file or directory
+make: *** [Makefile:38: build-amd64] Error 1
+```
+
+### The mechanism, from live-build's own source
+
+`/usr/lib/live/build/lb_binary_memtest` in live-build `3.0~a57-1`, the version in
+the OS/7 build container:
+
+```sh
+MEMTEST_BIN="${LB_MEMTEST}"                                    # line 65
+...
+[ -e "chroot/boot/${LB_MEMTEST}x64.bin" ] && _MEMTEST_BIN="${LB_MEMTEST}x64"
+...
+cp "chroot/boot/${_MEMTEST_BIN}.bin" "${DESTDIR}"/memtest      # line 118
+```
+
+Line 65 sets `MEMTEST_BIN`. Line 118 reads `_MEMTEST_BIN`, with a leading
+underscore — **a different variable**, and the only thing that ever assigns it is
+the `[ -e … ]` test. When `memtest86+x64.bin` is not in the chroot, `_MEMTEST_BIN`
+stays empty and the copy becomes `cp chroot/boot/.bin`, which is the exact string
+in the June log. The stage does not check whether the package it just tried to
+install arrived; it interpolates and copies.
+
+### Why no OS/7 build has ever seen it
+
+Two guards upstream, and arm64 trips the second:
+
+```sh
+if [ "${LB_MEMTEST}" = "false" ] || [ "${LB_MEMTEST}" = "none" ]; then exit 0; fi
+...
+if [ "${LB_ARCHITECTURES}" != "amd64" ] && [ "${LB_ARCHITECTURES}" != "i386" ]; then
+	Echo_warning "skipping binary_memtest, foreign architecture."
+	exit 0
+fi
+```
+
+memtest86+ is x86-only, so **the entire stage is skipped on arm64** — every ISO
+this project has ever built. And `build/config/auto/config` sets no `--memtest`,
+so the default stands. Measured on today's tree, `lb config` for amd64:
+
+```
+LB_MEMTEST="memtest86+"
+```
+
+That is the value that reaches line 118. The trap is loaded in the tree right
+now and is unreachable from the only architecture that builds here — which is
+the same shape as #12 and #23: **an arm64 pass is not an amd64 result, in either
+direction.**
+
+### The fix, and what is still unproven about it
+
+`--memtest none` hits the first `exit 0` above; both `none` and `false` are
+accepted by `lb config` (measured — unlike `--debian-installer`, where HARVESTED
+FIX 4 found `none` rejected and `false` required). OS/7 wants nothing from this
+stage: the medium carries exactly two GRUB entries by design, and on arm64 the
+menu is written by `build/lib/arm64-efi-remaster.sh` regardless.
+
+**What has NOT been measured: that an amd64 ISO now builds.** This is the next
+failure removed, not the last one — nothing in either history has ever run past
+`lb_binary_memtest` on amd64. The claim here is exactly: today's config would
+reach a stage whose own source cannot succeed without a file the chroot does not
+have, and `--memtest none` stops it from being reached.
+
+### Worth carrying
+
+**A history that was replaced still ran somewhere.** Four documents in this
+repository asserted "never attempted" about a job that had been attempted,
+because the evidence lived in GitHub Actions rather than in git, and nothing here
+had thought to ask. Before writing *never* about a build, run `gh run list` —
+the repository name outlives the history under it.
