@@ -1,0 +1,42 @@
+# =============================================================================
+# OS/7 - line endings
+#
+# OS/7 is a Linux. Every executable text file in this repo is read by a Linux:
+# by `env` resolving a shebang, by live-build running config/hooks/*.chroot
+# inside the chroot, by GNU make, by dotnet, by pwsh. A CR before the newline
+# is not whitespace to any of them - it is part of the interpreter's name.
+#
+# Git for Windows ships core.autocrlf=true in its SYSTEM config
+# (C:/Program Files/Git/etc/gitconfig). Nothing in this repo's history contains
+# a CR byte; the damage is done on CHECKOUT, so it is invisible to `git status`
+# and to every diff. The symptom is:
+#
+#     env: 'bash\r': No such file or directory
+#     env: use -[v]S to pass options in shebang lines
+#
+# `eol=lf` here OVERRIDES core.autocrlf, so the repo defends itself on any
+# clone rather than depending on how each machine's Git was installed.
+# docs/BUILD-NOTES.md #62.
+# =============================================================================
+
+# Everything Git detects as text is LF in the working tree, on every platform.
+* text=auto eol=lf
+
+# Recorded real output is EVIDENCE and must stay byte-exact. run-zfs.py capture
+# writes these from a live ZFS; the serial-console harness speaks CR on purpose
+# (BUILD-NOTES #16). Never let an end-of-line filter edit a measurement.
+powershell/Zfs/tests/fixtures/**  -text
+docs/SESSION-*.md                 -text
+
+# Binaries, should any land here. `text=auto` guesses; these do not need to be
+# guessed at. Fonts and images are built into the ISO byte-for-byte.
+*.psf   binary
+*.psfu  binary
+*.ttf   binary
+*.otf   binary
+*.deb   binary
+*.png   binary
+*.gz    binary
+*.xz    binary
+*.img   binary
+*.iso   binary

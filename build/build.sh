@@ -466,7 +466,7 @@ install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
 # ---------------------------------------------------------------------------
 # The desktop theme, amd64 only.
 #
-# The CONDITION IS AROUND THE BUILD, NOT AROUND THE STAGING. packages.chroot is
+# The CONDITION IS AROUND THE BUILD, NOT AROUND THE STAGING. includes.chroot is
 # in both staging loops above, exactly like package-lists and hooks, so "amd64
 # gets a desktop and arm64 does not" is still said in one place. What is
 # architecture-specific here is only whether there is anything to build: arm64
@@ -474,15 +474,51 @@ install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
 #
 # Built straight into the staged tree rather than into the source tree: it is a
 # build artefact, and build/config/ is checked in.
+#
+# NOT config/packages.chroot, WHICH IS WHERE THIS USED TO GO. BUILD-NOTES #63.
+# A non-empty packages.chroot makes lb_chroot_archives build a local apt
+# repository in the chroot and sign it, and its signing code is gnupg 1.x:
+# it passes --secret-keyring/--keyring, which gnupg >= 2.1 IGNORES, and its
+# `gpg --batch --gen-key` parameter file has no %no-protection, so gpg 2.x tries
+# to prompt for a passphrase, finds no tty, and fails with "Inappropriate ioctl
+# for device". The build then dies at "signing failed: No secret key".
+#
+# There is no way round it from configuration. LB_APT_SECURE=false silences it
+# but reaches much further than this repository - lb_bootstrap_debootstrap turns
+# it into debootstrap --no-check-gpg, so the pinned snapshot would stop being
+# verified, which is the opposite of why it is pinned. And there is no earlier
+# place to intervene: lb_chroot_archives is stage 52 of lb_chroot, ahead of
+# chroot_early_hooks (57), chroot_includes (77) and chroot_hooks (78).
+#
+# So the theme travels as a FILE and hook 0085 installs it with apt, which is
+# the same answer efi-remaster.sh gives to a different live-build gap: do
+# it ourselves rather than carry a patch against live-build. The theme is still
+# OS/7's own .deb with OS/7's version on it and still lands in dpkg's database -
+# only the delivery changed. packages.chroot is now used by neither
+# architecture, so the local-repository path cannot run at all.
 # ---------------------------------------------------------------------------
 if [[ "${ARCH}" == "amd64" ]]; then
 	# OS7_VERSION is passed in rather than left to the environment: it is not
 	# exported until just before `lb config`, and the theme package must carry
 	# the same four-field version as the ISO, not a defaulted one.
 	OS7_VERSION="${OS7_VERSION}" "${HERE}/lib/build-desktop-theme.sh" \
-		"${RELEASE_CONF}" "${WORK}/config/packages.chroot"
+		"${RELEASE_CONF}" "${WORK}/config/includes.chroot/usr/lib/os7/packages"
 else
 	echo ">>> Desktop theme: skipped (${ARCH} is server-only, no GUI target)"
+fi
+
+# GUARD: nothing may reach config/packages.chroot. If a later change puts a .deb
+# back there, live-build resurrects the local repository and the build dies in
+# gnupg with a message that names neither this file nor the theme (#63).
+shopt -s nullglob
+STRAY_LOCAL_PKGS=( "${WORK}"/config/packages.chroot/* "${WORK}"/config/packages/* )
+shopt -u nullglob
+if (( ${#STRAY_LOCAL_PKGS[@]} > 0 )); then
+	echo "!!! ${#STRAY_LOCAL_PKGS[@]} file(s) staged into config/packages.chroot:" >&2
+	for _p in "${STRAY_LOCAL_PKGS[@]}"; do echo "!!!   ${_p}" >&2; done
+	echo "!!! live-build would build and SIGN a local apt repo, and its signing" >&2
+	echo "!!! code cannot work with gnupg 2.x. BUILD-NOTES #63." >&2
+	exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -512,6 +548,27 @@ cd "${WORK}"
 export OS7_ARCH="${ARCH}"        # read by auto/config
 export OS7_VERSION               # ditto - it names the ISO volume
 lb config
+
+# ---------------------------------------------------------------------------
+# GUARD: did gnupg actually reach the base system?
+#
+# auto/config exports LB_BOOTSTRAP_INCLUDE=gnupg (BUILD-NOTES #63, and see the
+# comment there for why it is kept now that hook 0085 has replaced the local
+# package repository). The export is not a `lb config` flag - there is none - so
+# nothing on the command line proves it took, and lb_config SOURCES an existing
+# config/bootstrap (Read_conffiles) before writing a new one, which lets a stale
+# empty value win over the environment without a word.
+#
+# A setting that can be silently dropped is worth one grep. Ask the file
+# debootstrap will actually read, not the variable we think we exported.
+# ---------------------------------------------------------------------------
+if ! grep -qE '^LB_BOOTSTRAP_INCLUDE="[^"]*gnupg' config/bootstrap; then
+	echo "!!! LB_BOOTSTRAP_INCLUDE did not survive into config/bootstrap:" >&2
+	grep '^LB_BOOTSTRAP_INCLUDE=' config/bootstrap >&2 || echo "!!!   (no such line at all)" >&2
+	echo "!!! see auto/config and BUILD-NOTES #63." >&2
+	exit 1
+fi
+echo "    base system includes gnupg (config/bootstrap) - BUILD-NOTES #63"
 
 echo ">>> Running live-build (needs network access to the Ubuntu archives)"
 lb build 2>&1 | tee "${WORK}/build-${ARCH}.log"

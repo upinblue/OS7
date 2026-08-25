@@ -86,6 +86,28 @@ OS7_MIRROR="${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}/"
 # `--mode ubuntu` makes ubuntu the parent distribution, so the parent family is
 # what actually reaches debootstrap; the non-parent family is set to match so
 # that no code path can pick up a different archive. Backports stay "none".
+# --- gnupg in the BASE system -------------------------------------------------
+#
+# BUILD-NOTES #63. No CLI flag exists for this: LB_BOOTSTRAP_INCLUDE is read by
+# lb_config out of the ENVIRONMENT and written into config/bootstrap, from where
+# lb_bootstrap_debootstrap turns it into debootstrap --include=. Hence an export
+# and not another line in the `lb config` call below.
+#
+# This was the fix for the FIRST half of #63: lb_chroot_archives signs a local
+# apt repository by running `gpg` inside the chroot, and debootstrap installs
+# only gpgv, the verify-only half. It stopped being load-bearing when the second
+# half turned out to be unfixable - live-build's signing code is gnupg 1.x and
+# cannot work with gnupg 2.x at all - and the local repository was abandoned in
+# favour of hook 0085. build.sh now refuses to let anything reach
+# config/packages.chroot, so that code path cannot run on either architecture.
+#
+# KEPT ANYWAY, deliberately, and cheap: gnupg is already in
+# config/package-lists/os7-base.list.chroot, so it ships either way and the
+# installed package set is the same - this only moves it earlier. It is the
+# second line of defence behind build.sh's guard, and it means the base system
+# can verify a key before the package lists have been installed.
+export LB_BOOTSTRAP_INCLUDE="gnupg"
+
 lb config noauto \
 	--mode ubuntu \
 	--distribution "${OS7_DISTRIBUTION}" \

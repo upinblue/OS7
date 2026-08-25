@@ -2723,3 +2723,215 @@ longer than the ISO 9660 rules allow, or a nested directory should go through a
 tar. `hdiutil makehybrid -iso -joliet` is only safe for a handful of lower-case
 files at the top level, which is exactly the shape the existing spikes use and
 exactly why they never revealed the limit.
+
+## 62. Git for Windows checks the repo out with CRLF, and the shebang stops naming an interpreter
+
+*Found 2026-08-25, on Windows 11 + WSL2 + Docker Desktop, first attempt at
+`make build-amd64` on that host.*
+
+```
+$ make build-amd64
+[+] Building 132.9s (7/7) FINISHED
+ => => naming to docker.io/library/os7-build:amd64
+env: $'bash\r': No such file or directory
+env: use -[v]S to pass options in shebang lines
+mkdir -p /mnt/c/.../out
+docker run --rm --platform linux/amd64 --privileged ... /work/build/build.sh amd64
+env: $'bash\r': No such file or directory
+env: use -[v]S to pass options in shebang lines
+make: *** [Makefile:126: build-amd64] Error 127
+```
+
+**Git for Windows ships `core.autocrlf = true` in its SYSTEM config**
+(`C:/Program Files/Git/etc/gitconfig`) — the default of the "Checkout
+Windows-style, commit Unix-style" option in its installer. Every text file is
+therefore converted **on checkout**. 166 of this repo's files landed with CRLF.
+
+`#!/usr/bin/env bash\r` does not ask for `bash`. It asks for a program whose
+name ends in a carriage return, and `env` says so — but it says so as
+`$'bash\r'`, which reads at a glance like it simply could not find bash.
+
+**Nothing in the history is damaged, and that is what makes it invisible.**
+`autocrlf=true` converts back to LF on the way *in*, so:
+
+* `git show HEAD:build/build.sh | od -c` → `\n`. Every blob is clean.
+* `git grep -I -l $'\r$' HEAD` → nothing. No commit contains a CR byte.
+* `git status` → **clean**. The filter is symmetric, so the mangled working
+  tree is byte-identical to HEAD *as far as git is concerned*.
+
+There is no diff to find, no commit to blame, and no bad object to fix. The
+corruption exists only in the files on disk, which is the only place the
+interpreter ever looks.
+
+**Two scripts failed, and only one of them stopped anything.** The first
+`env:` line — the one printed *before* `mkdir`, above — is the Makefile's
+`SOURCE_FACTS` shell-out to `scripts/os7-source-facts.sh`. It died into a
+`$(shell …)` substitution, and **make does not check the exit status of
+`$(shell …)`**: `SOURCE_FACTS` simply came out empty and the recipe ran on to
+`docker run` regardless. Nothing in the log says a version lookup failed. The
+build stopped only because `build.sh` had CRLF *too*.
+
+*What that near-miss is actually worth was measured, not assumed.* With no facts
+handed in, `build.sh` falls through to its `elif` and asks git inside the
+container — and on this host it gets the right answer:
+
+```
+$ docker run --rm --platform linux/amd64 -v "$PWD":/work os7-build:amd64     bash -c 'git -c safe.directory=/work -C /work rev-parse --short=12 HEAD'
+11dd6765983b          # identical to the host's answer, and rev-list --count = 95
+```
+
+So on a **plain checkout** the empty `SOURCE_FACTS` is survivable: this repo has
+a real `.git` directory, the bind mount carries it, and the fallback is correct.
+It is in a **git worktree** that the same silence turns into #43 — there `.git`
+is a *file* pointing outside the mount, git cannot answer, and `build.sh`
+refuses rather than inventing a version. Claude Code sessions run in a worktree
+by default. The hole is not the fallback; it is that `$(shell …)` can fail
+without a word, so which of those two paths you are on decides the outcome and
+the log looks the same either way.
+
+**The fix is `.gitattributes`, not a git config.** A `core.autocrlf=false` fixes
+one machine, silently, until the next clone or the next contributor:
+
+```
+* text=auto eol=lf
+```
+
+`eol=lf` **overrides `core.autocrlf`**, so the repo now defends itself wherever
+it is cloned, rather than depending on how each machine's Git was installed.
+`powershell/Zfs/tests/fixtures/**` is marked `-text`: those are recorded real
+ZFS output, and an end-of-line filter must never edit a measurement (and the
+serial harness speaks CR on purpose — #16).
+
+Renormalising an already-clean tree is a re-checkout, not an edit:
+
+```
+git rm --cached -r -q .   &&   git reset --hard
+```
+
+**Do not use `sed` or `file` to check for this on Windows.** Git Bash's `sed`
+reads in text mode and **strips CR silently**: `sed -n '26,30p' Makefile | od -c`
+showed clean `\n` for a file that had 162 CRs in it. The diagnostic agreed the
+problem was fixed while the problem was still there — the standing rule (*a
+diagnostic must not depend on the subsystem it is diagnosing*) applied to the
+line endings themselves. `tr -dc '\r' < f | wc -c` and `od -c` are honest;
+they read bytes.
+
+**What proves it is fixed** is not that `make` got further. It is:
+
+```
+for f in $(git ls-files); do tr -dc '\r' < "$f" | wc -c; done   # every one 0
+docker run --rm --platform linux/amd64 -v "$PWD":/work os7-build:amd64 \
+  /work/build/build.sh                    # -> "Usage: ... <amd64|arm64|clean>"
+```
+
+The second is the real check: no argument, so `build.sh` reaches `usage()` and
+stops. Reaching `usage()` means `env` resolved the shebang and bash parsed the
+whole file — proven **inside the container that will run it**, and without
+starting a build.
+
+## 63. A local package repository is signed with gnupg 1.x code, and only amd64 has one
+
+*Found 2026-08-25 on Windows 11 + WSL2 + Docker Desktop, native x86_64 — the
+first amd64 build attempted anywhere since the desktop theme landed.*
+
+Two failures, one after the other, from the same cause. The first:
+
+```
+env: 'gpg': No such file or directory
+E: GPG exited with error status 127
+```
+
+and once gpg existed, the second:
+
+```
+gpg: key generation failed: Inappropriate ioctl for device
+gpg: WARNING: "--secret-keyring" is an obsolete option - it has no effect
+gpg: signing failed: No secret key
+```
+
+**What asks for gpg.** `lb_chroot_archives` builds a **local apt repository**
+inside the chroot out of whatever is in `config/packages.chroot`, and when
+`LB_APT_SECURE` is true it signs it — `Chroot chroot "gpg --batch --gen-key"`,
+then `gpg ... -abs -o /root/packages/Release.gpg`.
+
+**Why no arm64 build has ever met it.** `build.sh` stages the desktop theme
+`.deb` into `config/packages.chroot` **on amd64 only** — arm64 is server-only
+and leaves the directory empty, and an empty `packages.chroot` skips the entire
+local-repository block. The one architecture that has ever produced an ISO
+cannot reach this code.
+
+**The first half is a missing package.** debootstrap installs `gpgv`, the
+verify-only half of GnuPG, and never `gnupg`. Measured from the build log:
+`Unpacking gpgv` once, `Unpacking gnupg` zero times. `gnupg` *is* in
+`os7-base.list.chroot`, but package lists are installed at `lb_chroot` stage 62
+and the signing runs at stage 52. Fixed with `LB_BOOTSTRAP_INCLUDE=gnupg`
+(debootstrap `--include=`), which has **no `lb config` flag** — `lb_config`
+reads it from the environment.
+
+**The second half cannot be fixed, and that is the finding.** live-build's
+signing code predates GnuPG 2:
+
+* it passes `--secret-keyring` / `--keyring`, which **gnupg >= 2.1 ignores**, so
+  the key it just made is not the key it then looks for;
+* its `--batch --gen-key` parameter file has no `%no-protection`, so gpg 2.x
+  tries to prompt for a passphrase, finds no tty, and fails with *Inappropriate
+  ioctl for device*;
+* `%secring` / `%pubring` in that parameter file are likewise obsolete.
+
+Nothing in live-build's configuration reaches any of it.
+
+**Three dead ends, each measured rather than reasoned about:**
+
+| Way out | Why it is not one |
+|---|---|
+| `LB_APT_SECURE=false` | Not scoped to the local repo. `lb_bootstrap_debootstrap:112` turns it into `debootstrap --no-check-gpg`, so **the pinned snapshot stops being verified** — the opposite of why it is pinned. |
+| A hook that runs earlier | None exists. `lb_chroot` order: `chroot_archives` **52**, `chroot_early_hooks` 57, `chroot_install-packages` 62, `chroot_includes` 77, `chroot_hooks` 78. Even the *early* hooks are five stages too late. |
+| Patch `lb_chroot_archives` in the container | Carries an upstream patch that a live-build update can silently invalidate. OS/7's standing answer to "live-build cannot" is `efi-remaster.sh`: do it ourselves. |
+
+**The fix removes the class.** `config/packages.chroot` is now used by neither
+architecture, so the local-repository path cannot run at all:
+
+* `build.sh` writes the theme `.deb` into
+  `config/includes.chroot/usr/lib/os7/packages` — stage 77 copies it into the
+  chroot as an ordinary file;
+* new hook `0085-install-desktop-theme.hook.chroot` runs `apt-get install` on
+  that path at stage 78. **`apt-get` and not `dpkg -i`**: it resolves the
+  theme's Depends against the pinned archive. It then asks `dpkg -s` whether the
+  install actually happened, and deletes the `.deb` so a build input does not
+  ship inside the squashfs;
+* installing and verifying stay in **separate** hooks — 0085 installs, 0090
+  verifies — because a program that checks its own work is the failure this
+  repo keeps re-learning;
+* `build.sh` **refuses to build** if anything is ever staged into
+  `packages.chroot` again, naming this note.
+
+**How long it was latent, and why nobody tripped it.** The theme package landed
+in `eb5d600`, which is a DESCENDANT of `c395e4c` - the commit carrying
+SESSION-AMD64-FIRST-ISO.md. So `OS7-1.0.0.45-amd64.iso` was built when
+`packages.chroot` was still empty (1528 packages, no theme), and the very change
+that gave amd64 a desktop also gave it a build that could not finish. Between
+those two commits no amd64 build ran anywhere: CI was not dispatched again,
+Apple Silicon is blocked by #12, and Windows was blocked by #62. The trap was
+armed for 50 commits with nothing to spring it.
+
+**What it produced.** `OS7-1.0.0.95-amd64.iso`, 3.26 GB, **1539** packages -
+the 1528 of the CI baseline plus the theme and its dependencies. Not the first
+amd64 ISO (that is SESSION-AMD64-FIRST-ISO.md, built in GitHub Actions), but the
+first built **locally** rather than in CI, the first on a **Windows** host, and
+the first that contains the desktop theme at all. `check-image.py amd64` passes
+every check against the **shipped** image - the pin holds on all six apt
+sources, `os7-setup --self-test` passes chrooted into it, and `xorriso` reports
+an El Torito **UEFI** boot image at `/boot/grub/efiboot.img`.
+
+**NOT MEASURED: whether THIS medium boots.** SESSION-AMD64-EFI-REMASTER.md
+measured an amd64 medium booting - firmware, GRUB, OS/7's menu - so the remaster
+path is proven in general. It was not re-run here: this host has no QEMU and no
+OVMF. The El Torito record says a firmware would find something; it does not say
+what happens next for this build.
+
+**Two smaller things worth carrying.** `MAKE_EXIT` was captured three times from
+`wsl.exe -- bash -lc '… ; rc=$?'` and came back `0`, then empty, for builds that
+had failed — the log said `make: *** Error 127` and `out/` was empty. Do not
+trust an exit status marshalled back through `wsl.exe`; ask for the artefact.
+And Git Bash's `sed` strips CR (#62), so neither is a reliable witness on this
+host.

@@ -73,11 +73,15 @@ if [ -n "${SHELL_VER}" ] && [ -f "${META}" ]; then
 fi
 
 # --- 2. The theme package ------------------------------------------------
-# NOTE ON ORDERING: the theme arrives through config/packages.chroot, which
-# live-build installs in its own stage. If this check fails while the .deb is
-# demonstrably in the staged tree, the cause is that local-packages runs AFTER
-# hooks - in which case move this block to check-image.py rather than deleting
-# it. Do not "fix" it by making it a warning.
+# NOTE ON ORDERING: the theme is installed by hook 0085, which runs before this
+# one because 0085 sorts before 0090. It no longer arrives through
+# config/packages.chroot - live-build signs a local package repository with
+# gnupg 1.x code that gnupg 2.x cannot satisfy, so that path kills the build
+# outright (BUILD-NOTES #63). The old worry here was that local-packages might
+# run after hooks; the measured sequence is chroot_archives 52, includes 77,
+# hooks 78, so a hook is now the LAST word on whether the theme is installed and
+# this check can be believed. Do not "fix" a failure by making it a warning: if
+# 0085 installed it, dpkg knows.
 if dpkg -s os7-desktop-theme >/dev/null 2>&1; then
 	ok "os7-desktop-theme $(dpkg-query -W -f='${Version}' os7-desktop-theme) installed"
 else
