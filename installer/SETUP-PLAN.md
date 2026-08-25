@@ -1391,6 +1391,19 @@ been checked on an installed machine.
 
 ## 9. Decisions
 
+**Claiming a D or an L number.** Take the next free one **in this file, in a
+commit, before you write the entry** — not in a conversation, and not in a branch
+nobody has pulled. On 2026-08-25 two sessions independently reached for `D11` and
+`L23` within the same hour, and a third had reserved BUILD-NOTES `#50` by saying
+so out loud; every one of those claims existed only where it had been said. A
+number claimed in the file survives `git pull`, which is what a numbered list
+needs in order to keep being one.
+
+**Taken as of 2026-08-25: D1–D15, L1–L29.** The next free numbers are **D16** and
+**L30**. If you take one, move this line in the same commit. The same rule and
+the same table live at the top of [../docs/BUILD-NOTES.md](../docs/BUILD-NOTES.md)
+for its numbers.
+
 | # | Decision | Outcome |
 |---|---|---|
 | D1 | Bootloader: signed GRUB + `bpool`, or ZFSBootMenu | **DECIDED 2026-08-22 — GRUB + `bpool`.** ZFSBootMenu stays possible behind a bootloader strategy interface; do not hard-code GRUB into the executor |

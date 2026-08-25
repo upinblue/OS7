@@ -197,18 +197,27 @@ def phase_m1():
 
 
 # ---------------------------------------------------------------------------
-def write_plan(c):
-    """A complete plan with a STATIC network, plus the secrets as separate files."""
+def write_plan(c, iface):
+    """A complete plan with a STATIC network, plus the secrets as separate files.
+
+    THE INTERFACE NAME IS DISCOVERED, NOT ASSUMED. Predictable interface names
+    come from the PCI topology, so what a virtio NIC is called on `machine virt`
+    is a property of the QEMU version and the machine model rather than something
+    this file can know. The first version wrote `enp0s1` and would have failed on
+    any host where it is `ens1` — with a message about an address, which is the
+    wrong thing to be told.
+
+    It is still a NAME and not `auto`: this phase asserts an address on ONE
+    interface, and a `match:` glob would make "which interface" part of what is
+    being tested. run-phase3.py's unattended plan covers the `auto` path.
+    """
     plan = ('{"version":1,"intent":"Install","language":"en_US.UTF-8",'
             '"keyboard":"us","timezone":"UTC","mode":"Headless",'
             f'"storage":{{"disk":"{TARGET}","layout":"single","efiMiB":512,'
             '"bpoolGiB":2,"encrypt":true,"swap":"zram"},'
             f'"account":{{"hostname":"{HOSTNAME}","username":"{USERNAME}",'
             '"fullName":"OS/7 Phase 3b"},'
-            # The interface is named here rather than left as `auto`, because
-            # this phase asserts an address on ONE interface and a glob would
-            # make "which interface" part of what is being tested.
-            f'"network":{{"interface":"enp0s1","kind":"Wired","method":"Static",'
+            f'"network":{{"interface":"{iface}","kind":"Wired","method":"Static",'
             f'"address":"{ADDRESS}","gateway":"{GATEWAY}",'
             f'"nameservers":["{NAMESERVER}"],"search":["os7.test"]}}}}')
     c.drop()
@@ -237,14 +246,24 @@ def phase_install():
         # install would write a netplan file matching nothing - which netplan
         # accepts and which produces a machine with no network. Better to fail
         # here, in one line, than to debug it after a boot.
+        # WHICH INTERFACE THE GUEST ACTUALLY HAS, asked rather than assumed.
+        # Predictable names come from the PCI topology, so a virtio NIC on
+        # `machine virt` may be enp0s1 or ens1 depending on the QEMU version.
+        # A plan naming the wrong one produces a netplan file matching nothing,
+        # which netplan ACCEPTS - and the machine comes up with no network and
+        # no error anywhere.
         out = ask(c, "ls /sys/class/net", "interface names")
-        names = [n for n in out.split() if n not in ("lo",) and not n.startswith("OK")]
+        names = [n for n in out.split()
+                 if n != "lo" and not n.startswith("OK") and "/" not in n]
+        wired = [n for n in names if n.startswith(("en", "eth"))]
         print(f"      interfaces on the live medium: {' '.join(names)}")
-        if "enp0s1" not in out:
-            print("      FAIL  this VM has no enp0s1; the plan below would match nothing")
+        if not wired:
+            print("      FAIL  this VM has no wired interface; the NIC did not attach")
             return False
+        iface = wired[0]
+        print(f"      the plan will name {iface}")
 
-        write_plan(c)
+        write_plan(c, iface)
         c.drop()
         c.send("os7-setup --unattend /tmp/plan.json --passphrase-file /tmp/pass "
                "--password-file /tmp/pw")
