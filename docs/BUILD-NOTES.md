@@ -2214,7 +2214,43 @@ is the same too — **pin the file, not the version**, and treat the source as
 part of the pin. SETUP-PLAN §2.8 records the SHA256 of the exact TTF, not just
 the package version.
 
----
+
+## 54. A direct rasteriser answers every request — `.notdef` passed both coverage checks
+
+Found while building the Cascadia PSFs
+([SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md), SETUP-PLAN §2.8),
+one step after #52 removed `bdf2psf` from that route.
+
+`bdf2psf` will not emit a glyph the source font does not have; it leaves the
+position out and logs it. Replacing it with a FreeType-based rasteriser removes
+that behaviour without announcing it: **FreeType answers every request.** Ask it
+for a codepoint the font lacks and it returns glyph 0 — and in Cascadia glyph 0
+is a hollow rectangle, not an empty cell.
+
+So the first build mapped `U+21B5` (absent from Cascadia's cmap) to a box, and
+`psf.py verify` reported the font **complete**:
+
+```
+ok    Arrows (the rest): 4/4
+```
+
+Both of the guards that exist for this failed to fire, and neither was wrong to:
+
+* the **coverage** check asks whether the codepoint is mapped — it is;
+* the **blank** check asks whether the bitmap has ink — it has plenty.
+
+The only signal was a contradiction between two measurements taken minutes
+apart: reading Cascadia's `cmap` directly said `U+21B5` was missing, and reading
+the built PSF said it was present. Nothing in the pipeline compared the two.
+
+**Fix:** consult the source font's `cmap` before rasterising and skip what is not
+there. `verify` then reports the absence as a note, which is the truth. The
+one-line version of the rule, already in this file twice (#26, #46): *a codepoint
+being mapped is not evidence that it is mapped to the right picture.*
+
+Worth stating in general, because the next font conversion will meet it too:
+**when a pipeline step is replaced, its silent guarantees go with it.** `bdf2psf`
+was not only converting — it was also refusing, and the refusal was load-bearing.
 
 ## 56. The interface name changes between installing and running, and netplan says nothing
 

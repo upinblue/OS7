@@ -378,7 +378,7 @@ The load-bearing parts:
 | File used | `/usr/share/fonts/truetype/cascadia-code/CascadiaMono.ttf`, 688 612 bytes, SHA256 `4bac5958d02c6fcf2b9365c5fdf65b9dc3a500a572c80357da7533d9fca9b098` — the **variable** font, `wght 200..400..700`, default 400 |
 | **Mono, not Code** | The two are one drawing; `Cascadia Code` adds programming ligatures, and a PSF is a fixed cell grid with no shaping engine. Same reasoning that rejects `FSEX302-alt.ttf` in §2.3, same conclusion. |
 | Design metrics | `unitsPerEm = 2048`; hhea ascender 1900, descender −480 → **line box 2380** against an advance of **1200**. That is **1 : 1.9833** where the console cell is 1 : 2 — the near-coincidence is what makes an exact 8×16 reachable. |
-| Coverage | 2 426 codepoints. **All 356 REQUIRED present**, every one of them advance 1200. Of WANTED only `U+21B5` is absent — against nine absent in Fixedsys, including `U+25B2`/`U+25BC`. |
+| Coverage | 2 426 codepoints. **All 356 REQUIRED present**, every one of them advance 1200. Of WANTED only `U+21B5` is absent — against **eleven** absent in Fixedsys, including `U+25B2`/`U+25BC`. |
 
 **The pin is the source, not just the version.** The Debian variable font and
 the GitHub static instances are both "2407.24" and they do **not** rasterise
@@ -446,12 +446,23 @@ Three things this route does *not* need, and one it does:
   also a look decision — Cascadia draws `░▒▓` as diagonal hatching, and a
   progress bar built from diagonal hatching does not read as the DOS one.
 
-**Result, measured 2026-08-25:** 409 codepoints, 32 of them synthesised;
-`os7-console-8x16.psf` 7 916 bytes (3 027 gzipped) and `os7-console-16x32.psf`
-27 548 bytes (5 281 gzipped). `build/lib/psf.py verify`, run unmodified against
-both files, returns **`ok` on every line — no failures and no notes**, which the
-shipping Fixedsys PSFs do not manage: they emit four notes for glyphs the font
-lacks.
+**Ask the cmap before rasterising. `.notdef` is not an absent glyph.** This one
+was hit rather than anticipated. `bdf2psf` omits a codepoint the font does not
+have and says so; a direct rasteriser has no such instinct — FreeType answers
+every request, returning glyph 0 for anything missing, and Cascadia's glyph 0 is
+a hollow rectangle. The first build therefore mapped `U+21B5` to a box, and
+`psf.py verify` passed it: the codepoint *is* present and it is *not* blank, so
+both of the checks that could have caught it were satisfied by a wrong picture.
+That is BUILD-NOTES #26 exactly, arriving through a different door, and it is
+why the route must consult `cmap` and **skip** what is not there — at which
+point `verify` correctly reports the absence as a note. BUILD-NOTES #54.
+
+**Result, measured 2026-08-25:** 408 codepoints, 32 of them synthesised;
+`os7-console-8x16.psf` 7 896 bytes (3 018 gzipped) and `os7-console-16x32.psf`
+27 480 bytes (5 271 gzipped). `build/lib/psf.py verify`, run unmodified against
+both files, returns **no failures and one note** — `Arrows (the rest): 3/4 —
+absent: U+21B5`, the single glyph Cascadia lacks. The shipping Fixedsys PSFs
+emit four such notes, covering eleven glyphs.
 
 **Not yet booted.** Everything above is the artefact measured on the host and in
 the build container. `psf.py verify` is a diagnostic like any other, and this
@@ -1554,7 +1565,7 @@ be recorded here a few minutes before the entry it points at.
 | D6 | Does the *installed* system keep the blue console palette | recommend yes, opt-out — free brand identity on every tty. **S1 gave it a mechanism and made it free:** the palette has to be shipped as `/etc/vtrgb` for Setup to work at all (§2.1), Ubuntu already enables `setvtrgb.service` to apply it, and that same file is what the installed console reads. Keeping the palette is now the default outcome and *removing* it would be the extra work |
 | D7 | Root README brand colour is orange `#ff6912`; Setup is blue `#1289ff` | **Still open as a documentation question.** Proposed wording: orange stays the marketing/logo identity, blue `#1289ff` is the *product* identity — Setup, console, boot menu. Two unqualified "the brand colour is" statements in one repo will otherwise be read as a mistake |
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3). **Scope narrowed 2026-08-25 by D15:** the second half of that — the installed system in non-GUI mode — is now Cascadia Mono. Fixedsys keeps Setup, which is the half the DOS reproduction depends on |
-| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against nine missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures *and no notes*. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **Not yet booted** — the artefact is verified, a console running it is not |
+| D15 | The font of the *installed* console, as distinct from Setup's | **DECIDED 2026-08-25 — [Cascadia Mono](https://github.com/microsoft/cascadia-code) 2407.24** for the installed system in non-GUI mode; `os7-setup` keeps Fixedsys (§2.8). The reasoning is that the two halves are different eras of the same house: Setup reproduces MS-DOS 6.22 and Windows 2000, the installed console is a PowerShell workstation and Cascadia is what Microsoft ships for that. **Measured before deciding, not after:** all 356 REQUIRED codepoints present and uniform-width, only `U+21B5` missing from WANTED against **eleven** missing in Fixedsys, and both built PSFs pass `psf.py verify` with no failures and a single note. Comes from the **already-pinned Ubuntu snapshot** (`fonts-cascadia-code 2407.24-3`, 1.3 MB) rather than upstream's 150 MB ZIP. Two consequences that are not free: it is OFL 1.1 rather than CC0 (L29), and it needs a **second build route** because `otf2bdf` cannot produce an 8×16 cell from it (BUILD-NOTES #52). Evidence: [../docs/SESSION-CASCADIA-CONSOLE.md](../docs/SESSION-CASCADIA-CONSOLE.md). **Not yet booted** — the artefact is verified, a console running it is not |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
 | D10 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split, not placed (§4.4).** Package state (`dpkg`, `apt`, `cache`) stays inside the BE, because it describes the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and — the OS/7-specific part — the state of the agents that hold a device identity in Entra, Intune and Arc, because the tenant on the other end has no rollback. Out-of-BE datasets hang under `rpool/DATA` rather than carrying a do-not-clone property, so the mistake is structurally impossible rather than merely discouraged |
 
@@ -2040,7 +2051,7 @@ remembered. What was *not* checked is marked as a spike in Phase 0.
 | **`fonts-cascadia-code 2407.24-3` is in the pinned snapshot's `universe`** — same upstream release as GitHub's, 1 355 014 bytes, SHA256 `bf3514c3…5184`, versus a 150 454 761-byte ZIP as upstream's only release asset | `dists/resolute/universe/binary-arm64/Packages.gz` under `OS7_ARCHIVE_SNAPSHOT`, and the GitHub release API, both read 2026-08-25 |
 | **Cascadia's line box is 1200 : 2380 = 1 : 1.9833**, against a console cell of 1 : 2 — which is what makes an exact 8×16 reachable at all; but its Block Elements are drawn to the **win** box (2706), so rasterising them puts the eighths in the wrong rows and blanks `U+2594` | `head`/`hhea`/`OS/2`/`hmtx` and per-glyph outline bounds read out of the shipped `CascadiaMono.ttf` with fontTools 4.63.0; the blank was then reproduced as a real `psf.py verify` failure |
 | **`otf2bdf` cannot yield an 8×16 cell from Cascadia** — `-rv` does not scale outlines, so height follows width and only 8×15 and 9×16 exist on that route | swept `-p 14 -rh 71…77` in `os7-build:arm64`, 2026-08-25 (BUILD-NOTES #52). Also confirms trap #24 is not Fixedsys-specific: `otf2bdf` exits 8 on this font too |
-| **Both Cascadia PSFs pass `psf.py verify` with no failures and no notes** — 409 codepoints, 32 synthesised, cell tiling continuous, all nine shape distinctions held | the repo's own `build/lib/psf.py verify --expect 8x16,16x32`, run unmodified against the built files, 2026-08-25 |
+| **Both Cascadia PSFs pass `psf.py verify` with no failures and one note** (`U+21B5`, the only WANTED glyph the font lacks) — 408 codepoints, 32 synthesised, cell tiling continuous, all nine shape distinctions held | the repo's own `build/lib/psf.py verify --expect 8x16,16x32`, run unmodified against the built files, 2026-08-25 |
 
 Contrast ratios in §2.2 were computed from the sRGB relative-luminance formula,
 not taken from a source.

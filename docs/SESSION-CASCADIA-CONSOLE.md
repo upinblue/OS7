@@ -22,13 +22,13 @@ D9 is therefore split rather than replaced.
 
 **It works, and Cascadia covers OS/7's requirements more completely than
 Fixedsys does.** Both PSFs built in this session pass `build/lib/psf.py verify`
-with **no failures and no notes** — which the shipping Fixedsys font does not:
-it emits four `note` lines for glyphs it lacks.
+with **no failures and a single note** — the one glyph Cascadia lacks. The
+shipping Fixedsys PSFs emit four such notes, for eleven glyphs.
 
 | | Fixedsys Excelsior (shipping) | Cascadia Mono 2407.24 |
 |---|---|---|
 | REQUIRED codepoints (356) | 356 — complete | **356 — complete** |
-| WANTED codepoints | 9 absent (`U+2030`, `U+2194`, 5 Geometric Shapes, 2 CP437) | **1 absent (`U+21B5`)** |
+| WANTED codepoints | **11 absent** (`U+2030`, `U+2194`, 7 Geometric Shapes, 2 CP437) | **1 absent (`U+21B5`)** |
 | Monospaced across the cmap | no — 4 230 of 6 192 at 8 px, needs `fixedwidth` | **yes — 1 810 of 1 863 at exactly 8 px, the other 53 are zero-advance combining marks** |
 | Cell tiling | draws 15 px of ink in a 16 px cell, needs `fillcell` (#27) | **overdraws the cell on purpose, tiles unaided** |
 | 16×32 | pixel-doubled from 8×16 | **rasterised natively** |
@@ -278,12 +278,42 @@ This is the same class of intervention as `psf.py fillcell` — the font is righ
 about itself and wrong about a console cell — and it replaces it, since
 Cascadia needs no seam closing.
 
-### 5.2 Result
+### 5.2 The one that was hit rather than anticipated: `.notdef`
+
+Dropping `bdf2psf` from the route drops something that was not obviously a
+feature. **`bdf2psf` refuses**: a codepoint the source font lacks is left out of
+the PSF and logged. FreeType does not refuse — it answers every request, with
+glyph 0 for anything missing, and Cascadia's glyph 0 is a hollow rectangle.
+
+The first build therefore mapped `U+21B5`, which Cascadia does not have, to a
+box. `psf.py verify` declared it complete:
 
 ```
-409 codepoints requested (REQUIRED + WANTED), 32 of them synthesised
-os7-console-8x16.psf    7 916 bytes    ->  3 027 bytes gzipped
-os7-console-16x32.psf  27 548 bytes    ->  5 281 bytes gzipped
+ok    Arrows (the rest): 4/4          <- and the glyph is a rectangle
+```
+
+Both guards fired correctly on a wrong premise: the coverage check asks whether
+the codepoint is mapped (it is) and the blank check asks whether the bitmap has
+ink (28 pixels of it). This is BUILD-NOTES #26 arriving through a different
+door — the codepoint is mapped, to the wrong picture — and nothing downstream
+can see it.
+
+What surfaced it was a contradiction between two of this session's own
+measurements: reading Cascadia's `cmap` said `U+21B5` was absent (§2.2), and
+reading the built PSF said it was present. Nothing in the pipeline compared
+them; a person did.
+
+**The route must consult `cmap` and skip what is not there**, at which point
+`verify` reports the absence honestly, as a note. Recorded as BUILD-NOTES #54,
+and stated as a requirement in SETUP-PLAN §2.8 rather than left as a property of
+one prototype.
+
+### 5.3 Result
+
+```
+408 codepoints mapped (REQUIRED + WANTED, less U+21B5), 32 of them synthesised
+os7-console-8x16.psf    7 896 bytes    ->  3 018 bytes gzipped
+os7-console-16x32.psf  27 480 bytes    ->  5 271 bytes gzipped
 ```
 
 `build/lib/psf.py verify --expect 8x16,16x32`, run unmodified from the repo
