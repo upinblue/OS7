@@ -604,12 +604,33 @@ def phase_walk(font):
         # F4 = apply it here and now (D12). The live medium has the whole stack,
         # so this is a REAL DHCP lease on a REAL interface, and the address is
         # known before the VM started because user-mode networking is fixed.
+        #
+        # POLLED, NOT SLEPT. NetworkProbe waits up to 30 s for a lease, and how
+        # long it actually takes depends on how loaded this Mac is. A fixed sleep
+        # would photograph a screen that has not got there yet and report "no
+        # lease" — os7-d7 hit exactly that twice in one afternoon on 2026-08-25
+        # with a probe that waited 95 s of wall-clock time for a GRUB menu, and
+        # both times the diagnosis named a cause the screen did not have.
         press("f4")
-        print("      testing the live network … (DHCP lease, up to 30s)")
-        time.sleep(12)
-        w, h, rgb = shoot("48-network-tested", 2.0)
-        ok &= on_screen(w, h, rgb, DHCP_ADDRESS,
-                        f"F4 took a real lease on the live medium ({DHCP_ADDRESS})")
+        print("      testing the live network … (a real DHCP lease, up to 45s)")
+        got_lease = False
+        for attempt in range(15):
+            time.sleep(3)
+            w, h, rgb = lab.shoot(q, "48-network-tested")
+            page = page_of(w, h, rgb)
+            if DHCP_ADDRESS in page:
+                got_lease = True
+                break
+            if "did not" in page or "Check the passphrase" in page:
+                break
+        if got_lease:
+            print(f"      ok    F4 took a real lease on the live medium ({DHCP_ADDRESS})")
+        else:
+            ok = False
+            print(f"      FAIL  F4 did not produce {DHCP_ADDRESS} within 45s")
+            for line in page.splitlines():
+                if line.strip():
+                    print(f"            {line.rstrip()}")
 
         press("ret")
 
