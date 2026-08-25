@@ -1602,10 +1602,33 @@ plan §4.4), so it is owed, not dropped.
 
 ### Phase 3b — Network, and the account model named
 
-**PLANNED 2026-08-25, not started.** Screen 9 was the one part of screens 7–11
-that Phase 3 did not deliver, on a premise that turns out not to hold for this
-image (L23). This phase delivers it, together with the Wi-Fi screens D13 puts in
-v1 and the screen-7 wording D11 makes necessary.
+**WRITTEN 2026-08-25. NOT YET RUN ON A MACHINE.** Screen 9 was the one part of
+screens 7–11 that Phase 3 did not deliver, on a premise that turns out not to
+hold for this image (L23). This phase delivers it, together with the Wi-Fi
+screens D13 puts in v1 and the screen-7 wording D11 makes necessary.
+
+The distinction in that first line is the whole of this repository's discipline
+and it is not modesty. The code exists, compiles with zero warnings, and passes
+19 new `--self-test` assertions; every shell string it generates has been parsed
+as bash *and* executed in the condition its error message was written for; every
+plan file the harnesses build has been parsed as JSON and fed to the real binary.
+**None of that is a boot.** No ISO carries this code, no VM has run it, and M1 —
+the measurement that justifies the phase at all — is unmade. Until then every
+claim here is a claim about code.
+
+Four defects were found by those checks before a machine could have found them,
+and they are listed because the *kind* of check that caught each one is the
+transferable part:
+
+| Found by | Defect |
+|---|---|
+| a captured `iw scan` fed to the parser | **`iw` escapes a hidden SSID rather than emitting it** — a zero-filled SSID arrives as the literal text `\x00\x00…`, not as NUL bytes. A check for `c == '\0'` filtered nothing and would have put every hidden network into 9W's list as a row of gibberish |
+| running the generated shell with its target files absent | **`set -euo pipefail` killed the diagnostic before it printed.** `ls` on a glob matching nothing exits non-zero, `pipefail` propagates it, the assignment fails and the script dies three lines above its own `echo`. Demonstrated: the pre-fix script exits 1 with *no output at all*. `bash -n` passes it, so check-image would have shipped it |
+| reading SetupFlow's order against the code | **the Wi-Fi scan blocked before the screen it was scanning for was drawn** — and carried a comment claiming the opposite |
+| asking what the walk VM actually had | **the walk VM had no NIC**, so screen 9 would have been skipped and the walk would have reported success without ever seeing it. BUILD-NOTES #45 from the other side |
+
+The first two are the same class as everything expensive in this repository: a
+tool reported something that *looked* like what was expected, and was not.
 
 *Deliverable:* **a machine installed by Setup boots into OS/7 and is reachable
 over the network the operator configured** — proved the same way Phase 3 proved
