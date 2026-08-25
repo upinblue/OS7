@@ -313,8 +313,9 @@ def build(font, out, W, H, hinting=True):
         codepoints.append(cp)
         glyphs.append(bm)
 
-    if glyphs and any(any(r) for r in glyphs[32]):
-        sys.stderr.write("!!! glyph position 32 is not blank; setfont would "
+    erase = psfmod.PSF_ERASE_POSITION
+    if len(glyphs) > erase and any(any(r) for r in glyphs[erase]):
+        sys.stderr.write(f"!!! glyph position {erase} is not blank; setfont would "
                          "refuse this font (BUILD-NOTES #59)\n")
         sys.exit(1)
 
@@ -335,9 +336,10 @@ def build(font, out, W, H, hinting=True):
     # written down as a CAP. It is not a cap; it is one of two permitted values.
     # BUILD-NOTES #59.
     # ---------------------------------------------------------------------
-    target = 256 if len(glyphs) <= 256 else psfmod.PSF_MAX_GLYPHS
-    if len(glyphs) > target:
-        sys.stderr.write(f"!!! {len(glyphs)} glyphs exceeds {target}\n")
+    target = next((n for n in psfmod.PSF_GLYPH_COUNTS if len(glyphs) <= n), None)
+    if target is None:
+        sys.stderr.write(f"!!! {len(glyphs)} glyphs exceeds "
+                         f"{max(psfmod.PSF_GLYPH_COUNTS)}\n")
         sys.exit(1)
     while len(glyphs) < target:
         glyphs.append(blank)

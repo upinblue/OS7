@@ -2556,6 +2556,26 @@ repo knows how to assert and still be rejected by the thing that loads it. The
 only check that closes that gap is handing the artefact to the real consumer,
 which here meant booting a machine and reading `$?`.
 
+**Both are now asserted, for both fonts.** `psf.py verify` gained the two rules
+as `PSF_GLYPH_COUNTS = (256, 512)` and `PSF_ERASE_POSITION = 32`, so the Fixedsys
+pipeline is covered by them too — it happens to satisfy both already, because
+`bdf2psf` is told 512 and pads, and puts `U+0020` at position 32. That is the
+point: it satisfies them *by luck of a tool's defaults*, and nothing said so.
+
+The guards were made to fire before they were trusted. A 441-glyph copy and a
+copy with ink painted into slot 32:
+
+```
+FAIL  441 glyphs — fbcon accepts 256 or 512 and nothing else; setfont would
+      report ioctl(KDFONTOP): Invalid argument                        exit 1
+FAIL  glyph position 32 is not blank (it holds U+0020) — setfont refuses
+      the font: 'font position 32 is nonblank'                        exit 1
+```
+
+`PSF_MAX_GLYPHS` survives as a derived alias so older references keep working,
+with a comment saying it is not a maximum. SETUP-PLAN §2.5, L9 and L19 said
+"caps at 512" and now say what the kernel actually does.
+
 **And the lesson that generalises past fonts:** a build artefact can satisfy
 every property its own verifier knows about and still be rejected by the thing
 that consumes it. The only check that closes that gap is handing the artefact to

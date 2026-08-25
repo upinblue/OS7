@@ -63,7 +63,39 @@ WANTED = [
                              0x2660, 0x2663, 0x2665, 0x2666, 0x266A, 0x266B]),
 ]
 
-PSF_MAX_GLYPHS = 512
+# ---------------------------------------------------------------------------
+# What the CONSUMER requires, as opposed to what a valid PSF may contain.
+#
+# These two constants are here because both of them cost a booted machine to
+# learn (BUILD-NOTES #59). A PSF that satisfies every other check in this file
+# can still be refused outright by kbd or by the kernel, and the refusal happens
+# where nothing in a build log is looking.
+#
+# GLYPH COUNT. fbcon accepts two values and no others:
+#
+#     drivers/video/fbdev/core/fbcon.c, fbcon_set_font()
+#         if (charcount != 256 && charcount != 512) return -EINVAL;
+#
+# reported as `ioctl(KDFONTOP): Invalid argument`. 441 glyphs is a perfectly
+# well-formed PSF and an unloadable console font. This was written down here as
+# PSF_MAX_GLYPHS and in SETUP-PLAN §2.5 as "PSF caps at 512" — both read as an
+# upper bound, so a smaller font looked safe. It is not a bound; it is a choice
+# of two. Fixedsys only ever worked because `bdf2psf` is told 512 and pads.
+#
+# ERASE POSITION. kbd refuses a font whose glyph at position 32 has ink:
+#
+#     setfont: ERROR setfont.c:142 try_loadfont: font position 32 is nonblank
+#     setfont: ERROR setfont.c:154 try_loadfont: background will look funny
+#
+# because the console paints that slot to clear the screen. The classic layout
+# puts U+0020 there, which is blank by construction; packing codepoints in table
+# order does not, and the kernel then never loads the font at all.
+PSF_GLYPH_COUNTS = (256, 512)
+PSF_ERASE_POSITION = 32
+
+# Kept as the historical name, derived rather than written twice. Note that it
+# is NOT a cap — see above.
+PSF_MAX_GLYPHS = max(PSF_GLYPH_COUNTS)
 
 # Pairs that must not end up sharing a bitmap.
 #
@@ -518,9 +550,26 @@ def verify(paths, expect=None):
         print(f"  {path}")
         print(f"    {f.describe()}")
 
-        if f.length > PSF_MAX_GLYPHS:
-            print(f"    FAIL  {f.length} glyphs — the console driver caps at {PSF_MAX_GLYPHS}")
+        # The two things the CONSUMER requires. Neither is visible in coverage,
+        # in shape or in tiling, and a font can pass everything below while the
+        # kernel refuses to load it — which is what happened, twice, and cost a
+        # booted machine to find (BUILD-NOTES #59).
+        if f.length not in PSF_GLYPH_COUNTS:
+            want = " or ".join(str(n) for n in PSF_GLYPH_COUNTS)
+            print(f"    FAIL  {f.length} glyphs — fbcon accepts {want} and nothing "
+                  f"else; setfont would report ioctl(KDFONTOP): Invalid argument")
             ok = False
+        if f.length > PSF_ERASE_POSITION:
+            erase = f.bitmap(PSF_ERASE_POSITION)
+            if any(any(row) for row in erase):
+                at = sorted(cp for cp, g in f.table.items() if g == PSF_ERASE_POSITION)
+                print(f"    FAIL  glyph position {PSF_ERASE_POSITION} is not blank"
+                      + (f" (it holds {fmt_cps(at, 4)})" if at else "")
+                      + " — setfont refuses the font: 'font position 32 is nonblank'")
+                ok = False
+            else:
+                print(f"    ok    position {PSF_ERASE_POSITION} blank, {f.length} glyphs "
+                      f"— loadable by setfont")
         if not f.table:
             print("    FAIL  no unicode table — setfont would map by position, not by codepoint")
             ok = False
