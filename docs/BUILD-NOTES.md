@@ -30,7 +30,12 @@ as a conversation.
 
 *No number is currently claimed but unwritten.*
 
-Everything below is written. Numbers above 61 are free.
+Everything below is written. Numbers above 76 are free.
+
+*(That line said 61 until 2026-08-26 and had been wrong since #62 landed —
+it is the one line in this file nothing checks, and it is exactly the line a
+session reads in good faith before claiming a number. Update it in the same
+commit as the entry.)*
 
 ## What was kept, and what was dropped
 
@@ -3392,3 +3397,178 @@ nobody has tested.
 since the first amd64 ISO and it is still true. What changed here is that the
 GUI branch is now generated, parsed and asserted from the shipped binary — not
 that any machine has run it.
+
+## 73. `sanoid` reports success it cannot have, and its monitor answers from a five-hour-old cache
+
+**Found 2026-08-26**, by reading `/usr/sbin/sanoid` out of the `sanoid 2.3.0-1`
+deb the archive pin resolves to, before writing anything that would depend on it
+(docs/BACKUP-PLAN.md §13, M-B4). Not by hitting it — which is the point: this one
+was cheap because it was looked for.
+
+**Two separate ways the program says yes.**
+
+*The exit code.* `sanoid --take-snapshots --prune-snapshots` ends in a bare
+`exit 0` (`sanoid:144`). A `zfs snapshot` that fails is reported with perl's
+`warn` — text on stderr containing the words `CRITICAL ERROR` — and never
+touches the status. A destroy that fails is `warn "could not remove $snap"`
+(`:412-414`) and the loop continues. So a run in which nothing was snapshotted
+and nothing was pruned is indistinguishable, by exit code, from one that worked.
+
+*The monitor.* `sanoid --monitor-snapshots` does not ask ZFS. It answers from
+`/var/cache/sanoid/snapshots.txt`, and when **only** monitor flags are given —
+no `--cron`, `--force-update`, `--take-snapshots`, `--prune-snapshots` or
+`--cache-ttl` — the TTL is deliberately raised from 1200 seconds to **18000**
+(`sanoid:69-85`):
+
+```perl
+# Allow a much older snapshot cache file than default if _only_ "--monitor-*"
+        $cacheTTL = 18000; # 5 hours
+```
+
+That is upstream being reasonable about a monitoring plugin's cost. It is also a
+diagnostic that can report OK about a state which stopped being true four hours
+ago, and CRIT about one that was fixed three hours ago.
+
+**What it means here.** This is the repo's standing rule arriving in a
+dependency: *a diagnostic must not depend on the subsystem it is diagnosing*, and
+*an exit code is a diagnostic, not evidence.* `Get-OS7BackupStatus` therefore
+asks `Get-ZfsSnapshot` for creation times and never runs `--monitor-snapshots`,
+and `Start-OS7Backup` counts the snapshots ZFS reports before and after rather
+than reading sanoid's status. Same treatment for `syncoid`, whose exit code is
+the worst outcome over all datasets and which several post-transfer steps —
+sync-snapshot pruning, target-snapshot deletion, hold release — only `warn` about
+and cannot reach.
+
+**The one place sanoid's own answer IS used**, and it is used because it is the
+only thing that can give it: `sanoid --readonly --take-snapshots` against a
+scratch `--configdir` is what validates a rendered `sanoid.conf` before it is
+installed. An unrecognised key anywhere in that file is a **fatal die**
+(`sanoid:975`), not a warning, and no renderer can know the legal set — OS/7
+reads it out of `[template_default]` in the shipped defaults for the same reason.
+
+## 74. `/home/<user>` is not on a USERDATA dataset unless the account is called `os7`
+
+**Found 2026-08-26** while deciding what a backup policy should cover. It is not
+a backup bug; the backup feature is just the first thing that had to look.
+
+```
+New-OS7Storage ... -UserName 'os7'        # powershell/OS7/OS7.psm1, the DEFAULT
+    -> rpool/USERDATA/os7_<suffix>   mountpoint=/home/os7
+```
+
+`os7-setup` builds its invocation with `-Root`, `-RootDevice`, `-BootDevice` and
+`-BootEnvironment` — **and no `-UserName`** (`StorageSteps.cs`, the
+`New-OS7Storage` command string). The account is created afterwards, in a
+different step, by `useradd -m` with whatever name the operator typed. On the one
+machine this repository has installed and booted that name is **`os7admin`**
+(`installer/testing/run-phase3.py`).
+
+So on that machine:
+
+```
+/home/os7        a mounted ZFS dataset containing nothing
+/home/os7admin   an ordinary directory inside rpool/ROOT/<BE>
+```
+
+**Two consequences, and the second is the expensive one.**
+
+`Restore-OS7` rolls the machine back to an earlier boot environment — which now
+takes the user's home directory with it. That is precisely what SETUP-PLAN §4.4
+puts USERDATA outside ROOT to prevent, defeated by a parameter that is never
+passed. And no snapshot policy can cover that home without snapshotting the boot
+environment, which is the one thing a snapshot policy must never do.
+
+**Nothing here checks `/home`.** `grep -rIn "/home" installer/testing/*.py`
+returns nothing: the install harnesses verify the pools, the datasets, the
+bootloader and the account's ability to log in, and none of them looks at where
+the account's files landed. That is why an installer that has been through
+`run-phase3.py all` still has this.
+
+**The fix is one parameter**, plus a migration for machines already installed —
+a dataset created and the existing directory moved into it, which is not a
+one-liner and is not safe to write blind. `Get-OS7BackupCoverage` reports the gap
+on every machine in the meantime, and docs/BACKUP-PLAN.md B-Q1 holds it open.
+Do not close it without running `run-phase3.py all`.
+
+## 75. A package can enable a timer whose services are gated on a file it does not ship
+
+**Found 2026-08-26**, reading the `sanoid` package's own postinst and units.
+
+```
+sanoid.service        ConditionFileNotEmpty=/etc/sanoid/sanoid.conf
+sanoid-prune.service  ConditionFileNotEmpty=/etc/sanoid/sanoid.conf
+sanoid.timer          OnCalendar=*:0/15  Persistent=true   [Install] timers.target
+postinst              deb-systemd-helper enable 'sanoid.timer'      (unconditional)
+                      deb-systemd-invoke start 'sanoid.service' 'sanoid.timer'
+```
+
+and the package's only `/etc` content is a `cron.d` entry that disables itself
+under systemd. **There is no `/etc/sanoid/sanoid.conf` and no `/etc/sanoid`.**
+
+So on a freshly installed machine the timer is `enabled` and `active`, fires
+every fifteen minutes, and both services skip — successfully, because a failed
+condition is not a failure. `systemctl is-enabled sanoid.timer` says `enabled`,
+`systemctl is-active sanoid.timer` says `active`, `systemctl is-failed` says
+`inactive`, and nothing on the machine has ever been snapshotted.
+
+**Related to #33 and not the same thing.** #33 is `Conflicts=` being resolved
+when systemd BUILDS the transaction while `Condition...=` is evaluated when the
+job RUNS — an enabled unit with a failing condition has already conflicted its
+target away. Here nothing conflicts; what is new is that the *packaging* arms a
+schedule whose work is gated on configuration the package leaves to somebody
+else. The shared lesson is the one that matters: **`enabled` is a statement about
+a symlink, never about work being done.**
+
+OS/7 depends on this behaviour rather than fighting it — writing
+`/etc/sanoid/sanoid.conf` is what starts the schedule, and removing it is what
+`Disable-OS7Backup` does. Two things follow. Hook 0090 fails the build if a
+`sanoid.conf` is ever baked into the **image**, because that would start
+snapshotting on the live medium against datasets only an installed machine has.
+And `Get-OS7BackupStatus` reports whether ZFS holds a recent snapshot, never
+whether a timer is enabled.
+
+## 76. `.GetNewClosure()` captures a value, so `$n++` inside the closure increments a copy
+
+**Found 2026-08-26**, by a self-test failing the first time it was run — which is
+the right way round, and is the whole argument for tier 1 existing.
+
+The Zfs self-test installs a scriptblock into the seam so a cmdlet can be run
+without ZFS. `.GetNewClosure()` is mandatory there and the module already says
+why: without it the block resolves its captured variables when it RUNS, by which
+time the defining scope is gone, and under `Set-StrictMode` that is an error
+rather than a silent `$null`.
+
+What is easy to miss is the other half. A closure captures **the value**, so a
+counter written this way never advances:
+
+```powershell
+$n = 0
+$script:ZfsCommandOverride = {
+    param($cmd, $a)
+    $n++                                   # increments a COPY
+    [pscustomobject]@{ ExitCode = ($n -eq 1 ? 0 : 1) }
+}.GetNewClosure()
+```
+
+Every call sees `$n -eq 1`. The test that found it was checking
+`Clear-ZpoolLabel`'s verification — which asks `zpool labelclear` a SECOND time,
+because that command exits non-zero when there is nothing to clear, so a second
+success means the label survived the first. With a frozen counter the fake said
+"cleared" twice and the cmdlet correctly threw, which read as a broken cmdlet
+rather than as a broken fake.
+
+**Use a reference type instead.** The list the calls are already being recorded
+in is one:
+
+```powershell
+$calls = [System.Collections.Generic.List[string]]::new()
+$script:ZfsCommandOverride = {
+    param($cmd, $a)
+    $calls.Add("$cmd $($a -join ' ')")
+    [pscustomobject]@{ ExitCode = ($calls.Count -eq 1 ? 0 : 1) }
+}.GetNewClosure()
+```
+
+The object reference is captured; the object it points at is shared. Same family
+as #60, #65 and #68 — PowerShell doing exactly what it documents, somewhere
+nobody looks.

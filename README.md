@@ -70,7 +70,9 @@ from [docs/HANDOFF.md](docs/HANDOFF.md). Every "no" is a thing nobody has tried 
 | Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ❌ |
 | Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❌ |
 | GNOME · Edge · Intune portal | — (arm64 is server-only by design) | 📦 in the image, never launched |
-| `Update-OS7` / `Restore-OS7` | 🚧 designed in full, not implemented | 🚧 |
+| `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back, walked in a VM | ❌ |
+| `Update-OS7` — apply the next release | 🚧 designed in full; waiting on there being a release to apply | 🚧 |
+| Backup — snapshots, replication, file restore | 🚧 written and self-tested offline; **never run on a machine** | 🚧 |
 
 **The two architectures are different products.** Microsoft ships no arm64 build of Edge,
 `intune-portal` or `microsoft-identity-broker`, so arm64 is server-only and managed by
@@ -214,6 +216,7 @@ twenty minutes reaching a known failure.
 | **Desktop installs (x86-64)** | GNOME 50 in OS/7 Classic · Microsoft Edge · Intune portal + `microsoft-identity-broker` |
 | **Server installs** | Azure Connected Machine agent (Azure Arc) — x86-64 *and* arm64 |
 | **Recommended additions** | Azure CLI · VSCodium (the official VS Code build is opt-in) |
+| **Backup** | `sanoid` + `syncoid` (GPL-3.0+, from the archive) — policy-driven ZFS snapshots and `zfs send`/`receive` replication, wrapped by the OS7 module |
 | **Out of scope for v1** | OneDrive sync · Microsoft Defender for Endpoint |
 
 Component versions are not written here twice: they live in
@@ -235,11 +238,27 @@ Get-ZfsDataset | Where-Object { $_.Used -gt 1TB }
 (Get-ZpoolStatus rpool).Vdevs                 # a real object tree, not indented text
 ```
 
-23 cmdlets, read and write, checked against 18 recordings of real ZFS output:
+24 cmdlets, read and write, checked against 18 recordings of real ZFS output:
 
 ```bash
 pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'
 ```
+
+Backups are the same idea one layer up — the snapshot policy and the replication
+are `sanoid` and `syncoid`, and OS/7 decides what is covered and *checks that it
+worked*, from ZFS rather than from either tool's exit code:
+
+```powershell
+Enable-OS7Backup                              # hourly/daily/weekly snapshots of user data
+New-OS7BackupTarget -Name nas -ComputerName backup@nas.lan -Dataset tank/os7
+Get-OS7BackupStatus                           # asks ZFS here AND on the target
+
+Get-OS7FileVersion  ~/notes.txt               # every version a snapshot still holds
+Restore-OS7File     ~/notes.txt -Destination ~/notes.old.txt
+```
+
+**Not proven on a machine yet.** [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) says
+exactly what is and is not.
 
 ## Documentation
 
@@ -250,6 +269,7 @@ pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'
 | The installer: screens, decisions, limitations | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) |
 | Versioning, the update train, rollback | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
 | ZFS from PowerShell | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
+| Backup: snapshots, replication, restore | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) |
 | How to work in this repository | [CLAUDE.md](CLAUDE.md) |
 

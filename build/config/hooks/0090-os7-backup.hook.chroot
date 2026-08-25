@@ -1,0 +1,179 @@
+#!/bin/bash
+# OS/7 — the backup feature's dependencies and units, checked in the image.
+# docs/BACKUP-PLAN.md §8.
+#
+# Everything here is a fact about the FINISHED filesystem, which is the earliest
+# point at which any of it can be asked: live-build applies includes.chroot
+# before hooks, and the package list has been installed by now.
+#
+# WHY EACH CHECK IS A CHECK RATHER THAN AN ASSUMPTION. docs/BUILD-NOTES.md #13 is
+# the standing reason — a hook that "succeeded" is not evidence that anything
+# happened, and live-build has run zero hooks and exited 0 before now. The
+# specific reasons are with each block.
+#
+# WHAT THIS HOOK MAY NOT DO (BUILD-NOTES #38): it may not run Test-OS7Backup.
+# That is PowerShell, and it calls Get-Content, ConvertFrom-Json and
+# Where-Object, all of which autoload BY NAME out of $PSHOME/Modules — the
+# lookup live-build's chroot mangles. The self-test runs in
+# installer/testing/check-image.py against the finished artefact and,
+# authoritatively, in installer/testing/run-backup.py on a booted VM.
+
+set -euo pipefail
+
+echo "OS/7 hook 0090: backup — sanoid, syncoid and the OS/7 units"
+
+# shellcheck source=/dev/null
+. /usr/lib/os7/release.conf 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# The programs
+# ---------------------------------------------------------------------------
+for bin in /usr/sbin/sanoid /usr/sbin/syncoid; do
+	if [ ! -x "${bin}" ]; then
+		echo "OS/7 hook 0090: ${bin} is missing or not executable" >&2
+		echo "OS/7 hook 0090: 'sanoid' is in os7-base.list.chroot; did apt resolve it?" >&2
+		exit 1
+	fi
+done
+
+# The list of settings sanoid will ACCEPT is this file, and OS/7 reads it at
+# runtime rather than hard-coding one — an unrecognised key in sanoid.conf is a
+# fatal die, not a warning, so a missing defaults file turns
+# Assert-OS7SanoidKeys into a function that silently checks nothing.
+DEFAULTS=/usr/share/sanoid/sanoid.defaults.conf
+if [ ! -s "${DEFAULTS}" ]; then
+	echo "OS/7 hook 0090: ${DEFAULTS} is missing." >&2
+	echo "OS/7 hook 0090: sanoid dies without it, and OS/7 reads it to find out which" >&2
+	echo "OS/7 hook 0090: settings may be written into /etc/sanoid/sanoid.conf." >&2
+	exit 1
+fi
+# v2 or sanoid refuses to start at all.
+if ! grep -qE '^\s*version\s*=\s*2\s*$' "${DEFAULTS}"; then
+	echo "OS/7 hook 0090: ${DEFAULTS} does not declare version = 2." >&2
+	grep -n -A2 '^\[version\]' "${DEFAULTS}" >&2 || true
+	exit 1
+fi
+
+# `ps` is an UNDECLARED dependency of both programs — sanoid's lock check and
+# syncoid's "is the target already receiving" check both run it, and neither the
+# package's Depends nor its documentation says so. procps is in
+# os7-base.list.chroot for this reason and this check is what holds it there.
+if ! command -v ps >/dev/null 2>&1; then
+	echo "OS/7 hook 0090: no 'ps' in the image." >&2
+	echo "OS/7 hook 0090: sanoid's locking and syncoid's overlap check both need it," >&2
+	echo "OS/7 hook 0090: and neither package declares it. Keep procps in the list." >&2
+	exit 1
+fi
+
+SANOID_MEASURED="$(dpkg-query -W -f='${Version}' sanoid 2>/dev/null || true)"
+if [ -n "${OS7_SANOID_VERSION:-}" ] && [ -n "${SANOID_MEASURED}" ] &&
+	[ "${SANOID_MEASURED}" != "${OS7_SANOID_VERSION}" ]; then
+	echo "OS/7 hook 0090: sanoid is ${SANOID_MEASURED}, the pin says ${OS7_SANOID_VERSION}." >&2
+	echo "OS/7 hook 0090: the archive snapshot decides which version arrives, so this" >&2
+	echo "OS/7 hook 0090: means the pin and the snapshot disagree. Read the upstream" >&2
+	echo "OS/7 hook 0090: CHANGELIST before moving OS7_SANOID_VERSION - the /^autosnap/" >&2
+	echo "OS/7 hook 0090: filter is what keeps it away from the boot environments." >&2
+	exit 1
+fi
+echo "OS/7 hook 0090:   sanoid ${SANOID_MEASURED:-<unknown>}, syncoid present, defaults v2"
+
+# ---------------------------------------------------------------------------
+# NO /etc/sanoid/sanoid.conf IN THE IMAGE, and this is an assertion, not an
+# omission.
+#
+# The package ships none, and OS/7 must not add one: the policy names
+# rpool/USERDATA and rpool/DATA/srv, which exist only on an INSTALLED machine.
+# A config baked in here would un-skip sanoid.service on the LIVE medium, where
+# sanoid would try to snapshot datasets that are not there, print
+# "CRITICAL ERROR" to stderr, and exit 0 — every fifteen minutes, for as long as
+# anybody left the ISO running.
+#
+# os7-backup-firstboot.service is what writes it, on the first boot of a machine
+# that has the datasets.
+# ---------------------------------------------------------------------------
+if [ -e /etc/sanoid/sanoid.conf ]; then
+	echo "OS/7 hook 0090: /etc/sanoid/sanoid.conf exists IN THE IMAGE." >&2
+	echo "OS/7 hook 0090: that would start snapshotting on the live medium, against" >&2
+	echo "OS/7 hook 0090: datasets that only an installed system has." >&2
+	exit 1
+fi
+if [ -e /etc/os7/backup.json ]; then
+	echo "OS/7 hook 0090: /etc/os7/backup.json exists IN THE IMAGE." >&2
+	echo "OS/7 hook 0090: the policy is written on first boot, not baked in." >&2
+	exit 1
+fi
+echo "OS/7 hook 0090:   no backup policy in the image (correct - it is written on first boot)"
+
+# ---------------------------------------------------------------------------
+# OS/7's own units
+# ---------------------------------------------------------------------------
+for f in /usr/libexec/os7-backup-replicate /usr/libexec/os7-backup-firstboot; do
+	if [ ! -s "${f}" ]; then
+		echo "OS/7 hook 0090: ${f} is missing or empty (includes.chroot)" >&2
+		exit 1
+	fi
+	# 0644, DELIBERATELY NOT EXECUTABLE. These are PowerShell, they carry no
+	# shebang, and both units invoke them as `pwsh -File <path>` rather than by
+	# execve. An executable bit here would be an invitation to run them directly,
+	# which would hand a PowerShell script to /bin/sh.
+	chmod 0644 "${f}"
+	if head -c 2 "${f}" | grep -q '#!'; then
+		echo "OS/7 hook 0090: ${f} starts with a shebang but is invoked as 'pwsh -File'." >&2
+		echo "OS/7 hook 0090: pick one - either give it a shebang AND make it 0755, or" >&2
+		echo "OS/7 hook 0090: keep it a plain script that only the unit knows how to run." >&2
+		exit 1
+	fi
+done
+
+for u in os7-backup-replicate.service os7-backup-replicate.timer os7-backup-firstboot.service; do
+	if [ ! -s "/usr/lib/systemd/system/${u}" ]; then
+		echo "OS/7 hook 0090: /usr/lib/systemd/system/${u} is missing (includes.chroot)" >&2
+		exit 1
+	fi
+	chmod 0644 "/usr/lib/systemd/system/${u}"
+done
+
+# NEITHER OS/7 UNIT CONFLICTS ANYTHING, and that is what makes enabling them
+# safe. BUILD-NOTES #33: a Conflicts= is resolved when systemd BUILDS the
+# transaction while a Condition…= is evaluated when the job RUNS, so an enabled
+# unit whose condition fails has already taken its conflict with it. os7-setup
+# has to be started from the kernel command line for exactly that reason; these
+# do not, because they conflict with nothing.
+if grep -l '^Conflicts=' /usr/lib/systemd/system/os7-backup-*.service >/dev/null 2>&1; then
+	echo "OS/7 hook 0090: an os7-backup unit has a Conflicts= line." >&2
+	echo "OS/7 hook 0090: these units are ENABLED, so a Conflicts= would apply on every" >&2
+	echo "OS/7 hook 0090: boot including the live one - regardless of the conditions." >&2
+	exit 1
+fi
+
+# Enabled at build time rather than at first boot: `systemctl enable` inside a
+# chroot only writes the [Install] symlink, which is a file operation and works
+# where `systemctl start` would not.
+systemctl enable os7-backup-firstboot.service >/dev/null 2>&1 || true
+systemctl enable os7-backup-replicate.timer >/dev/null 2>&1 || true
+
+# CHECKED BY LOOKING FOR THE SYMLINK, not by trusting the exit code above.
+# `systemctl enable` in a chroot can fail to talk to a bus and still exit 0, and
+# what has to be true is that the link exists.
+missing=0
+[ -L /etc/systemd/system/multi-user.target.wants/os7-backup-firstboot.service ] || missing=1
+[ -L /etc/systemd/system/timers.target.wants/os7-backup-replicate.timer ] || missing=1
+if [ "${missing}" -ne 0 ]; then
+	echo "OS/7 hook 0090: systemctl enable did not leave the [Install] symlinks:" >&2
+	ls -la /etc/systemd/system/multi-user.target.wants/ /etc/systemd/system/timers.target.wants/ >&2 2>&1 || true
+	exit 1
+fi
+echo "OS/7 hook 0090:   os7-backup-firstboot.service and os7-backup-replicate.timer enabled"
+
+# sanoid.timer is enabled by the PACKAGE's postinst, unconditionally, and its
+# services are gated on a config file that does not exist yet. Reported rather
+# than changed: that is the shipped behaviour, it is harmless, and the note is
+# here so that a future reader does not mistake "enabled" for "running".
+if [ -L /etc/systemd/system/timers.target.wants/sanoid.timer ]; then
+	echo "OS/7 hook 0090:   NOTE: sanoid.timer is enabled by its own package and will"
+	echo "OS/7 hook 0090:   NOTE: fire every 15 minutes; both its services skip until"
+	echo "OS/7 hook 0090:   NOTE: /etc/sanoid/sanoid.conf exists. 'enabled' is not"
+	echo "OS/7 hook 0090:   NOTE: evidence that anything is being snapshotted."
+fi
+
+echo "OS/7 hook 0090: done"

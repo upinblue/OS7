@@ -38,6 +38,9 @@
 		# Pools
 		'New-Zpool', 'Remove-Zpool', 'Import-Zpool', 'Export-Zpool',
 		'Start-ZpoolScrub',
+		# Z14: needed before a pool can be created on a device that held one.
+		# Verifies by asking labelclear a second time - see the cmdlet.
+		'Clear-ZpoolLabel',
 		# The display half of Z6 — the format file calls it from every size
 		# column, and a report wants the same rendering rather than a second one
 		'Format-ZfsSize',

@@ -22,7 +22,8 @@ here either — this file points, they rule.
 | The installer: design, screens, decisions D1–D10, limitations L1–L22, phases | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) — **authoritative** |
 | Versioning, the update train, rollback, `/var` | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
-| ZFS from PowerShell: the two layers, decisions Z1–Z13, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
+| ZFS from PowerShell: the two layers, decisions Z1–Z14, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
+| Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -57,6 +58,17 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
 ./installer/testing/check-layering.py     # Z1: does OS7 still reach ZFS directly
+
+./installer/testing/run-backup.py all     # backup, against real ZFS and real
+                                          #   sanoid. NEVER RUN - it is the gate
+                                          #   docs/BACKUP-PLAN.md B-5 names
+```
+
+The two self-tests need no VM, no ZFS and no ISO, and both are green:
+
+```bash
+pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'   # 75
+pwsh -c 'Import-Module ./powershell/OS7/OS7.psd1 -Force; Test-OS7Backup'   # 63
 ```
 
 **Boot environments are real since 2026-08-25**, and none of it is a ZFS
@@ -79,6 +91,16 @@ against **recorded real ZFS output** shipped beside it:
 ```bash
 pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'
 ```
+**Backups are sanoid and syncoid, wrapped — not reimplemented.** `powershell/OS7`
+decides which datasets, which targets and *whether it actually worked*; the
+snapshot policy, the retention thinning and the `zfs send`/`receive` are the
+`sanoid` package's, shelled out to (GPL-3.0+, never vendored). The wrapper
+exists because **both tools report success in cases where nothing happened** —
+sanoid exits 0 after a failed `zfs snapshot`, and its `--monitor-snapshots`
+answers from a cache deliberately allowed to be five hours old (#73). So
+`Get-OS7BackupStatus` asks ZFS, on the source and over ssh on the target, and
+never asks either tool. [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md).
+
 
 **One file defines the release:**
 [build/config/os7-release.conf](build/config/os7-release.conf) — the version, the
@@ -176,6 +198,14 @@ the ones a fresh session hits first.
   was unreachable for a whole commit. `--unattend`, `--storage-only` and the
   screen-walking harness each missed it for a different reason. The whole plan is
   checked once, at `ExecuteScreen.Start`.
+- **#74 — `/home/<user>` is NOT on a USERDATA dataset unless the account is
+  called `os7`.** `New-OS7Storage`'s `-UserName` defaults to `os7` and
+  `os7-setup` never passes it, so the machine this repo has booted has an empty
+  dataset at `/home/os7` and the real home inside the boot environment — where
+  `Restore-OS7` rolls it back and no snapshot policy may follow. One parameter
+  fixes new installs; existing ones need a migration. Nothing in
+  `installer/testing/` looks at `/home`, which is why an installer that passed
+  `run-phase3.py all` still has it.
 - **#66 — code that replaces a spike must be DIFFED against it.** The installer's
   TPM step was written from the same notes as `s4-tpm-enroll.sh` and took a
   different route: no LUKS2 token handler in the initramfs, and
@@ -249,6 +279,13 @@ installer/
                             (framebuffer, QMP, reading the screen back through
                             the console font), run-phase1.py
 powershell/OS7/             the OS7 module - ONE source, staged by build.sh
+  OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four
+                            files DOT-SOURCED by OS7.psm1, so a staging that
+                            copied the .psm1 alone is a real failure mode -
+                            hook 0060 checks all four
+build/config/includes.chroot/
+                            files copied verbatim into the image: the console
+                            defaults, and the os7-backup units and their scripts
 docs/                       plans, handoff, build notes, session results
 out/, .vm/                  artefacts and VM state. Both gitignored.
 ```

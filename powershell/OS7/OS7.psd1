@@ -25,6 +25,18 @@
 		'Set-OS7BootEnvironment', 'Remove-OS7BootEnvironment', 'Restore-OS7',
 		# Implemented — the classic desktop, amd64 GUI mode
 		'Get-OS7Theme', 'Set-OS7Theme',
+		# Implemented — backup (docs/BACKUP-PLAN.md). Snapshot policy and
+		# retention are sanoid's, replication is syncoid's; what is here is
+		# which datasets, which targets, and the verification that neither tool
+		# provides. Never run against a machine — see docs/HANDOFF.md.
+		'Get-OS7BackupPolicy', 'Set-OS7BackupPolicy',
+		'Enable-OS7Backup', 'Disable-OS7Backup',
+		'Start-OS7Backup', 'Get-OS7BackupStatus', 'Get-OS7BackupCoverage',
+		'Get-OS7BackupTarget', 'New-OS7BackupTarget', 'Remove-OS7BackupTarget',
+		'Test-OS7BackupTarget', 'Start-OS7BackupReplication',
+		'Mount-OS7BackupTarget', 'Dismount-OS7BackupTarget',
+		'Get-OS7FileVersion', 'Restore-OS7File',
+		'Test-OS7Backup',
 		# Stubs — the command surface docs/DECISIONS.md documents
 		'Set-OS7Mode', 'Update-OS7')
 	CmdletsToExport   = @()

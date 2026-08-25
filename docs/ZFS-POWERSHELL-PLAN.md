@@ -279,7 +279,7 @@ being real rather than cosmetic.
 
 ---
 
-## 7. The v1 surface — 23 cmdlets, built
+## 7. The v1 surface — 24 cmdlets, built
 
 Chosen to serve exactly two customers: the update train, and an operator's day.
 
@@ -288,12 +288,13 @@ Chosen to serve exactly two customers: the update train, and an operator's day.
 | Read | `Get-Zpool`, `Get-ZpoolStatus`, `Get-ZfsDataset`, `Get-ZfsSnapshot`, `Get-ZfsProperty`, `Get-ZfsSpace` |
 | Datasets | `New-ZfsDataset`, `Remove-ZfsDataset`, `Rename-ZfsDataset`, `Set-ZfsProperty`, `Clear-ZfsProperty`, `Mount-ZfsDataset`, `Dismount-ZfsDataset` |
 | Snapshots and clones | `New-ZfsSnapshot`, `Remove-ZfsSnapshot`, `Restore-ZfsSnapshot`, `New-ZfsClone`, `Convert-ZfsClone` |
-| Pools | `New-Zpool`, `Remove-Zpool`, `Import-Zpool`, `Export-Zpool`, `Start-ZpoolScrub` |
+| Pools | `New-Zpool`, `Remove-Zpool`, `Import-Zpool`, `Export-Zpool`, `Start-ZpoolScrub`, `Clear-ZpoolLabel` |
 
 Plus `Format-ZfsSize` (Z6) and `Test-ZfsModule` (Z10), which are not operator
 verbs.
 
-**23 and not the 21 this section first listed.** `Clear-ZfsProperty` and
+**24 since 2026-08-26**, when `Clear-ZpoolLabel` was added for Z14. **23 and not
+the 21 this section first listed.** `Clear-ZfsProperty` and
 `Remove-Zpool` were moved forward from v2 for one reason: each is the inverse of
 something v1 already has. `Set-ZfsProperty` with no way to un-set leaves the
 operator in bash to type `zfs inherit`, and that is the exact failure §6 of the
@@ -436,6 +437,49 @@ manifest keeps describing what the release actually consists of.
 CURATION-AND-DELIVERY-PLAN C7 turns every OS/7 component into a `.deb`. The ZFS
 layer is its own package because it has its own version and its own upstream
 once Z11 fires; `os7-module` depends on it.
+
+### Z14 — the READ cmdlets take `-ComputerName`; and `Clear-ZpoolLabel`
+
+**Added 2026-08-26 for the backup feature** ([BACKUP-PLAN.md](BACKUP-PLAN.md) §4),
+and both are Layer 2 rather than Layer 3 because both are generic: they would be
+the same on a TrueNAS box, and neither knows anything about OS/7.
+
+**`-ComputerName` on `Get-Zpool`, `Get-ZpoolStatus`, `Get-ZfsDataset` and
+`Get-ZfsSnapshot`.** Plumbed through the one seam (Z2) as `ssh <host> zfs …`, so
+`Invoke-ZfsNative` is still the only function in this module that starts a
+process and `Test-ZfsModule` still replaces exactly one thing.
+
+It exists because of a question Layer 3 could not otherwise answer honestly:
+*did the replication actually land*. The tools that do the replicating report
+success with their post-transfer work unfinished, so the only trustworthy answer
+comes from the receiving pool's own ZFS. The alternative — an `ssh` invocation
+from `powershell/OS7` — would have required weakening `check-layering.py` to let
+it past, which is the wrong direction for a guard. With this, Z1 stays at **0**.
+
+**READ ONLY, and enforced rather than documented:** the mutating cmdlets do not
+take the parameter at all. A module that can destroy a dataset on another
+machine is a different product.
+
+Three ssh options are not negotiable and are not parameters — `BatchMode=yes`
+(a verification that BLOCKS on a prompt is worse than one that fails),
+`ConnectTimeout=10`, and `StrictHostKeyChecking=yes` (a target whose identity is
+accepted on sight is one anything on the path can impersonate, and this reads the
+answer to "is my data really over there"). Remote arguments are shell-quoted and
+local ones are not: `ssh` joins its arguments and hands them to a **login shell**
+while `& zfs @args` has no shell in it at all, so the two paths escape
+differently on purpose.
+
+**`Clear-ZpoolLabel`** — `zpool labelclear`, needed before a pool can be created
+on a device that held one. Without it, Layer 3 would have to run `zpool` itself,
+which Z1 forbids. Its verification is the interesting part: `labelclear` **exits
+non-zero when there is nothing to clear**, so a *second* call that succeeds means
+the label survived the first. That is the only way to satisfy Z3 here, because
+`zpool list` cannot see a device that is not in a pool.
+
+**What this does NOT do.** It is not replication: `Send-`/`Receive-ZfsSnapshot`
+are still v2 and still unbuilt, and OS/7 replicates with `syncoid` rather than
+with this module. Nor is it holds or bookmarks. ZL3 is unchanged — "fully
+manageable" is true after v2, not after v1 plus these two.
 
 ### Why a public module is worth anything at all
 

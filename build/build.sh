@@ -462,6 +462,11 @@ install -Dm644 "${HERE}/../LICENSE" \
 	"${WORK}/config/includes.chroot/usr/share/os7/LICENSE"
 install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
 	"${WORK}/config/includes.chroot/usr/share/os7/SETUP-PLAN.md"
+# The backup design, because both os7-backup units point at it with
+# Documentation=file:///usr/share/os7/BACKUP-PLAN.md and a Documentation= that
+# names a file the image does not have is worse than none.
+install -Dm644 "${HERE}/../docs/BACKUP-PLAN.md" \
+	"${WORK}/config/includes.chroot/usr/share/os7/BACKUP-PLAN.md"
 
 # ---------------------------------------------------------------------------
 # The desktop theme, amd64 only.

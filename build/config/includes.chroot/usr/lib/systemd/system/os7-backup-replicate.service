@@ -1,0 +1,57 @@
+[Unit]
+# OS/7 backup replication — docs/BACKUP-PLAN.md §6.
+#
+# THE PACKAGE THIS SITS BESIDE SHIPS NO REPLICATION UNIT AT ALL. `sanoid` brings
+# sanoid.service, sanoid-prune.service and sanoid.timer, and all three only take
+# and thin snapshots; syncoid has no config file, no schedule and no unit. So
+# everything about WHEN a copy leaves this machine is OS/7's, and this is it.
+Description=OS/7 backup replication
+Documentation=file:///usr/share/os7/BACKUP-PLAN.md
+
+# The pools have to be there. ZFS is not optional on OS/7, but zfs.target being
+# reached is still a fact rather than an assumption.
+Requires=zfs.target
+After=zfs.target zfs-mount.service
+
+# A remote target needs a route; a local one does not, and Wants= rather than
+# Requires= is why a machine with only a USB target still replicates when the
+# network never comes up.
+Wants=network-online.target
+After=network-online.target
+
+# NOT PRESENT ON THE LIVE MEDIUM, and this is what keeps it off one. The config
+# is written by Enable-OS7Backup on an installed system; a live session has no
+# /etc/os7/backup.json, so this unit is skipped there.
+#
+# A CONDITION IS EVALUATED WHEN THE JOB RUNS, not when the transaction is built
+# (docs/BUILD-NOTES.md #33). That is safe here only because this unit conflicts
+# with nothing — os7-setup.service had to be started from the kernel command
+# line for exactly the opposite reason.
+ConditionPathExists=/etc/os7/backup.json
+
+[Service]
+Type=oneshot
+
+# TZ=UTC, matching the units the sanoid package ships. syncoid stamps its sync
+# snapshots with LOCAL time plus a GMT offset while sanoid's units force UTC, so
+# without this a single machine's snapshot names would carry two clocks — and
+# one of them would move twice a year.
+Environment=TZ=UTC
+
+# -NonInteractive so that anything which would have prompted fails instead of
+# hanging. A oneshot that waits forever for an answer nobody can give is worse
+# than one that exits 1, because nothing reports it.
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-backup-replicate
+
+# A replication that finds its target unplugged is not a failure and must not be
+# reported as one — see the script, which distinguishes "skipped" from "failed"
+# and exits accordingly. An external drive that is absent most of the time would
+# otherwise put this unit in `failed` every hour and teach everyone to ignore it.
+# Whether the copy is actually current is answered by Get-OS7BackupStatus, which
+# asks ZFS.
+
+# A send can take a long time on a first run. systemd's default would kill it.
+TimeoutStartSec=infinity
+
+Nice=10
+IOSchedulingClass=idle

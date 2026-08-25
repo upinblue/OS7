@@ -120,6 +120,30 @@ wpasupplicant
 iw
 rfkill
 
+# --- Backup: sanoid and syncoid (docs/BACKUP-PLAN.md) -------------------------
+# One package, three programs: /usr/sbin/sanoid takes and thins snapshots on a
+# policy, /usr/sbin/syncoid replicates them with zfs send/receive, and findoid
+# is there and unused (BACKUP-PLAN B10 says why).
+#
+# GPL-3.0+, and shelled out to as ordinary programs rather than vendored, so
+# OS/7's own MIT licensing is unaffected. It is `Architecture: all` - pure perl -
+# which is why this line is in the COMMON list and needs no arch split.
+#
+# MEASURED against the pinned snapshot on 2026-08-25, not remembered:
+#   sanoid 2.3.0-1, universe, 56 770 B, installed 213 KiB
+#   SHA256 24bc2809f01eab894383b5a8a09f6346a9ad19280268928c167e04a4ae1d603d
+# It pulls five more, all resolvable from the same pin: pv 1.10.3-1 and
+# lzop 1.04-2build4 (main), mbuffer 20251025+ds1-1 (universe), and the perl
+# libraries libconfig-inifiles-perl 3.000003-4build1 and libcapture-tiny-perl
+# 0.50-1 (main, both arch:all). Roughly 357 KB downloaded, 1.1 MB installed.
+# `perl` itself is already in the image via ubuntu-standard.
+sanoid
+# NOT a dependency of sanoid, and both programs need it: sanoid's lock check and
+# syncoid's "is the target already receiving" check both run `ps`. Named here so
+# that a base-system change which drops it fails the build rather than the first
+# backup.
+procps
+
 # --- Base tooling ------------------------------------------------------------
 openssh-server
 curl

@@ -679,6 +679,10 @@ function Get-ZfsDataset {
 	.PARAMETER Property
 		Extra properties to fetch, on top of the standard columns.
 
+	.PARAMETER ComputerName
+		Ask another host over ssh instead of this one (Z14). Read-only: the
+		mutating cmdlets in this module deliberately do not take it.
+
 	.EXAMPLE
 		Get-ZfsDataset rpool -Recurse | Sort-Object Used -Descending |
 			Select-Object -First 10
@@ -698,7 +702,9 @@ function Get-ZfsDataset {
 
 		[switch]$Recurse,
 		[int]$Depth = -1,
-		[string[]]$Property
+		[string[]]$Property,
+		[string]$ComputerName,
+		[string[]]$SshArgument
 	)
 
 	process {
@@ -716,7 +722,8 @@ function Get-ZfsDataset {
 		elseif ($Recurse) { $zargs += '-r' }
 		if ($Name) { $zargs += $Name }
 
-		$j = Invoke-ZfsJson -Command zfs -Arguments $zargs
+		$j = Invoke-ZfsJson -Command zfs -Arguments $zargs `
+			-ComputerName $ComputerName -SshArgument $SshArgument
 		if ($null -eq $j -or -not $j.Contains('datasets')) { return }
 
 		foreach ($key in $j['datasets'].Keys) {
@@ -737,9 +744,18 @@ function Get-ZfsSnapshot {
 		means. Named separately because `Get-ZfsSnapshot` is what an
 		administrator will type.
 
+	.PARAMETER ComputerName
+		Ask another host over ssh instead of this one (Z14). This is the one
+		that answers "did the replication actually land", and it answers it from
+		the TARGET's ZFS rather than from the replication tool's exit code.
+
 	.EXAMPLE
 		Get-ZfsSnapshot rpool/USERDATA |
 			Sort-Object Creation -Descending | Select-Object -First 5
+
+	.EXAMPLE
+		Get-ZfsSnapshot backup/os7 -ComputerName backup@nas.example.net |
+			Sort-Object Creation -Descending | Select-Object -First 1
 	#>
 	[CmdletBinding()]
 	[OutputType('OS7.Zfs.Dataset')]
@@ -747,11 +763,14 @@ function Get-ZfsSnapshot {
 		[Parameter(Position = 0, ValueFromPipelineByPropertyName)]
 		[Alias('Dataset')]
 		[string[]]$Name,
-		[switch]$NoRecurse
+		[switch]$NoRecurse,
+		[string]$ComputerName,
+		[string[]]$SshArgument
 	)
 
 	process {
-		Get-ZfsDataset -Name $Name -Type Snapshot -Recurse:(-not $NoRecurse)
+		Get-ZfsDataset -Name $Name -Type Snapshot -Recurse:(-not $NoRecurse) `
+			-ComputerName $ComputerName -SshArgument $SshArgument
 	}
 }
 
@@ -1686,6 +1705,84 @@ function Start-ZpoolScrub {
 	}
 }
 
+function Clear-ZpoolLabel {
+	<#
+	.SYNOPSIS
+		Remove ZFS's label from a device, so a pool can be created on it again.
+
+	.DESCRIPTION
+		`zpool labelclear`. Needed whenever a pool is created on a device that
+		held one before, and the reason is in installer/SETUP-PLAN.md L12: a
+		stale label makes `zpool create` refuse, or — worse — makes an
+		`zpool import` resurrect a phantom pool that nobody asked for. The
+		installer clears the whole-disk label AND every partition's, because
+		either can carry one.
+
+		THE VERIFICATION IS THE SECOND CALL, and it is the point of this being a
+		cmdlet rather than one line. `zpool labelclear` exits non-zero when there
+		is no label to clear — measured, and it is what makes the check possible:
+		run it again, and a SUCCESS the second time means a label is still there.
+		A destroy that reports success while the thing survives is the shape
+		docs/BUILD-NOTES.md keeps recording, and this is the only way to ask ZFS
+		itself here (Z3): `zpool list` cannot see a device that is not in a pool.
+
+	.PARAMETER Device
+		The devices. Whole disks and partitions alike.
+
+	.PARAMETER Force
+		`-f`. Required for a device that is part of an EXPORTED pool; without it
+		labelclear refuses one. It does not reach an imported pool's devices at
+		all — ZFS holds those open — which is the guard that matters most here.
+
+	.EXAMPLE
+		Clear-ZpoolLabel /dev/disk/by-id/usb-Backup-0:0-part1 -Confirm:$false
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0, ValueFromPipelineByPropertyName)]
+		[Alias('Path')]
+		[string[]]$Device,
+		[switch]$Force
+	)
+
+	process {
+		foreach ($d in $Device) {
+			if (-not $PSCmdlet.ShouldProcess($d, 'clear the ZFS label')) { continue }
+
+			$zargs = @('labelclear')
+			if ($Force) { $zargs += '-f' }
+			$zargs += $d
+
+			Write-ZfsStep "labelclear $d"
+			$first = Invoke-ZfsNative -Command zpool -Arguments $zargs -AllowFail
+
+			# The re-read (Z3). Only meaningful when the first call claimed to
+			# have cleared something: if it already said "there was nothing
+			# here", the device is in the state asked for and a second attempt
+			# would say the same thing twice.
+			$verified = $true
+			if ($first.ExitCode -eq 0) {
+				$second = Invoke-ZfsNative -Command zpool -Arguments $zargs -AllowFail
+				$verified = ($second.ExitCode -ne 0)
+				if (-not $verified) {
+					throw [System.Management.Automation.RuntimeException]::new(
+						"zpool labelclear '$d' reported success twice, so a ZFS label is " +
+						'still on the device. Creating a pool here would either be ' +
+						'refused or resurrect the old one (SETUP-PLAN L12).')
+				}
+			}
+
+			[pscustomobject]@{
+				PSTypeName = 'OS7.Zfs.LabelClear'
+				Device     = $d
+				HadLabel   = ($first.ExitCode -eq 0)
+				Cleared    = $verified
+				Message    = ($first.StdErr ?? '').Trim()
+			}
+		}
+	}
+}
+
 # ---------------------------------------------------------------------------
 # The self-test (Z10)
 #
@@ -1980,6 +2077,118 @@ function Test-ZfsModule {
 			try { Get-Zpool -Name nosuchpool | Out-Null } catch { $threw = $true }
 			if (ok 'a missing pool throws, naming the command' $threw) { $pass++ }
 			else { $fail.Add('missing pool must throw') }
+
+			# -- Z14: the remote read ----------------------------------------
+			#
+			# What a fixture CAN check about ssh is the command line, and the
+			# command line is the whole of the risk here: sshd joins its
+			# arguments and hands them to a LOGIN SHELL, so the escaping is not
+			# the local one and getting it wrong produces a command that works
+			# against every target until it meets a name with a space in it.
+			$remote = [System.Collections.Generic.List[string]]::new()
+			$script:ZfsCommandOverride = {
+				param($cmd, $a)
+				$remote.Add("$cmd $($a -join ' ')")
+				[pscustomobject]@{ StdOut = '{"datasets":{}}'; ExitCode = 0; StdErr = '' }
+			}.GetNewClosure()
+
+			$remote.Clear()
+			Get-ZfsSnapshot -Name 'backup/os7' -ComputerName 'backup@nas' | Out-Null
+			$line = $remote[0]
+
+			$remote.Clear()
+			Get-ZfsDataset -Name 'tank/a b' -ComputerName 'nas' | Out-Null
+			$quoted = $remote[0]
+
+			$remote.Clear()
+			Get-ZfsDataset -Name 'tank/plain' | Out-Null
+			$local = $remote[0]
+
+			foreach ($t in @(
+					@{ n = 'remote: the process started is ssh, not zfs'; c = ($line -like 'ssh *') }
+					@{ n = 'remote: BatchMode is not optional - a prompt would hang, not fail'
+					   c = ($line -like '*-o BatchMode=yes*') }
+					@{ n = 'remote: the host key must already be known'
+					   c = ($line -like '*-o StrictHostKeyChecking=yes*') }
+					@{ n = 'remote: the host comes before the command'
+					   c = ($line -match 'backup@nas\s+zfs\s+list') }
+					@{ n = 'remote: the ZFS command line itself is unchanged'
+					   c = ($line -like '*zfs list -j --json-int -o *-t snapshot -r backup/os7') }
+					@{ n = 'remote: a name the remote shell would split is quoted'
+					   c = ($quoted -like "*'tank/a b'") }
+					@{ n = 'local: nothing gained an ssh prefix'; c = ($local -like 'zfs list *') }
+					@{ n = 'local: no ssh option leaked into a local call'
+					   c = ($local -notlike '*BatchMode*') }
+				)) { if (ok $t.n $t.c) { $pass++ } else { $fail.Add($t.n) } }
+
+			# The quoter itself, at the edges. A word that needs quoting and is
+			# not is a remote command that silently means something else.
+			foreach ($t in @(
+					@{ n = 'quote: a plain dataset name is left alone'
+					   c = ((ConvertTo-ZfsShellWord -Word 'rpool/USERDATA') -eq 'rpool/USERDATA') }
+					@{ n = 'quote: a snapshot name is left alone'
+					   c = ((ConvertTo-ZfsShellWord -Word 'a/b@autosnap_2026-08-25_00:00:00_daily') -eq
+					        'a/b@autosnap_2026-08-25_00:00:00_daily') }
+					@{ n = 'quote: a space is quoted'
+					   c = ((ConvertTo-ZfsShellWord -Word 'a b') -eq "'a b'") }
+					@{ n = 'quote: a semicolon cannot end the remote command'
+					   c = ((ConvertTo-ZfsShellWord -Word 'a;rm -rf /') -eq "'a;rm -rf /'") }
+					@{ n = 'quote: an embedded single quote is escaped, not dropped'
+					   c = ((ConvertTo-ZfsShellWord -Word "it's") -eq "'it'\''s'") }
+					@{ n = 'quote: an empty word becomes an empty ARGUMENT, not nothing'
+					   c = ((ConvertTo-ZfsShellWord -Word '') -eq "''") }
+				)) { if (ok $t.n $t.c) { $pass++ } else { $fail.Add($t.n) } }
+
+			# -- Clear-ZpoolLabel, and its second call ------------------------
+			#
+			# labelclear exits non-zero when there is nothing to clear, which is
+			# what makes verification possible at all: a SECOND success means
+			# the label survived the first.
+			# The call COUNT comes off the list rather than an $n captured by
+			# GetNewClosure: a closure captures a value, so `$n++` inside it
+			# increments a copy and every call still looks like the first.
+			# Found by this test failing, which is the right way round.
+			$lc = [System.Collections.Generic.List[string]]::new()
+			$script:ZfsCommandOverride = {
+				param($cmd, $a)
+				$lc.Add("$cmd $($a -join ' ')")
+				# First call clears; second call finds nothing. The honest shape.
+				[pscustomobject]@{
+					StdOut = ''; ExitCode = ($lc.Count -eq 1 ? 0 : 1)
+					StdErr = ($lc.Count -eq 1 ? '' : 'failed to read label')
+				}
+			}.GetNewClosure()
+
+			$lc.Clear()
+			$r = Clear-ZpoolLabel /dev/sdz1 -Force -Confirm:$false
+			foreach ($t in @(
+					@{ n = 'labelclear builds `zpool labelclear -f`'
+					   c = ($lc[0] -eq 'zpool labelclear -f /dev/sdz1') }
+					@{ n = 'labelclear asks a SECOND time, which is the verification'
+					   c = ($lc.Count -eq 2 -and $lc[1] -eq $lc[0]) }
+					@{ n = 'labelclear reports the device had a label'; c = ($r.HadLabel -and $r.Cleared) }
+				)) { if (ok $t.n $t.c) { $pass++ } else { $fail.Add($t.n) } }
+
+			# The failure this exists to catch: labelclear says yes, twice.
+			$script:ZfsCommandOverride = {
+				param($cmd, $a)
+				[pscustomobject]@{ StdOut = ''; ExitCode = 0; StdErr = '' }
+			}
+			$caught = $false
+			try { Clear-ZpoolLabel /dev/sdz1 -Confirm:$false | Out-Null } catch { $caught = $true }
+			if (ok 'a label that survives a successful labelclear is a failure' $caught) { $pass++ }
+			else { $fail.Add('labelclear verification') }
+
+			# And the case that must NOT throw: there was no label to begin
+			# with, which is the state the caller wanted.
+			$script:ZfsCommandOverride = {
+				param($cmd, $a)
+				[pscustomobject]@{ StdOut = ''; ExitCode = 1; StdErr = 'failed to read label' }
+			}
+			$none = Clear-ZpoolLabel /dev/sdz1 -Confirm:$false
+			if (ok 'a device with no label is not an error' (
+					-not $none.HadLabel -and $none.Cleared)) { $pass++ }
+			else { $fail.Add('labelclear on a clean device') }
 		}
 		finally {
 			$script:ZfsCommandOverride = $null
@@ -2164,6 +2373,6 @@ Export-ModuleMember -Function @(
 	'New-ZfsClone', 'Convert-ZfsClone',
 	# Pools
 	'New-Zpool', 'Remove-Zpool', 'Import-Zpool', 'Export-Zpool',
-	'Start-ZpoolScrub',
+	'Start-ZpoolScrub', 'Clear-ZpoolLabel',
 	# Helpers
 	'Format-ZfsSize', 'Test-ZfsModule')

@@ -31,6 +31,8 @@ decides what, the commands that work, and the traps that cost the most.
 | `os7-setup` | **Phases 1, 2 and 3 done — an installed machine BOOTS, from `--unattend` and from the keyboard.** `run-phase3.py all` installs unattended, starts the disk with no ISO attached (LUKS prompt, pool import, login as the account Setup created, `/` from `rpool/ROOT/os7_<version>_<stamp>`, `boot=zfs`), and then installs a second machine **by keypress alone** — screens 1–7 to the Complete screen. See [SESSION-PHASE3-SYSTEM.md](SESSION-PHASE3-SYSTEM.md) and [SESSION-SCREEN6-GATE.md](SESSION-SCREEN6-GATE.md). Screen 9 (network) is the one part of 7–11 not delivered. **The log of the install is now on the installed machine** at `/var/log/os7-setup/install.log`, mode 0600, with every step's self-proof in it — L31, [SESSION-INSTALL-LOG.md](SESSION-INSTALL-LOG.md). |
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
+| **Backup** | **Written and self-tested; NEVER RUN ON A MACHINE.** `powershell/OS7/OS7.Backup*.ps1` — 17 cmdlets over `sanoid` (snapshot policy and retention) and `syncoid` (`zfs send`/`receive` replication, local or over ssh), both GPL-3.0+ and both shelled out to rather than vendored. OS/7 owns which datasets, which targets, and the verification: `Get-OS7BackupStatus` asks ZFS on the source and, through the `Zfs` module over ssh (Z14), on the target — comparing snapshot **GUIDs**, because neither tool's exit code is evidence (BUILD-NOTES #73). `Assert-OS7DatasetSafe` keeps a snapshot policy away from `rpool/ROOT` and `bpool/BOOT`. `Test-OS7Backup` is **63 checks, green**, and `check-layering.py` still reports **0**. What has never happened: a snapshot taken, a stream sent, or a file restored by this code. [BACKUP-PLAN.md](BACKUP-PLAN.md). |
+| `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. It is `qemu-system-aarch64 -machine virt,accel=hvf` like every other harness here, so it needs the Apple Silicon host. |
 
 ### Phase 0 is done — the gate is open
 
@@ -69,6 +71,30 @@ not `initramfs-tools`, not `grub.d/10_linux_zfs`. Without it the machine drops
 to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
+
+**THE BACKUP FEATURE LANDED ON 2026-08-26 AND HAS NEVER TOUCHED A MACHINE.**
+That is the first thing to do next, and it is one command on the Mac:
+
+```bash
+./installer/testing/run-backup.py all
+```
+
+It boots the live ISO, builds two file-backed pools, enables a policy, snapshots,
+replicates, ruins a file and restores it — asking ZFS and the filesystem for
+every answer. Until it passes, `Get-OS7BackupStatus` is a claim about code.
+[BACKUP-PLAN.md](BACKUP-PLAN.md) B-5 is the gate; §12 is the honest limitation
+list, and BL1 is at the top of it.
+
+**AND FIX #74 WHILE THE HARNESS IS WARM, because it is worth more than the
+backup feature is.** `New-OS7Storage`'s `-UserName` defaults to `os7` and
+`os7-setup` never passes it, so on the machine this repository has actually
+booted the account's home is an ordinary directory **inside the boot
+environment** and `/home/os7` is an empty dataset. `Restore-OS7` therefore rolls
+a user's files back with the system — the one thing SETUP-PLAN §4.4's layout
+exists to prevent. One parameter in `StorageSteps` fixes new installs; existing
+ones need a migration that creates the dataset and moves the directory into it.
+It needs `run-phase3.py all`, which is why it was not done from Windows.
+docs/DECISIONS.md open question 8, BUILD-NOTES #74, BACKUP-PLAN B-Q1.
 
 **SPIKE S5 PASSED on 2026-08-25** — the last open gate in
 [RELEASE-AND-UPDATE-PLAN.md](RELEASE-AND-UPDATE-PLAN.md) §10. A machine

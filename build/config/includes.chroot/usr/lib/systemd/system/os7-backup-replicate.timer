@@ -1,0 +1,21 @@
+[Unit]
+Description=OS/7 backup replication, hourly
+Documentation=file:///usr/share/os7/BACKUP-PLAN.md
+
+[Timer]
+# HOURLY, NOT EVERY FIFTEEN MINUTES. sanoid's own timer runs at *:0/15 because
+# taking a snapshot is nearly free; sending one is not. Hourly is the finest
+# grain at which the shipped retention keeps anything (hourly = 24), so a
+# shorter interval would send the same snapshot again.
+OnCalendar=hourly
+
+# Persistent, for the same reason sanoid's timer is: a machine that was closed
+# for two days should replicate when it opens, not wait for the next full hour.
+Persistent=true
+
+# Fleets exist. Two hundred machines all sending on the hour is a decision about
+# somebody's uplink, made by accident.
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

@@ -218,6 +218,11 @@ KERNEL_RELEASE="$(ls -1 /boot/vmlinuz-* 2>/dev/null | LC_ALL=C sort -V | tail -n
 
 ZFS_VERSION="$(pkgver zfsutils-linux)"
 AUTHD_VERSION="$(pkgver authd)"
+# The backup engine (docs/BACKUP-PLAN.md). It comes from the archive, so the
+# snapshot pin already decides which version arrives - and it is recorded
+# because it is the one third-party program OS/7 lets run unattended against its
+# pools, which is a thing a support case asks about by version.
+SANOID_VERSION="$(pkgver sanoid)"
 AZCMAGENT_VERSION="$(pkgver azcmagent)"
 INTUNE_VERSION="$(pkgver intune-portal)"
 
@@ -251,7 +256,7 @@ if [ -n "${PWSH_MEASURED}" ] && [ "${PWSH_MEASURED}" != "${OS7_PWSH_VERSION}" ];
 fi
 
 RELEASE_JSON=/usr/lib/os7/release.json
-export KERNEL_RELEASE ZFS_VERSION AUTHD_VERSION AZCMAGENT_VERSION INTUNE_VERSION
+export KERNEL_RELEASE ZFS_VERSION AUTHD_VERSION AZCMAGENT_VERSION INTUNE_VERSION SANOID_VERSION
 export PWSH_SHA SETUP_SHA MODULE_VERSION MANIFEST_SHA
 
 python3 - "${RELEASE_JSON}" <<'PY'
@@ -312,6 +317,15 @@ doc = {
         "authd_msentraid": {
             "present": False,
             "reason": "snap seeding into live-build is unsolved; see docs/DECISIONS.md open question 4",
+        },
+        # The backup engine (docs/BACKUP-PLAN.md). BOTH values, per this file's
+        # own rule: the pin says what was asked for and dpkg says what arrived,
+        # and hook 0090 fails the build when they disagree. sanoid is
+        # Architecture: all, so this is the same on both products.
+        "sanoid": {
+            "pinned":    env.get("OS7_SANOID_VERSION") or None,
+            "installed": v("SANOID_VERSION"),
+            "licence":   "GPL-3.0+, run as a program and not vendored",
         },
     },
 

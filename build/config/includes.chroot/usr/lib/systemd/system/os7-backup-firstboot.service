@@ -1,0 +1,38 @@
+[Unit]
+# OS/7 — turn local snapshots on, once, on a machine that has been installed.
+# docs/BACKUP-PLAN.md B4.
+#
+# WHY A FIRST-BOOT UNIT AND NOT A FILE IN THE IMAGE. The policy names datasets —
+# rpool/USERDATA, rpool/DATA/srv — that exist only on an INSTALLED system. A
+# /etc/sanoid/sanoid.conf baked into the image would un-skip sanoid's services on
+# the LIVE medium, where those datasets are not there; sanoid would then try to
+# snapshot them, print CRITICAL ERROR to stderr, and exit 0, every fifteen
+# minutes, for as long as anybody left the ISO running.
+#
+# WHY NOT IN os7-setup. It could be, and one line in the installer would do it —
+# but the installer is the one code path in this repository that is proven to
+# produce a machine that boots, and changing it means re-running
+# run-phase3.py all. This unit reaches the same place without touching that.
+Description=OS/7 first-boot backup enablement
+Documentation=file:///usr/share/os7/BACKUP-PLAN.md
+
+Requires=zfs.target
+After=zfs.target zfs-mount.service
+
+# Once. The script is idempotent anyway, but the condition is what makes this
+# unit disappear rather than run and decide nothing on every subsequent boot.
+ConditionPathExists=!/etc/os7/backup.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=TZ=UTC
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-backup-firstboot
+
+# It decides whether it applies and exits 0 when it does not — a live session,
+# or a machine with no USERDATA. A first-boot unit that fails on the medium it
+# ships on is a red line in `systemctl --failed` on every demo.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

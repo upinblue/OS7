@@ -1,0 +1,65 @@
+# =============================================================================
+# OS/7 — what os7-backup-replicate.service runs. docs/BACKUP-PLAN.md §6.
+#
+# A SCRIPT AND NOT A ONE-LINER IN ExecStart=, because there is a decision to
+# make and a unit file is a bad place to make one: a target that is UNPLUGGED
+# must not put this unit into `failed`, and a target that is present but did not
+# receive the data must. Those are two different exit codes from one command,
+# and the difference is the whole point of the feature.
+#
+#   exit 0   nothing to do, or every target that was reachable is verified
+#            current. A skipped target — drive absent, host unreachable — is a
+#            0, because an external drive is absent most of the time and a unit
+#            that fails hourly is a unit nobody reads.
+#   exit 1   a target was reachable and the copy did NOT verify. That is a
+#            backup that is not happening while everything looks connected, and
+#            it is the state worth waking somebody for.
+#
+# "The drive has been unplugged for a month" is deliberately NOT this script's
+# job to notice. It is Get-OS7BackupStatus's, which reports
+# HoursSinceReplication from ZFS, and an Intune or Arc rule's to act on — a
+# question about a fleet, answered where fleets are managed.
+# =============================================================================
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+}
+catch {
+	[Console]::Error.WriteLine("os7-backup-replicate: cannot import the OS7 module: $($_.Exception.Message)")
+	exit 2
+}
+
+try {
+	$results = @(Start-OS7BackupReplication -Confirm:$false)
+}
+catch {
+	[Console]::Error.WriteLine("os7-backup-replicate: $($_.Exception.Message)")
+	exit 2
+}
+
+if ($results.Count -eq 0) {
+	# No targets. A machine taking local snapshots and sending them nowhere is a
+	# supported configuration — it is what every machine looks like between
+	# Enable-OS7Backup and the first New-OS7BackupTarget — so it is not an error.
+	[Console]::Error.WriteLine('os7-backup-replicate: no replication targets are configured')
+	exit 0
+}
+
+# One JSON document on stdout, so the journal carries the result as data rather
+# than as prose. -Compress because journald stores lines.
+$results | ConvertTo-Json -Depth 6 -Compress
+
+$failed = @($results | Where-Object { -not $_.Ok -and -not $_.Skipped })
+$skipped = @($results | Where-Object { $_.Skipped })
+
+foreach ($s in $skipped) {
+	[Console]::Error.WriteLine("os7-backup-replicate: skipped $($s.Target): $($s.Problems -join '; ')")
+}
+foreach ($f in $failed) {
+	[Console]::Error.WriteLine("os7-backup-replicate: FAILED $($f.Target): $($f.Problems -join '; ')")
+}
+
+if ($failed.Count -gt 0) { exit 1 }
+exit 0

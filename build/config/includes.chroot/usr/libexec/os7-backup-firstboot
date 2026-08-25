@@ -1,0 +1,79 @@
+# =============================================================================
+# OS/7 — enable local snapshots once, on a machine that has been installed.
+# docs/BACKUP-PLAN.md B4. Run by os7-backup-firstboot.service.
+#
+# IT DECIDES WHETHER IT APPLIES, rather than relying on the unit's conditions to
+# decide for it. The unit can only ask about paths; the question here is about
+# ZFS — does this machine have the dataset layout os7-setup creates — and the
+# only thing that can answer it is ZFS.
+#
+# Exits 0 whenever backups are not applicable, so that a live session and a
+# machine without USERDATA both come up clean. The one thing it will not do is
+# report success for an enablement that did not happen: if it decides backups
+# SHOULD be on and turning them on fails, it exits non-zero and says why.
+# =============================================================================
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+	Import-Module Zfs -ErrorAction Stop
+}
+catch {
+	[Console]::Error.WriteLine("os7-backup-firstboot: cannot import the modules: $($_.Exception.Message)")
+	exit 2
+}
+
+# The live medium has no rpool at all; an installed machine has rpool/USERDATA
+# because New-OS7Storage creates it before anything else is written.
+$userdata = $null
+try {
+	$userdata = Get-ZfsDataset -Name 'rpool/USERDATA' -Type Filesystem -ErrorAction SilentlyContinue
+}
+catch { }
+
+if (-not $userdata) {
+	[Console]::Error.WriteLine(
+		'os7-backup-firstboot: no rpool/USERDATA on this machine, so there is nothing ' +
+		'a default policy would cover. This is what a live session looks like.')
+	exit 0
+}
+
+if (-not (Test-Path -LiteralPath '/usr/sbin/sanoid')) {
+	[Console]::Error.WriteLine(
+		'os7-backup-firstboot: sanoid is not installed; leaving backups off rather than ' +
+		'writing a policy nothing would act on.')
+	exit 0
+}
+
+try {
+	Enable-OS7Backup -Confirm:$false | Out-Null
+}
+catch {
+	[Console]::Error.WriteLine("os7-backup-firstboot: could not enable backups: $($_.Exception.Message)")
+	exit 1
+}
+
+# THE PROOF, FROM ZFS AND FROM THE FILESYSTEM, not from Enable-OS7Backup's
+# return value. What has to be true afterwards is that the file which un-skips
+# sanoid's services exists and that the policy reads back.
+$status = Get-OS7BackupStatus -SkipTargets
+if (-not $status.ScheduleFileInstalled) {
+	[Console]::Error.WriteLine(
+		'os7-backup-firstboot: Enable-OS7Backup returned and /etc/sanoid/sanoid.conf is ' +
+		'not there. sanoid.timer will fire every fifteen minutes and its services will ' +
+		'condition-skip, silently.')
+	exit 1
+}
+
+[Console]::Error.WriteLine(
+	"os7-backup-firstboot: enabled. $($status.Sources.Count) source(s); the first " +
+	'snapshot is taken within fifteen minutes.')
+
+# Anything the policy cannot reach, said once, on the boot where it becomes
+# true. On a machine whose account is not called `os7` this is where the
+# uncovered home directory is first reported.
+foreach ($u in @($status.Uncovered)) {
+	[Console]::Error.WriteLine("os7-backup-firstboot: NOT COVERED $($u.Path): $($u.Reason)")
+}
+exit 0

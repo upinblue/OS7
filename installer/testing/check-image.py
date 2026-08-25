@@ -144,6 +144,20 @@ chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/p
 echo "EXIT=$?" >> /tmp/zfs.txt
 emit zfs.selftest      bash -c 'tail -30 /tmp/zfs.txt'
 
+# THE BACKUP LAYER'S SELF-TEST, in the same chroot and read the same way
+# (docs/BACKUP-PLAN.md §9). Offline: it exercises the guard that keeps a
+# snapshot policy away from the boot environments, the sanoid.conf renderer, the
+# path-to-dataset resolution and the syncoid command line — none of which needs
+# ZFS, sanoid or a disk.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; Test-OS7Backup' >/tmp/backup.txt 2>&1
+echo "EXIT=$?" >> /tmp/backup.txt
+emit backup.selftest   bash -c 'tail -30 /tmp/backup.txt'
+
+# The three facts about backups that are properties of the IMAGE rather than of
+# any program: the two binaries are there, the defaults file OS/7 reads its
+# legal-key list out of is there, and no policy has been baked in.
+emit backup.files      bash -c 'for f in /mnt/root/usr/sbin/sanoid /mnt/root/usr/sbin/syncoid /mnt/root/usr/share/sanoid/sanoid.defaults.conf /mnt/root/usr/libexec/os7-backup-replicate /mnt/root/usr/libexec/os7-backup-firstboot /mnt/root/usr/lib/systemd/system/os7-backup-replicate.timer; do [ -s "$f" ] && echo "ok $f" || echo "MISSING $f"; done; for f in /mnt/root/etc/sanoid/sanoid.conf /mnt/root/etc/os7/backup.json; do [ -e "$f" ] && echo "BAKED-IN $f" || echo "absent $f"; done'
+
 emit volume            bash -c 'blkid -o value -s LABEL /iso/ISONAME'
 emit grub.cfg          bash -c 'cat /mnt/iso/boot/grub/grub.cfg 2>/dev/null | head -40'
 
@@ -463,6 +477,37 @@ def main() -> None:
         detail = summary or next(
             (l.strip() for l in zt.splitlines() if "FAILED:" in l), "")
         check(exit0, "the Zfs module parses the ZFS output it ships with", detail)
+
+    # -- the backup layer ---------------------------------------------------
+    #
+    # Read exactly like the Zfs one above, and for the same reason: "PowerShell
+    # said nothing in this chroot" is a property of the chroot, and only "the
+    # verdict was FAIL" may fail an image.
+    bt = img.get("backup.selftest", "")
+    bran = "OS/7 Backup self-test:" in bt
+    if not bran:
+        print("      note  the backup self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run ./installer/testing/run-backup.py test.")
+    else:
+        bsummary = next((l.strip() for l in bt.splitlines()
+                         if l.strip().startswith("OS/7 Backup self-test:")
+                         and "passed" in l), "")
+        bdetail = bsummary or next(
+            (l.strip() for l in bt.splitlines() if "FAILED:" in l), "")
+        check("EXIT=0" in bt,
+              "the backup layer's guards and renderer behave as designed", bdetail)
+
+    # The image's own share of the backup feature, which no self-test can see:
+    # what is on the medium. THE ABSENCES MATTER AS MUCH AS THE PRESENCES — a
+    # sanoid.conf baked into the image would start snapshotting on the live
+    # medium, against datasets only an installed machine has.
+    bf = img.get("backup.files", "")
+    missing = [l.split(None, 1)[1] for l in bf.splitlines() if l.startswith("MISSING ")]
+    baked = [l.split(None, 1)[1] for l in bf.splitlines() if l.startswith("BAKED-IN ")]
+    check(not missing, "sanoid, syncoid and the OS/7 backup units are in the image",
+          "; ".join(missing))
+    check(not baked, "no backup policy is baked into the image (it is written on first boot)",
+          "; ".join(baked))
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

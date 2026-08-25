@@ -1701,8 +1701,49 @@ function Restore-OS7 {
 	$be
 }
 
+# ---------------------------------------------------------------------------
+# Backup (docs/BACKUP-PLAN.md)
+#
+# THREE FILES, DOT-SOURCED, and dot-sourced HERE at the end rather than at the
+# top. Dot-sourcing executes the file, and these files call Write-OS7Step and
+# Invoke-OS7Native at definition time in their parameter defaults and comments'
+# sake — more importantly, a reader who finds a function in one of them should
+# find the helpers it uses already defined above. PowerShell defines functions
+# as the script runs, so "already defined" is a fact about line order.
+#
+# NOT A SEPARATE MODULE. Backup policy is OS/7 knowledge — which datasets the
+# update train owns, which a rollback must not touch, where /home really is —
+# and ZFS-POWERSHELL-PLAN Z8 puts OS/7 knowledge in Layer 3. The generic layer
+# this feature sits on is not a PowerShell module at all: it is sanoid and
+# syncoid, which are somebody else's programs and stay that way.
+#
+# Resolved relative to this file, so a module imported by path from a repository
+# and a module staged into /usr/local/share/powershell/Modules both work.
+foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
+		'OS7.BackupSelfTest.ps1')) {
+	$file = Join-Path $PSScriptRoot $part
+	if (-not (Test-Path -LiteralPath $file)) {
+		throw [System.IO.FileNotFoundException]::new(
+			"$part is missing from $PSScriptRoot. The OS7 module is staged by copying the " +
+			'whole directory (build.sh stage_ps_module); a partial copy is what this looks ' +
+			'like.')
+	}
+	. $file
+}
+
 Export-ModuleMember -Function New-OS7Storage, New-OS7BootEnvironmentName,
 	Get-OS7BootEnvironment, New-OS7BootEnvironment, Set-OS7BootEnvironment,
 	Remove-OS7BootEnvironment,
 	Get-OS7Theme, Set-OS7Theme,
-	Set-OS7Mode, Update-OS7, Restore-OS7
+	Set-OS7Mode, Update-OS7, Restore-OS7,
+	# Backup — policy and schedule
+	Get-OS7BackupPolicy, Set-OS7BackupPolicy, Enable-OS7Backup, Disable-OS7Backup,
+	Start-OS7Backup, Get-OS7BackupStatus, Get-OS7BackupCoverage,
+	# Backup — targets and replication
+	Get-OS7BackupTarget, New-OS7BackupTarget, Remove-OS7BackupTarget,
+	Test-OS7BackupTarget, Start-OS7BackupReplication,
+	Mount-OS7BackupTarget, Dismount-OS7BackupTarget,
+	# Backup — restore
+	Get-OS7FileVersion, Restore-OS7File,
+	# Backup — the self-test
+	Test-OS7Backup
