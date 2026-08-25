@@ -368,9 +368,9 @@ text — but it is why the screen list is longer than Win2k's text phase.
 | 6 | Confirm — destructive | Win2k format warning | `F` `ESC` |
 | 7 | Computer name and administrator account | Win2k GUI phase, in text | `TAB` `ENTER` |
 | 8 | Install mode: GUI or Headless (amd64 only) | — | arrows, `ENTER` |
-| 9 | Network — adapter and method | Win2k network settings | arrows, `TAB` `ENTER` `T` |
-| 9S | Static TCP/IP settings | Win2k TCP/IP properties | `TAB` `ENTER` `T` `ESC` |
-| 9W | Wi-Fi — network and authentication | — | arrows, `TAB` `ENTER` `R` `T` `ESC` |
+| 9 | Network — adapter and method | Win2k network settings | arrows, `TAB` `ENTER` `F4` |
+| 9S | Static TCP/IP settings | Win2k TCP/IP properties | `TAB` `ENTER` `F4` `ESC` |
+| 9W | Wi-Fi — network and authentication | — | arrows, `TAB` `ENTER` `F6` `F4` `ESC` |
 | 10 | Copying files | Win2k copy phase | — |
 | 11 | Configuring the system | Win2k "Setup is configuring..." | — |
 | 12 | Setup is complete | Win2k restart prompt | `ENTER` |
@@ -539,6 +539,13 @@ off the disk by a different mechanism in the next.
 with carrier is pre-selected — a plugged-in cable is the operator telling Setup
 which port they mean, and it costs one file read to notice.
 
+**Test is `F4`, not `T`, on all three of these screens.** `SelectionList`
+consumes letters for type-to-find and `TextBox` consumes them as text, so `T`
+would mean two things depending on where the cursor was — the one property a
+keyboard-driven installer cannot afford, and the same reason `SetupFlow` handles
+`F3` and `F5` itself rather than letting screens own them. The first draft of
+these mockups used `T` and the code disagreed with them within the hour.
+
 ```
  OS/7 Setup                                       Version 1.0.0.32 (development)
  ═══════════════════════════════════════════════════════════════════════════════
@@ -560,7 +567,7 @@ which port they mean, and it costs one file read to notice.
      Setup will apply these settings now and test them before writing them
      to the installed system.
 
- ENTER=Continue   T=Test   F1=Help   F3=Exit
+ TAB=Next list   F4=Test   ENTER=Continue   ESC=Back   F3=Quit
 ```
 
 **9S — Static TCP/IP settings.** Reached only from "Specify an address".
@@ -585,7 +592,7 @@ form with more than one thing in it.
 
      Not yet tested.
 
- TAB=Next field   T=Test   ENTER=Continue   ESC=Back   F3=Exit
+ TAB=Next field   F4=Test   ENTER=Continue   ESC=Back   F3=Quit
 ```
 
 **9W — Wi-Fi.** `R` rescans. The auth block below the list changes shape with
@@ -600,8 +607,8 @@ what it cannot do (L27).
 
      ┌──────────────────────────────────────────────────────────────────────┐
      │   CORP-SECURE          ▂▄▆█   WPA2 Enterprise (802.1X)               │
-     │   CORP-GUEST           ▂▄▆    WPA2 Personal                          │
-     │   Branch-Office-5G     ▂▄     WPA3 Personal                          │
+     │   CORP-GUEST           ▂▄▆    WPA2/WPA3 Personal                     │
+     │   Branch-Office-5G     ▂▄     WPA2/WPA3 Personal                     │
      │   (enter a hidden network name)                                      │
      └──────────────────────────────────────────────────────────────────────┘
 
@@ -614,7 +621,7 @@ what it cannot do (L27).
 
      Setup will associate now and report whether it worked.
 
- R=Rescan   TAB=Next field   T=Test   ENTER=Continue   ESC=Back   F3=Exit
+ R=Rescan   TAB=Next field   F4=Test   ENTER=Continue   ESC=Back   F3=Quit
 ```
 
 **10 — Copying files**

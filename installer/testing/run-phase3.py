@@ -74,7 +74,15 @@ HOSTNAME = "os7-phase3"
 USERNAME = "os7admin"
 
 # 24 GB: the §4.4 layout needs 16 as a floor, and the copied system needs room.
-lab = Lab("phase3", target_gb=24, iso_as_disk=True)
+# nic=True since Phase 3b: screen 9 does not appear on a machine with no network
+# adapter (NetworkScreen.Entry skips it), so a lab without one cannot walk it -
+# and `boot` has always had a NIC, which is how the network gap in L23 stayed
+# invisible for so long. User-mode networking is deterministic: 10.0.2.15.
+lab = Lab("phase3", target_gb=24, iso_as_disk=True, nic=True)
+
+# What QEMU's user-mode network hands out, every time. Named rather than
+# repeated, because it is asserted on the live medium AND on the installed disk.
+DHCP_ADDRESS = "10.0.2.15"
 
 CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
@@ -209,7 +217,14 @@ def write_plan(c):
             f'"storage":{{"disk":"{TARGET}","layout":"single","efiMiB":512,'
             '"bpoolGiB":2,"encrypt":true,"swap":"zram"},'
             f'"account":{{"hostname":"{HOSTNAME}","username":"{USERNAME}",'
-            '"fullName":"OS/7 Phase 3"}}')
+            '"fullName":"OS/7 Phase 3"},'
+            # `interface: auto` and not `enp0s1`, deliberately — L28. A plan file
+            # is written on one machine and replayed on another, and an interface
+            # name is a property of whichever machine was in front of the person
+            # who wrote it. `auto` becomes a netplan `match: name: "en*"`, so this
+            # is the path an unattended fleet install really takes, and therefore
+            # the one worth exercising here rather than the interactive one.
+            '"network":{"interface":"auto","kind":"Wired","method":"Dhcp"}}')
     c.drop()
     c.send(f"printf '%s' '{plan}' > /tmp/plan.json")
     c.send(f"printf '%s' '{PASSPHRASE}' > /tmp/pass")
@@ -374,7 +389,7 @@ def phase_boot():
 
 
 def phase_walk(font):
-    """THE INTERACTIVE PATH, all of it — screens 1 to 7 by hand, to the Complete
+    """THE INTERACTIVE PATH, all of it — screens 1 to 9 by hand, to the Complete
     screen, with a real install behind it.
 
     This phase exists because `--unattend` cannot stand in for it, and the reason
@@ -535,13 +550,45 @@ def phase_walk(font):
         # -- screen 8 does not exist here, and that is the assertion ---------
         #
         # arm64 is server-only (README), so ModeScreen.Next skips the GUI/headless
-        # question and goes straight to the executor. On amd64 there would be one
-        # more ENTER here; no amd64 ISO has ever been built.
-        w, h, rgb = shoot("48-executing", 4.0)
+        # question. On amd64 there would be one more ENTER here; no amd64 ISO has
+        # ever been walked.
+        w, h, rgb = shoot("47b-after-account", 3.0)
         page = page_of(w, h, rgb)
         if "Choose how this computer will be used" in page:
             print("      FAIL  screen 8 appeared on arm64, which ships no desktop")
             return False
+        if "Setup cannot continue" in page:
+            print("      FAIL  the plan was refused after screen 7")
+            for line in page.splitlines():
+                if line:
+                    print(f"            {line}")
+            return False
+
+        # -- screen 9: the network (Phase 3b) --------------------------------
+        #
+        # THIS IS WHERE BUILD-NOTES #45 WOULD HAVE STRUCK AGAIN. Screen 9 was
+        # inserted between screen 8 and the executor, and this walk previously
+        # went straight from screen 7's ENTER to a progress bar. A harness that
+        # was not taught about the new screen would press ENTER into it, get the
+        # executor anyway, and report success - which is exactly how the screen-6
+        # gate bug survived every automated check in the repository.
+        ok &= on_screen(w, h, rgb, "network connection", "screen 9 is the network screen")
+        ok &= on_screen(w, h, rgb, "virtio_net", "the virtio NIC is in the adapter list")
+
+        # F4 = apply it here and now (D12). The live medium has the whole stack,
+        # so this is a REAL DHCP lease on a REAL interface, and the address is
+        # known before the VM started because user-mode networking is fixed.
+        press("f4")
+        print("      testing the live network … (DHCP lease, up to 30s)")
+        time.sleep(12)
+        w, h, rgb = shoot("48-network-tested", 2.0)
+        ok &= on_screen(w, h, rgb, DHCP_ADDRESS,
+                        f"F4 took a real lease on the live medium ({DHCP_ADDRESS})")
+
+        press("ret")
+
+        w, h, rgb = shoot("48b-executing", 4.0)
+        page = page_of(w, h, rgb)
         if "Setup cannot continue" in page:
             print("      FAIL  the plan was refused at the executor's gate")
             for line in page.splitlines():
@@ -549,9 +596,9 @@ def phase_walk(font):
                     print(f"            {line}")
             return False
         if "Do not turn off the computer" in page:
-            print("      ok    screen 8 is skipped on arm64 and the executor is running")
+            print("      ok    the executor is running after screen 9")
         else:
-            print("      FAIL  the executor did not start after screen 7")
+            print("      FAIL  the executor did not start after screen 9")
             for line in page.splitlines():
                 if line:
                     print(f"            {line}")

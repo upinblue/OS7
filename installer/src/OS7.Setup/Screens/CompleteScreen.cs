@@ -38,7 +38,7 @@ internal sealed class CompleteScreen : Screen
         int width = f.BoxWidth;
         StoragePlan s = _plan.Storage;
 
-        f.Box(5, left, width, 11);
+        f.Box(5, left, width, 12);
         // The version comes FIRST, and it is here as well as on the title row
         // because this is the screen someone reads when the install is over: it
         // is the record of what was put on this machine, and the boot
@@ -53,12 +53,47 @@ internal sealed class CompleteScreen : Screen
         f.Text(13, left + 3, $"Computer:     {_plan.Account.Hostname}");
         f.Text(14, left + 3, $"Account:      {_plan.Account.Username}"
                              + (_plan.Mode == InstallMode.Gui ? "   (desktop)" : "   (headless)"));
+        f.Text(15, left + 3, $"Network:      {NetworkLine()}");
 
-        f.Body(17, 5, "Remove the setup medium and press ENTER to restart.");
+        f.Body(18, 5, "Remove the setup medium and press ENTER to restart.");
         if (s.Encrypt)
             f.Body(19, 5, "This computer will ask for the disk passphrase when it starts.",
                    Slot.Brand);
+
+        // AN UNTESTED NETWORK IS SAID OUT LOUD, on the last screen anybody reads.
+        //
+        // D12 makes the live test optional on purpose - a machine built on a
+        // bench for a site that is not wired yet has to be installable. What
+        // must not happen is that it goes out with an untested configuration and
+        // nothing anywhere says so, because the machine this matters for is the
+        // headless one that nobody can look at afterwards.
+        NetworkPlan n = _plan.Network;
+        if (n.Method != NetworkMethod.None && !n.Verified)
+            f.Body(20, 5, "The network settings were NOT tested before they were written.",
+                   Slot.Brand);
+        else if (n.Method == NetworkMethod.None)
+            f.Body(20, 5, "This computer has no network configuration.", Slot.Brand);
+
         f.Body(21, 5, $"A log of this session is at {Log.Path}.");
+    }
+
+    /// <summary>
+    /// The network, in one line and in the terms the operator typed.
+    ///
+    /// The ADDRESS where there is one, not the word "static": this screen is the
+    /// record of what was put on the machine, and "static" does not tell anybody
+    /// which machine to look for on the network afterwards.
+    /// </summary>
+    private string NetworkLine()
+    {
+        NetworkPlan n = _plan.Network;
+        if (n.Method == NetworkMethod.None) return "none";
+
+        string where = n.Kind == LinkKind.Wireless && n.Wifi is not null
+            ? $"{n.Interface} '{n.Wifi.Ssid}'"
+            : n.Interface ?? "(none)";
+        string how = n.Method == NetworkMethod.Static ? n.Address ?? "static" : "DHCP";
+        return $"{where}  {how}";
     }
 
     public override Transition Handle(KeyPress key) =>

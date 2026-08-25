@@ -32,6 +32,13 @@ internal static class SystemSteps
         new ReleaseIdentityStep(plan, target),
         new AccountStep(plan, target),
         new InstallModeStep(plan, target),
+        // AFTER the mode step, and the order is asserted rather than assumed —
+        // see the check below. L24: the headless path runs
+        // `apt-get autoremove -y --purge`, which removes `network-manager`, so a
+        // NetworkManager-rendered netplan written before it names a backend that
+        // is no longer installed. Nothing fails at install time; the machine
+        // simply comes up with no network.
+        new NetworkStep(plan, target),
         new InitramfsStep(plan, target),
         new TpmEnrolStep(plan, target),
         new BootloaderStep(plan, target),
