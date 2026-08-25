@@ -495,16 +495,34 @@ def phase_wifi():
             return True
         print("      ok    mac80211_hwsim loaded, two virtual radios")
 
-        out = ask(c, "ls /sys/class/net | grep -c wlan", "wlan count", timeout=60)
-        print(f"      wlan interfaces: {out.strip().splitlines()[-2:]}")
+        out = ask(c, "ls /sys/class/net | tr '\\n' ' '", "wlan count", timeout=60)
+        wlans = [w for w in out.split() if w.startswith("wlan")]
+        print(f"      wlan interfaces: {' '.join(wlans) if wlans else '(none)'}")
+        if len(wlans) < 2:
+            print("      FAIL  mac80211_hwsim did not produce two radios")
+            return False
 
-        for want, what in [("wpa_supplicant", "wpasupplicant is on the image"),
-                           ("iw", "iw is on the image")]:
-            out = ask(c, f"command -v {want} || echo MISSING", what, timeout=60)
-            if "MISSING" in out:
-                print(f"      FAIL  {what}: not found. The package list did not take.")
+        # THE FILE, NOT `command -v`. The first version used `command -v
+        # wpa_supplicant`, which failed - and the package IS on the image
+        # (wpasupplicant 2:2.11 is in the manifest). casper logs in
+        # unprivileged, and /usr/sbin is not on an unprivileged PATH, so
+        # `command -v` was answering "is it on YOUR path" while the message it
+        # printed said "the package list did not take".
+        #
+        # A correct check answering a different question from the one asked,
+        # which is the third time this phase has produced that shape. Testing
+        # for the file says what is actually meant.
+        for path, what in [("/usr/sbin/wpa_supplicant", "wpasupplicant is on the image"),
+                           ("/usr/sbin/iw", "iw is on the image"),
+                           ("/usr/sbin/rfkill", "rfkill is on the image")]:
+            out = ask(c, f"test -x {path} && echo FOUND || echo MISSING {path}",
+                      what, timeout=60)
+            if "FOUND" not in out:
+                print(f"      FAIL  {what}: {path} is not there.")
+                print("            The three-package addition to os7-base.list.chroot")
+                print("            did not reach this image.")
                 return False
-            print(f"      ok    {what}")
+            print(f"      ok    {what}  ({path})")
 
         # -- the access point, on wlan1 ---------------------------------------
         ap = (f'network={{\\n'
@@ -520,18 +538,41 @@ def phase_wifi():
         c.drop()
         c.send(f"printf '{ap}' > /tmp/ap.conf")
         ask(c, "cat /tmp/ap.conf", "ap config")
-        ask(c, "sudo rfkill unblock wifi; sudo ip link set wlan1 up", "wlan1 up",
+        ask(c, "sudo /usr/sbin/rfkill unblock wifi; sudo ip link set wlan1 up", "wlan1 up",
             timeout=60)
-        ask(c, "sudo wpa_supplicant -B -i wlan1 -c /tmp/ap.conf -D nl80211",
-            "start ap", timeout=90)
-        time.sleep(5)
-        ask(c, f"sudo ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
-        out = ask(c, "iw dev wlan1 info", "ap info", timeout=60)
-        if "type AP" not in out:
+        # `-dd -f`: wpa_supplicant DAEMONISES with -B, so anything it decides
+        # after the fork - "AP mode not supported", a regulatory refusal, a
+        # config key it ignored - goes nowhere at all. The first run of this got
+        # "Successfully initialized wpa_supplicant" and an interface still in
+        # `type managed`, which is a success message about the wrong thing.
+        ask(c, "sudo /usr/sbin/wpa_supplicant -B -dd -f /tmp/wpa.log "
+               "-i wlan1 -c /tmp/ap.conf -D nl80211", "start ap", timeout=90)
+
+        # POLLED, not slept: bringing up an AP is asynchronous after the fork.
+        got_ap = False
+        for _ in range(10):
+            time.sleep(3)
+            out = ask(c, "sudo /usr/sbin/iw dev wlan1 info", "ap info", timeout=60)
+            if "type AP" in out:
+                got_ap = True
+                break
+        if not got_ap:
             print("      FAIL  wlan1 did not come up as an access point")
-            print(out[-1200:])
+            print("      --- what iw says ---")
+            print(out[-800:])
+            # ASK THE THING ITSELF. wpa_supplicant's own log is the only place
+            # its reason exists.
+            for cmd, label in [("sudo /usr/sbin/wpa_cli -i wlan1 status", "wpa_cli"),
+                               ("sudo tail -40 /tmp/wpa.log", "wpa_supplicant log"),
+                               ("dmesg | tail -20", "kernel")]:
+                extra = ask(c, cmd, label, timeout=90)
+                print(f"      --- {label} ---")
+                for line in extra.splitlines()[:40]:
+                    if line.strip() and not line.startswith("OK"):
+                        print(f"          {line.rstrip()}")
             return False
         print(f"      ok    wlan1 is an access point broadcasting '{AP_SSID}'")
+        ask(c, f"sudo ip addr add {AP_ADDRESS} dev wlan1", "ap address", timeout=60)
 
         # -- Setup's own scan, on wlan0 ---------------------------------------
         #
@@ -539,7 +580,7 @@ def phase_wifi():
         # failure to join it. Two different bugs; one message each.
         ask(c, "sudo ip link set wlan0 up", "wlan0 up", timeout=60)
         time.sleep(3)
-        out = ask(c, "sudo iw dev wlan0 scan | grep -E 'SSID|signal'", "scan", timeout=120)
+        out = ask(c, "sudo /usr/sbin/iw dev wlan0 scan | grep -E 'SSID|signal'", "scan", timeout=120)
         if AP_SSID not in out:
             print(f"      FAIL  wlan0 cannot see '{AP_SSID}'")
             print(out[-1200:])
@@ -573,7 +614,7 @@ def phase_wifi():
         # AND THE KERNEL AGREES. `--test-network` already checks with `ip`, so
         # this is the check on the checker: if the two ever disagree, the one to
         # believe is this one.
-        out = ask(c, "iw dev wlan0 link; ip -o addr show wlan0", "link", timeout=90)
+        out = ask(c, "sudo /usr/sbin/iw dev wlan0 link; ip -o addr show wlan0", "link", timeout=90)
         if AP_SSID in out and WIFI_ADDRESS.split("/")[0] in out:
             print(f"      ok    wlan0 is associated to '{AP_SSID}' with {WIFI_ADDRESS}")
         else:
