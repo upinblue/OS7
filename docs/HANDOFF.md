@@ -75,10 +75,27 @@ installed or walked, so every Phase 1–3 result is still arm64-only.
 Otherwise: **Phase 4 — Authenticity and polish**, or **screen 9**, or the release
 plan's **S5**. Phase 3 is done (below); what it leaves is:
 
-* **Screen 9, the network screen.** Deliberately not in Phase 3: DHCP is the
-  default and a machine that boots can be configured, while one that does not
-  cannot. It matters for the headless product — a server that comes up with no
-  network is a site visit.
+* **Screen 9, the network screen — now PLANNED as Phase 3b, and it is not
+  optional.** It was left out of Phase 3 on the grounds that "DHCP is the default
+  on a fresh Ubuntu install". **Both shipped ISOs were read on 2026-08-25 and that
+  premise does not hold for them**: `/etc/netplan/` is empty, `/etc/systemd/network/`
+  is empty, there is no `cloud-init` to write `50-cloud-init.yaml`, and
+  `systemd-networkd` is not enabled — only its *consumer*
+  `networkd-dispatcher.service` is. amd64-GUI is masked by NetworkManager;
+  arm64 and amd64-headless have nothing equivalent. Plan, screens, limitations
+  L23–L28 and decisions D11–D14 are in
+  [../installer/SETUP-PLAN.md](../installer/SETUP-PLAN.md) §3, §7.2, §7.3, §8, §9
+  and Phase 3b; the reasoning is in
+  [SESSION-NETWORK-ACCOUNTS-PLAN.md](SESSION-NETWORK-ACCOUNTS-PLAN.md).
+  **Start with M1**: boot an installed machine with a NIC attached and run
+  `ip -o addr`. Everything above is a property of a squashfs, not of a computer,
+  and M1 is what turns it into one — or overturns it.
+* **The account model is decided and needs no code (D11).** Root stays locked and
+  the first account stays in `sudo`, which is what `SystemSteps` already does.
+  What is owed is one sentence on screen 7 naming the role — the local account is
+  the *break-glass* credential for when Entra is unreachable — plus L26, found on
+  the way: `/etc/shadow` is inside the boot environment, so **a rollback un-says a
+  local password change.**
 * **TPM2 enrolment has never actually enrolled.** The code is written and the
   initramfs pieces are S4's, but every Phase 3 run so far was on a VM with no
   TPM, so the step took its "no TPM on this machine" path. `run-s4.py` shows how

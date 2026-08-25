@@ -368,8 +368,9 @@ text — but it is why the screen list is longer than Win2k's text phase.
 | 6 | Confirm — destructive | Win2k format warning | `F` `ESC` |
 | 7 | Computer name and administrator account | Win2k GUI phase, in text | `TAB` `ENTER` |
 | 8 | Install mode: GUI or Headless (amd64 only) | — | arrows, `ENTER` |
-| 9 | Network (headless: DHCP/static) | Win2k network settings | `TAB` `ENTER` |
-
+| 9 | Network — adapter and method | Win2k network settings | arrows, `TAB` `ENTER` `T` |
+| 9S | Static TCP/IP settings | Win2k TCP/IP properties | `TAB` `ENTER` `T` `ESC` |
+| 9W | Wi-Fi — network and authentication | — | arrows, `TAB` `ENTER` `R` `T` `ESC` |
 | 10 | Copying files | Win2k copy phase | — |
 | 11 | Configuring the system | Win2k "Setup is configuring..." | — |
 | 12 | Setup is complete | Win2k restart prompt | `ENTER` |
@@ -388,6 +389,30 @@ and for one commit that made screen 7 unreachable — BUILD-NOTES #45.
 onto a ZFS concept: **import an existing `rpool` and install into a new boot
 environment beside the current one**, leaving `rpool/USERDATA` untouched. That
 is an upgrade/repair path Calamares would never have given us. Phase 6.
+
+**9S and 9W are lettered, not numbered, and that is the whole reason they are
+lettered.** Renumbering the screen list is how BUILD-NOTES #45 happened: a screen
+was inserted, and the screen before it went on keeping a promise it could no
+longer keep. Everything downstream of 9 — the copy phase, the configure phase,
+the Complete screen, and `run-phase3.py walk`, which counts screens by keypress —
+keeps its number. 9S is reached only when the method is Static; 9W only when the
+chosen adapter is wireless. Neither is a step in a line every install walks, so
+neither earns a number in one.
+
+**Screen 9 is after screen 8, and that ordering is load-bearing.** The netplan
+*renderer* is decided by the install mode (L24), so the network screen can only
+be asked once the mode is known. Putting network before mode would mean writing a
+file whose backend has not been chosen yet — which is the same class of mistake
+as screen 6 validating an account nobody had typed.
+
+**Screen 9 is no longer optional, and that changed on evidence.** Phase 3 left it
+out on the grounds that "DHCP is the default on a fresh Ubuntu install". Both
+shipped images were asked on 2026-08-25 and that sentence does not hold for them:
+`/etc/netplan/` is empty, `/etc/systemd/network/` is empty, there is no
+`cloud-init` to write `50-cloud-init.yaml`, and `systemd-networkd` is not
+enabled — only `networkd-dispatcher.service` is, which is its *consumer*. See
+L23, and see M1 for the measurement that is still owed before this is stated as a
+fact about a running machine rather than about an image.
 
 ### 3.1 Mockups
 
@@ -508,6 +533,88 @@ off the disk by a different mechanism in the next.
      Then press ENTER to see alternatives.
 
  ENTER=Continue   F1=Help   F3=Exit
+```
+
+**9 — Network.** The adapter list is read from `/sys/class/net`, and the one
+with carrier is pre-selected — a plugged-in cable is the operator telling Setup
+which port they mean, and it costs one file read to notice.
+
+```
+ OS/7 Setup                                       Version 1.0.0.32 (development)
+ ═══════════════════════════════════════════════════════════════════════════════
+
+     Setup can configure this computer's network connection now.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │   enp1s0    Ethernet    Intel I219-V              link up            │
+     │   enp3s0    Ethernet    Realtek RTL8111           no link            │
+     │   wlp2s0    Wi-Fi       Intel AX211                                  │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │   Obtain an address automatically (DHCP)                             │
+     │   Specify an address (static TCP/IP)                                 │
+     │   Leave this computer without a network connection                   │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Setup will apply these settings now and test them before writing them
+     to the installed system.
+
+ ENTER=Continue   T=Test   F1=Help   F3=Exit
+```
+
+**9S — Static TCP/IP settings.** Reached only from "Specify an address".
+`TAB` moves, exactly as on screen 7, because it is the same kind of object: a
+form with more than one thing in it.
+
+```
+ OS/7 Setup                                       Version 1.0.0.32 (development)
+ ═══════════════════════════════════════════════════════════════════════════════
+
+     Setup needs the addresses this computer will use on enp1s0.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │   IP address:        [ 10.42.0.17/24                     ]           │
+     │   Default gateway:   [ 10.42.0.1                         ]           │
+     │   DNS servers:       [ 10.42.0.1, 1.1.1.1                ]           │
+     │   Search domains:    [ corp.example.com                  ]           │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     The address is written with its prefix length, as 10.42.0.17/24.
+     Leave the gateway blank for a network segment with no route off it.
+
+     Not yet tested.
+
+ TAB=Next field   T=Test   ENTER=Continue   ESC=Back   F3=Exit
+```
+
+**9W — Wi-Fi.** `R` rescans. The auth block below the list changes shape with
+the network's advertised security, and 802.1X is the one that is honest about
+what it cannot do (L27).
+
+```
+ OS/7 Setup                                       Version 1.0.0.32 (development)
+ ═══════════════════════════════════════════════════════════════════════════════
+
+     Setup found these wireless networks on wlp2s0.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │   CORP-SECURE          ▂▄▆█   WPA2 Enterprise (802.1X)               │
+     │   CORP-GUEST           ▂▄▆    WPA2 Personal                          │
+     │   Branch-Office-5G     ▂▄     WPA3 Personal                          │
+     │   (enter a hidden network name)                                      │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │   Authentication:    PEAP / MSCHAPv2                                 │
+     │   Identity:          [ bastian@corp.example.com          ]           │
+     │   Password:          [ ******************                ]           │
+     │   CA certificate:    [ (none — the network is not verified) ]        │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Setup will associate now and report whether it worked.
+
+ R=Rescan   TAB=Next field   T=Test   ENTER=Continue   ESC=Back   F3=Exit
 ```
 
 **10 — Copying files**
@@ -1089,6 +1196,155 @@ in the shipped system.
 
 `calamares` can be dropped from `build/config/package-lists-amd64/os7-desktop.list.chroot`.
 
+**Added by screen 9 (Wi-Fi), arm64 only:** `wpasupplicant`, `iw`, `rfkill`.
+Three packages, roughly 4 MB. amd64 needs nothing — see §7.2 for what each image
+already carries, measured rather than assumed.
+
+---
+
+### 7.2 The network — what is on the medium, and what reaches the target
+
+**Both shipped images were asked on 2026-08-25** by mounting the squashfs and
+reading `/usr/lib/os7/packages.manifest`, `/etc/netplan/`,
+`/etc/systemd/network/` and `/etc/systemd/system/`. Nothing here is inferred from
+what Ubuntu usually does.
+
+| | arm64 (1.0.0.46, 549 packages) | amd64 (1.0.0.47, 1528 packages) |
+|---|---|---|
+| `netplan.io`, `netplan-generator`, `libnetplan1` | 1.2 | 1.2 |
+| `systemd-resolved`, `networkd-dispatcher` | yes | yes |
+| `network-manager` | **no** | 1.54.3 |
+| `wpasupplicant` | **no** | 2:2.11 |
+| `iw`, `rfkill` | **no** | 6.17, 2.41.3 |
+| `modemmanager`, `libnm0` | no | yes |
+| wireless firmware (Intel, Broadcom, Realtek, MediaTek, Qualcomm, Marvell) | **yes** | yes |
+| `/etc/netplan/` | **empty** | **empty** |
+| `/etc/systemd/network/` | **empty** | **empty** |
+| `cloud-init` | **absent** | **absent** |
+| `systemd-networkd` enabled | **no** | no |
+
+Two things fall out of that table, and they are the whole reason this section
+exists.
+
+**First: nothing on this image configures a network by itself, except
+NetworkManager.** `/etc/netplan/` being empty is not a neutral state — netplan
+generates nothing from nothing, `systemd-networkd` is not enabled, and the only
+`.network` files under `/usr/lib/systemd/network/` are for containers, VM
+tunnels, 6rd and `.example` templates. What *is* enabled is
+`networkd-dispatcher.service`, which reacts to networkd's state changes: the
+consumer is switched on and the producer is not. On amd64 the desktop rescues
+this, because `network-manager` ships
+`/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf` and takes every
+device — which is exactly why the GUI product has never shown the problem and the
+headless one would. On Ubuntu Server the default that Phase 3 relied on comes from
+`cloud-init` writing `/etc/netplan/50-cloud-init.yaml`, and this image has no
+`cloud-init`.
+
+**Second: Wi-Fi is nearly free on amd64 and costs three packages on arm64.** The
+firmware — the part that is large and that cannot be added later without a
+network — is already on both images, via `linux-firmware` and its 19 companion
+packages. What arm64 lacks is the userspace: `wpasupplicant` to associate, `iw`
+to scan, `rfkill` to notice a hardware kill switch.
+
+#### The renderer is decided by screen 8, never by what is installed
+
+| Product | Renderer | Why |
+|---|---|---|
+| amd64, GUI | `NetworkManager` | NM is installed and manages every device; a networkd-rendered netplan would leave GNOME's own network UI describing a connection it does not own |
+| amd64, headless | `networkd` | `SystemSteps`' headless path runs `apt-get purge ubuntu-desktop-minimal …` followed by `apt-get autoremove -y --purge`, which takes `network-manager` with it |
+| arm64 | `networkd` | NM was never installed |
+
+The renderer therefore comes from `plan.Mode` — a value screen 8 has already
+collected — and never from probing the target for `network-manager`. Probing
+gives a different answer depending on whether the purge has run yet, which makes
+the outcome depend on step order rather than on the plan. L24 states the failure.
+
+#### Applied live, and written to the target — and they are different jobs
+
+Screen 9 does both, and the distinction matters:
+
+* **Live is the verification.** In the live environment the full stack is
+  present, so Setup can bring the interface up, take a DHCP lease, associate with
+  an access point and see whether any of it worked. This is the only moment at
+  which a mistyped Wi-Fi passphrase or a dead VLAN can be caught by the person who
+  typed it. It is also the prerequisite for Entra/Intune/Arc onboarding ever
+  happening during an install rather than on first boot (Phase 6).
+* **The target write is the deliverable.** `/etc/netplan/01-os7-network.yaml`,
+  mode `0600`, renderer from the table above.
+
+**The check is never an exit code.** `netplan apply` cannot run in a chroot —
+it needs a live systemd, the same reason `SystemSteps` already avoids `systemctl`
+there. What *can* run in the chroot is `netplan generate`, which turns the YAML
+into `/run/systemd/network/10-netplan-<iface>.network`. Setup reads that
+generated file back and asserts the thing it actually cares about — `DHCP=ipv4`,
+or the `Address=` that was typed — rather than trusting that `netplan` exited 0.
+That is a diagnostic which does not depend on the subsystem it is diagnosing:
+it needs no running networkd, no link, and no DHCP server.
+
+#### The plan file, and what must never enter it
+
+`NetworkPlan` follows §6.6 like the rest: screens edit it, execution reads it.
+Two fields are `[JsonIgnore]` for the same reason the LUKS passphrase and the
+account password are — this is the third instance of that rule, and the first two
+were each written as though they were the only one:
+
+* the Wi-Fi PSK
+* the 802.1X password
+
+Unattended installs take them from `--wifi-secret-file`, matching the existing
+`--passphrase-file` and `--password-file`.
+
+The interface name is the subtler one. §6.6 makes the plan a file that can be
+written on one machine and replayed on another, and `enp1s0` is not a property of
+the plan — it is a property of the machine that happened to be in front of the
+operator. An interactive install writes the chosen name; an unattended plan may
+say `"interface": "auto"`, which becomes a netplan `match:` on `en*` for wired and
+`wl*` for wireless. L28.
+
+### 7.3 Accounts — root, sudo, and where Entra fits
+
+**Nothing about the current implementation changes.** `SystemSteps` already
+creates one account with `useradd -m -s /bin/bash -G sudo` and never gives root a
+password, so root keeps the `!` it has in the base image. That is Ubuntu's model
+and it is the right one here for three separate reasons, only the first of which
+is convention:
+
+1. **Ubuntu's own rationale.** There is no root account to brute-force; `sudo`
+   writes each command to `/var/log/auth.log` under the *human's* name; and
+   administrative rights move by group membership rather than by a shared secret.
+2. **It is the model `authd` assumes.** The Entra broker makes the first user to
+   authenticate the **owner**, `owner_extra_groups = sudo` grants them
+   administrative rights, and `allowed_users = OWNER` is the default. On a
+   managed OS/7 machine, admin rights are meant to arrive from the tenant.
+3. **A root password is the thing Entra and Intune exist to remove.** It cannot
+   be rotated across a fleet, it appears in no audit trail, and it lives outside
+   the tenant that is supposed to be the authority on who may administer the
+   device. Offering it as an *option* would be worse than either extreme: a fleet
+   in which some machines have one and nobody can say which.
+
+What the plan does add is a **name for the role the local account already
+plays**. It is the break-glass account: the credential that still works when
+Entra is unreachable, when the network is down, or when the machine has been
+rolled back. Screen 7 should say so, because an operator who thinks they are
+creating a throwaway first user will choose a throwaway password for the only
+non-cloud credential on the machine.
+
+Two consequences worth writing down rather than discovering:
+
+* **A rollback un-says a local password change (L26).** `/etc/shadow` is inside
+  the boot environment. D10 moved the Entra/Intune/Arc agent state *out* of the BE
+  because the tenant on the other end has no rollback; the mirror-image case —
+  the local credential that a rollback quietly reverts — was not considered at the
+  time.
+* **A second, non-administrative account is not offered.** Ubuntu does not,
+  Subiquity does not, and on OS/7 further users come from Entra. Every extra field
+  in a text installer is a field somebody types wrong.
+
+Recovery on a machine with a locked root is the GRUB recovery entry, which on an
+encrypted OS/7 install sits behind the LUKS passphrase. **M2 owes the measurement**
+— whether that entry exists in the generated menu and what it asks for has not
+been checked on an installed machine.
+
 ---
 
 ## 8. Limitations — the honest list
@@ -1117,6 +1373,12 @@ in the shipped system.
 | L20 | `setfont` is userspace, so the earliest boot frames use the kernel's built-in font, not Fixedsys | `fbcon=font:TER16x32` as the closest built-in; `console-setup` from the initramfs on the installed system, so the gap is a few frames (§2.4). **S1 note:** the same is true of the palette and for the same reason, except that there the gap is not a few frames — `setvtrgb.service` runs *before* fbcon takes the console over, so nothing is ever displayed in the pre-userspace palette at all (BUILD-NOTES #25) |
 | L22 | **A palette change does not retint pixels already drawn.** The framebuffer is truecolor, so every cell was resolved to RGB when it was written | `F5` is a palette switch **and** a full redraw. Free on a palettised framebuffer, which is why it is easy to miss; measured 2026-08-24 |
 | L21 | Any boot-required directory split into its own dataset must be listed in `ZFS_INITRD_ADDITIONAL_DATASETS` (`/etc/default/zfs`), or the system will not boot; `canmount=off` datasets are exempt | Nothing in the D10 split needs this — the list stays empty today. Recorded because it is the trap waiting for whoever later separates `/etc`, and the failure is at boot, not at install (§4.4) |
+| L23 | **Nothing on the shipped image configures a network by itself.** `/etc/netplan/` is empty, `/etc/systemd/network/` is empty, there is no `cloud-init` to write `50-cloud-init.yaml`, and `systemd-networkd` is not enabled — only its *consumer* `networkd-dispatcher.service` is. Phase 3 left screen 9 out on the grounds that "DHCP is the default on a fresh Ubuntu install"; on Ubuntu Server that default comes from cloud-init, which this image does not carry | **Screen 9 becomes mandatory rather than owed.** On amd64-GUI the problem is masked by `network-manager`'s `10-globally-managed-devices.conf`, which is why it has never been seen; arm64 and amd64-headless have nothing equivalent. Measured from both ISOs on 2026-08-25 (§7.2) — **of the image, not of a running machine. M1 is the boot that would make this a fact about a computer** |
+| L24 | **The netplan renderer depends on a step that may not have run yet.** `SystemSteps`' headless path purges the desktop and then runs `apt-get autoremove -y --purge`, which removes `network-manager`. A NetworkManager-rendered netplan written before that purge leaves an installed machine with a config naming a backend that is no longer installed — no network, and no error at install time | The renderer comes from `plan.Mode` (§7.2), never from probing the target, and the network step runs **after** the mode step. Deriving it from the plan makes the outcome independent of step order; probing makes it depend on it |
+| L25 | **The Wi-Fi PSK and the 802.1X password reach the target in plaintext**, inside `/etc/netplan/01-os7-network.yaml`. That is netplan's design and Ubuntu does the same; it is not a defect Setup can fix | `chmod 0600` on the file, and it is named here rather than left to be discovered. Neither secret is ever serialised into the plan JSON (`[JsonIgnore]` — the third instance of that rule after the LUKS passphrase and the account password); `--unattend` takes them from `--wifi-secret-file` |
+| L26 | **A rollback un-says a local password change.** `/etc/shadow` is inside the boot environment, so a password changed after install is reverted along with `/usr` when a BE is rolled back. D10 moved the Entra/Intune/Arc agent state *out* of the BE because the tenant has no rollback; the mirror-image case — the local break-glass credential — was not considered | Not fixed here, and possibly not worth fixing: moving `/etc` out of the BE is exactly the split L21 warns about. Named so that whoever hits it recognises it, and so that "the local admin password is the credential of last resort" (§7.3) is read with this attached |
+| L27 | **802.1X in a text installer has no certificate store.** PEAP/MSCHAPv2 verifies the RADIUS server against a CA certificate, and there is no UI in 80×25 for importing, viewing or trusting one. The honest options are a file path on the install medium, or associating without server verification | The CA field takes a path, and leaving it blank is a **visible choice with its consequence printed on the screen** — "the network is not verified" — never a silent default. TLS client-certificate EAP is out of scope for v1 |
+| L28 | **An interface name pinned into the plan file breaks replay.** §6.6 makes the plan a file written on one machine and replayed on another, and `enp1s0` is a property of the machine, not of the plan | An interactive install writes the chosen name; an unattended plan may say `"interface": "auto"`, which becomes a netplan `match:` glob — `en*` for wired, `wl*` for wireless. The same trap as `/dev/sdb` in `StoragePlan.Disk`, and the same fix |
 
 ---
 
@@ -1134,6 +1396,11 @@ in the shipped system.
 | D9 | Console font | **DECIDED 2026-08-22 — [Fixedsys Excelsior](https://github.com/kika/fixedsys)**, for Setup and for the installed system in non-GUI mode. Public domain/CC0, and verified to carry the complete Box Drawing and Block Elements blocks the UI depends on (§2.3) |
 | D8 | `/etc/os-release` identity: brand it as OS/7, or stay `ID=ubuntu` for Intune | **CLOSED 2026-08-23, and without a trade-off.** os-release has fields for exactly this: `IMAGE_ID=os7` + `IMAGE_VERSION=<version>` carry the product identity while `ID=ubuntu` / `ID_LIKE=ubuntu` / `VERSION_ID="26.04"` stay untouched for Intune, and `NAME` / `PRETTY_NAME` / `HOME_URL` are branded as already proposed. Note `BUILD_ID` is the **wrong** field — systemd defines it as the original installation base, which by design does not move during updates. Details and the systemd citation: [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §3.5. One caveat inherited: `/etc/os-release` is a conffile of `base-files`, so the branding must be re-asserted idempotently after every update, not written once at install |
 | D10 | Is `/var` inside the boot environment | **DECIDED 2026-08-23 — split, not placed (§4.4).** Package state (`dpkg`, `apt`, `cache`) stays inside the BE, because it describes the `/usr` that rolls with it. Everything a rollback should not un-say moves out to `rpool/DATA`: logs, spool, workload data, snapd, and — the OS/7-specific part — the state of the agents that hold a device identity in Entra, Intune and Arc, because the tenant on the other end has no rollback. Out-of-BE datasets hang under `rpool/DATA` rather than carrying a do-not-clone property, so the mistake is structurally impossible rather than merely discouraged |
+
+| D11 | The account model: a root password, or Ubuntu's locked root plus a `sudo` account | **DECIDED 2026-08-25 — locked root, first account in `sudo`, and no root-password field at any point.** It is what `SystemSteps` already does, so nothing changes in code; what changes is that it is now a decision with three reasons rather than an inherited default. Ubuntu's own: no root account to brute-force, `sudo` logs each command under the human's name, rights move by group. `authd`'s: the first Entra user to authenticate becomes the **owner**, `owner_extra_groups = sudo` grants them administration, `allowed_users = OWNER` is the default — administrative rights are meant to arrive from the tenant. And the fleet's: a root password cannot be rotated across 500 machines, appears in no audit trail, and lives outside the tenant that is supposed to be the authority on the device. Offering it as an *option* is worse than either extreme, because then nobody can say which machines have one. §7.3 |
+| D12 | Does screen 9 apply the network live, write it to the target, or both | **DECIDED 2026-08-25 — both, and they are different jobs.** Live is the *verification*: the live medium has the whole stack, so a lease, an association and a reachability check can happen in front of the person who typed the settings. The target write is the *deliverable*. This is the only point at which a mistyped Wi-Fi passphrase is catchable by anyone but a site visit, and it is the prerequisite for Entra/Intune/Arc onboarding ever moving into the install (Phase 6). **The check is never an exit code**: `netplan generate` runs in the chroot, and Setup reads back the `/run/systemd/network/10-netplan-*.network` it produced and asserts `DHCP=` or `Address=` from the file. That diagnostic needs no running networkd, no link and no DHCP server — it does not depend on the subsystem it diagnoses (§7.2) |
+| D13 | Wi-Fi in v1, and with what authentication | **DECIDED 2026-08-25 — Wi-Fi is in v1, with WPA2/WPA3-PSK *and* 802.1X (PEAP/MSCHAPv2).** The materials are cheap and measured: amd64 already carries `wpasupplicant`, `iw`, `rfkill` and `network-manager`, arm64 needs three packages and about 4 MB, and the wireless firmware — the part that is large and cannot be fetched without a network — is already on both. 802.1X is in because the product's users are Microsoft-administered fleets, and a corporate WLAN is 802.1X far more often than it is PSK; a Wi-Fi screen that silently cannot join the network it was built for would be worse than none. The cost is L27: there is no certificate store, so server verification is a path or an explicit, printed absence. TLS client-certificate EAP is out of scope |
+| D14 | Where the netplan renderer comes from | **DECIDED 2026-08-25 — from `plan.Mode`, and screen 9 therefore sits after screen 8.** amd64-GUI renders to `NetworkManager` because NM is installed and owns every device; amd64-headless and arm64 render to `networkd`. Probing the target for `network-manager` gives a different answer depending on whether the headless purge has run, which would make an installed machine's network depend on step ordering. L24 |
 
 ---
 
@@ -1286,6 +1553,20 @@ it, and it is the one screen of 7–11 still outstanding. It matters for the
 headless product (a rolled-back server with no network is a site visit, release
 plan §4.4), so it is owed, not dropped.
 
+> **The first sentence of that paragraph is wrong for this image, and the
+> correction is Phase 3b.** Both ISOs were read on 2026-08-25: `/etc/netplan/`
+> empty, `/etc/systemd/network/` empty, no `cloud-init`, `systemd-networkd` not
+> enabled. On Ubuntu Server the DHCP default comes from cloud-init writing
+> `50-cloud-init.yaml`, and this image does not carry cloud-init; on amd64-GUI
+> the default comes from NetworkManager, which arm64 and amd64-headless do not
+> have. So "a machine that boots can be configured from a shell" holds only for
+> somebody standing at the machine — which for the headless product is the site
+> visit the paragraph was trying to avoid. See L23 and §7.2, and note that M1 is
+> the boot that turns this from a statement about an image into one about a
+> computer. The reasoning above is kept rather than edited, because the shape of
+> the mistake is the point: the premise was true of Ubuntu and was never asked of
+> *this* image.
+
 **Scope decided 2026-08-24, three additions:**
 
 * **TPM2 enrolment is IN this phase.** Spikes S4 and S6 proved it works and what
@@ -1311,6 +1592,148 @@ plan §4.4), so it is owed, not dropped.
   machine. The mechanism exists: `build/config/hooks/0075-release-identity.hook.chroot`
   does it for the image, and re-asserting it is a documented step of the update
   sequence (§4.2 step 6) rather than a one-off.
+
+### Phase 3b — Network, and the account model named
+
+**PLANNED 2026-08-25, not started.** Screen 9 was the one part of screens 7–11
+that Phase 3 did not deliver, on a premise that turns out not to hold for this
+image (L23). This phase delivers it, together with the Wi-Fi screens D13 puts in
+v1 and the screen-7 wording D11 makes necessary.
+
+*Deliverable:* **a machine installed by Setup boots into OS/7 and is reachable
+over the network the operator configured** — proved the same way Phase 3 proved
+its own claim, by booting the installed disk with no ISO attached and asking the
+machine itself.
+
+#### The measurements come first, and two of them can overturn the phase
+
+This repo's rule is that a diagnostic must be checked against the thing it claims
+to check. §7.2's table was read out of two squashfs images; it is evidence about
+what is *on* the medium and not about what a computer *does*. Before any code:
+
+| # | Question | Method | Overturns what |
+|---|---|---|---|
+| **M1** | Does an installed arm64 machine really come up with no network | `run-phase3.py boot` with a virtio NIC attached, then `ip -o addr`, `networkctl status` and `systemctl is-enabled systemd-networkd` over the serial console | If it *does* get an address, L23 is wrong and screen 9 goes back to being a convenience. The whole priority of this phase rests here |
+| **M2** | What does recovery look like on a machine with a locked root | Boot an installed machine, open the GRUB menu, take the recovery entry, and see what it asks for | D11's closing sentence. If recovery is unreachable without a root password, D11 needs a mitigation, not a footnote |
+| **M3** | Does the amd64 headless purge actually remove `network-manager` | Install headless on amd64, then `dpkg -l network-manager` on the booted machine | L24's premise. If `autoremove` spares it, the renderer question is softer than stated — but the fix (derive from `plan.Mode`) is correct either way |
+
+M1 is cheap: the harness already boots an installed disk, and this adds a NIC and
+three commands. **It is also the one that decides whether this phase is urgent or
+merely owed, so it runs before the model is written, not after.**
+
+#### The model
+
+`NetworkPlan`, hanging off `InstallPlan` beside `StoragePlan` and `AccountPlan`,
+and validated the way §6.6 and BUILD-NOTES #45 require — `NetworkPlan.Validate`
+is called from `InstallPlan.Validate`, which has exactly two callers, and neither
+is a screen. `ConfirmScreen` keeps calling `ValidateThroughStorage` and learns
+nothing about the network, because at screen 6 nobody has been asked.
+
+```
+NetworkPlan
+  Interface   string?    "enp1s0", or "auto" for a match: glob (L28)
+  Kind        Wired | Wireless
+  Method      Dhcp | Static | None
+  Address     string?    "10.42.0.17/24" — with the prefix, as netplan wants it
+  Gateway     string?
+  Nameservers string[]
+  Search      string[]
+  Wifi        WifiPlan?
+      Ssid        string
+      Hidden      bool
+      Security    WpaPsk | Wpa8021x
+      Psk         string?   [JsonIgnore]   L25
+      Identity    string?
+      Password    string?   [JsonIgnore]   L25
+      CaCert      string?   a path, or blank = unverified, printed as such (L27)
+```
+
+`Method = None` is an explicit choice on the screen, not the absence of one.
+A machine deliberately kept off the network and a machine nobody configured
+should not be the same state in the plan file.
+
+#### The screens
+
+Screens 9, 9S and 9W as mocked in §3.1. Three notes that are design, not layout:
+
+* **The adapter list comes from `/sys/class/net`**, with `carrier`, `operstate`
+  and the driver name read per interface, and the first wired adapter with carrier
+  pre-selected. A plugged-in cable is the operator saying which port they mean.
+* **`T` = Test is on all three screens** and is what D12 is about. It applies the
+  configuration in the live environment and reports what happened — a lease and
+  its address, an association and its signal, or a named failure. Until it has run,
+  the screen says *"Not yet tested"* rather than nothing, because a blank field
+  reads as approval.
+* **`T` is never mandatory.** An operator installing a machine whose network does
+  not exist yet — a bench build for a site that is not wired — must be able to
+  type a static address and continue. The screen records that it was untested and
+  the Complete screen repeats it.
+
+#### The steps
+
+Two, and they are separate because they fail differently:
+
+1. **`NetworkSteps.ApplyLive`** — live environment only, never the target. On
+   amd64 the live system has NetworkManager running and owning every device, so
+   this path talks to NM there and to `netplan`/`wpa_supplicant` on arm64. This is
+   the one place in Setup where "what is installed right now" is the correct
+   question, because it is a question about the live medium and not about the
+   plan.
+2. **`NetworkSteps.WriteTarget`** — takes the target root as a parameter, like
+   every other chroot step (Phase 3's second scope note, for `Update-OS7`'s sake).
+   Writes `/etc/netplan/01-os7-network.yaml` at mode `0600`, renderer from
+   `plan.Mode` (D14), then runs `netplan generate` in the chroot and **reads back
+   `/run/systemd/network/10-netplan-*.network`** to assert `DHCP=ipv4` or the
+   typed `Address=`. Exit codes are not evidence.
+
+**Ordering: `WriteTarget` runs after the mode step**, so the desktop purge has
+already happened and cannot remove the backend the file names (L24).
+
+For the `networkd` renderer, the step must also **enable `systemd-networkd` and
+`systemd-resolved` on the target** — §7.2 measured that neither is enabled in the
+image, and netplan's generator does not enable a service that was never wanted
+before. This is the concrete shape of L23 and the easiest part of it to forget,
+because on a live system networkd is already running for other reasons.
+
+#### Packages
+
+`wpasupplicant`, `iw`, `rfkill` into
+`build/config/package-lists/os7-base.list.chroot`. They land on amd64 too, where
+they are already pulled in by `network-manager`; naming them explicitly costs
+nothing and stops arm64's Wi-Fi from depending on a transitive dependency of a
+package arm64 does not have. **This touches a build file, and `os7-d7` owns the
+build tree — coordinate before editing.**
+
+#### The testing contract
+
+`installer/testing/run-phase3b-network.py`, following `run-phase3.py`'s shape,
+and the checks that matter are the ones that ask a computer:
+
+| Target | What is asserted | How |
+|---|---|---|
+| `walk` | Screens 9 → 9S → 9W are reachable by keypress and `ESC` returns | The framebuffer harness, reading text back through the console font. It extends the existing walk rather than replacing it — screens 1–7 keep their keypress sequence, which is what BUILD-NOTES #45 costs if it changes |
+| `static` | **The address typed into 9S is the address the installed machine has.** Install with `10.0.2.99/24`, boot the disk **with no ISO attached**, `ip -o addr show` over serial | QEMU user-mode networking is deterministic — gateway `10.0.2.2`, DNS `10.0.2.3` — so the expected value is known before the VM starts |
+| `dhcp` | The installed machine takes a lease | Same boot, expecting `10.0.2.15`, QEMU's fixed first lease |
+| `renderer` | A headless install names `networkd` and a GUI install names `NetworkManager`, in the file on the disk | Read `/etc/netplan/01-os7-network.yaml` off the installed disk. Two installs, one assertion each |
+| `wifi` | Association and a lease over Wi-Fi, both PSK and PEAP/MSCHAPv2 | `mac80211_hwsim` gives the VM a virtual radio and `hostapd` an access point; `hostapd`'s built-in EAP server (`eap_server=1`, `eap_user_file`) serves the 802.1X half without a real RADIUS. No hardware, and it is reproducible |
+| `none` | `Method = None` writes no netplan file and enables nothing | Absence, asserted on the installed disk |
+
+`--self-test` gains the same treatment the screen-6 fix got: the generated netplan
+YAML is checked as YAML and the generated chroot script as bash, in hook 0080, so
+a broken generator fails the **ISO build** rather than a VM an hour later.
+
+#### Screen 7, amended — wording only
+
+D11 changes no code. It changes one line of `AccountScreen`: *"The account is
+added to sudo and administers this machine"* becomes a sentence that names the
+role — this is the account that still works when Entra is unreachable — and the
+Complete screen repeats it. Nothing is added to the form. L26 goes in the notes,
+not on the screen; a rollback semantics lecture does not belong in an 80×25 form.
+
+**Not in this phase, and named so it is not silently assumed:** SSH public-key
+import (Subiquity has it, and it is the other half of not stranding a headless
+box — Phase 6), VLANs, bonds, bridges, static IPv6, proxy configuration, and
+TLS client-certificate EAP.
 
 ### Phase 4 — Authenticity and polish
 GRUB theme, boot palette, "inspecting your computer's hardware configuration",
@@ -1384,3 +1807,19 @@ remembered. What was *not* checked is marked as a spike in Phase 0.
 
 Contrast ratios in §2.2 were computed from the sRGB relative-luminance formula,
 not taken from a source.
+
+**Added 2026-08-25, for §7.2, §7.3 and Phase 3b.** The first four rows were read
+out of the shipped squashfs images, not out of documentation — the images are
+`OS7-1.0.0.46-arm64.iso` and `OS7-1.0.0.47-amd64.iso`, mounted read-only in the
+build container.
+
+| Claim | Source |
+|---|---|
+| **arm64 carries `netplan.io` 1.2, `systemd-resolved` and `networkd-dispatcher`, and carries no `wpasupplicant`, `iw`, `rfkill` or `network-manager`** (549 packages) | `/usr/lib/os7/packages.manifest` in the arm64 squashfs |
+| **amd64 additionally carries `network-manager` 1.54.3, `wpasupplicant` 2:2.11, `iw` 6.17, `rfkill`, `modemmanager` and `libnm0`** (1528 packages) | same file in the amd64 squashfs |
+| **Wireless firmware for Intel, Broadcom, Realtek, MediaTek, Qualcomm and Marvell is on *both* images** — 19 `linux-firmware*` packages, architecture-independent | same files |
+| **`/etc/netplan/` and `/etc/systemd/network/` are empty on both images, there is no `cloud-init`, and `systemd-networkd` is not enabled — only `networkd-dispatcher.service` is** | directory listings and `/etc/systemd/system/multi-user.target.wants/` in both squashfs images |
+| **This is evidence about the image and not about a running machine.** No installed OS/7 machine has been booted with a NIC attached and asked `ip -o addr` | stated as M1 in Phase 3b, deliberately unmeasured as of 2026-08-25 |
+| Ubuntu locks the root account by default and puts the first user in `sudo`; the reasons given are no root account to brute-force, `sudo` logging to `/var/log/auth.log`, and rights moving by group membership | [Ubuntu community: RootSudo](https://help.ubuntu.com/community/RootSudo) |
+| **`authd` makes the first user to authenticate the "owner"; `owner_extra_groups` (e.g. `sudo`) grants that user administrative rights, and `allowed_users = OWNER` is the default** — the basis for D11's second reason | [authd: group and privilege management](https://documentation.ubuntu.com/authd/latest/reference/group-management/), [authd: configure authd](https://documentation.ubuntu.com/authd/latest/howto/configure-authd/) |
+| netplan's renderer defaults to `networkd` when unset; ethernet DHCP is `dhcp4`, static addressing is `addresses` + `routes: [{to: default, via: …}]` + `nameservers`, and Wi-Fi is `wifis:` → `access-points:` | [netplan YAML configuration reference](https://netplan.readthedocs.io/en/stable/netplan-yaml/) |
