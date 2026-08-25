@@ -224,6 +224,30 @@ measured 0.00%: the right-hand end of the caption bar is covered by the window
 buttons, so that stop is never painted. The check now measures the gradient
 instead of one of its endpoints.
 
+### The baseline this theme will be compared against
+
+`./installer/testing/check-image.py amd64` was run against
+`OS7-1.0.0.48-amd64.iso` — the CI image built from `c4b3ddb`, i.e. **before**
+this theme. Every check passed, and the two numbers that matter for spike S7
+are recorded here so the next comparison has something to subtract from:
+
+```
+version            1.0.0.48    BUILD=48  commit=c4b3ddb29f38
+package manifest   1528 packages
+archive snapshot   20260824T000000Z, every apt source in the image on it
+```
+
+That image answers nothing about this theme — it does not contain it. Its value
+is as the *before* half of a difference: an image built from this branch should
+show `os7-desktop-theme` plus roughly eight archive packages for GNOME Classic,
+and a moved manifest hash. That movement is intended, and is stated in the
+commit so a later S7 run reads it as intent rather than drift. os7-b1's three
+network packages move the same baseline independently.
+
+Note for whoever runs this next: `check-image.py` resolves the ISO through a
+container, so a **symlink** into another worktree's `out/` fails with
+`failed to setup loop device`. A hardlink works.
+
 ## 7. What is still NOT measured
 
 **The GNOME Shell half.** The panel, the taskbar and the desktop background are
