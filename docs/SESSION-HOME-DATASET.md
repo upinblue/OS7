@@ -43,7 +43,7 @@ It survived every automated check in the repository because
 Three things, all in a container running Ubuntu 26.04 — the same release OS/7 is
 built on — because that is what Windows could reach.
 
-### 2.1 `useradd -m` against a home that already exists → BUILD-NOTES #77
+### 2.1 `useradd -m` against a home that already exists → BUILD-NOTES #78
 
 The identical command three times, differing only in what was at the path
 first. `passwd 1:4.17.4-2ubuntu3`:

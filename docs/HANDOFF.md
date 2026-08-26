@@ -122,13 +122,13 @@ files), that the original is renamed and not deleted, that a bad copy is caught
 and undone. **It is not a test of ZFS and not a test of a machine** — see
 BACKUP-PLAN B-6, which is the gate `Move-OS7Home` has never been through.
 
-Also new, and worth reading before touching any of it: BUILD-NOTES **#77** —
+Also new, and worth reading before touching any of it: BUILD-NOTES **#78** —
 `useradd -m` warns, **exits 0**, copies no `/etc/skel` and changes no ownership
 when the home directory already exists, which it now always does. The
 one-parameter fix on its own would have produced a correctly-placed home that
 its owner cannot write to.
 
-docs/DECISIONS.md open question 8, BUILD-NOTES #74 and #77, BACKUP-PLAN B-Q1,
+docs/DECISIONS.md open question 8, BUILD-NOTES #74 and #78, BACKUP-PLAN B-Q1,
 docs/SESSION-HOME-DATASET.md.
 
 **SPIKE S5 PASSED on 2026-08-25** — the last open gate in

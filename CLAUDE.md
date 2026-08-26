@@ -57,7 +57,7 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 ./installer/testing/check-home-logic.py   # Get-/Move-OS7Home's decisions: a fake
                                           #   zfs whose datasets are real tmpfs
                                           #   mounts. No VM, no ZFS, ~4s. Runs
-                                          #   itself in a container (#74, #77)
+                                          #   itself in a container (#74, #78)
 
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
@@ -212,7 +212,7 @@ the ones a fresh session hits first.
   `run-phase3.py all`, which needs the Mac. Nothing in `installer/testing/`
   looked at `/home` — which is why an installer that passed `run-phase3.py all`
   still had it — and checks 9 and 10 are now what stop that recurring.
-- **#77 — `useradd -m` does NOTHING when the home directory already exists.**
+- **#78 — `useradd -m` does NOTHING when the home directory already exists.**
   It warns, **exits 0**, copies no `/etc/skel` and changes no ownership
   (measured on this image's `passwd`). Since #74's fix the home is always there
   first, so this is the only path an OS/7 install takes: the naive one-parameter

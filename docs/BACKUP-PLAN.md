@@ -531,7 +531,7 @@ It is the first item in [HANDOFF.md](HANDOFF.md).
 The parameter is passed, the `os7` default is gone, and **the second half turned
 out not to be the parameter at all**: with the dataset already mounted at
 `/home/<user>`, `useradd -m` warns, exits 0, copies no `/etc/skel` and changes no
-ownership ([BUILD-NOTES.md](BUILD-NOTES.md) #77, measured on this image's own
+ownership ([BUILD-NOTES.md](BUILD-NOTES.md) #78, measured on this image's own
 `passwd`). So the one-line fix on its own would have produced a correctly-placed
 home that its owner cannot write to. `AccountStep` now finishes it and proves
 owner, mode and contents from the filesystem.

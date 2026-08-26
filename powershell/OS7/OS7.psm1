@@ -422,7 +422,7 @@ function New-OS7Storage {
 	# It is created only when somebody has said whose it is. The caller that
 	# does not know — `--storage-only` — gets no home dataset and a result that
 	# says so, rather than one named after a default nobody chose. `useradd -m`
-	# will later find the directory already there and leave it alone (#77), so
+	# will later find the directory already there and leave it alone (#78), so
 	# whoever creates the account has to finish the job: os7-setup's AccountStep
 	# copies /etc/skel into it and chowns it, and proves both.
 	$userDataset = $null

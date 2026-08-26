@@ -47,7 +47,7 @@ every machine this repository installed had an empty dataset at /home/os7 and
 the real home an ordinary directory inside the boot environment — which
 `Restore-OS7` rolls back with the system, and which is exactly what SETUP-PLAN
 §4.4 puts USERDATA outside ROOT to prevent. It passed `all` throughout.
-BUILD-NOTES #74; #77 is the half `useradd` contributed.
+BUILD-NOTES #74; #78 is the half `useradd` contributed.
 
 `walk` IS HERE AND NOT IN run-phase2.py, and that is a decision rather than a
 filing choice. The interactive path performs a FULL INSTALL - there is no
@@ -464,10 +464,10 @@ def phase_boot():
                   "and furnished from /etc/skel")
         else:
             # `useradd -m` finds the directory already there, warns, EXITS 0 and
-            # copies no skel and changes no ownership (BUILD-NOTES #77). A home
+            # copies no skel and changes no ownership (BUILD-NOTES #78). A home
             # the account cannot write to is the failure this catches.
             print(f"      FAIL 10/10 /home/{USERNAME} is '{home_stat}' holding "
-                  f"'{home_has}' - useradd left it alone (BUILD-NOTES #77)")
+                  f"'{home_has}' - useradd left it alone (BUILD-NOTES #78)")
             ok = False
 
         # The phantom. Every machine installed before 2026-08-26 has an empty

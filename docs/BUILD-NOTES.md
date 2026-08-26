@@ -3509,7 +3509,7 @@ therefore produces no `/home/<x>` dataset instead of one named after a default
 nobody chose. A dataset for an account nobody has been asked for is what this
 whole entry is about.
 
-**The second half was not the parameter, and it is #77.** With the dataset
+**The second half was not the parameter, and it is #78.** With the dataset
 mounted at `/home/<user>` before the account exists, `useradd -m` takes its
 "already exists" path: it warns, **exits 0**, copies no `/etc/skel` and changes
 no ownership. The naive one-line fix therefore produces a machine whose home is
@@ -3625,7 +3625,7 @@ The object reference is captured; the object it points at is shared. Same family
 as #60, #65 and #68 — PowerShell doing exactly what it documents, somewhere
 nobody looks.
 
-## 77. `useradd -m` does nothing at all when the home directory already exists
+## 78. `useradd -m` does nothing at all when the home directory already exists
 
 **Measured 2026-08-26**, on Ubuntu 26.04's own `passwd 1:4.17.4-2ubuntu3`, while
 fixing #74. Three runs of the identical command, differing only in what was at

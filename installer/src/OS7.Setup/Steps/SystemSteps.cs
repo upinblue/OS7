@@ -434,7 +434,7 @@ internal sealed class AccountStep : IStep
     /// involved at all, and handed to `useradd -p`.
     ///
     /// AND `useradd -m` DOES NOT CREATE THE HOME DIRECTORY HERE, which is
-    /// BUILD-NOTES #77 and the second half of #74.
+    /// BUILD-NOTES #78 and the second half of #74.
     ///
     /// `New-OS7Storage` created `rpool/USERDATA/&lt;user&gt;_&lt;suffix&gt;` at
     /// `/home/&lt;user&gt;` in Phase 2 and ZFS mounted it, so by the time this step
@@ -520,7 +520,7 @@ internal sealed class AccountStep : IStep
             id '{a.Username}'
 
             echo ">>> the home directory"
-            # BUILD-NOTES #74 and #77. The directory is already here - Phase 2
+            # BUILD-NOTES #74 and #78. The directory is already here - Phase 2
             # created rpool/USERDATA/{a.Username}_<suffix> for it and ZFS mounted
             # it - so `useradd -m` above took its "already exists" path: warned,
             # exited 0, copied no skel and changed no ownership. Finish it.
