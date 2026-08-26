@@ -19,103 +19,75 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 
 > [!WARNING]
 > **OS/7 is in active development and has not been released.** Both architectures
-> install and boot today — arm64 as a server, x86-64 as a desktop with GNOME, Edge and
-> Intune. What is missing is not "does it work" but "does anyone notice when it stops":
-> the x86-64 half is checked by hand, has no scripted harness, and has never been
-> through Entra sign-in, Secure Boot or a rollback. Please don't put this on hardware
-> you care about. [What actually works](#status) is kept honest below.
+> install and boot today: arm64 as a server, x86-64 as a desktop with GNOME, Edge,
+> Intune and VS Code. Entra ID sign-in does not work yet, and Secure Boot and rollback
+> are untested on x86-64. Please don't put this on hardware you care about.
+> [What works](#status) is listed below.
 
 ---
 
 ## What it is
 
-Plenty of shops run Microsoft end to end — Entra ID for identity, Intune for devices,
-Azure Arc for servers, PowerShell for everything else — and then hit a workload that
-wants Linux. That usually means a second set of tools, a second way to prove
-compliance, and a second thing to explain to an auditor.
+A lot of organisations run Microsoft for everything: Entra ID for identity, Intune for
+devices, Azure Arc for servers, PowerShell for administration. When a workload needs
+Linux, it usually arrives with its own tooling, its own way of proving compliance, and
+its own set of exceptions in the audit.
 
-OS/7 is Ubuntu, unmodified where it counts, arranged so that it fits the tooling those
-teams already have:
+OS/7 is Ubuntu 26.04 LTS, left alone where it matters, set up so that it fits into that
+tooling instead of sitting beside it.
 
-- 🐚 **PowerShell 7 is the interactive shell.** Log in and you land at a `PS /home/you>` prompt.
-  bash is still the *system* shell underneath, so cron, systemd, dpkg hooks and Intune's
-  bash-based compliance scripts all keep working.
-- 🔐 **Entra ID sign-in** through `authd` + `authd-msentraid`, with a local
-  break-glass account for when the tenant is unreachable.
-- 🛡️ **Intune** on the x86-64 desktop product, **Azure Arc** on servers. Microsoft's own
-  compliance rules were the design input, not an afterthought — encryption is LUKS2
-  because Intune only recognises `dm-crypt`, and `/etc/os-release` stays
-  Ubuntu-identifiable so the *Allowed distributions* rule still matches.
-- 🧊 **ZFS root on LUKS2, with boot environments.** Every update happens in a clone.
+- 🐚 **PowerShell 7 is the interactive shell.** You log in and get a `PS /home/you>`
+  prompt, on the console, over ssh and in the desktop's terminal. bash remains the
+  system shell, so cron, systemd, dpkg hooks and Intune's bash compliance scripts are
+  unaffected.
+- 🔐 **Entra ID sign-in** through `authd` and `authd-msentraid`, with a local
+  break-glass account for when the tenant cannot be reached.
+- 🛡️ **Intune** on the x86-64 desktop, **Azure Arc** on servers. Microsoft's
+  requirements shaped the design: encryption is LUKS2 because Intune only recognises
+  `dm-crypt`, and `/etc/os-release` stays Ubuntu-identifiable so the *Allowed
+  distributions* rule keeps matching.
+- 🧊 **ZFS root on LUKS2, with boot environments.** An update is applied to a clone.
   If it goes wrong, you boot yesterday's system from the GRUB menu.
-- 📀 **A text-mode installer of our own**, `os7-setup` — styled after MS-DOS 6.22 Setup
-  and the Windows 2000 text phase, because a 4.4 MB keyboard-driven binary with no .NET
-  runtime behind it serves a headless arm64 server and a desktop workstation equally well.
-- 🪟 **OS/7 Classic** on the desktop: GNOME wearing a Windows 2000 surface, built from
-  GNOME's own Classic extensions rather than third-party shell hacks — so an Ubuntu
-  release upgrade leaves it working. Opening a terminal there lands you in PowerShell,
-  the same hand-off the console and ssh use.
+- 📀 **Its own text-mode installer**, `os7-setup`, styled after MS-DOS 6.22 Setup and
+  the Windows 2000 text phase. It is a 4.4 MB keyboard-driven binary with no runtime
+  behind it, which suits a headless server and a desktop equally.
+- 🪟 **OS/7 Classic** on the desktop: GNOME with a Windows 2000 surface, built from
+  GNOME's own Classic extensions rather than third-party shell hacks, so an Ubuntu
+  release upgrade leaves it intact.
 - 🧹 **No onboarding wizard, no telemetry, no crash reports to Canonical.** The
   first-login wizard, `ubuntu-report`, `ubuntu-insights`, `whoopsie`, `apport` and
-  Firefox are removed *and* pinned at `Pin-Priority: -1`, so a later `apt full-upgrade`
-  cannot quietly bring them back. A managed machine reports to whoever manages it.
+  Firefox are removed and pinned at `Pin-Priority: -1`, so a later `apt full-upgrade`
+  cannot bring them back.
 
-It is aimed at IT admins, MSPs and Microsoft-centric organisations — not at consumers
-looking for a daily driver.
+It is meant for IT departments, MSPs and Microsoft-centric organisations, not for
+consumers looking for a daily driver.
 
 ## Status
 
-Every "yes" below happened on a real (virtual) machine. **The two columns are checked
-differently, and the difference is worth knowing**: arm64 is driven by the scripted
-harnesses in `installer/testing/`, which assert their results and are re-runnable;
-x86-64 is driven by a person in a Hyper-V VM, because those harnesses are
-`qemu-system-aarch64` and there is no x86_64 equivalent yet. So an arm64 ✅ is a test
-anyone can re-run, and an x86-64 ✅ is an operator report. Both are evidence. Only one
-of them notices a regression on its own.
+Everything marked ✅ has been done on a real (virtual) machine. The two columns are
+checked differently: arm64 by the scripted harnesses in `installer/testing/`, which
+assert their own results and can be re-run by anyone; x86-64 by hand in a Hyper-V VM,
+because those harnesses are `qemu-system-aarch64` and no x86_64 equivalent exists yet.
+Writing one is the main gap in the project's testing.
 
-|  | **arm64** — server only<br><sub>harness-verified</sub> | **x86-64** — desktop or server<br><sub>operator-verified</sub> |
+|  | **arm64** — server only<br><sub>scripted harness</sub> | **x86-64** — desktop or server<br><sub>tested by hand</sub> |
 |---|---|---|
-| ISO builds | ✅ natively on Apple Silicon, ~5 min | ✅ natively on any x86-64 host, ~20 min. **Not** on Apple Silicon — Docker's x86 emulation cannot unpack a Debian rootfs |
+| ISO builds | ✅ natively on Apple Silicon, ~5 min | ✅ natively on any x86-64 host, ~20 min. Not on Apple Silicon: Docker's x86 emulation cannot unpack a Debian rootfs |
 | Medium boots | ✅ | ✅ firmware → GRUB → OS/7's menu |
-| Setup runs | ✅ the whole flow, by keypress, to the Complete screen | ✅ several times, in **GUI mode**, to the Complete screen |
+| Setup runs | ✅ the whole flow, by keypress, to the Complete screen | ✅ several times, in GUI mode, to the Complete screen |
 | Installs to a disk | ✅ ESP + LUKS2 + `bpool`/`rpool` + datasets + account + bootloader | ✅ the same layout, from the same code |
-| Installed disk boots alone | ✅ verified with **no setup medium attached** | ✅ boots to GDM and logs in as the account Setup created |
-| Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ❔ not tested |
+| Installed disk boots alone | ✅ with no setup medium attached | ✅ boots to GDM and logs in as the account Setup created |
+| Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ✅ wired; Wi-Fi has no meaning in the VM it was tested in |
+| GNOME · Edge · Intune portal · VS Code | — (arm64 is server-only by design) | ✅ the desktop comes up and the applications run |
 | Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❔ not tested |
-| GNOME · Edge · Intune portal | — (arm64 is server-only by design) | ✅ desktop comes up, Intune portal opens — see the caveat below |
-| Visual Studio Code | — | 📦 in the image since 1.0.0.116, never launched |
-| `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back, walked in a VM | ❔ not tested |
-| `Update-OS7` — apply the next release | 🚧 designed in full; waiting on there being a release to apply | 🚧 |
-| Backup — snapshots, replication, file restore | 🚧 written and self-tested offline; **never run on a machine** | 🚧 |
+| `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back | ❔ not tested |
+| Entra ID sign-in | ❌ the `authd-msentraid` broker is a Canonical snap and cannot yet be put into the image | ❌ |
+| `Update-OS7` — apply the next release | 🚧 designed; waiting on there being a release to apply | 🚧 |
+| Backup — snapshots, replication, file restore | 🚧 written and self-tested offline, never run on a machine | 🚧 |
 
-The one x86-64 install failure on record is worth keeping: on `1.0.0.95` Setup died at
-the pool step because the setup medium was booting a **desktop's** background workload
-while it installed — 39 units and 15 timers, on a medium whose writable root is RAM,
-with ZFS's ARC free to take half of it. That is fixed
-([BUILD-NOTES #79](docs/BUILD-NOTES.md)), and installs have completed since.
-
-**The two architectures are different products.** Microsoft ships no arm64 build of Edge,
-`intune-portal` or `microsoft-identity-broker`, so arm64 is server-only and managed by
-Azure Arc. That is a decision, not a gap. See [docs/DECISIONS.md](docs/DECISIONS.md).
-
-**The desktop worked, and it was wearing the wrong clothes.** Up to `1.0.0.109` an
-installed x86-64 machine came up in **Ubuntu's** GNOME session, not OS/7 Classic — the
-theme was installed, selected, and its own build-time check called it verified, but
-Ubuntu's session mode carries its own Shell stylesheet and OS/7 had never said which
-session to start. On the same screen, the setting that was meant to give the UI a
-1999-crisp font was asking GNOME 50 to draw text with no antialiasing at all, which
-GTK 4 cannot do without dropping the stems out of letters. Both are fixed in
-`1.0.0.116`, together with the removal of Canonical's onboarding wizard, telemetry and
-crash reporting — all of it verified against the ISO, **none of it seen on a screen
-yet**, because an ISO is not a running desktop.
-[docs/SESSION-DESKTOP-DEBRAND.md](docs/SESSION-DESKTOP-DEBRAND.md) says what was
-measured and, at greater length, what was not.
-
-**Two honest caveats about the setup medium.** Its GRUB is unsigned on both
-architectures, so you must turn **Secure Boot off to install** and can turn it back on
-afterwards — the *installed* system boots with shim and a Canonical-signed GRUB. And
-the Entra broker is a Canonical snap that cannot yet be seeded into a live-build image,
-so **no OS/7 build can sign in with Entra ID today**. Both are tracked as open questions.
+The two architectures are deliberately different products. Microsoft ships no arm64
+build of Edge, `intune-portal` or `microsoft-identity-broker`, so arm64 is server-only
+and managed through Azure Arc. See [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## System requirements
 
@@ -136,7 +108,7 @@ a ZFS root that likes memory, and a LUKS2 header whose Argon2id unlock is pinned
 | **Secure Boot** | Supported on the installed system; **switch it off to install**, because the setup medium's GRUB is unsigned. |
 | **TPM 2.0** | Optional but wanted. Without it, OS/7 asks for the LUKS2 passphrase on every boot instead of unlocking itself. |
 | **Setup medium** | A USB stick of **4 GB** or more (arm64 ISO ≈ 1.8 GB, x86-64 ≈ 3.1 GB); 8 GB is comfortable. |
-| **Disk** | One whole disk. The installer refuses anything under **16 GB** outright — that is the floor at which the layout can be laid down at all, not a recommendation. |
+| **Disk** | One whole disk. The installer refuses anything under **16 GB**. That is the point at which the layout stops fitting, not a recommended size. |
 | **Intune enrolment** | Microsoft supports **Ubuntu Desktop 26.04 LTS on x86-64 only**, physical or Hyper-V. GNOME and Microsoft Edge are mandatory for enrolment, not optional extras. |
 
 <details>
@@ -144,11 +116,9 @@ a ZFS root that likes memory, and a LUKS2 header whose Argon2id unlock is pinned
 
 <br>
 
-Nothing here is a round number picked for looking sensible.
-
 - **6 GB RAM on x86-64** is [Ubuntu Desktop 26.04's own figure](https://ubuntu.com/download/desktop)
-  (2 GHz dual-core, 6 GB, 25 GB), and x86-64 is the product that carries GNOME, Edge and
-  the Intune portal — 1491 packages against arm64's 518.
+  (2 GHz dual-core, 6 GB, 25 GB). x86-64 is the product carrying GNOME, Edge, the Intune
+  portal and VS Code: 1491 packages against arm64's 518.
 - **4 GB RAM on arm64.** [Ubuntu Server's floor](https://ubuntu.com/server/docs/reference/installation/system-requirements/)
   is 1.5 GB for an ISO install, with 3 GB suggested. OS/7 adds two appetites on top: ZFS
   caches in ARC, which by default may grow to half of RAM and which OS/7 does not cap,
@@ -167,17 +137,17 @@ Nothing here is a round number picked for looking sensible.
   disk boots with Secure Boot on against the Microsoft UEFI CA, auto-unlock works,
   a TPM-less machine still prompts, and a Secure Boot policy change breaks auto-unlock
   *detectably and recoverably*.
-- **ISO sizes** are the built artefacts: `OS7-1.0.0.46-arm64.iso` is 2148 MB and
-  `OS7-1.0.0.48-amd64.iso` is 3254 MB.
+- **ISO sizes** are measured from the built artefacts, not estimated: roughly 1.8 GB for
+  arm64 and 3.1 GB for x86-64.
 
 </details>
 
 ## Building an ISO
 
 Everything is built in a privileged Docker container, so the only prerequisite is a
-working Docker and GNU make. **Always build through the Makefile** — it asks git on the
-host for the three facts the version number is made of, which a container inside a git
-worktree cannot answer for itself.
+working Docker and GNU make. Always build through the Makefile: it asks git on the host
+for the three facts the version number is built from, which a container inside a git
+worktree cannot work out for itself.
 
 ### On an Apple Silicon Mac → arm64
 
@@ -213,19 +183,13 @@ make build-amd64
 ```
 
 > [!IMPORTANT]
-> Clone into the **Linux** filesystem (`~/OS7`), never into `/mnt/c/...`. The Windows
-> drive is mounted without POSIX ownership or case sensitivity, and `debootstrap` fails
-> on it. `uname -m` inside WSL 2 reports `x86_64`, so `make build-amd64` runs native and
-> fast — the same code path CI uses.
+> Clone into the Linux filesystem (`~/OS7`), never into `/mnt/c/...`. The Windows drive
+> is mounted without POSIX ownership or case sensitivity and `debootstrap` fails on it.
 >
-> **This is the route the x86-64 ISOs are actually built on.** Four of them have come
-> off one Windows box since 2026-08-25, in about twenty minutes each. Getting the first
-> one there cost two traps that have nothing to do with the build —
-> [docs/SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md) — of which the
-> one to know about is `core.autocrlf`: git on Windows rewrites the shell scripts on
-> **checkout**, and the build then fails with `env: 'bash\r': No such file or
-> directory`. `.gitattributes` fixes it; a tree cloned before that has to be re-checked
-> out.
+> If the build stops immediately with `env: 'bash\r': No such file or directory`, your
+> clone has CRLF line endings. Git for Windows sets `core.autocrlf=true` system-wide and
+> rewrites the shell scripts on checkout. The repository's `.gitattributes` prevents
+> this, but a tree cloned before it existed has to be checked out again.
 
 ### Any machine → let CI do it
 
@@ -250,23 +214,23 @@ twenty minutes reaching a known failure.
 
 | Tier | Components |
 |---|---|
-| **Core, everywhere** | PowerShell 7.6.5 · .NET 10 **runtime** (not the SDK — nothing in the image compiles) · ZFS 2.4.1 on Linux 7.0 · `authd` — its `authd-msentraid` broker is a Canonical snap and is **not in the image yet** |
-| **Desktop installs (x86-64)** | GNOME 50 in OS/7 Classic · Microsoft Edge · Intune portal + `microsoft-identity-broker` · **Visual Studio Code** |
-| **Server installs** | Azure Connected Machine agent (Azure Arc) — x86-64 *and* arm64 |
+| **Core, everywhere** | PowerShell 7.6.5 · .NET 10 runtime · ZFS 2.4.1 on Linux 7.0 · `authd` (the `authd-msentraid` broker is a Canonical snap and is not in the image yet) |
+| **Desktop installs (x86-64)** | GNOME 50 in OS/7 Classic · Microsoft Edge · Intune portal and `microsoft-identity-broker` · Visual Studio Code |
+| **Server installs** | Azure Connected Machine agent (Azure Arc), on both architectures |
 | **Recommended additions** | Azure CLI |
-| **Backup** | `sanoid` + `syncoid` (GPL-3.0+, from the archive) — policy-driven ZFS snapshots and `zfs send`/`receive` replication, wrapped by the OS7 module |
+| **Backup** | `sanoid` and `syncoid` (GPL-3.0+, from the Ubuntu archive), wrapped by the OS7 module |
 | **Out of scope for v1** | OneDrive sync · Microsoft Defender for Endpoint |
 
-Component versions are not written here twice: they live in
-[`build/config/os7-release.conf`](build/config/os7-release.conf), the single pin that
-also fixes the Ubuntu archive to one timestamp, and every image carries the resulting
-bill of materials at `/usr/lib/os7/release.json`.
+Versions are not repeated here. They live in
+[`build/config/os7-release.conf`](build/config/os7-release.conf), which also pins the
+Ubuntu archive to a single timestamp, and every image carries the resulting bill of
+materials at `/usr/lib/os7/release.json`.
 
 ## PowerShell on the inside
 
-Two modules ship, and the direction between them is deliberate. `Zfs` is a generic
-OpenZFS layer that knows nothing about OS/7 and would run on any ZFS host; `OS7` is the
-product layer on top of it and reaches ZFS only through it.
+Two modules ship. `Zfs` is a generic OpenZFS layer that knows nothing about OS/7 and
+would run on any ZFS host. `OS7` is the product layer on top of it, and reaches ZFS only
+through it.
 
 ```powershell
 Import-Module Zfs        # staged into the image's module path, so it resolves by name
@@ -282,9 +246,9 @@ Get-ZfsDataset | Where-Object { $_.Used -gt 1TB }
 pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'
 ```
 
-Backups are the same idea one layer up — the snapshot policy and the replication
-are `sanoid` and `syncoid`, and OS/7 decides what is covered and *checks that it
-worked*, from ZFS rather than from either tool's exit code:
+Backup works the same way one layer up. The snapshot policy and the replication are
+`sanoid` and `syncoid`; OS/7 decides which datasets are covered and verifies the result
+by asking ZFS, rather than trusting either tool's exit code:
 
 ```powershell
 Enable-OS7Backup                              # hourly/daily/weekly snapshots of user data
@@ -295,8 +259,8 @@ Get-OS7FileVersion  ~/notes.txt               # every version a snapshot still h
 Restore-OS7File     ~/notes.txt -Destination ~/notes.old.txt
 ```
 
-**Not proven on a machine yet.** [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) says
-exactly what is and is not.
+None of this has run on a machine yet. [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) sets
+out what is and is not covered.
 
 ## Documentation
 
@@ -311,8 +275,8 @@ exactly what is and is not.
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) |
 | How to work in this repository | [CLAUDE.md](CLAUDE.md) |
 
-`docs/SESSION-*.md` are the lab notebooks: what one session measured, what it did *not*,
-and what that changed.
+`docs/SESSION-*.md` are working notes: what a single session measured, what it did not,
+and what changed as a result.
 
 ## Repository layout
 
@@ -326,18 +290,16 @@ scripts/        host-side helpers the Makefile calls
 
 ## How we work here
 
-Two habits, both learned the expensive way, and both worth knowing before you send a
-patch:
+Two rules, if you plan to send a patch.
 
 **Measure, don't assert.** Every claim in `docs/` has a number behind it and says how it
-was obtained. The recurring shape of the costly bugs in this project is *a program
-reported success and the thing it was meant to change did not change* — so an exit code
-is a diagnostic, not evidence. Ask the thing itself.
+was obtained. Most of the expensive bugs in this project have the same shape: a program
+reported success and the thing it was supposed to change did not change. An exit code is
+a diagnostic, not evidence.
 
-**A diagnostic must not depend on the subsystem it is diagnosing,** and it must be
-checked against the thing it claims to check. Both rules are in
-[docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) because both were learned by getting a
-confident, wrong answer.
+**A diagnostic must not depend on the subsystem it is diagnosing,** and it has to be
+checked against the thing it claims to check. Both rules are written down in
+[docs/BUILD-NOTES.md](docs/BUILD-NOTES.md), along with the mistakes that produced them.
 
 ## Licence
 
