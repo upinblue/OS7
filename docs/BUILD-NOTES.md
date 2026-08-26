@@ -4402,3 +4402,87 @@ per-user `settings.json`, which never reaches the home directories `authd`
 creates for Entra ID accounts, or overwriting `base-files`' `/etc/bash.bashrc`
 conffile, which would then fight every `base-files` upgrade. Neither was done.
 It is named here so that it is a known gap rather than a surprise.
+
+---
+
+## 87. `whoopsie-preferences` is a hard dependency of GNOME Settings, and purging it took the whole desktop
+
+**Measured on 2026-08-26**, by a hook that failed a build on purpose.
+
+Hook 0035 removes the Ubuntu onboarding, telemetry and crash reporting from the
+amd64 desktop. Its header records a measurement for every name in its list:
+each is a **Recommends** of `ubuntu-desktop-minimal` and nothing Depends on it.
+That measurement was correct for every name in it. The build still ended with:
+
+```
+OS/7 hook 0035: FAIL: ubuntu-desktop-minimal was removed as collateral
+OS/7 hook 0035: FAIL: gnome-shell was removed as collateral
+OS/7 hook 0035: FAIL: gdm3 was removed as collateral
+```
+
+because the list contained one name that had **not** been measured:
+`whoopsie-preferences`, added beside `whoopsie` because it is obviously the same
+feature. It is not the same package.
+
+```
+gnome-control-center     Depends: whoopsie-preferences
+gnome-shell              Depends: gnome-control-center
+ubuntu-desktop-minimal   Depends: gnome-control-center
+gdm3                     Depends: ubuntu-session -> gnome-shell
+```
+
+Simulated afterwards, one name at a time, against the shipped image:
+
+| purged alone | packages removed |
+|---|---|
+| `gnome-initial-setup` | 1 |
+| `whoopsie` | 1 |
+| `apport` | 3 |
+| `ubuntu-docs` | 2 |
+| **`whoopsie-preferences`** | **18, including gnome-shell, gdm3 and gnome-control-center** |
+
+`whoopsie-preferences` is the D-Bus service that stores the "send error reports"
+preference, which the Settings Privacy panel talks to. With `whoopsie` itself
+purged there is nothing for it to enable, so it stays, inert, and the desktop
+stands up.
+
+### The mistake is not the package, it is where the list stopped
+
+Reverse dependencies were measured for the packages that were in the list at the
+time. Then one more was added from the same family, and the measurement was not
+re-run. Everything the header said stayed true, and the header stopped
+describing the code.
+
+### And the check that caught it was the weaker of the two possible checks
+
+The hook had a survivor list — `ubuntu-desktop-minimal`, `gnome-shell`, `gdm3`,
+`nautilus`, … — checked **after** the purge. It worked here only because
+somebody had thought to name gnome-shell. A cascade into something nobody
+listed would have shipped.
+
+So the hook now asks apt what it would do **before it does it**:
+
+```sh
+SIM="$(apt-get -s purge "${PRESENT[@]}")"
+# the set apt would remove must be EXACTLY the set asked for
+# and apt must need to install NOTHING
+```
+
+Both halves matter. The second is not redundant: the failing transaction wanted
+to **install** `notification-daemon` and `policykit-1-gnome`, because
+`gnome-shell` *Provides* those and was about to be taken away. An `Inst` line in
+a purge simulation is a cascade wearing a different hat, and it is visible
+before anything is removed.
+
+The corrected list was then simulated in full: exactly the thirteen named
+packages removed, nothing installed, `ubuntu-desktop-minimal`, `gnome-shell`,
+`gdm3`, `gnome-control-center`, `ubuntu-session`, `gnome-classic` and
+`gnome-terminal` all kept.
+
+### What went right
+
+The build **stopped**. `E: config/hooks/0035-debrand-desktop.hook.chroot failed
+(exit non-zero)`, no later hook ran, and no ISO was written — the previous
+image in `out/` was untouched. A hook that checks its own work and exits
+non-zero is the difference between a bad build and a bad ISO that boots to no
+desktop, and #13 is the reminder that live-build will happily do the second.

@@ -36,6 +36,13 @@
 #   update-notifier               ubuntu-desktop-minimal DEPENDS on it
 #   ubuntu-release-upgrader-gtk   ubuntu-desktop-minimal DEPENDS on it
 #   ubuntu-pro-client             ubuntu-minimal DEPENDS on it
+#   whoopsie-preferences          gnome-control-center DEPENDS on it, and
+#                                 gnome-shell and ubuntu-desktop-minimal depend
+#                                 on gnome-control-center. It was in the purge
+#                                 list for one build and took the entire desktop
+#                                 with it (#87). It is the D-Bus service holding
+#                                 the preference; with whoopsie gone it has
+#                                 nothing to enable.
 #
 # Those stay INSTALLED and are made inert instead — by the dconf defaults that
 # select the GNOME Classic session, so ubuntu.json's mode, its Yaru stylesheet
@@ -118,7 +125,14 @@ Pin: release *
 Pin-Priority: -1
 
 # Crash reporting to Canonical. A managed fleet reports to whoever manages it.
-Package: whoopsie whoopsie-preferences apport apport-gtk apport-core-dump-handler apport-symptoms
+#
+# whoopsie-preferences is NOT in this list and must not be added to it:
+# gnome-control-center DEPENDS on it, gnome-shell and ubuntu-desktop-minimal
+# depend on gnome-control-center, and purging it takes the entire desktop with
+# it. Measured, after it did. docs/BUILD-NOTES.md #87. It is the D-Bus service
+# that stores the preference; with whoopsie gone there is nothing for it to
+# enable.
+Package: whoopsie apport apport-gtk apport-core-dump-handler apport-symptoms
 Pin: release *
 Pin-Priority: -1
 
@@ -162,7 +176,7 @@ PURGE=(
 	gnome-initial-setup
 	ubuntu-report
 	ubuntu-insights
-	whoopsie whoopsie-preferences
+	whoopsie
 	apport apport-gtk apport-core-dump-handler apport-symptoms
 	ubuntu-docs gnome-user-docs
 	firefox
@@ -178,7 +192,44 @@ for p in "${PURGE[@]}"; do
 	if dpkg -s "${p}" >/dev/null 2>&1; then PRESENT+=("${p}"); fi
 done
 echo "OS/7 hook 0035: purging ${#PRESENT[@]} of ${#PURGE[@]} named packages"
+
+# ASK APT WHAT IT WOULD DO, BEFORE IT DOES IT.
+#
+# This exists because the first run of this hook removed ubuntu-desktop-minimal,
+# gnome-shell, gdm3 and gnome-control-center, and every individual claim in the
+# header above was true: each package named was a Recommends and nothing
+# hard-depended on it. What was NOT measured was whoopsie-PREFERENCES, added to
+# the list from the same family as whoopsie without being checked, and
+# gnome-control-center Depends on it. docs/BUILD-NOTES.md #87.
+#
+# A fixed list of survivors, checked afterwards, only catches the collateral
+# somebody thought to name. This catches ALL of it, before anything is removed:
+# the set apt would remove must be EXACTLY the set asked for, and apt must not
+# need to install anything - a replacement appearing (notification-daemon,
+# policykit-1-gnome) is apt filling in for a Provides: it is about to take away,
+# which is a cascade wearing a different hat.
 if [ "${#PRESENT[@]}" -gt 0 ]; then
+	SIM="$(apt-get -s purge "${PRESENT[@]}" 2>&1 || true)"
+	WOULD_GO="$(printf '%s\n' "${SIM}" | sed -n 's/^\(Purg\|Remv\) \([^ ]*\).*/\2/p' | sort -u)"
+	WOULD_ADD="$(printf '%s\n' "${SIM}" | sed -n 's/^Inst \([^ ]*\).*/\1/p' | sort -u)"
+	ASKED="$(printf '%s\n' "${PRESENT[@]}" | sort -u)"
+	EXTRA="$(comm -23 <(printf '%s\n' "${WOULD_GO}") <(printf '%s\n' "${ASKED}") || true)"
+
+	if [ -n "${EXTRA}" ]; then
+		echo "OS/7 hook 0035: FAIL: purging the list would ALSO remove:"
+		printf '%s\n' "${EXTRA}" | sed 's/^/OS\/7 hook 0035:     /'
+		echo "OS/7 hook 0035: nothing has been removed. Find which name in PURGE"
+		echo "OS/7 hook 0035: pulls these, with: apt-get -s purge <one name>"
+		exit 1
+	fi
+	if [ -n "${WOULD_ADD}" ]; then
+		echo "OS/7 hook 0035: FAIL: purging the list would INSTALL:"
+		printf '%s\n' "${WOULD_ADD}" | sed 's/^/OS\/7 hook 0035:     /'
+		echo "OS/7 hook 0035: apt only does that to replace something it is removing."
+		exit 1
+	fi
+	ok "apt would remove exactly the $(printf '%s\n' "${ASKED}" | wc -l) named packages and nothing else"
+
 	apt-get purge -y "${PRESENT[@]}"
 fi
 apt-get autoremove --purge -y
