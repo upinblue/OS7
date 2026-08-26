@@ -41,7 +41,43 @@ fi
 # that removing PowerShell some day does not silently take the installer with
 # it, and checked so that the failure reads as a missing package rather than as
 # a crashing binary.
-if ! ldconfig -p | grep -q 'libicuuc\.so'; then
+# ASKED OF THE FILESYSTEM, NOT OF `ldconfig -p`, and that is a bug fix rather
+# than a preference. This was `ldconfig -p | grep -q 'libicuuc\.so'` and it
+# failed a build on 2026-08-26 in which libicu78 was demonstrably installed —
+# the same build log has "Setting up libicu78:amd64 (78.2-2ubuntu1)" and hook
+# 0020's "libicu78 is already the newest version".
+#
+# The pipeline was a RACE, and the numbers come from the previous shipped image:
+# `ldconfig -p` there is 893 entries and **75 100 bytes**, against a pipe buffer
+# of 65 536, with `libicuuc` at entry 437 — 34 915 bytes in. So `grep -q` finds
+# its match and exits with about ten kilobytes still unwritten, `ldconfig` takes
+# SIGPIPE for them, and `set -o pipefail` at the top of this file turns the
+# pipeline's status into 141. The `!` then reads that as "no libicu" and fails a
+# build over a library that is right there. Whether it happens at all depends on
+# scheduling, which is why this stood for months and then did not.
+#
+# Two rules of this repository were both being broken by one line. A cache is a
+# diagnostic, and `/etc/ld.so.cache` is a cache — the library is the thing
+# itself. And an exit status is a diagnostic: this one was reporting on a signal
+# rather than on the question asked. A glob over the library directories answers
+# the actual question, cannot be poisoned by pipefail, and is what dlopen will
+# do anyway, since these are default search paths.
+#
+# The REAL proof is twenty lines below: `os7-setup --self-test` is a .NET binary
+# built with InvariantGlobalization=false, so a missing ICU aborts it before
+# Main runs. This check exists only so that the failure reads as a missing
+# package instead of as a crashing installer.
+icu_found=0
+for libdir in /usr/lib/*/ /usr/lib/ /lib/*/ /lib/; do
+	for so in "${libdir}"libicuuc.so.*; do
+		if [ -e "${so}" ]; then
+			echo "OS/7 hook 0080:   ICU: ${so}"
+			icu_found=1
+			break 2
+		fi
+	done
+done
+if [ "${icu_found}" != "1" ]; then
 	echo "OS/7 hook 0080: no libicu in the image - os7-setup cannot start." >&2
 	echo "OS/7 hook 0080: hook 0020 installs it for PowerShell; if that changed," >&2
 	echo "OS/7 hook 0080: add an ICU package to os7-base.list.chroot." >&2
