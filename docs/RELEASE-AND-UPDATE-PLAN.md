@@ -482,7 +482,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 | UL7 | Ubuntu Pro / ESM / Livepatch unexamined against this model (§7) | Position needed before an enterprise deal; not a v1 blocker. |
 | UL8 | A BE pair spans two pools and can half-activate (§4.3) | BE primitives treat the pair as one object; never expose the halves. |
 | UL9 | Boot environments accumulate and fill the pool | `Remove-OS7BootEnvironment` plus a retention policy shipped by default, not left to the operator. |
-| UL10 | `/etc/os-release` is a conffile of `base-files`; branding it is contested at every upgrade (§2.2 #2) | Idempotent reassert as a step in the update sequence, not a one-time write at install. |
+| UL10 | `/etc/os-release` is a conffile of `base-files`; branding it is contested at every upgrade (§2.2 #2) | ~~Idempotent reassert as a step in the update sequence~~ — **CLOSED 2026-08-26 by mechanism.** `os7-release` `dpkg-divert`s `/usr/lib/os-release`, so `base-files` writes to `.distrib` and can no longer touch the real name; the postinst derives the branded file **from** `.distrib` (never inventing Ubuntu's fields) and a dpkg file trigger re-derives it when base-files writes a new one. Measured by reinstalling `base-files` over the divert and reading `/etc/os-release` back. A step that has to be remembered forever was the defect. [../docs/SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) §3, C7 §6.2 |
 | UL11 | A generation bump depends on Microsoft publishing a matching suite (§2.3) | Cannot be mitigated, only scheduled around. Azure CLI on `noble` is the standing precedent. |
 
 ---

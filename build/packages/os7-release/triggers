@@ -1,0 +1,15 @@
+# Re-derive the branded /usr/lib/os-release when base-files writes its own.
+#
+# A FILE TRIGGER on both names. dpkg fires it when any package unpacks a file at
+# that path, which after the divert means base-files writing
+# /usr/lib/os-release.distrib. noawait: nothing needs os7-release to be
+# configured before the triggering package finishes, and an await would drag
+# this package into base-files' own upgrade transaction.
+#
+# WHETHER IT FIRES IS A MEASUREMENT, NOT AN ASSUMPTION — see
+# installer/testing/check-os7-repo.py, which reinstalls base-files and then asks
+# /etc/os-release what it says. If dpkg's trigger matching does not follow the
+# divert, the branding survives anyway, because base-files can no longer write
+# the real path; it is then the next Update-OS7 migration that re-derives it.
+interest-noawait /usr/lib/os-release.distrib
+interest-noawait /usr/lib/os-release

@@ -1,0 +1,26 @@
+Package: os7-release
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: important
+Depends: python3-minimal, base-files
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 release identity, archive pin and trust anchor
+ The package that says which OS/7 this is. It carries the release pin — the
+ version, the Ubuntu archive snapshot and every component version and hash —
+ the public key of OS/7's own package repository, the apt source that points at
+ it, and the generator that brands /etc/os-release.
+ .
+ It DIVERTS /usr/lib/os-release away from base-files. That file is a conffile of
+ a package which legitimately owns it, so before this package existed every apt
+ run that touched base-files could revert the OS/7 branding, and the update
+ sequence had to re-assert it as a step somebody had to remember forever. A
+ divert makes it a mechanism instead: base-files can no longer write to that
+ path at all, and a dpkg trigger re-derives the branded file whenever it tries.
+ .
+ The branding is deliberately narrow. PRETTY_NAME, IMAGE_ID, IMAGE_VERSION,
+ VARIANT and the URLs are OS/7's; NAME, ID, ID_LIKE, VERSION, VERSION_ID and
+ VERSION_CODENAME are left exactly as Ubuntu wrote them, because Microsoft's
+ Intune agent and its Azure Arc onboarding script read three different subsets
+ of them and one of them exits 133 on a NAME without "buntu" in it.

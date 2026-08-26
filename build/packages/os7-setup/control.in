@@ -1,0 +1,25 @@
+Package: os7-setup
+Version: @OS7_VERSION@
+Architecture: @OS7_ARCH@
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: @OS7_ICU@
+Recommends: os7-console (= @OS7_VERSION@)
+Homepage: https://github.com/upinblue/os7
+Description: The OS/7 text-mode installer
+ os7-setup, the program the setup medium starts on tty1: an OS/7-authored text
+ phase styled after MS-DOS 6.22 Setup and the Windows 2000 text phase, which
+ partitions the disk, creates the ZFS-on-LUKS layout, unpacks the system,
+ installs the bootloader and writes the boot-environment menu.
+ .
+ A NativeAOT binary of about 3.4 MB with no .NET runtime beneath it, which is
+ what makes it viable as the first thing that runs on a machine — the medium
+ carries no runtime at all. It links against ICU because it is built with
+ InvariantGlobalization=false, and without it the program does not start.
+ .
+ os7-console is a Recommends rather than a Depends because Setup carries its own
+ palette and font handling and applies them itself: on a virtual console it
+ calls setvtrgb and setfont, and on anything else it emits the same palette
+ indices as SGR. It looks right on a medium that has the fonts and works on one
+ that does not.

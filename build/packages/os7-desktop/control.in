@@ -1,0 +1,23 @@
+Package: os7-desktop
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: metapackages
+Priority: important
+Depends: os7-base (= @OS7_VERSION@),
+ os7-backup (= @OS7_VERSION@),
+ os7-desktop-theme (= @OS7_VERSION@)
+Conflicts: os7-server
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 — the GUI product
+ What a machine installed in GUI mode is: everything os7-server has, plus OS/7
+ Classic, the Windows 2000 surface for GNOME.
+ .
+ x86_64 only, and that is a Microsoft constraint rather than an OS/7 preference:
+ Edge, the Intune portal and the identity broker have no arm64 builds, and
+ Intune enrollment requires a GNOME desktop. The package is Architecture: all
+ because its own content is architecture-independent; what makes it amd64-only
+ is that its dependencies do not resolve anywhere else.
+ .
+ Conflicts with os7-server, because the two are the setup-time choice and not a
+ runtime toggle.

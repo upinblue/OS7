@@ -1,0 +1,23 @@
+Package: os7-module
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: important
+Depends: os7-powershell (= @OS7_VERSION@)
+Recommends: zfsutils-linux
+Homepage: https://github.com/upinblue/os7
+Description: The OS/7 and Zfs PowerShell modules
+ OS/7's own command surface: the release identity, storage, boot environments,
+ rollback, backup, home directories and the classic desktop, as PowerShell
+ cmdlets — and the generic ZFS layer they run on.
+ .
+ TWO MODULES, and the direction between them is the point. Zfs knows nothing
+ about OS/7 and would run on any OpenZFS host; OS7 is the product layer above
+ it and reaches ZFS only through it. They travel in one package because that
+ rule is only true if both are present — an OS7 module on a machine without Zfs
+ is a module that cannot do anything.
+ .
+ zfsutils-linux is a Recommends and not a Depends on purpose: the modules load,
+ report and self-test on a machine with no pools, which is what makes them
+ checkable during an image build and on a rescue system.

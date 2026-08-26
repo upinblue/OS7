@@ -1,0 +1,16 @@
+Package: os7-server
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: metapackages
+Priority: important
+Depends: os7-base (= @OS7_VERSION@), os7-backup (= @OS7_VERSION@)
+Conflicts: os7-desktop
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 — the headless product
+ What a machine installed in headless mode is. On arm64 it is the only product
+ there is: Microsoft ships no arm64 desktop stack, so that architecture is
+ server-only and permanently so.
+ .
+ Conflicts with os7-desktop, because the two are the setup-time choice and not a
+ runtime toggle. A machine holding both would be one whose mode nobody chose.

@@ -38,6 +38,12 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 	ca-certificates \
 	curl \
 	gnupg \
+	`# OS/7's own package repository (CURATION-AND-DELIVERY-PLAN C7).` \
+	`# apt-ftparchive writes the Packages and Release indices;` \
+	`# build/lib/build-os7-repo.sh signs them with the gnupg above.` \
+	`# NOT live-build's config/packages.chroot, which builds a local repo of` \
+	`# its own with gnupg 1.x code that gnupg 2.x cannot satisfy - #71.` \
+	apt-utils \
 	git \
 	make \
 	rsync \

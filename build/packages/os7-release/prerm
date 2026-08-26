@@ -1,0 +1,28 @@
+#!/bin/sh
+# os7-release: give /usr/lib/os-release back to base-files.
+#
+# ON REMOVE, NOT ON UPGRADE. dpkg runs prerm for both, and removing the divert
+# during an upgrade would hand the file back to base-files for the length of the
+# upgrade and take it away again — a window in which /etc/os-release says
+# Ubuntu, for no reason.
+#
+# The branded file is deleted BEFORE the divert is removed. dpkg-divert --rename
+# refuses to move .distrib back over a file that is in the way, and a machine
+# left with OS/7's branding and no package owning it is worse than either state.
+set -e
+
+REAL=/usr/lib/os-release
+DISTRIB=/usr/lib/os-release.distrib
+
+case "$1" in
+	remove|deconfigure)
+		if dpkg-divert --list "${REAL}" | grep -q "os7-release"; then
+			[ -e "${DISTRIB}" ] && rm -f "${REAL}"
+			dpkg-divert --remove --package os7-release --rename --divert "${DISTRIB}" "${REAL}"
+		fi
+		;;
+	upgrade|failed-upgrade)
+		;;
+esac
+
+exit 0

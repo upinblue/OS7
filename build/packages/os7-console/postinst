@@ -1,0 +1,43 @@
+#!/bin/sh
+# os7-console: take /etc/default/console-setup from the console-setup package.
+#
+# Same reasoning as os7-release's divert of /usr/lib/os-release, and the same
+# mechanism. Until now build.sh copied OS/7's console-setup in through
+# includes.chroot, where it belonged to nobody: dpkg could not list it, an
+# update could not replace it, and a conffile from a later console-setup would
+# silently overwrite it. The machine would still boot, with the wrong font, and
+# nothing anywhere would say so.
+#
+# THE FILE IS A SYMLINK, not a copy. The content lives at
+# /usr/share/os7/console-setup where this package owns it outright; the divert
+# only decides which of the two names console-setup reads.
+set -e
+
+REAL=/etc/default/console-setup
+DISTRIB=/etc/default/console-setup.distrib
+OURS=/usr/share/os7/console-setup
+
+case "$1" in
+	configure)
+		if ! dpkg-divert --list "${REAL}" | grep -q "os7-console"; then
+			dpkg-divert --add --package os7-console --rename --divert "${DISTRIB}" "${REAL}"
+		fi
+		if [ ! -s "${OURS}" ]; then
+			echo "os7-console: ${OURS} is missing — leaving ${REAL} alone." >&2
+			exit 1
+		fi
+		ln -sfn "${OURS}" "${REAL}"
+
+		# ASK THE THING ITSELF. A symlink that resolves to nothing reads as an
+		# absent file to console-setup, which then keeps the Debian default and
+		# reports nothing.
+		if [ ! -r "${REAL}" ]; then
+			echo "os7-console: ${REAL} does not resolve to a readable file." >&2
+			exit 1
+		fi
+		;;
+	abort-upgrade|abort-remove|abort-deconfigure)
+		;;
+esac
+
+exit 0

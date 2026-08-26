@@ -1,0 +1,24 @@
+Package: os7-backup
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: os7-module (= @OS7_VERSION@), sanoid, procps, openssh-client
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 backup — snapshot policy, replication and verification
+ The units and scripts behind Enable-OS7Backup, Start-OS7Backup and
+ Get-OS7BackupStatus: a first-boot unit that establishes the policy and a timer
+ that replicates to the configured targets.
+ .
+ THE SNAPSHOTTING AND THE REPLICATION ARE SANOID'S AND SYNCOID'S, wrapped and
+ never reimplemented. What OS/7 adds is which datasets, which targets, and
+ whether it actually worked — because both tools report success in cases where
+ nothing happened. sanoid exits 0 after a failed zfs snapshot, and its
+ --monitor-snapshots answers from a cache deliberately allowed to be five hours
+ old. So the status cmdlet asks ZFS, on the source and over ssh on the target,
+ and never asks either tool.
+ .
+ procps is here because `ps` is an undeclared dependency of both programs:
+ sanoid's lock check and syncoid's "is the target already receiving" check both
+ run it, and neither the package's Depends nor its documentation says so.

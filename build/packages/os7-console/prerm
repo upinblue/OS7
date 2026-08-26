@@ -1,0 +1,25 @@
+#!/bin/sh
+# os7-console: give /etc/default/console-setup back to console-setup.
+#
+# On remove only, not on upgrade — the same reason as os7-release's prerm: an
+# upgrade that undiverts and re-diverts leaves a window in which the console
+# reverts to the Debian default, for no reason.
+set -e
+
+REAL=/etc/default/console-setup
+DISTRIB=/etc/default/console-setup.distrib
+
+case "$1" in
+	remove|deconfigure)
+		if dpkg-divert --list "${REAL}" | grep -q "os7-console"; then
+			# Ours is a symlink; dpkg-divert --rename will not move .distrib
+			# back over anything that is in the way.
+			[ -L "${REAL}" ] && rm -f "${REAL}"
+			dpkg-divert --remove --package os7-console --rename --divert "${DISTRIB}" "${REAL}"
+		fi
+		;;
+	upgrade|failed-upgrade)
+		;;
+esac
+
+exit 0

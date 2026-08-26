@@ -1,0 +1,22 @@
+Package: os7-console
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: console-setup, kbd
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 console fonts and palette
+ What the machine looks like before anything logs in: two console fonts, the
+ sixteen-entry palette both of them are drawn with, and the console-setup
+ defaults that select them.
+ .
+ The fonts are two and so are the routes that build them. Fixedsys Excelsior is
+ what os7-setup paints in, converted through otf2bdf and bdf2psf because its em
+ square is the console cell; Cascadia Mono is the installed console's face and
+ has to be rasterised straight into an exact 8x16 or 16x32 cell, because scaling
+ both axes together from that outline reaches 8x15 or 9x16 and never 8x16.
+ .
+ It DIVERTS /etc/default/console-setup. That file belongs to the console-setup
+ package, and a file OS/7 merely overwrites is one a later Ubuntu quietly
+ overwrites back — with the wrong font and no sign that anything is wrong.

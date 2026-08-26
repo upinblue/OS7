@@ -68,7 +68,7 @@ endef
 SOURCE_FACTS = $(addprefix -e ,$(shell $(CURDIR)/scripts/os7-source-facts.sh $(CURDIR)))
 
 .PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
-        build-amd64-vm build-amd64-vm-reset \
+        build-amd64-vm build-amd64-vm-reset repo-amd64 repo-arm64 \
         lb-config shell-amd64 shell-arm64 clean
 
 help:
@@ -83,6 +83,13 @@ help:
 	@echo "                    Works: the ISO boots, installs, and the installed"
 	@echo "                    disk boots on its own. Check it with"
 	@echo "                    installer/testing/check-image.py"
+	@echo "  make repo-amd64   Build and SIGN OS/7's own package repository"
+	@echo "                    -> ./out/os7-repo  (C7). Not privileged."
+	@echo "                    Prove it with installer/testing/check-os7-repo.py,"
+	@echo "                    which installs from it in a clean Ubuntu container."
+	@echo "                    Signs with a DEVELOPMENT key unless you hand it one"
+	@echo "                    in OS7_REPO_GNUPGHOME - C7a is open."
+	@echo "  make repo-arm64   The same, for arm64"
 	@echo "  make lb-config    Run 'lb config' only (validates auto/config)"
 	@echo "  make shell-amd64  Interactive shell in the amd64 build container"
 	@echo "  make shell-arm64  Interactive shell in the arm64 build container"
@@ -137,6 +144,36 @@ build-amd64-vm-reset:
 build-arm64: image-arm64
 	mkdir -p $(OUT)
 	$(call DOCKER_RUN,arm64,$(SOURCE_FACTS)) /work/build/build.sh arm64
+
+# OS/7's own package repository (docs/CURATION-AND-DELIVERY-PLAN.md C7).
+#
+# The OS/7 half of the product as .debs, in a signed apt repository with a
+# release descriptor and a signed index beside it. Not privileged: nothing here
+# chroots or mounts anything - it is dpkg-deb, apt-ftparchive and gpg.
+#
+# THE VERSION COMES FROM THE SAME PLACE THE ISO'S DOES. SOURCE_FACTS hands git's
+# answer in from the host, so a repository and an ISO built from one tree carry
+# one number and `Update-OS7` cannot be handed a release the medium never had.
+#
+# The key: build-os7-repo.sh signs with OS7_REPO_KEY out of OS7_REPO_GNUPGHOME
+# when there is one, and otherwise GENERATES A DEVELOPMENT KEY whose user ID
+# says NOT FOR RELEASE. Where a release key lives is C7a and it is open.
+#
+# Prove it with:  ./installer/testing/check-os7-repo.py --arch <arch>
+define BUILD_REPO
+mkdir -p $(OUT)/os7-repo
+docker run --rm --platform linux/$(1) \
+  -v $(CURDIR):/work -v $(OUT)/os7-repo:/out \
+  $(SOURCE_FACTS) -e OS7_ARCH=$(1) \
+  $(IMAGE):$(1) /work/build/lib/build-os7-repo.sh \
+  /work/build/config/os7-release.conf /out
+endef
+
+repo-amd64: check-amd64-host image-amd64
+	$(call BUILD_REPO,amd64)
+
+repo-arm64: image-arm64
+	$(call BUILD_REPO,arm64)
 
 # Config-only smoke test: stages the tree and runs `lb config`, no `lb build`.
 #

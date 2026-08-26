@@ -1,0 +1,26 @@
+Package: os7-base
+Version: @OS7_VERSION@
+Architecture: all
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: metapackages
+Priority: important
+Depends: os7-release (= @OS7_VERSION@),
+ os7-console (= @OS7_VERSION@),
+ os7-powershell (= @OS7_VERSION@),
+ os7-module (= @OS7_VERSION@)
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 — the parts every OS/7 machine has
+ A metapackage, and the reason it exists is that membership has to be
+ executable rather than descriptive. Before it, "what is an OS/7 system" was a
+ sentence in a document and a set of package lists consulted once at image build
+ time; nothing on a running machine could answer it, and nothing could converge
+ a machine that had drifted.
+ .
+ THE VERSIONS ARE EXACT. Depending on "= this version" rather than ">=" is what
+ makes an update a single apt operation that moves the whole product together:
+ installing os7-base at a version pulls every OS/7 component to that same
+ version, and a component that failed to build simply makes the transaction
+ unsatisfiable instead of shipping a half-moved machine.
+ .
+ It carries no files. A metapackage with files is a package doing two jobs, and
+ the second one cannot be removed without the first.

@@ -4502,3 +4502,61 @@ The build **stopped**. `E: config/hooks/0035-debrand-desktop.hook.chroot failed
 image in `out/` was untouched. A hook that checks its own work and exits
 non-zero is the difference between a bad build and a bad ISO that boots to no
 desktop, and #13 is the reminder that live-build will happily do the second.
+
+## 88. `apt-ftparchive`'s `ValidUntil` is accepted, ignored, and silent — the repository then never expires
+
+**Measured on 2026-08-26**, on `apt-ftparchive` from resolute
+(`apt-utils 3.1.7`), while building OS/7's own package repository (C7).
+
+`Release` files carry `Valid-Until`, and apt enforces it on the client. That
+field is not decoration: CURATION-AND-DELIVERY-PLAN §6.3 names the attack it
+exists for.
+
+> A signed package set with an unsigned index of *which* set is current lets an
+> attacker serve an older, still-validly-signed release.
+
+Authenticity and freshness are different properties, and `Valid-Until` is the
+one that covers freshness. So `build-os7-repo.sh` asked for it the obvious way:
+
+```
+apt-ftparchive -o APT::FTPArchive::Release::ValidUntil="Fri, 25 Sep 2026 …" \
+               release dists/os7-1.0
+```
+
+The result, with an empty `Packages` beside it so nothing else could interfere:
+
+| option passed | `Valid-Until` in the output |
+|---|---|
+| `APT::FTPArchive::Release::ValidUntil=<RFC 1123 date>` | **absent** |
+| `APT::FTPArchive::Release::Valid-Until=<RFC 1123 date>` | **absent** |
+| `APT::FTPArchive::Release::ValidTime=2592000` | `Valid-Until: Fri, 25 Sep 2026 19:00:21 +0000` |
+
+Exit code 0 in all three. No warning, on stdout or stderr. An unknown key under
+`APT::FTPArchive::Release::` is simply a configuration item nobody reads, and
+apt's configuration space has no schema to be wrong against.
+
+**The failure is invisible from both ends.** The build succeeds. The repository
+signs and verifies. `apt update` against it succeeds, because a Release with no
+`Valid-Until` is perfectly valid — it just never goes stale. Nothing anywhere
+reports a problem, and the property the field was added for is simply absent.
+
+Correct: **`ValidTime`, in seconds.**
+
+```
+VALID_SECONDS=$(( OS7_REPO_VALID_DAYS * 86400 ))
+apt-ftparchive -o "APT::FTPArchive::Release::ValidTime=${VALID_SECONDS}" …
+```
+
+### What caught it
+
+Not the option, and not a document — the readback:
+
+```bash
+grep -q '^Valid-Until:' "${DISTS}/Release" || exit 1
+```
+
+It was written because this repository's rule is that a program which writes a
+file re-reads it, and it earned its place on the first run. The same shape as
+#25, #36, #62 and #72: a setting was accepted by the thing that was supposed to
+act on it, and the thing did not act on it. **A configuration key is not an
+interface. Read back what it was supposed to change.**

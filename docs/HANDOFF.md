@@ -72,6 +72,48 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**OS/7 IS NOW SOMETHING dpkg KNOWS ABOUT (2026-08-26), AND `Update-OS7` IS THE
+NEXT THING TO WRITE.** Until this week every OS/7-specific file on a running
+OS/7 system was unowned by a package — the PowerShell tarball, both modules,
+`os7-setup`, the release manifest, the console fonts, the os-release branding —
+so the update train could have reached Ubuntu's half of the product and nothing
+that makes it OS/7. C7 is built:
+[SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md).
+
+```bash
+make repo-amd64                           # nine .debs + a SIGNED suite os7-1.0
+./installer/testing/check-os7-repo.py     # install from it in a plain Ubuntu
+                                          #   container, then swap the key and
+                                          #   require apt to REFUSE. ~4 min
+```
+
+What that leaves, in order:
+
+1. **`Update-OS7`.** §4.2 steps 1, 2 and 9 are real code and VM-proven; steps
+   3–8, as corrected by C10, are the S5 harness's shell and belong in the
+   cmdlet. There is now a suite, a metapackage and a signed descriptor to point
+   them at.
+2. **`Get-OS7Release -Available`**, which reads the signed index. Without it
+   `Update-OS7 -WhatIf` has nothing to report.
+3. **Switch the ISO over.** `build.sh` still stages the same files through
+   `includes.chroot`, so the packages are correct and the image does not use
+   them. That change resolves the one seam this left, which
+   [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) §5 names: two
+   `release.json` files, one authored by the release and one measured from the
+   image.
+
+**C7a is still open and was kept open on purpose.** The repository is signed by
+a development key whose user ID reads `NOT FOR RELEASE` and which the descriptor
+declares as such. Where a release key lives and who holds it is a decision to
+make deliberately, not on the day the first repository is published.
+
+**And this box can run KVM after all.** `docker run --device /dev/kvm` on the
+x64 Windows host gives `query-kvm → {"enabled": true}` — no elevation, no
+Hyper-V by hand. Every harness here is still `qemu-system-aarch64` and would
+need an x86_64 arm, so §3's blocker is now a **port** rather than an
+impossibility. See [../CLAUDE.md](../CLAUDE.md).
+
+
 **THE amd64 DESKTOP WAS LOOKED AT ON A SCREEN FOR THE FIRST TIME ON
 2026-08-26, AND IT WAS UBUNTU'S.** `1.0.0.109` booted into the **Ubuntu
 session**, not OS/7 Classic, so the theme that hook 0090 verified was never

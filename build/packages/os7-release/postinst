@@ -1,0 +1,76 @@
+#!/bin/sh
+# os7-release: take ownership of /usr/lib/os-release, then brand it.
+#
+# CURATION-AND-DELIVERY-PLAN.md §6.2. /etc/os-release is a symlink to
+# /usr/lib/os-release and base-files owns that as a CONFFILE, so any apt run
+# that reinstalls or upgrades base-files can put Ubuntu's identity back. UL10
+# mitigates that with "an idempotent reassert as a step in the update sequence",
+# and a step that has to be remembered forever is a defect.
+#
+# WHY WE DIVERT RATHER THAN SHIP THE FILE. The branded file has to carry
+# base-files' OWN values for NAME, ID, ID_LIKE, VERSION, VERSION_ID and
+# VERSION_CODENAME — fields that belong to somebody else (IDENTITY-PLAN I4) and
+# that OS/7 must never invent. Shipping a static /usr/lib/os-release would be
+# inventing them. So the divert moves base-files' copy to .distrib, where it
+# stays current, and this script derives ours FROM it.
+#
+# The trigger on the same path re-runs this after base-files writes .distrib.
+set -e
+
+REAL=/usr/lib/os-release
+DISTRIB=/usr/lib/os-release.distrib
+GEN=/usr/lib/os7/os-release-identity.py
+
+brand() {
+	# Nothing to derive from means nothing gets written. A generated
+	# os-release built from a file that is not there would be OS/7 inventing
+	# Ubuntu's fields, which is the one thing this must not do.
+	if [ ! -s "${DISTRIB}" ]; then
+		echo "os7-release: ${DISTRIB} is missing or empty — not branding." >&2
+		echo "os7-release: /etc/os-release is left as it stands." >&2
+		return 0
+	fi
+
+	# The version facts, from the file this package ships.
+	. /usr/lib/os7/build.conf
+
+	OS7_VERSION="${OS7_VERSION}"
+	OS7_PRODUCT="${OS7_PRODUCT}"
+	OS7_VARIANT="${OS7_VARIANT}"
+	OS7_VARIANT_ID="${OS7_VARIANT_ID}"
+	export OS7_VERSION OS7_PRODUCT OS7_VARIANT OS7_VARIANT_ID
+
+	# Build it beside the target and move it into place, so a failure halfway
+	# leaves the machine with the os-release it already had rather than half of
+	# one. Every consumer of this file reads it at a moment nobody controls.
+	tmp="$(mktemp "${REAL}.os7.XXXXXX")"
+	cp "${DISTRIB}" "${tmp}"
+	if python3 "${GEN}" rewrite "${tmp}"; then
+		chmod 0644 "${tmp}"
+		mv -f "${tmp}" "${REAL}"
+	else
+		rm -f "${tmp}"
+		echo "os7-release: refusing to install a branded os-release that does" >&2
+		echo "os7-release: not pass its own check. /etc/os-release is unchanged." >&2
+		return 1
+	fi
+}
+
+case "$1" in
+	configure)
+		# --package os7-release, so `dpkg-divert --list` says who took it and
+		# --rename, so dpkg moves the existing file rather than leaving two.
+		if ! dpkg-divert --list "${REAL}" | grep -q "os7-release"; then
+			dpkg-divert --add --package os7-release --rename --divert "${DISTRIB}" "${REAL}"
+		fi
+		brand
+		;;
+	triggered)
+		# base-files was unpacked and wrote a fresh .distrib. Re-derive.
+		brand
+		;;
+	abort-upgrade|abort-remove|abort-deconfigure)
+		;;
+esac
+
+exit 0

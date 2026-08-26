@@ -1,0 +1,25 @@
+Package: os7-powershell
+Version: @OS7_VERSION@
+Architecture: @OS7_ARCH@
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: shells
+Priority: important
+Depends: @OS7_ICU@, ca-certificates, less, locales
+Provides: powershell
+Homepage: https://github.com/upinblue/os7
+Description: PowerShell 7 as OS/7's interactive shell
+ Microsoft's PowerShell 7 release for Linux, repacked from the upstream tarball
+ pinned by version and SHA256 in the OS/7 release pin, plus the profile drop-in
+ that hands an interactive human session over to it.
+ .
+ REPACKED RATHER THAN TAKEN FROM MICROSOFT'S APT REPOSITORY, because that
+ repository has no snapshot service: a machine that resolved PowerShell from it
+ would move independently of the OS/7 release train, and the version number
+ would stop describing the system. A Microsoft component moving upstream is a
+ release event here, not a background occurrence.
+ .
+ Bash remains the system shell. The hand-off is a /etc/profile.d drop-in with
+ five guards on it — interactive shells only, never an ssh command, never
+ re-entrant, never when pwsh is missing, and an OS7_NO_PWSH opt-out — so that
+ scp, sftp, cron, dpkg hooks and Intune's own bash compliance scripts all keep
+ the shell they expect.

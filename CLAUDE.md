@@ -15,7 +15,25 @@ on 2026-08-25:
 | host | builds | tests |
 |---|---|---|
 | **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness — they are `qemu-system-aarch64 -machine virt,accel=hvf` |
-| **x64 Windows + Docker Desktop** | `make build-amd64`, native, ~20 min. Four amd64 ISOs have come off one ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py` and the container-based checks. **No QEMU harness runs here** — the VM work is Hyper-V by hand |
+| **x64 Windows + Docker Desktop** | `make build-amd64`, native, ~20 min. Four amd64 ISOs have come off one ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py` and the container-based checks. **No `run-*.py` harness runs here yet** — they are all `qemu-system-aarch64`. But see below: the reason given for that until 2026-08-26 was wrong |
+
+**"No QEMU here" stopped being true on 2026-08-26, and it was never measured.**
+This table used to say the VM work on Windows was "Hyper-V by hand". Asked
+directly, on that host:
+
+```
+$ docker run --rm --device /dev/kvm ubuntu:26.04 …
+qemu: QEMU emulator version 10.2.1
+{"execute":"query-kvm"} → {"return": {"enabled": true, "present": true}}
+```
+
+WSL2 has nested virtualisation on, `/dev/kvm` exists, and a `docker run --device
+/dev/kvm` passes it through — no elevation, no `sudo`, no Hyper-V by hand. What
+is still true is that **every harness in `installer/testing/` is
+`qemu-system-aarch64 -machine virt,accel=hvf`** and would need an x86_64 arm:
+`q35`, `accel=kvm`, OVMF instead of AAVMF. That port is the piece
+[docs/HANDOFF.md](docs/HANDOFF.md) §2 calls "the single piece that unblocks
+both", and it is now a port rather than an impossibility.
 
 So "not yet verified on a machine" means different things on the two hosts, and
 a session that cannot run `run-phase3.py` should say so rather than leave the
@@ -58,6 +76,11 @@ make build-amd64                          # x86_64 hosts only - refuses elsewher
 make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hours
 
 ./installer/testing/check-image.py        # ask a built ISO what it is - no boot
+make repo-amd64                           # OS/7's own SIGNED package repository
+./installer/testing/check-os7-repo.py     # and the check that matters: install
+                                          #   from it, in a plain ubuntu:26.04,
+                                          #   then swap the key and require apt
+                                          #   to REFUSE. No VM, ~4 min
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
                                           #   install again BY KEYPRESS (walk)

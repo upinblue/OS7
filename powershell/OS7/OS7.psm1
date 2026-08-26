@@ -2129,17 +2129,36 @@ function Update-OS7 {
 		activates it, Restore-OS7 goes back. Spike S5 walked the whole cycle —
 		docs/SESSION-BOOT-ENVIRONMENTS.md.
 
-		WHAT IS STILL MISSING IS THE RELEASE ITSELF, and it is not a small
-		remainder. §4.2 steps 3 to 8 — assemble the clone, point it at the new
-		archive, apply, re-assert os-release, rebuild the initramfs, regenerate
-		the menu — have been performed by hand in the S5 harness and belong
-		here; and there is nothing yet to point them AT. There is no OS/7
+		AND SINCE 2026-08-26 THERE IS SOMETHING TO POINT IT AT. This paragraph
+		used to read "there is nothing yet to point them AT. There is no OS/7
 		package repository, nothing on a running system belongs to an OS/7
-		package, and no release index is published or signed
-		(docs/CURATION-AND-DELIVERY-PLAN.md §5, §6, C7 and the open C7a). Until
-		that exists, this cmdlet could only apply plain Ubuntu updates and call
-		them an OS/7 release, which is the one thing §5 says makes the version
-		number worse than none.
+		package, and no release index is published or signed." All three have
+		changed (docs/CURATION-AND-DELIVERY-PLAN.md C7,
+		docs/SESSION-OS7-REPOSITORY.md):
+
+		  - The OS/7 half of the product is nine .deb packages, built by
+		    build/lib/build-os7-packages.sh, with os7-base / os7-server /
+		    os7-desktop as the membership metapackages C6 asks for. So
+		    `apt install os7-server=<version>` moves the whole product and not
+		    only the versions of what a machine already has.
+		  - They live in a SIGNED suite, os7-1.0, with Valid-Until on the
+		    Release file, and a release DESCRIPTOR and a signed INDEX beside it.
+		  - A machine's own /usr/lib/os7/release.json now names its suite and
+		    its metapackage versions, so this cmdlet can read where to go from
+		    the machine rather than from a parameter.
+
+		WHAT IS STILL MISSING IS THIS CMDLET. §4.2 steps 1, 2 and 9 are real
+		code (New-/Set-OS7BootEnvironment, Restore-OS7 — VM-proven). Steps 3 to
+		8 — assemble the clone, point it at the new archive AND the OS/7 suite,
+		`apt install os7-<mode>=<version>` then full-upgrade then autoremove
+		(C10 corrects step 5), run the release's migrations (C10 step 6'),
+		rebuild the initramfs, regenerate the menu — have been performed by hand
+		in the S5 harness and belong here.
+
+		C7a — where a release signing key lives — is still open, and the
+		repository is signed by a development key that says so in its user ID
+		and in the descriptor. A cmdlet that applies a release must refuse an
+		unverified descriptor by default.
 
 	.PARAMETER WhatIf
 		STUB. Should report the pending release without applying it.
@@ -2151,10 +2170,12 @@ function Update-OS7 {
 	param()
 
 	throw [System.NotImplementedException]::new(
-		'Update-OS7 is a stub. Boot environments are real now (New-OS7BootEnvironment, ' +
-		'Set-OS7BootEnvironment, Restore-OS7); what it would apply is not. There is no ' +
-		'OS/7 package repository and no signed release index — CURATION-AND-DELIVERY-PLAN.md ' +
-		'C7 and C7a.')
+		'Update-OS7 is a stub. Everything it needs now exists: boot environments ' +
+		'(New-OS7BootEnvironment, Set-OS7BootEnvironment, Restore-OS7) and, since ' +
+		'2026-08-26, a signed OS/7 package repository with membership metapackages, ' +
+		'a release descriptor and a signed index (CURATION-AND-DELIVERY-PLAN.md C7, ' +
+		'docs/SESSION-OS7-REPOSITORY.md). What is missing is steps 3 to 8 of ' +
+		'RELEASE-AND-UPDATE-PLAN.md §4.2 as corrected by C10 — this cmdlet.')
 }
 
 function Restore-OS7 {
