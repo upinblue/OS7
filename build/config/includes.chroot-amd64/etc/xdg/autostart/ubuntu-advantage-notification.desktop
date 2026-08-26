@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Ubuntu Pro Notification (disabled by OS/7)
+# OS/7 — the Ubuntu Pro upsell does not start on an OS/7 desktop.
+#
+# Same mechanism and same reason as update-notifier.desktop beside it:
+# ubuntu-advantage-desktop-daemon is pulled in by update-notifier, which is a
+# hard Depends of ubuntu-desktop-minimal, so it cannot be purged. Whether this
+# fleet has an Ubuntu Pro subscription is a procurement fact, not something to
+# ask the person using the machine about.
+Exec=/bin/true
+Hidden=true
+NoDisplay=true
+X-GNOME-Autostart-enabled=false

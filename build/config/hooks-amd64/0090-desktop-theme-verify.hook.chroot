@@ -117,9 +117,31 @@ if [ -s /etc/dconf/db/os7 ]; then
 	check_key /org/gnome/shell/extensions/user-theme/name "'OS7-Classic'"
 	check_key /org/gnome/desktop/background/primary-color "'#000000'"
 	check_key /org/gnome/desktop/wm/preferences/button-layout "':minimize,maximize,close'"
+	# THE SESSION, and it is the key the other four depend on. Added
+	# 2026-08-26: without it GDM used Ubuntu's default of "ubuntu", whose
+	# session mode carries its own Shell stylesheet and its own extension
+	# list, and none of the four keys above ever reached a screen. A theme
+	# that is installed and not loaded passes every other check in this file.
+	check_key /org/gnome/desktop/session/session-name "'gnome-classic'"
+	# 1-bit text and GNOME 50 do not agree; docs/BUILD-NOTES.md #84.
+	check_key /org/gnome/desktop/interface/font-antialiasing "'grayscale'"
 else
 	note "/etc/dconf/db/os7 was not compiled"
 fi
+
+# --- 3a. The session the defaults name must EXIST ------------------------
+# dconf stores any string at all, and GDM falls back to its own default without
+# a word when the name matches no session file. So the value being right is only
+# half of it: this asks the filesystem whether the thing it names is here.
+#
+# Both files come from packages already in the amd64 list - gnome-classic ships
+# the .desktop, gnome-shell-common ships the mode - so a failure here means a
+# package list changed, not a typo.
+for f in /usr/share/wayland-sessions/gnome-classic.desktop \
+         /usr/share/gnome-shell/modes/classic.json
+do
+	[ -e "${f}" ] && ok "${f}" || note "the defaults select gnome-classic and ${f} is missing"
+done
 
 # --- 3b. Every key we set is a key GNOME actually has -------------------
 # BUILD-NOTES #54. dconf is a key-value store with no knowledge of GSettings

@@ -1,0 +1,286 @@
+#!/bin/bash
+# OS/7 — the desktop stops introducing itself as Ubuntu. amd64 only.
+#
+# WHAT THIS IS FOR. The GUI product is Ubuntu's desktop underneath, by locked
+# decision: Microsoft supports Intune enrollment on Ubuntu Desktop with GNOME
+# and nothing else, and Intune's constraints outrank OS/7's preferences. What
+# that decision does NOT require is Canonical's onboarding wizard, telemetry,
+# crash reporting, help content and browser on a managed corporate machine. All
+# of those arrive the same way and can leave the same way.
+#
+# THE MEASUREMENT THIS HOOK IS BUILT ON (2026-08-26, read out of
+# /var/lib/dpkg/status in the SHIPPED OS7-1.0.0.109-amd64.iso rather than out of
+# documentation): every package purged below is a **Recommends** of
+# ubuntu-desktop-minimal, never a Depends, and nothing hard-depends on any of
+# them. That is the whole reason this can be done without forking the desktop
+# package set.
+#
+#   gnome-initial-setup         Recommends: ubuntu-desktop-minimal   <- the wizard
+#   ubuntu-report               Recommends: ubuntu-desktop-minimal
+#   ubuntu-insights             Recommends: ubuntu-desktop-minimal
+#   whoopsie                    Recommends: ubuntu-desktop-minimal, update-notifier
+#   apport-gtk                  Recommends: ubuntu-desktop-minimal, update-notifier
+#   ubuntu-docs                 Recommends: ubuntu-desktop-minimal
+#   firefox                     Recommends: ubuntu-desktop-minimal
+#   plymouth-theme-ubuntu-text  Recommends: plymouth, ubuntu-standard
+#
+# AND WHAT CANNOT LEAVE, measured the same way, recorded so it is not
+# rediscovered later as an oversight:
+#
+#   ubuntu-wallpapers             gnome-shell DEPENDS on it
+#   yaru-theme-gnome-shell        ubuntu-session DEPENDS on it
+#   ubuntu-session                gdm3 AND ubuntu-desktop-minimal DEPEND on it
+#   ubuntu-settings               ubuntu-desktop-minimal DEPENDS on it
+#   gnome-shell-ubuntu-extensions ubuntu-session DEPENDS on it
+#   update-notifier               ubuntu-desktop-minimal DEPENDS on it
+#   ubuntu-release-upgrader-gtk   ubuntu-desktop-minimal DEPENDS on it
+#   ubuntu-pro-client             ubuntu-minimal DEPENDS on it
+#
+# Those stay INSTALLED and are made inert instead — by the dconf defaults that
+# select the GNOME Classic session, so ubuntu.json's mode, its Yaru stylesheet
+# and its extensions are never loaded; and by config/includes.chroot-amd64,
+# which sets Prompt=never for the release upgrader and hides two autostart
+# entries. Making a hard dependency vanish would mean curating the desktop
+# package set ourselves, trading a visible Ubuntu string for an invisible
+# missing package. That trade was put and declined on 2026-08-26.
+#
+# snapd STAYS, deliberately, even though firefox was the only thing that
+# Depends on it: authd-msentraid — the Entra ID broker installer/README names as
+# the path to Entra sign-in — is a Canonical snap with no .deb. Removing snapd
+# now would block the identity story before it is built. It is marked manual
+# below so that the autoremove after firefox cannot take it.
+#
+# THE PIN IS THE DURABLE HALF. Purging alone lasts until the first
+# `apt full-upgrade` re-satisfies a Recommends. /etc/apt/preferences.d/ is
+# apt's own documented mechanism for "never this package", it ships in the
+# image, and it therefore governs the installed machine and every update after
+# it — which is the actual requirement. It is verified below by asking APT what
+# it would now do, not by reading back the file this hook just wrote.
+#
+# ORDERING: 0035 runs after 0030 (the Microsoft stack, so its packages are here
+# to be checked) and before 0085/0090 (theme install and verify), so hook 0090
+# can check this hook's work.
+
+set -euo pipefail
+
+# One stream, in order — hooks 0085 and 0090 explain why: live-build merges
+# stdout and stderr into one log and they buffer independently, so a failure can
+# print ahead of a check that had not run yet.
+exec 1>&2
+
+ARCH="$(dpkg --print-architecture)"
+if [ "${ARCH}" != "amd64" ]; then
+	echo "OS/7 hook 0035: staged on ${ARCH} but this hook is amd64-only - skipping."
+	exit 0
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+echo "OS/7 hook 0035: removing the Ubuntu onboarding, telemetry and browser"
+
+fail=0
+note() { echo "OS/7 hook 0035: FAIL: $*"; fail=1; }
+ok()   { echo "OS/7 hook 0035:   ok: $*"; }
+
+# --- 1. The pin, written before anything else --------------------------------
+# Pin-Priority: -1 is apt's "never install this, not even to satisfy a
+# Recommends". `Pin: release *` scopes it to every source, so the same name
+# appearing in a third-party repository later is covered too.
+PIN=/etc/apt/preferences.d/os7-desktop-exclusions.pref
+install -d -m 0755 /etc/apt/preferences.d
+cat > "${PIN}" <<'PREF'
+# OS/7 — packages that must never be installed on an OS/7 desktop.
+#
+# Written by build/config/hooks-amd64/0035-debrand-desktop.hook.chroot and
+# SHIPPED, on purpose: purging at build time lasts only until the first upgrade
+# re-satisfies a Recommends of ubuntu-desktop-minimal. This file is what makes
+# the removal survive an `apt full-upgrade` and a release upgrade.
+#
+# Every entry below is a Recommends of ubuntu-desktop-minimal (or, for the
+# plymouth theme, of plymouth and ubuntu-standard), and nothing Depends on any
+# of them — measured against the shipped image on 2026-08-26. A Recommends that
+# cannot be installed is simply skipped by apt, so nothing here can break a
+# dependency.
+#
+# To put one back, delete its stanza. These are defaults, not locks — the same
+# rule the dconf database in os7-desktop-theme follows.
+
+# The first-login wizard: language, privacy, "Enable Ubuntu Pro", "Help improve
+# Ubuntu". OS/7 asks its questions in os7-setup, before the machine has ever
+# booted a desktop, and asks them once.
+Package: gnome-initial-setup
+Pin: release *
+Pin-Priority: -1
+
+# Telemetry to Canonical.
+Package: ubuntu-report ubuntu-insights
+Pin: release *
+Pin-Priority: -1
+
+# Crash reporting to Canonical. A managed fleet reports to whoever manages it.
+Package: whoopsie whoopsie-preferences apport apport-gtk apport-core-dump-handler apport-symptoms
+Pin: release *
+Pin-Priority: -1
+
+# Ubuntu-branded help content.
+Package: ubuntu-docs gnome-user-docs
+Pin: release *
+Pin-Priority: -1
+
+# The browser of this product is Microsoft Edge (hook 0030). Note that snapd is
+# deliberately NOT pinned here: authd-msentraid is a snap.
+Package: firefox
+Pin: release *
+Pin-Priority: -1
+
+# The Ubuntu wordmark on the text boot splash. Unused while default.plymouth is
+# bgrt, and pinned so that it stays unused.
+Package: plymouth-theme-ubuntu-text
+Pin: release *
+Pin-Priority: -1
+PREF
+chmod 0644 "${PIN}"
+ok "wrote ${PIN}"
+
+# --- 2. Protect snapd from the autoremove ------------------------------------
+# firefox is the only package that Depends on snapd. Purge firefox with snapd
+# still marked auto and `apt-get autoremove` takes it with it.
+apt-mark manual snapd >/dev/null
+ok "snapd marked manual (authd-msentraid is a snap - see the header)"
+
+# --- 3. Purge -----------------------------------------------------------------
+PURGE=(
+	gnome-initial-setup
+	ubuntu-report
+	ubuntu-insights
+	whoopsie whoopsie-preferences
+	apport apport-gtk apport-core-dump-handler apport-symptoms
+	ubuntu-docs gnome-user-docs
+	firefox
+	plymouth-theme-ubuntu-text
+)
+
+# Name only what is actually installed: `apt-get purge` errors on a package it
+# has never heard of, and a future image that already lacks one of these should
+# not fail the build for being ahead of this list.
+PRESENT=()
+for p in "${PURGE[@]}"; do
+	if dpkg -s "${p}" >/dev/null 2>&1; then PRESENT+=("${p}"); fi
+done
+echo "OS/7 hook 0035: purging ${#PRESENT[@]} of ${#PURGE[@]} named packages"
+if [ "${#PRESENT[@]}" -gt 0 ]; then
+	apt-get purge -y "${PRESENT[@]}"
+fi
+apt-get autoremove --purge -y
+
+# --- 4. Ask dpkg whether they are gone ----------------------------------------
+# apt-get's exit code says the transaction it computed succeeded. This says what
+# is on the image.
+for p in "${PURGE[@]}"; do
+	if dpkg -s "${p}" >/dev/null 2>&1; then
+		note "${p} is still installed after the purge"
+	else
+		ok "${p} gone"
+	fi
+done
+
+# --- 5. Ask dpkg whether the desktop survived ---------------------------------
+# The failure this guards against is a purge that cascaded — apt removing a
+# Depends chain that reached the desktop itself, and the build going green
+# because apt did exactly what it was asked to do.
+for p in ubuntu-desktop-minimal gnome-shell gnome-shell-extension-window-list \
+	gdm3 nautilus gnome-terminal network-manager snapd \
+	microsoft-edge-stable intune-portal code
+do
+	if dpkg -s "${p}" >/dev/null 2>&1; then
+		ok "${p} still installed"
+	else
+		note "${p} was removed as collateral - the purge cascaded"
+	fi
+done
+
+# --- 6. Ask APT whether the pin is in force -----------------------------------
+# THE POINT OF THIS CHECK: it does not read the file written in step 1. It asks
+# apt what it would now do, which is the only thing that can tell a correct pin
+# from a mistyped one. With Pin-Priority: -1 apt reports no installation
+# candidate at all.
+for p in gnome-initial-setup ubuntu-report firefox whoopsie; do
+	# No `exit` in the awk program, and no `grep -q` anywhere in this hook:
+	# under `set -o pipefail` a reader that stops early SIGPIPEs the writer and
+	# the whole pipeline reports failure for a command that did its job. That
+	# race cost a build already - docs/BUILD-NOTES.md #83.
+	cand="$(apt-cache policy "${p}" 2>/dev/null | awk '/Candidate:/{print $2}')"
+	if [ "${cand}" = "(none)" ]; then
+		ok "apt would not install ${p} (candidate: none)"
+	else
+		note "apt still offers ${p} version ${cand:-<unknown>} - the pin is not in force"
+	fi
+done
+
+# --- 7. The Ubuntu logo on the boot splash ------------------------------------
+# MEASURED: /etc/alternatives/default.plymouth -> bgrt/bgrt.plymouth, whose
+# [boot-up] section sets UseFirmwareBackground=true. On hardware with an ACPI
+# BGRT table that shows the firmware's own logo; on everything without one —
+# every VM, and plenty of machines — plymouth falls back to bgrt-fallback.png,
+# which is the Ubuntu Circle of Friends. dpkg says that file belongs to
+# plymouth-theme-spinner, which cannot be removed, because the bgrt theme itself
+# lives in the same package.
+#
+# dpkg-divert is the mechanism dpkg provides for exactly this case: replacing a
+# file owned by another package so that the package's own upgrades cannot take
+# it back. --rename moves theirs aside; a later plymouth-theme-spinner upgrade
+# writes its version to the diverted name and leaves ours alone.
+FALLBACK=/usr/share/plymouth/themes/spinner/bgrt-fallback.png
+SRC_SVG=/usr/share/icons/hicolor/scalable/apps/os7.svg
+
+if [ ! -r "${SRC_SVG}" ]; then
+	note "${SRC_SVG} is missing - config/includes.chroot did not stage the product mark"
+elif [ ! -e "${FALLBACK}" ]; then
+	echo "OS/7 hook 0035:   note: ${FALLBACK} is absent - nothing to divert"
+else
+	# rsvg-convert is not otherwise needed on the image, so it comes and goes.
+	apt-get install -y --no-install-recommends librsvg2-bin
+	dpkg-divert --local --rename --add "${FALLBACK}" >/dev/null
+	rsvg-convert -w 128 -h 128 "${SRC_SVG}" -o "${FALLBACK}"
+	chmod 0644 "${FALLBACK}"
+	apt-get purge -y librsvg2-bin
+
+	# Ask, do not assume. A diversion that did not take and a rasteriser that
+	# wrote a zero-byte file both leave a green exit code behind them.
+	if [ -n "$(dpkg-divert --list "${FALLBACK}")" ]; then
+		ok "diverted ${FALLBACK}"
+	else
+		note "dpkg-divert recorded no diversion for ${FALLBACK}"
+	fi
+	# Command substitution rather than `head | grep -q`, for the pipefail
+	# reason given at the Candidate check above.
+	magic="$(head -c 8 "${FALLBACK}" 2>/dev/null || true)"
+	case "${magic}" in
+		*PNG*) ok "boot splash mark is a PNG of $(stat -c%s "${FALLBACK}") bytes" ;;
+		*)     note "${FALLBACK} is not a PNG after rasterising ${SRC_SVG}" ;;
+	esac
+	if [ -e "${FALLBACK}.distrib" ]; then
+		ok "Ubuntu's original kept at ${FALLBACK}.distrib"
+	else
+		note "${FALLBACK}.distrib is missing - --rename did not move the original aside"
+	fi
+fi
+
+# --- 8. The icon cache --------------------------------------------------------
+# os7.svg arrives through config/includes.chroot, which copies files rather than
+# installing a package, so no dpkg trigger runs and hicolor's cache never learns
+# about it. LOGO="os7" in /etc/os-release is the field that reads it.
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+	gtk-update-icon-cache -f -q /usr/share/icons/hicolor 2>/dev/null || true
+	ok "hicolor icon cache refreshed"
+fi
+if [ -r "${SRC_SVG}" ]; then
+	ok "product mark present at ${SRC_SVG} (LOGO=os7 in /etc/os-release)"
+else
+	note "no product mark at ${SRC_SVG} - LOGO=os7 resolves to nothing"
+fi
+
+if [ "${fail}" -ne 0 ]; then
+	echo "OS/7 hook 0035: the desktop was NOT correctly debranded."
+	exit 1
+fi
+echo "OS/7 hook 0035: done"

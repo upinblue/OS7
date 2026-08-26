@@ -45,13 +45,67 @@ monospace-font-name='Monospace 10'
 # Classic had no animation and no hot corner.
 enable-animations=false
 enable-hot-corners=false
-# Hinting full, antialiasing off: this is what makes a small UI font look like
-# 1999 instead of like a blurry modern one.
-font-antialiasing='none'
+# Hinting full, antialiasing GRAYSCALE.
+#
+# This line used to read font-antialiasing='none', for the stated reason that
+# 1-bit text is what makes a small UI font look like 1999 rather than like a
+# blurry modern one. That reason is true about 1999 and false about GNOME 50.
+#
+# MEASURED 2026-08-26 against the fonts in the shipped amd64 image, and the
+# measurement matters because it says where the fault is NOT: Tahoma was
+# re-rendered outside the desktop at 8, 9, 10, 11, 12 and 13 px, monochrome and
+# grayscale, through FreeType directly and through Pango/Cairo with hint_metrics
+# both on and off. Every one of those is legible and none reproduces the damage
+# seen on screen. Nothing in the font, in fontconfig or in FreeType is broken.
+#
+# What a booted machine shows is that GTK 3 surfaces render crisply with 1-bit
+# text while GTK 4 / libadwaita surfaces fall apart - same screen, same font,
+# same size, different toolkit. GNOME 50 draws text through a GPU glyph atlas,
+# and a 1-bit glyph has no partial coverage left to lose when anything
+# downstream resamples it: the atlas, a fractional glyph origin, a scaled VM
+# console. Grayscale coverage survives all three.
+#
+# So this is not a change of taste. 'none' asked GNOME 50 for a guarantee it
+# stopped making; the classic look is carried by the palette, the bevels and the
+# metrics, none of which this touches. docs/BUILD-NOTES.md #84.
+font-antialiasing='grayscale'
 font-hinting='full'
 clock-format='24h'
 clock-show-weekday=true
 show-battery-percentage=true
+
+[org/gnome/desktop/session]
+# THE SESSION ITSELF - the key that decides whether any of the rest of this file
+# is ever seen.
+#
+# GDM reads org.gnome.desktop.session session-name to pick the session for a
+# user who has not chosen one yet, and Ubuntu sets it to "ubuntu" from
+# /usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override. Until this
+# line existed OS/7 did not set it, so every first login landed in the Ubuntu
+# session - and MEASURED out of the shipped image, that session is not a neutral
+# container:
+#
+#   /usr/share/gnome-shell/modes/ubuntu.json sets
+#     "stylesheetName":    "Yaru/gnome-shell.css"
+#     "themeResourceName": "theme/Yaru/gnome-shell-theme.gresource"
+#   and enables ding, tiling-assistant, snapd-prompting, web-search-provider.
+#
+# A session mode's own stylesheet is not a default that a user theme can be
+# relied on to beat, so OS7-Classic's gnome-shell.css never reached the screen:
+# the panel stayed Yaru-dark instead of #d4d0c8 and ding drew desktop icons onto
+# a desktop that is meant to be bare. That is what "the theme is installed and
+# the desktop still looks like Ubuntu" actually was.
+#
+# 'gnome-classic' names /usr/share/wayland-sessions/gnome-classic.desktop and
+# modes/classic.json, which sets no stylesheet and no theme resource, forces the
+# light colour scheme, and enables exactly the four extensions this file already
+# asks for. It ships in gnome-shell-extensions, which Ubuntu moves in lockstep
+# with gnome-shell - the same durability argument as every other choice here.
+#
+# PRECEDENCE: once a user has picked a session, AccountsService remembers it and
+# that wins over this key. This decides the FIRST login, which on an imaged
+# machine is the one that matters.
+session-name='gnome-classic'
 
 [org/gnome/desktop/wm/preferences]
 theme='OS7-Classic'

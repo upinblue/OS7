@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=Update Notifier (disabled by OS/7)
+# OS/7 — Ubuntu's update notifier does not start on an OS/7 desktop.
+#
+# Hidden=true is the freedesktop.org autostart specification's own way of
+# saying "this entry is not to be used". gnome-session reads it and starts
+# nothing.
+#
+# WHY OVERWRITE RATHER THAN REMOVE: update-notifier is a hard Depends of
+# ubuntu-desktop-minimal (measured 2026-08-26), so hook 0035 cannot purge it.
+# What it actually does on a managed machine is offer Ubuntu package updates and
+# advertise Ubuntu Pro, both of which are decided by Intune policy and by OS/7's
+# update train, not by a tray bubble.
+#
+# WHY NOT ~/.config/autostart: a per-user override never reaches the home
+# directories authd creates for Entra ID accounts that were not on this machine
+# at install time - the same argument the dconf system database in
+# os7-desktop-theme makes for itself.
+Exec=/bin/true
+Hidden=true
+NoDisplay=true
+X-GNOME-Autostart-enabled=false

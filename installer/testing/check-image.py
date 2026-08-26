@@ -90,6 +90,31 @@ emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
 # made on a dependency graph and one of them was wrong about what installs the
 # kernel (BUILD-NOTES #62), so they are asked of the artefact from now on.
 emit packages.curated  bash -c "grep -E '^(dotnet|aspnetcore|linux-(generic|image-generic|headers|main-modules-zfs))' /mnt/sq/usr/lib/os7/packages.manifest | cut -f1 | sort || true"
+# THE DESKTOP'S IDENTITY, asked of the SHIPPED image (amd64; empty on arm64,
+# which is server-only and has no desktop at all).
+#
+# Every one of these was a real failure on OS7-1.0.0.109-amd64.iso, and none of
+# them was visible to a build hook:
+#
+#   * the dconf database named no session, so GDM used Ubuntu's default and the
+#     Ubuntu session mode's Yaru stylesheet beat the theme that was correctly
+#     installed beside it;
+#   * gnome-initial-setup was installed and ran on first login;
+#   * plymouth's Ubuntu logo shipped as the boot mark.
+#
+# A hook could only have reported on the chroot at the moment it ran. This
+# reports on the artefact.
+emit desktop.dconf     bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin DCONF_PROFILE=/etc/dconf/profile/user dconf dump /org/gnome/ 2>/dev/null || true'
+emit desktop.sessions  bash -c 'ls /mnt/sq/usr/share/wayland-sessions/ 2>/dev/null || true'
+emit desktop.modes     bash -c 'ls /mnt/sq/usr/share/gnome-shell/modes/ 2>/dev/null || true'
+emit desktop.debrand   bash -c 'for p in gnome-initial-setup ubuntu-report ubuntu-insights whoopsie apport apport-gtk ubuntu-docs firefox plymouth-theme-ubuntu-text; do if chroot /mnt/root dpkg -s "$p" >/dev/null 2>&1; then echo "PRESENT $p"; else echo "absent  $p"; fi; done'
+emit desktop.kept      bash -c 'for p in ubuntu-desktop-minimal gnome-shell gdm3 nautilus network-manager snapd microsoft-edge-stable intune-portal code; do if chroot /mnt/root dpkg -s "$p" >/dev/null 2>&1; then echo "present $p"; else echo "MISSING $p"; fi; done'
+emit desktop.pin       bash -c 'cat /mnt/sq/etc/apt/preferences.d/os7-desktop-exclusions.pref 2>/dev/null || true'
+emit desktop.pinforce  bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin apt-cache policy gnome-initial-setup firefox ubuntu-report 2>/dev/null || true'
+emit desktop.logo      bash -c 'ls -l /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png.distrib 2>&1 || true'
+emit desktop.autostart bash -c 'for f in update-notifier ubuntu-advantage-notification; do printf "%s %s\n" "$f" "$(grep -c "^Hidden=true" /mnt/sq/etc/xdg/autostart/$f.desktop 2>/dev/null || echo 0)"; done'
+emit desktop.relupg    bash -c 'grep -E "^Prompt=" /mnt/sq/etc/update-manager/release-upgrades 2>/dev/null || true'
+
 emit setup.version     chroot /mnt/root /usr/lib/os7-setup/os7-setup --version
 emit setup.selftest    bash -c 'chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/lib/os7-setup/os7-setup --self-test | tail -3'
 
@@ -694,6 +719,93 @@ def main() -> None:
         print("      note  the image ships no ZFS module options, so zfs_arc_max is "
               "the default half of memory — InstallerEnvironmentStep caps it at "
               "install time (#79)")
+
+    # -- the desktop is OS/7's, not Ubuntu's (amd64 only) -------------------
+    #
+    # WHY THESE LIVE HERE and not only in a build hook. Every failure this
+    # section covers was true of OS7-1.0.0.109-amd64.iso while hook 0090
+    # reported the classic desktop verified — because 0090 checked that the
+    # theme was installed and never asked whether anything would LOAD it. The
+    # answer to that is a session name, and the session name is in the image.
+    if arch == "amd64":
+        dconf = img.get("desktop.dconf", "")
+
+        def dkey(group: str, key: str) -> str:
+            """Read one key out of `dconf dump /org/gnome/` output."""
+            cur = None
+            for line in dconf.splitlines():
+                line = line.strip()
+                if line.startswith("[") and line.endswith("]"):
+                    cur = line[1:-1]
+                elif cur == group and line.startswith(key + "="):
+                    return line.split("=", 1)[1].strip()
+            return ""
+
+        session = dkey("desktop/session", "session-name")
+        check(session == "'gnome-classic'",
+              "the defaults name the GNOME Classic session",
+              session or "<unset> — GDM will use Ubuntu's default")
+
+        # A session name that names nothing is the silent half of the same bug:
+        # dconf stores any string happily and GDM falls back without a word.
+        sessions = img.get("desktop.sessions", "")
+        check("gnome-classic.desktop" in sessions,
+              "and that session is actually on the image",
+              sessions.replace("\n", " ") or "<none>")
+
+        aa = dkey("desktop/interface", "font-antialiasing")
+        check(aa == "'grayscale'",
+              "UI text is antialiased (1-bit text breaks GTK 4, #84)",
+              aa or "<unset>")
+        check(dkey("desktop/interface", "gtk-theme") == "'OS7-Classic'",
+              "the GTK theme default survived into the image",
+              dkey("desktop/interface", "gtk-theme") or "<unset>")
+
+        # The onboarding, the telemetry and the browser.
+        gone = [l.split()[1] for l in img.get("desktop.debrand", "").splitlines()
+                if l.startswith("absent")]
+        still = [l.split()[1] for l in img.get("desktop.debrand", "").splitlines()
+                 if l.startswith("PRESENT")]
+        check(not still, f"the Ubuntu onboarding and telemetry are gone ({len(gone)} packages)",
+              ("still installed: " + ", ".join(still)) if still else "")
+
+        missing = [l.split()[1] for l in img.get("desktop.kept", "").splitlines()
+                   if l.startswith("MISSING")]
+        check(not missing, "and the purge did not cascade into the desktop",
+              ("missing: " + ", ".join(missing)) if missing else "")
+
+        # THE DURABLE HALF, and the only check that speaks about the machine
+        # AFTER it is installed: without the pin, the first `apt full-upgrade`
+        # re-satisfies ubuntu-desktop-minimal's Recommends and the wizard is
+        # back. Asked of apt in the image, not read off the file.
+        pin = img.get("desktop.pin", "")
+        check("Pin-Priority: -1" in pin and "gnome-initial-setup" in pin,
+              "the image carries the APT pin that keeps them gone",
+              f"{len(pin.splitlines())} lines" if pin else "<absent>")
+
+        pol = img.get("desktop.pinforce", "")
+        cands = [l.split(":", 1)[1].strip() for l in pol.splitlines()
+                 if l.strip().startswith("Candidate:")]
+        check(bool(cands) and all(c == "(none)" for c in cands),
+              "and apt in the image agrees it would install none of them",
+              ", ".join(cands) if cands else "<apt-cache said nothing>")
+
+        # The boot mark. `.distrib` existing is what proves the diversion took:
+        # it is the name dpkg-divert --rename moved Ubuntu's file to.
+        logo = img.get("desktop.logo", "")
+        check("os7.svg" in logo and "No such file" not in logo.split("os7.svg")[0],
+              "the product mark exists for LOGO=os7")
+        check("bgrt-fallback.png.distrib" in logo,
+              "and plymouth's Ubuntu logo is diverted out of the boot splash")
+
+        auto = dict(l.split() for l in img.get("desktop.autostart", "").splitlines() if l.split())
+        check(auto.get("update-notifier") == "1" and
+              auto.get("ubuntu-advantage-notification") == "1",
+              "the update and Ubuntu Pro autostart entries are hidden",
+              str(auto))
+        check(img.get("desktop.relupg", "").strip() == "Prompt=never",
+              "the release upgrader will not offer a do-release-upgrade",
+              img.get("desktop.relupg", "").strip() or "<unset>")
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

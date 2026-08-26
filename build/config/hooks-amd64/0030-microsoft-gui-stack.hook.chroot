@@ -9,6 +9,12 @@
 #   intune-portal              amd64 only  (resolute suite)
 #   microsoft-identity-broker  amd64 only  (resolute suite)
 #
+# code (Visual Studio Code) joined them on 2026-08-26. It is the ONE package
+# here that Microsoft does publish for arm64 as well - so unlike the three
+# above, its amd64-only-ness is entirely OS/7's own decision that arm64 is a
+# server target with no GUI. Recorded so that a future arm64 desktop is a
+# product decision and not a packaging discovery.
+#
 # So even if arm64 were a GUI target, it could not be Intune-enrolled. It isn't,
 # so this hook is simply never staged there.
 
@@ -29,6 +35,22 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get install -y --no-install-recommends \
 	microsoft-edge-stable \
 	intune-portal \
-	microsoft-identity-broker
+	microsoft-identity-broker \
+	code
+
+# ASK DPKG, not apt's exit code. `apt-get install` reports success for a set it
+# resolved; this reports on the set that is actually on the image, and names the
+# one that is missing rather than "something went wrong". Standing rule in this
+# repo, and it is what turns a green build into evidence.
+missing=0
+for p in microsoft-edge-stable intune-portal microsoft-identity-broker code; do
+	if dpkg -s "${p}" >/dev/null 2>&1; then
+		echo "OS/7 hook 0030:   ok: ${p} $(dpkg-query -W -f='${Version}' "${p}")"
+	else
+		echo "OS/7 hook 0030: FAIL: ${p} is NOT installed" >&2
+		missing=1
+	fi
+done
+[ "${missing}" -eq 0 ] || exit 1
 
 echo "OS/7 hook 0030: done"

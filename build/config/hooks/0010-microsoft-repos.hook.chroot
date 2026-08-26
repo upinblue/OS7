@@ -100,8 +100,26 @@ Components: main
 Architectures: amd64
 Signed-By: /usr/share/keyrings/microsoft-legacy.gpg
 SRC
+	# --- Visual Studio Code. amd64 only, for the GUI reason alone: Microsoft
+	# --- DOES publish an arm64 build here, unlike Edge, so the constraint is
+	# --- purely OS/7's (arm64 is a server-only target).
+	# ---
+	# --- MEASURED 2026-08-26 rather than assumed, because getting the key wrong
+	# --- fails the build with "is not signed" and nothing else:
+	# ---   repos/code stable -> RSA key EB3E94ADBE1229CF  (the LEGACY key)
+	# --- read out of the InRelease signature itself. Same key as repos/edge,
+	# --- which is what the two-keyring split in this hook exists to keep
+	# --- straight.
+	cat > /etc/apt/sources.list.d/microsoft-vscode.sources <<SRC
+Types: deb
+URIs: https://packages.microsoft.com/repos/code
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/microsoft-legacy.gpg
+SRC
 else
-	echo "OS/7 hook 0010: skipping the Edge repo - ${ARCH} is a server-only target (no GUI)."
+	echo "OS/7 hook 0010: skipping the Edge and VS Code repos - ${ARCH} is a server-only target (no GUI)."
 fi
 
 apt-get update

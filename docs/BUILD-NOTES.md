@@ -4156,3 +4156,137 @@ installed, PRESENT after, and 0 under `set -euo pipefail`.
 which aborts before `Main` without ICU. The `ldconfig` line exists so that the
 failure reads as a missing package instead of as a crashing installer, which is
 exactly the job it had stopped doing.
+
+---
+
+## 84. GNOME 50 will not draw 1-bit text, and the setting that asked it to was a theme default
+
+**Measured on 2026-08-26**, from screenshots of a booted amd64 machine plus
+renderings taken outside the desktop.
+
+`os7-desktop-theme` shipped, in `/etc/dconf/db/os7.d/00-os7-classic`:
+
+```ini
+font-antialiasing='none'
+font-hinting='full'
+font-name='Tahoma 9'
+```
+
+with the stated reason that 1-bit text is what makes a small UI font look like
+1999 rather than like a blurry modern one. On screen, body text in
+`gnome-initial-setup` came out with whole vertical stems missing — `Upgrade`
+read as `Uograde`, `Ubuntu` as `Jountu`, `Free` as `-ree`. Headings, buttons and
+the window title were fine.
+
+**The first thing that was measured is where the fault is NOT.** The shipped
+`tahoma.ttf` was pulled out of the image and re-rendered outside the desktop
+entirely:
+
+| renderer | sizes | modes | result |
+|---|---|---|---|
+| FreeType via Pillow | 12 px | mono, grayscale | legible, both |
+| Pango/Cairo | 12 px | `antialias=NONE` × `hint_metrics` on **and off** | legible, all three |
+| Pango/Cairo | 8, 9, 10, 11, 12, 13 px | mono and grayscale | legible at every size |
+
+Twelve renderings, none of which reproduces the damage. So nothing in the font,
+in fontconfig, in FreeType or in Pango is broken, and "the Wine Tahoma clone is
+badly hinted" — the obvious first answer, and the one this note exists to
+close — is wrong.
+
+**What separates the broken text from the intact text is the toolkit.** On the
+same screen, at the same size, with the same font:
+
+| surface | toolkit | result |
+|---|---|---|
+| `gnome-initial-setup` body text | GTK 4 / libadwaita | stems missing |
+| `intune-portal` window | GTK 3 | crisp, correct |
+| Shell panel labels | Clutter | thin, washed out |
+
+GNOME 50 draws text through a GPU glyph atlas. A grayscale glyph carries partial
+coverage, so a stem that lands between two pixels survives as two grey pixels. A
+1-bit glyph has no partial coverage to spend: the same stem is either one hard
+pixel or nothing, and every stage downstream — the atlas, a fractional glyph
+origin, a scaled VM console — is one more chance for it to round to nothing.
+GTK 3's cairo path positions glyphs on integer pixels and never gives it that
+chance, which is why the one non-GTK-4 window on the screen looked right.
+
+**The rule this breaks.** `font-antialiasing='none'` is not a rendering hint
+that GNOME may honour approximately; it is an instruction to throw away the only
+information later stages can use to be approximately right. The classic look
+does not depend on it: the palette, the bevels, the square corners and the
+metrics all survive `grayscale` untouched.
+
+**Fixed** by `font-antialiasing='grayscale'` in the same keyfile, with
+`font-hinting='full'` unchanged. Verified by hook 0090 reading the key back out
+of the compiled dconf database, and by `check-image.py` reading it out of the
+shipped ISO.
+
+**NOT verified on a machine at the time of writing.** The one-line check that
+settles it, on the booted VM, is:
+
+```bash
+gsettings set org.gnome.desktop.interface font-antialiasing grayscale
+```
+
+which takes effect immediately and needs no rebuild.
+
+---
+
+## 85. A theme can be installed, verified, and never loaded — because the session mode ships its own stylesheet
+
+**Measured on 2026-08-26** out of the shipped `OS7-1.0.0.109-amd64.iso`.
+
+Hook 0090 reported the classic desktop verified: `os7-desktop-theme` installed,
+`/usr/share/themes/OS7-Classic/gnome-shell/gnome-shell.css` present, all four
+GNOME Classic extensions present and declaring the right shell generation,
+`/etc/dconf/db/os7` compiled, every key reading back the value it was given.
+Every one of those statements was true. The desktop on screen had a **black
+Ubuntu panel**, an Ubuntu `ding` desktop-icon layer, and none of the theme's
+colours.
+
+The image says why:
+
+```
+/usr/share/gnome-shell/modes/ubuntu.json
+  "stylesheetName":    "Yaru/gnome-shell.css"
+  "themeResourceName": "theme/Yaru/gnome-shell-theme.gresource"
+  "enabledExtensions": [ ubuntu-dock, ubuntu-appindicators, ding,
+                         tiling-assistant, snapd-prompting,
+                         snapd-search-provider, web-search-provider ]
+
+/usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override
+  [org.gnome.desktop.session]
+  session-name = "ubuntu"
+```
+
+GDM reads `org.gnome.desktop.session session-name` to choose the session for a
+user who has not chosen one. `00-os7-classic` set sixty-odd keys and **did not
+set that one**, so every first login landed in the Ubuntu session — and a
+session mode's `stylesheetName` is not a default that a user theme can be relied
+on to beat. The theme was on disk, selected, and never asked for.
+
+**The shape of the mistake is the interesting part**, and it is one this
+repository has hit before in other clothes (#62: the package list did not decide
+which kernel was installed). *Every declaration was satisfiable on paper and
+satisfied — and the thing they were declared about was decided somewhere else.*
+Hook 0090 could check that the theme was installed. It could not check that
+anything would load it, because nothing it looked at knew.
+
+**Fixed** by `[org/gnome/desktop/session] session-name='gnome-classic'` in the
+same keyfile. `modes/classic.json` sets no stylesheet and no theme resource,
+forces the light colour scheme, and enables exactly the four extensions the file
+already asked for.
+
+**And a second check was added, because the first one is not enough.** A session
+name that names nothing is the silent half of the same bug: dconf stores any
+string, GDM falls back without a word. Hook 0090 now also asserts that
+`/usr/share/wayland-sessions/gnome-classic.desktop` and
+`/usr/share/gnome-shell/modes/classic.json` exist, and `check-image.py` asserts
+both against the shipped ISO.
+
+**What is deliberately NOT fixed.** `ubuntu-session`, `ubuntu-settings` and
+`gnome-shell-ubuntu-extensions` stay on the image. `gdm3` **Depends** on
+`ubuntu-session`, so the Ubuntu session and its Yaru stylesheet cannot be
+removed while GDM is the greeter. They are inert once the default names a
+different session, and inert-and-present is a state a support case can inspect;
+a curated desktop package set with something missing is not.

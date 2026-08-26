@@ -1,0 +1,23 @@
+# OS/7 — the release upgrader must never offer to upgrade this machine.
+#
+# WHY THIS FILE IS HERE AND NOT IN THE PURGE LIST. ubuntu-release-upgrader-gtk
+# is a hard Depends of ubuntu-desktop-minimal (measured 2026-08-26 out of the
+# shipped image), so it cannot be removed without curating the desktop package
+# set ourselves. It can, however, be told to be quiet, and this is the file its
+# own maintainers provide for saying so.
+#
+# It matters more here than on stock Ubuntu. An OS/7 machine has a ZFS root, a
+# LUKS2 container beneath it and boot environments above it, and it is updated
+# through OS/7's own train (docs/RELEASE-AND-UPDATE-PLAN.md). A GNOME dialogue
+# offering the user a do-release-upgrade to the next Ubuntu is not merely
+# off-brand, it is an offer to take a route this product does not support.
+#
+# Ubuntu ships this file with Prompt=lts. This copy arrives through
+# config/includes.chroot-amd64/ at live-build stage 77, after the package that
+# owns it has been installed, so it replaces the conffile rather than racing it.
+# dpkg will see a locally modified conffile on a future upgrade and keep this
+# one, which is the intended outcome.
+
+[DEFAULT]
+# never  - Never check for, or allow upgrading to, a new release.
+Prompt=never

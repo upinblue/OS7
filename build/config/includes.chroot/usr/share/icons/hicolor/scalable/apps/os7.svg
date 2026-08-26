@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OS/7 product mark.
+
+  WHY THIS FILE EXISTS. /etc/os-release has carried LOGO="os7" since the
+  identity work of 2026-08-26 (docs/IDENTITY-PLAN.md I1), and LOGO names an
+  ICON THEME ENTRY. Until this file existed the name resolved to nothing:
+  GNOME's About panel, and anything else that follows that key, fell back to a
+  generic placeholder. A field pointing at an absent icon is the same class of
+  mistake as a font name that silently substitutes.
+
+  It is also the source for the boot splash mark - hook 0035 rasterises this
+  file and diverts plymouth's Ubuntu bgrt-fallback.png to it. One asset, two
+  consumers, so the two cannot disagree.
+
+  COLOURS ARE THE PRODUCT'S OWN, taken from build/lib/palette.py rather than
+  chosen here:
+    #0057ad  FIELD  - the Setup field colour
+    #1289ff  BRAND  - "up in blue", the title stripe
+
+  The wordmark is <text>, not paths, and that is a deliberate trade: a path
+  version cannot be read or corrected by a human, and both consumers that
+  render it (rsvg-convert at build time, GTK's icon loader at run time) have
+  DejaVu Sans, which ships in the image via fonts-dejavu-core. If a renderer
+  without it ever appears, the mark degrades to the blue tile rather than to
+  nothing.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="4" y="4" width="120" height="120" rx="16" ry="16" fill="#0057ad"/>
+  <rect x="4" y="4" width="120" height="10" rx="5" ry="5" fill="#1289ff"/>
+  <text x="64" y="86"
+        font-family="DejaVu Sans, Verdana, sans-serif"
+        font-size="44" font-weight="bold"
+        text-anchor="middle" fill="#ffffff">OS/7</text>
+</svg>
