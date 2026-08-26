@@ -227,10 +227,27 @@ function New-OS7Storage {
 	.PARAMETER BootEnvironment
 		The BE name, from New-OS7BootEnvironmentName.
 
+	.PARAMETER UserName
+		The first account's name, and therefore the one dataset in this whole
+		layout whose NAME is not knowable from the layout itself.
+
+		IT USED TO DEFAULT TO 'os7' AND THAT WAS BUILD-NOTES #74. `os7-setup`
+		never passed it, the account was created afterwards by `useradd -m` with
+		whatever the operator typed, and every machine this repository has ever
+		installed came out with an empty dataset at /home/os7 and the real home
+		an ordinary directory INSIDE the boot environment — which is the one
+		thing §4.4 puts USERDATA outside ROOT to prevent, defeated by a default.
+
+		So there is no default any more. Empty means NO HOME DATASET IS CREATED
+		and the result says so, which is the honest answer for `--storage-only`:
+		that path stops before an account exists, and a dataset named for an
+		account nobody has been asked for is exactly the bug above. Every path
+		that does know the name passes it.
+
 	.EXAMPLE
 		New-OS7Storage -Root /target -RootDevice /dev/mapper/os7_root `
 			-BootDevice /dev/disk/by-partlabel/os7-bpool `
-			-BootEnvironment os7_1.0.0.0_202608241530
+			-BootEnvironment os7_1.0.0.0_202608241530 -UserName os7admin
 	#>
 	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 	param(
@@ -238,8 +255,19 @@ function New-OS7Storage {
 		[Parameter(Mandatory)][string]$RootDevice,
 		[Parameter(Mandatory)][string]$BootDevice,
 		[Parameter(Mandatory)][string]$BootEnvironment,
-		[Parameter()][string]$UserName = 'os7'
+		[Parameter()][string]$UserName = ''
 	)
+
+	# The name becomes both a dataset component and a mountpoint, so it is
+	# checked here as well as in os7-setup's AccountPlan.IsValidUsername. Not
+	# because the installer's check is doubted, but because this module is also
+	# called by hand and `New-OS7Storage -UserName '../../etc'` should fail
+	# saying so rather than create something.
+	if ($UserName -and $UserName -notmatch '^[a-z_][a-z0-9_-]*$') {
+		throw [System.ArgumentException]::new(
+			"'$UserName' is not a valid Linux account name, so it cannot name a " +
+			'dataset or a mountpoint either.', 'UserName')
+	}
 
 	$dry = -not $PSCmdlet.ShouldProcess($RootDevice, 'create OS/7 pools and datasets')
 	$created = [System.Collections.Generic.List[string]]::new()
@@ -388,16 +416,38 @@ function New-OS7Storage {
 	# user's files, and it cannot be retrofitted afterwards (§4.4).
 	& $mk 'rpool/USERDATA' $none
 	& $mk "rpool/USERDATA/root_$suffix"           ([ordered]@{ mountpoint = '/root' })
-	& $mk "rpool/USERDATA/${UserName}_$suffix"    ([ordered]@{ mountpoint = "/home/$UserName" })
+
+	# THE ACCOUNT'S HOME, and the whole of BUILD-NOTES #74 is in this `if`.
+	#
+	# It is created only when somebody has said whose it is. The caller that
+	# does not know — `--storage-only` — gets no home dataset and a result that
+	# says so, rather than one named after a default nobody chose. `useradd -m`
+	# will later find the directory already there and leave it alone (#77), so
+	# whoever creates the account has to finish the job: os7-setup's AccountStep
+	# copies /etc/skel into it and chowns it, and proves both.
+	$userDataset = $null
+	if ($UserName) {
+		$userDataset = "rpool/USERDATA/${UserName}_$suffix"
+		& $mk $userDataset ([ordered]@{ mountpoint = "/home/$UserName" })
+	}
+	else {
+		Write-OS7Step 'no -UserName given: NO home dataset was created (BUILD-NOTES #74)'
+	}
 
 	Write-OS7Step 'datasets created'
 
 	# The one thing on stdout: the result. os7-setup parses this.
+	#
+	# userName and userDataset are in it so that the install log records which
+	# home was made, and so that a check can ask. #74 survived every automated
+	# check in the repository partly because nothing anywhere reported this.
 	[pscustomobject]@{
 		bootEnvironment = $BootEnvironment
 		root            = $Root
 		pools           = @($created)
 		userSuffix      = $suffix
+		userName        = $UserName
+		userDataset     = $userDataset
 		dryRun          = [bool]$dry
 	} | ConvertTo-Json -Compress
 }
@@ -1719,8 +1769,14 @@ function Restore-OS7 {
 #
 # Resolved relative to this file, so a module imported by path from a repository
 # and a module staged into /usr/local/share/powershell/Modules both work.
+#
+# OS7.Home.ps1 rides along in the same list and for the same reasons. It is not
+# backup: it is where a user's home directory lives (BUILD-NOTES #74), which is
+# the fact the backup policy, Restore-OS7 and the installer all depend on and
+# none of them owned. Dot-sourced AFTER the backup files because Get-OS7Home
+# uses Get-OS7PathDataset, which OS7.BackupRestore.ps1 defines.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1')) {
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1')) {
 	$file = Join-Path $PSScriptRoot $part
 	if (-not (Test-Path -LiteralPath $file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -1746,4 +1802,7 @@ Export-ModuleMember -Function New-OS7Storage, New-OS7BootEnvironmentName,
 	# Backup — restore
 	Get-OS7FileVersion, Restore-OS7File,
 	# Backup — the self-test
-	Test-OS7Backup
+	Test-OS7Backup,
+	# Home directories — BUILD-NOTES #74. Where a home lives, and the migration
+	# for machines installed before the installer passed -UserName.
+	Get-OS7Home, Move-OS7Home

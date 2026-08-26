@@ -74,6 +74,14 @@ NEXT_RELEASE = "1.0.1.0"
 # pinned snapshot (checked before this was written), and depends on libc alone.
 MARKER_PACKAGE = "hello"
 
+# The change that must survive the same rollback the package must not, and the
+# two together are what SETUP-PLAN §4.4's split means: package state is INSIDE
+# the boot environment, the user's files are OUTSIDE it. Added 2026-08-26 with
+# BUILD-NOTES #74 — until then no harness here had ever looked at /home, and the
+# machine this repository installs kept the home inside the boot environment
+# where a rollback un-said it.
+HOME_MARKER = f"/home/{USERNAME}/s5-written-in-the-clone.txt"
+
 lab = Lab("s5", target_gb=24, iso_as_disk=True, nic=True)
 
 TPMDIR = os.path.join(lab.dir, "tpm")
@@ -692,6 +700,45 @@ def phase_cycle():
 
         be_table(c, "in the clone")
 
+        # -- A FILE IN THE HOME, WRITTEN FROM THE CLONE -----------------------
+        #
+        # THE PROPERTY THE WHOLE DATASET LAYOUT EXISTS FOR, and until 2026-08-26
+        # nothing in this repository tested it. SETUP-PLAN §4.4 puts USERDATA
+        # outside ROOT so that rolling back a release does not roll back the
+        # user's files. Written HERE — in the clone, after the switch — and
+        # looked for after the rollback, because that is the only ordering that
+        # can tell the two layouts apart: a home inside the boot environment
+        # would take this file with the clone and it would be gone; a home on a
+        # USERDATA dataset is the same dataset in both environments.
+        #
+        # BUILD-NOTES #74 is what happens when nobody checks: `New-OS7Storage`'s
+        # -UserName defaulted to `os7`, Setup never passed it, and the home this
+        # writes to was an ordinary directory in rpool/ROOT/<be> on every
+        # machine this repository has ever installed.
+        ask(c, f"install -d -o {USERNAME} -g {USERNAME} /home/{USERNAME} && "
+               f"printf 'written from the clone\\n' > {HOME_MARKER} && "
+               f"chown {USERNAME}:{USERNAME} {HOME_MARKER} && "
+               f"printf 'S5-%s\\n' MARKWRITTEN; findmnt -no SOURCE /home/{USERNAME}",
+            "write a file into the home", timeout=180)
+        text = ask(c, f"printf 'S5-%s\\n' HOMEDS; findmnt -no SOURCE,FSTYPE "
+                      f"/home/{USERNAME}; stat -c '%U:%G' {HOME_MARKER}",
+                   "which dataset serves the home", timeout=180)
+        homeds = body_of(text, "S5-HOMEDS")
+        print("\n--- the home, in the clone ---")
+        print(homeds.strip()[:300])
+        print("---")
+        if "rpool/USERDATA/" in homeds:
+            print(f"      ok         /home/{USERNAME} is a USERDATA dataset, so the "
+                  "rollback below is a real test of §4.4")
+        else:
+            # NOT a pass, and not a silent one either. On a machine with #74 the
+            # marker WILL disappear at the rollback, and reporting that as "the
+            # rollback works" would be the exact inversion of the truth.
+            print(f"      FAIL       /home/{USERNAME} is not on a USERDATA dataset "
+                  "(BUILD-NOTES #74). The rollback check below cannot mean what "
+                  "it says on this machine.")
+            ok = False
+
         # -- and back ---------------------------------------------------------
         text = ps(c, "Import-Module OS7; Restore-OS7 -Confirm:$false | "
                      "Format-List Name,Active,Menu | Out-String",
@@ -742,6 +789,26 @@ def phase_cycle():
             ok = False
         else:
             print(f"      ok         {MARKER_PACKAGE} is gone: the rollback un-said the change")
+
+        # AND THE OTHER HALF OF THE SAME SENTENCE. The package is gone because
+        # it was inside the boot environment; the file must still be here
+        # because the home is not (SETUP-PLAN §4.4). One rollback, two opposite
+        # outcomes, and a layout that gets either of them wrong is a layout that
+        # cannot be corrected afterwards.
+        text = ask(c, f"printf 'S5-%s\\n' HOMEBACK; cat {HOME_MARKER} 2>&1; "
+                      f"findmnt -no SOURCE /home/{USERNAME}",
+                   "the file written from the clone", timeout=180)
+        homeback = body_of(text, "S5-HOMEBACK")
+        print("\n--- the home, after the rollback ---")
+        print(homeback.strip()[:300])
+        print("---")
+        if "written from the clone" in homeback:
+            print("      ok         THE USER'S FILE SURVIVED THE ROLLBACK — USERDATA "
+                  "is outside ROOT and it shows")
+        else:
+            print(f"      FAIL       {HOME_MARKER} is gone: the rollback took the "
+                  "user's files with the system (BUILD-NOTES #74, SETUP-PLAN §4.4)")
+            ok = False
 
         final = be_table(c, "after the rollback")
         if final.count("os7_") >= 2:

@@ -495,7 +495,7 @@ back-to-bash means here.
 
 ## 11. The finding that limits what this is worth today
 
-### B-Q1 — OPEN: `/home/<user>` is not on a USERDATA dataset
+### B-Q1 — FIXED IN CODE 2026-08-26, STILL OPEN: `/home/<user>` is not on a USERDATA dataset
 
 **Measured 2026-08-25**, and it is not a backup bug:
 
@@ -525,6 +525,37 @@ already installed. It is not made here because the installer is the only code
 path proven to produce a machine that boots, and changing it means running
 `run-phase3.py all` — which needs the Apple Silicon host this was not written on.
 It is the first item in [HANDOFF.md](HANDOFF.md).
+
+#### Written 2026-08-26 — and why this heading still says OPEN
+
+The parameter is passed, the `os7` default is gone, and **the second half turned
+out not to be the parameter at all**: with the dataset already mounted at
+`/home/<user>`, `useradd -m` warns, exits 0, copies no `/etc/skel` and changes no
+ownership ([BUILD-NOTES.md](BUILD-NOTES.md) #77, measured on this image's own
+`passwd`). So the one-line fix on its own would have produced a correctly-placed
+home that its owner cannot write to. `AccountStep` now finishes it and proves
+owner, mode and contents from the filesystem.
+
+For machines already installed there are two new cmdlets in
+`powershell/OS7/OS7.Home.ps1`:
+
+| | |
+|---|---|
+| `Get-OS7Home` | every `/home/*`, its dataset, and whether it is really its own filesystem — asked of ZFS **and** of `stat(2)` separately, with `Agrees` reporting whether the two witnesses said the same thing |
+| `Move-OS7Home` | the migration: snapshot the boot environment, build the dataset on a staging path under `/run`, copy, verify against the original, rename the original aside, move the mountpoint onto the home, verify again. Nothing is deleted without `-RemoveOriginal` |
+
+The reason the migration is not a `mv`: **OpenZFS has defaulted to `overlay=on`
+since 0.8**, so `zfs create -o mountpoint=/home/<user>` mounts over the live
+directory and hides every file in it with no error at all. Staging exists to
+make that unrepresentable rather than merely avoided — the same argument D10
+makes for `rpool/DATA`.
+
+**Why it is still OPEN.** `Move-OS7Home` has never run against real ZFS, and the
+installer change has not been through `run-phase3.py all`. B-6 below is the
+gate; `installer/testing/check-home-logic.py` is what exists in the meantime —
+the real cmdlets against a fake `zfs` whose datasets are real tmpfs mounts, 45
+checks, green in about four seconds, and it found two bugs while being written.
+It checks OS/7's decisions. A machine checks the machine.
 
 ---
 
@@ -608,7 +639,7 @@ by this code. `run-backup.py` is the thing that would change that.
 | **B-3** | Targets, replication, target creation, restore | tier 1 green | **done** |
 | **B-4** | Image: the package, the units, hooks 0060/0075/0090, `check-image.py` | a built ISO | **written, no ISO built** |
 | **B-5** | **`./installer/testing/run-backup.py all` on a booted VM** | tier 2 green | **NOT DONE — the gate** |
-| **B-6** | B-Q1: the installer passes `-UserName`, and a migration for installed machines | `run-phase3.py all` | not started |
+| **B-6** | B-Q1: the installer passes `-UserName`, and a migration for installed machines | `run-phase3.py all`, then `Move-OS7Home` on a machine with real ZFS | **written 2026-08-26; `check-home-logic.py` green (45); NEITHER VM RUN DONE** |
 | **B-7** | A scrub schedule for targets; Intune compliance definitions | | not started |
 | **B-8** | The GUI restore browser, amd64 | | not started |
 

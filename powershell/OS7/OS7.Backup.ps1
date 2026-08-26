@@ -991,16 +991,22 @@ function Get-OS7BackupCoverage {
 
 	.DESCRIPTION
 		MEASURED 2026-08-25, and it is the finding that most changes what this
-		feature is worth on a machine installed today:
+		feature is worth on a machine installed BEFORE 2026-08-26:
 
 		`New-OS7Storage` creates `rpool/USERDATA/<UserName>_<suffix>` mounted at
-		`/home/<UserName>`, and `-UserName` DEFAULTS TO 'os7'. `os7-setup` never
-		passes it (StorageSteps.cs, the New-OS7Storage command it builds), and
-		the account is created afterwards by `useradd -m` with whatever name the
-		operator typed. On the machine this repository has actually installed
-		and booted, that name is `os7admin` — so `/home/os7admin` is an ordinary
-		directory inside the boot environment's root dataset, and
-		`/home/os7` is a mounted dataset with nothing in it.
+		`/home/<UserName>`, and `-UserName` USED TO DEFAULT TO 'os7' while
+		`os7-setup` never passed it. The account is created afterwards by
+		`useradd -m` with whatever name the operator typed. On the machine this
+		repository has actually installed and booted, that name is `os7admin` —
+		so `/home/os7admin` is an ordinary directory inside the boot
+		environment's root dataset, and `/home/os7` is a mounted dataset with
+		nothing in it.
+
+		FIXED FOR NEW INSTALLS on 2026-08-26: the installer passes the account
+		name, and the default is gone. This function stays exactly as it is,
+		because every machine installed before that date still has the problem
+		and because a coverage report that assumed the fix would be a report
+		that stops looking. `Move-OS7Home` is the migration; BUILD-NOTES #74.
 
 		Two consequences, and neither is a backup problem:
 
@@ -1061,9 +1067,10 @@ function Get-OS7BackupCoverage {
 				if (-not $ds) { 'not on ZFS' }
 				elseif (-not $ownDataset) {
 					"inside $ds — this directory has no dataset of its own, so it can " +
-					'only be snapshotted by snapshotting the boot environment. ' +
-					'New-OS7Storage was not told the account name (its -UserName ' +
-					"defaults to 'os7'), so the dataset it made is /home/os7."
+					'only be snapshotted by snapshotting the boot environment. On a ' +
+					'machine installed before 2026-08-26, New-OS7Storage was never ' +
+					"told the account name and made /home/os7 instead (BUILD-NOTES " +
+					"#74). Move-OS7Home fixes it."
 				}
 				elseif ($covered.Contains($ds)) { 'covered' }
 				else { "on $ds, which no backup source covers" })

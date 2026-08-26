@@ -37,6 +37,12 @@
 		'Mount-OS7BackupTarget', 'Dismount-OS7BackupTarget',
 		'Get-OS7FileVersion', 'Restore-OS7File',
 		'Test-OS7Backup',
+		# Implemented — home directories (BUILD-NOTES #74). Get-OS7Home says
+		# whether a home is on a dataset of its own, asking ZFS and stat(2)
+		# separately; Move-OS7Home migrates one that is not. The installer half
+		# of #74 is in os7-setup; this is the half for machines already
+		# installed. Never run against real ZFS — docs/BACKUP-PLAN.md B-6.
+		'Get-OS7Home', 'Move-OS7Home',
 		# Stubs — the command surface docs/DECISIONS.md documents
 		'Set-OS7Mode', 'Update-OS7')
 	CmdletsToExport   = @()

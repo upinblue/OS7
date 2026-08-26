@@ -32,9 +32,22 @@ WHAT IS ASSERTED, in order, because each one fails differently:
   6. the version on the disk is the version on the medium
   7. /etc/os-release says OS/7, and still says ID=ubuntu for Intune
   8. the hostname is the one that was typed
+  9. /home/<account> is a rpool/USERDATA dataset, and st_dev agrees
+ 10. it belongs to the account and was furnished from /etc/skel
 
 7 is the check nothing else can make: os-release on the INSTALLED system, after
 `unsquashfs` copied it and ReleaseIdentityStep rewrote VARIANT.
+
+9 AND 10 ARE HERE BECAUSE THEIR ABSENCE SHIPPED A BUG. Until 2026-08-26
+`grep -rIn "/home" installer/testing/*.py` returned nothing — every harness in
+this directory checked the pools, the datasets, the bootloader and the account's
+ability to log in, and none of them looked at where that account's FILES landed.
+`New-OS7Storage`'s `-UserName` defaulted to `os7` and Setup never passed it, so
+every machine this repository installed had an empty dataset at /home/os7 and
+the real home an ordinary directory inside the boot environment — which
+`Restore-OS7` rolls back with the system, and which is exactly what SETUP-PLAN
+§4.4 puts USERDATA outside ROOT to prevent. It passed `all` throughout.
+BUILD-NOTES #74; #77 is the half `useradd` contributed.
 
 `walk` IS HERE AND NOT IN run-phase2.py, and that is a decision rather than a
 filing choice. The interactive path performs a FULL INSTALL - there is no
@@ -314,7 +327,7 @@ def phase_boot():
             print(c.text()[-3000:])
             print("      FAIL  the machine never got as far as asking for the passphrase")
             return False
-        print("      ok    1/8 GRUB, the kernel and the initramfs all ran")
+        print("      ok    1/10 GRUB, the kernel and the initramfs all ran")
         c.send(PASSPHRASE)
 
         j = c.expect([r"\blogin:", r"\(initramfs\)", r"Kernel panic",
@@ -324,8 +337,8 @@ def phase_boot():
             print(c.text()[-3000:])
             print("      FAIL  unlocked, but never reached a login prompt")
             return False
-        print("      ok    2/8 the pool imported and / was mounted")
-        print("      ok    3/8 a login prompt")
+        print("      ok    2/10 the pool imported and / was mounted")
+        print("      ok    3/10 a login prompt")
 
         # 4: THE ACCOUNT SETUP CREATED, with the password Setup hashed.
         # This is the check BUILD-NOTES #17 exists for: `chpasswd` cannot work in
@@ -333,10 +346,21 @@ def phase_boot():
         # that the hash is right is a login.
         live_login(c, user=USERNAME, password=PASSWORD)
         to_plain_bash(c)
-        print(f"      ok    4/8 {USERNAME} logged in with the password Setup set")
+        print(f"      ok    4/10 {USERNAME} logged in with the password Setup set")
 
+        # WHY findmnt AND stat AND ls FOR /home, and no `zfs list` anywhere:
+        # this is a login shell belonging to the account Setup created, and
+        # `zfs list` needs /dev/zfs, so it would need a sudo password typed over
+        # a serial line. findmnt names the dataset serving a path — which is the
+        # whole question — and stat answers from st_dev, which needs nothing at
+        # all. AccountStep asks the same two questions inside the chroot.
         body = ask(c, "echo P3-"'"BEGIN"'"; "
                       "findmnt -no SOURCE,FSTYPE /; "
+                      f"echo HOMEMNT $(findmnt -no SOURCE,FSTYPE /home/{USERNAME}); "
+                      f"echo HOMESTAT $(stat -c '%U:%G %a %d' /home/{USERNAME}); "
+                      "echo ROOTDEV $(stat -c '%d' /); "
+                      f"echo HOMEHAS $(ls -A /home/{USERNAME} | tr '\\n' ' '); "
+                      "echo HOMEDIRS $(ls -1 /home | tr '\\n' ' '); "
                       "cat /etc/os-release; "
                       "hostname; "
                       "cat /proc/cmdline; "
@@ -349,19 +373,19 @@ def phase_boot():
 
         # 5: / is served from a boot environment, not from anything else.
         if f"rpool/ROOT/os7_{version}_" in body and "zfs" in body:
-            print(f"      ok    5/8 / is rpool/ROOT/os7_{version}_…")
+            print(f"      ok    5/10 / is rpool/ROOT/os7_{version}_…")
         else:
             print(f"      FAIL  / is not a boot environment named for {version}")
             ok = False
 
         # 6/7: the identity, on the INSTALLED system.
         if f'IMAGE_VERSION="{version}"' in body or f"IMAGE_VERSION={version}" in body:
-            print(f"      ok    6/8 IMAGE_VERSION is {version}")
+            print(f"      ok    6/10 IMAGE_VERSION is {version}")
         else:
             print(f"      FAIL  IMAGE_VERSION on the disk is not {version}")
             ok = False
         if "ID=ubuntu" in body and 'VERSION_ID="26.04"' in body:
-            print("      ok    7/8 ID and VERSION_ID are untouched (Intune, L16)")
+            print("      ok    7/10 ID and VERSION_ID are untouched (Intune, L16)")
         else:
             print("      FAIL  the Intune-matched os-release fields were changed")
             ok = False
@@ -372,7 +396,7 @@ def phase_boot():
 
         # 8: the name that was typed.
         if HOSTNAME in body:
-            print(f"      ok    8/8 the computer is called {HOSTNAME}")
+            print(f"      ok    8/10 the computer is called {HOSTNAME}")
         else:
             print(f"      FAIL  the hostname is not {HOSTNAME}")
             ok = False
@@ -383,6 +407,77 @@ def phase_boot():
         else:
             print("      FAIL  boot=zfs is missing - this boot was luck")
             ok = False
+
+        # -- 9 and 10: WHERE THE USER'S FILES ARE ---------------------------
+        #
+        # ADDED 2026-08-26, and the reason it is worth a paragraph is that its
+        # ABSENCE is what let BUILD-NOTES #74 ship. `grep -rIn "/home"
+        # installer/testing/*.py` returned nothing: every harness here checked
+        # the pools, the datasets, the bootloader and the account's ability to
+        # log in, and not one of them looked at where that account's files
+        # landed. So a machine whose home directory was inside the boot
+        # environment — the one thing SETUP-PLAN §4.4's layout exists to
+        # prevent — passed `run-phase3.py all` for two months.
+        #
+        # Setup now passes -UserName to New-OS7Storage and AccountStep proves
+        # the home is its own filesystem inside the chroot. This is the same
+        # claim, made about a MACHINE THAT HAS BOOTED, which is the only place
+        # `zfs mount -a` and the dataset's canmount have had their say.
+        def line(tag):
+            for l in body.replace("\r", "").splitlines():
+                if l.strip().startswith(tag + " "):
+                    return l.strip()[len(tag) + 1:].strip()
+            return ""
+
+        home_mnt = line("HOMEMNT")
+        home_stat = line("HOMESTAT")
+        root_dev = line("ROOTDEV")
+        home_has = line("HOMEHAS")
+        home_dirs = line("HOMEDIRS")
+        print(f"    /home/{USERNAME}: {home_mnt or '(not a mount point)'} | {home_stat}")
+        print(f"    /home holds: {home_dirs}")
+
+        if "rpool/USERDATA/" in home_mnt and "zfs" in home_mnt:
+            print(f"      ok    9/10 /home/{USERNAME} is {home_mnt.split()[0]}")
+        else:
+            print(f"      FAIL  9/10 /home/{USERNAME} is NOT on a USERDATA dataset "
+                  "- a rollback would take the user's files with the system "
+                  "(BUILD-NOTES #74)")
+            ok = False
+
+        # THE SECOND WITNESS, and it is not redundant: findmnt reads
+        # /proc/self/mountinfo, and st_dev is the kernel's answer about the
+        # inode itself. The failure this pair catches is a mount table that says
+        # one thing while the directory is served by another.
+        parts = home_stat.split()
+        if len(parts) == 3 and root_dev and parts[2] != root_dev:
+            print(f"      ok         st_dev agrees: {parts[2]}, and / is {root_dev}")
+        else:
+            print(f"      FAIL       st_dev says /home/{USERNAME} is on the same "
+                  f"filesystem as / ({home_stat!r} vs {root_dev!r})")
+            ok = False
+
+        owned = parts[0] == f"{USERNAME}:{USERNAME}" if parts else False
+        furnished = ".bashrc" in home_has
+        if owned and furnished:
+            print(f"      ok   10/10 it is {parts[0]}, mode {parts[1]}, "
+                  "and furnished from /etc/skel")
+        else:
+            # `useradd -m` finds the directory already there, warns, EXITS 0 and
+            # copies no skel and changes no ownership (BUILD-NOTES #77). A home
+            # the account cannot write to is the failure this catches.
+            print(f"      FAIL 10/10 /home/{USERNAME} is '{home_stat}' holding "
+                  f"'{home_has}' - useradd left it alone (BUILD-NOTES #77)")
+            ok = False
+
+        # The phantom. Every machine installed before 2026-08-26 has an empty
+        # dataset here, named after New-OS7Storage's old -UserName default.
+        if " os7 " in f" {home_dirs} ":
+            print("      FAIL       /home/os7 exists: New-OS7Storage was not told "
+                  "the account name")
+            ok = False
+        else:
+            print("      ok         and there is no phantom /home/os7 beside it")
         return ok
     finally:
         c.close()

@@ -1,0 +1,61 @@
+# OS/7 — the container `check-home-logic.py` runs in.
+#
+# WHY A CONTAINER AT ALL, when check-be-logic.py runs on the host: this one
+# needs two things macOS does not have. GNU `find -printf`, `diff
+# --no-dereference` and `stat -c` are what Move-OS7Home verifies a copy with —
+# BSD equivalents do not take those options — and the whole point of the check
+# is that the migrated home really is a SEPARATE FILESYSTEM, which needs
+# mount(2). So: Linux, root, and a private mount namespace.
+#
+# THE POWERSHELL VERSION IS NOT PINNED HERE. build/config/os7-release.conf is
+# the only place in this repository a version number or an archive URL may live
+# (CLAUDE.md), so check-home-logic.py reads the pin and passes it in, hash and
+# all, exactly as build hook 0020 does for the image itself.
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# python3      the check itself and the fake zfs
+# util-linux   unshare, mount, findmnt
+# psmisc is DELIBERATELY ABSENT, so that `fuser` is missing and Test-OS7HomeIdle
+# has to report one of its three probes as NOT CHECKED. That is a rule this
+# repository states out loud — a check that cannot see something must say so —
+# and it is only tested if something is genuinely unavailable.
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+      python3 curl ca-certificates util-linux coreutils findutils diffutils \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG PWSH_VERSION
+ARG PWSH_SHA256_x64
+ARG PWSH_SHA256_arm64
+
+# The same tarball, the same hash check and the same destination as hook 0020.
+# A hash that does not match fails the build rather than producing a container
+# that runs the module under something nobody chose.
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+      amd64) pa=x64;   sha="${PWSH_SHA256_x64}" ;; \
+      arm64) pa=arm64; sha="${PWSH_SHA256_arm64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-${pa}.tar.gz"; \
+    curl -fsSL -o /tmp/pwsh.tar.gz "${url}"; \
+    echo "${sha}  /tmp/pwsh.tar.gz" | sha256sum -c -; \
+    mkdir -p /opt/microsoft/powershell/7; \
+    tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7; \
+    chmod +x /opt/microsoft/powershell/7/pwsh; \
+    ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh; \
+    rm /tmp/pwsh.tar.gz
+
+# PowerShell is a .NET application and aborts at startup without ICU. Resolved
+# from the archive rather than hardcoded, for hook 0020's reason: the soname
+# version changes between Ubuntu releases.
+RUN set -eu; \
+    apt-get update -qq; \
+    icu="$(apt-cache search --names-only '^libicu[0-9]+$' | awk '{print $1}' | sort -V | tail -n1)"; \
+    [ -n "${icu}" ] || { echo "no libicu in the archive" >&2; exit 1; }; \
+    apt-get install -y --no-install-recommends "${icu}"; \
+    rm -rf /var/lib/apt/lists/*; \
+    pwsh -NoProfile -c '$PSVersionTable.PSVersion.ToString()'

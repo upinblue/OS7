@@ -432,6 +432,23 @@ internal sealed class AccountStep : IStep
     /// its own comments that a real installer must write the hash instead. This
     /// is that. The hash is computed on the LIVE system, where PAM is not
     /// involved at all, and handed to `useradd -p`.
+    ///
+    /// AND `useradd -m` DOES NOT CREATE THE HOME DIRECTORY HERE, which is
+    /// BUILD-NOTES #77 and the second half of #74.
+    ///
+    /// `New-OS7Storage` created `rpool/USERDATA/&lt;user&gt;_&lt;suffix&gt;` at
+    /// `/home/&lt;user&gt;` in Phase 2 and ZFS mounted it, so by the time this step
+    /// runs the directory already exists. Measured on Ubuntu 26.04's own
+    /// `passwd 1:4.17.4-2ubuntu3`: in that case `useradd -m` prints
+    /// "the home directory … already exists / Not copying any file from skel
+    /// directory into it" on stderr, **exits 0**, copies no `/etc/skel`, and
+    /// changes neither owner nor mode. The home therefore comes out `root:root`
+    /// and empty, and the account cannot write to its own home.
+    ///
+    /// So this step finishes what `useradd` declined to do, and then asks the
+    /// filesystem whether it worked. That last part is not decoration: `chown`
+    /// exits 0 on a directory it did not change, and #74 existed for a month
+    /// because nothing anywhere ever looked at `/home`.
     /// </summary>
     public void Run(Executor x)
     {
@@ -501,6 +518,84 @@ internal sealed class AccountStep : IStep
             fi
             echo "    /etc/shadow holds a $LEN-character hash for {a.Username}"
             id '{a.Username}'
+
+            echo ">>> the home directory"
+            # BUILD-NOTES #74 and #77. The directory is already here - Phase 2
+            # created rpool/USERDATA/{a.Username}_<suffix> for it and ZFS mounted
+            # it - so `useradd -m` above took its "already exists" path: warned,
+            # exited 0, copied no skel and changed no ownership. Finish it.
+            HOME_DIR=$(getent passwd '{a.Username}' | cut -d: -f6)
+            if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
+                echo "!!! {a.Username} has no home directory" >&2
+                exit 1
+            fi
+
+            # IS IT ITS OWN FILESYSTEM? Asked with st_dev, not with `zfs list`
+            # and not with findmnt. This chroot's /proc is a bind of the live
+            # system's and the pools are imported at an altroot, so both of
+            # those answer about paths this namespace names differently.
+            # Comparing the device number of the home against the device number
+            # of / needs neither, and it is the same question run-phase3.py
+            # asks the booted machine.
+            DEV_HOME=$(stat -c %d "$HOME_DIR")
+            DEV_ROOT=$(stat -c %d /)
+            if [ "$DEV_HOME" = "$DEV_ROOT" ]; then
+                echo "!!! $HOME_DIR is on the same filesystem as /, so it has no" >&2
+                echo "!!! dataset of its own and a rollback would take the user's" >&2
+                echo "!!! files with the system. BUILD-NOTES #74." >&2
+                exit 1
+            fi
+            echo "    $HOME_DIR is its own filesystem (dev $DEV_HOME; / is $DEV_ROOT)"
+
+            # /etc/skel, because useradd would not. ONLY into an empty
+            # directory: `R=Repair` installs beside an existing USERDATA, and a
+            # home that already holds somebody's files must not be written over.
+            SKEL=no
+            if [ -z "$(ls -A "$HOME_DIR")" ]; then
+                cp -a /etc/skel/. "$HOME_DIR"/
+                SKEL=yes
+                echo "    copied /etc/skel into $HOME_DIR"
+            else
+                echo "    $HOME_DIR already has files in it; /etc/skel was not copied"
+            fi
+
+            # The mode useradd would have used, READ rather than assumed.
+            # login.defs carries HOME_MODE on this image (0750, measured) and
+            # falls back to 0777 & ~UMASK where it does not.
+            MODE=0755
+            if grep -q '^HOME_MODE' /etc/login.defs; then
+                MODE=$(grep -m1 '^HOME_MODE' /etc/login.defs | tr -s ' \t' ' ' | cut -d' ' -f2)
+            fi
+            chown -R '{a.Username}':'{a.Username}' "$HOME_DIR"
+            chmod "$MODE" "$HOME_DIR"
+
+            # PROOF, from the filesystem rather than from three exit codes.
+            OWNER=$(stat -c '%U:%G' "$HOME_DIR")
+            GOT=$(stat -c '%a' "$HOME_DIR")
+            WANT=$(printf '%o' $(( 8#$MODE )))
+            if [ "$OWNER" != "{a.Username}:{a.Username}" ]; then
+                echo "!!! $HOME_DIR is owned by $OWNER, not by {a.Username}" >&2
+                exit 1
+            fi
+            if [ "$GOT" != "$WANT" ]; then
+                echo "!!! $HOME_DIR is mode $GOT, not $WANT" >&2
+                exit 1
+            fi
+            # WHAT IS IN IT, and the two branches above are checked apart.
+            # An earlier version asserted `.bashrc` unconditionally and failed
+            # the repair case, where not copying skel is the correct behaviour -
+            # found by running this script, not by reading it.
+            NSKEL=$(ls -A /etc/skel | wc -l)
+            NHOME=$(ls -A "$HOME_DIR" | wc -l)
+            if [ "$NHOME" -eq 0 ]; then
+                echo "!!! $HOME_DIR is empty: the account has nowhere furnished to land" >&2
+                exit 1
+            fi
+            if [ "$SKEL" = yes ] && [ "$NHOME" -lt "$NSKEL" ]; then
+                echo "!!! $HOME_DIR holds $NHOME entries but /etc/skel has $NSKEL" >&2
+                exit 1
+            fi
+            echo "    $HOME_DIR is $OWNER, mode $GOT, $NHOME entries (skel copied: $SKEL)"
             """;
 
         _t.Chroot(x, $"creating {a.Username}", script);

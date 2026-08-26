@@ -54,6 +54,10 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
                                           #   passphrase typed, then clone a boot
                                           #   environment, activate it, roll back
 ./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, 3s
+./installer/testing/check-home-logic.py   # Get-/Move-OS7Home's decisions: a fake
+                                          #   zfs whose datasets are real tmpfs
+                                          #   mounts. No VM, no ZFS, ~4s. Runs
+                                          #   itself in a container (#74, #77)
 
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
@@ -198,14 +202,22 @@ the ones a fresh session hits first.
   was unreachable for a whole commit. `--unattend`, `--storage-only` and the
   screen-walking harness each missed it for a different reason. The whole plan is
   checked once, at `ExecuteScreen.Start`.
-- **#74 — `/home/<user>` is NOT on a USERDATA dataset unless the account is
-  called `os7`.** `New-OS7Storage`'s `-UserName` defaults to `os7` and
-  `os7-setup` never passes it, so the machine this repo has booted has an empty
+- **#74 — `/home/<user>` was NOT on a USERDATA dataset unless the account was
+  called `os7`.** `New-OS7Storage`'s `-UserName` defaulted to `os7` and
+  `os7-setup` never passed it, so the machine this repo has booted has an empty
   dataset at `/home/os7` and the real home inside the boot environment — where
-  `Restore-OS7` rolls it back and no snapshot policy may follow. One parameter
-  fixes new installs; existing ones need a migration. Nothing in
-  `installer/testing/` looks at `/home`, which is why an installer that passed
-  `run-phase3.py all` still has it.
+  `Restore-OS7` rolls it back and no snapshot policy may follow. **Fixed in code
+  2026-08-26 and NOT YET VERIFIED**: the fix changes the storage step and the
+  account step of the only path that produces a machine that boots, so it needs
+  `run-phase3.py all`, which needs the Mac. Nothing in `installer/testing/`
+  looked at `/home` — which is why an installer that passed `run-phase3.py all`
+  still had it — and checks 9 and 10 are now what stop that recurring.
+- **#77 — `useradd -m` does NOTHING when the home directory already exists.**
+  It warns, **exits 0**, copies no `/etc/skel` and changes no ownership
+  (measured on this image's `passwd`). Since #74's fix the home is always there
+  first, so this is the only path an OS/7 install takes: the naive one-parameter
+  fix yields a correctly-placed home that is `root:root`, empty, and unwritable
+  by its owner. `AccountStep` finishes the job and proves it from `stat`.
 - **#66 — code that replaces a spike must be DIFFED against it.** The installer's
   TPM step was written from the same notes as `s4-tpm-enroll.sh` and took a
   different route: no LUKS2 token handler in the initramfs, and
@@ -282,7 +294,10 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four
                             files DOT-SOURCED by OS7.psm1, so a staging that
                             copied the .psm1 alone is a real failure mode -
-                            hook 0060 checks all four
+                            hook 0060 checks all five
+  OS7.Home.ps1              where a home directory lives, and the migration for
+                            machines installed before Setup passed -UserName
+                            (#74). Dot-sourced too, hence "five"
 build/config/includes.chroot/
                             files copied verbatim into the image: the console
                             defaults, and the os7-backup units and their scripts

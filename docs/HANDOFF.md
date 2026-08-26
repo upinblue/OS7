@@ -85,16 +85,51 @@ every answer. Until it passes, `Get-OS7BackupStatus` is a claim about code.
 [BACKUP-PLAN.md](BACKUP-PLAN.md) B-5 is the gate; §12 is the honest limitation
 list, and BL1 is at the top of it.
 
-**AND FIX #74 WHILE THE HARNESS IS WARM, because it is worth more than the
-backup feature is.** `New-OS7Storage`'s `-UserName` defaults to `os7` and
-`os7-setup` never passes it, so on the machine this repository has actually
-booted the account's home is an ordinary directory **inside the boot
-environment** and `/home/os7` is an empty dataset. `Restore-OS7` therefore rolls
-a user's files back with the system — the one thing SETUP-PLAN §4.4's layout
-exists to prevent. One parameter in `StorageSteps` fixes new installs; existing
-ones need a migration that creates the dataset and moves the directory into it.
-It needs `run-phase3.py all`, which is why it was not done from Windows.
-docs/DECISIONS.md open question 8, BUILD-NOTES #74, BACKUP-PLAN B-Q1.
+**#74 IS WRITTEN AND UNVERIFIED, AND IT IS THE FIRST THING TO RUN ON THE MAC.**
+`New-OS7Storage`'s `-UserName` defaulted to `os7` and `os7-setup` never passed
+it, so on the machine this repository has actually booted the account's home is
+an ordinary directory **inside the boot environment** and `/home/os7` is an
+empty dataset — `Restore-OS7` rolls a user's files back with the system, the one
+thing SETUP-PLAN §4.4's layout exists to prevent. On 2026-08-26 all of it was
+written, from Windows, and **the gate was not run**:
+
+```bash
+./installer/testing/run-phase3.py all
+```
+
+That is what decides whether this landed. It changes the storage step and the
+account step of the only code path in this repository proven to produce a
+machine that boots, so `install`, `boot` and `walk` all have to pass — and
+checks **9 and 10 are new**: `/home/<account>` must be a `rpool/USERDATA`
+dataset on a machine that has BOOTED, owned by the account and furnished from
+`/etc/skel`. `run-s5.py cycle` gained the other half: a file written into the
+home from the clone must still be there after the rollback that removes the
+clone's package.
+
+What is already checked, and what it does not cover:
+
+```bash
+./installer/testing/check-home-logic.py    # 45 checks, ~4s, no VM and no ZFS
+pwsh -c 'Import-Module ./powershell/OS7/OS7.psd1 -Force; Test-OS7Backup'   # 63
+```
+
+`check-home-logic.py` runs `Get-OS7Home` and `Move-OS7Home` — the migration for
+machines already installed — against a fake `zfs` whose datasets are real tmpfs
+mounts, inside a container it builds itself from the PowerShell
+`build/config/os7-release.conf` pins. It checks OS/7's DECISIONS: that the
+dataset is never created at the home directly (`overlay=on` would hide the
+files), that the original is renamed and not deleted, that a bad copy is caught
+and undone. **It is not a test of ZFS and not a test of a machine** — see
+BACKUP-PLAN B-6, which is the gate `Move-OS7Home` has never been through.
+
+Also new, and worth reading before touching any of it: BUILD-NOTES **#77** —
+`useradd -m` warns, **exits 0**, copies no `/etc/skel` and changes no ownership
+when the home directory already exists, which it now always does. The
+one-parameter fix on its own would have produced a correctly-placed home that
+its owner cannot write to.
+
+docs/DECISIONS.md open question 8, BUILD-NOTES #74 and #77, BACKUP-PLAN B-Q1,
+docs/SESSION-HOME-DATASET.md.
 
 **SPIKE S5 PASSED on 2026-08-25** — the last open gate in
 [RELEASE-AND-UPDATE-PLAN.md](RELEASE-AND-UPDATE-PLAN.md) §10. A machine

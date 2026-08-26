@@ -3490,6 +3490,58 @@ one-liner and is not safe to write blind. `Get-OS7BackupCoverage` reports the ga
 on every machine in the meantime, and docs/BACKUP-PLAN.md B-Q1 holds it open.
 Do not close it without running `run-phase3.py all`.
 
+### What was written on 2026-08-26, and what is still owed
+
+**The one parameter is passed.** `StorageSteps.PoolsAndDatasetsStep` now builds
+`-UserName '<account>'` into the `New-OS7Storage` command. The name is available
+there because the whole plan is validated at `ExecuteScreen.Start` and at
+`--unattend`, which are the executor's only two doors, so
+`plan.Account.Username` has already been through `AccountPlan.IsValidUsername`
+by the time any storage step runs. That is not a violation of #45 — #45 is about
+a SCREEN validating what it did not collect; this is the executor, whose
+contract is a complete plan.
+
+**And the default is gone.** `New-OS7Storage -UserName` no longer defaults to
+`os7`; empty means **no home dataset is created at all**, and the result object
+gained `userName` and `userDataset` so the install log records which home was
+made. `--storage-only` — the one caller that legitimately has no account name —
+therefore produces no `/home/<x>` dataset instead of one named after a default
+nobody chose. A dataset for an account nobody has been asked for is what this
+whole entry is about.
+
+**The second half was not the parameter, and it is #77.** With the dataset
+mounted at `/home/<user>` before the account exists, `useradd -m` takes its
+"already exists" path: it warns, **exits 0**, copies no `/etc/skel` and changes
+no ownership. The naive one-line fix therefore produces a machine whose home is
+correctly placed, `root:root`, and empty — the account cannot write to it. It is
+measured, and `AccountStep` now finishes the job and proves it did.
+
+**Three checks now look at `/home`, where none did:**
+
+| | |
+|---|---|
+| `AccountStep`, in the chroot | st_dev of the home against st_dev of `/`, then owner, mode and what is in it. Fails the install rather than producing the machine this entry describes |
+| `run-phase3.py boot`, checks 9 and 10 | the same claim about a machine that has BOOTED, which is the only place `zfs mount -a` and `canmount` have had their say. `findmnt` names the dataset and `stat -c %d` is the second witness |
+| `run-s5.py cycle` | a file written into the home **from the clone**, looked for after the rollback. The package must be gone and the file must not: one rollback, two opposite outcomes, which is the whole of §4.4 in one assertion |
+
+**For machines already installed: `Get-OS7Home` and `Move-OS7Home`**
+(`powershell/OS7/OS7.Home.ps1`). The design problem that makes the migration
+more than a `mv` is that **OpenZFS has defaulted to `overlay=on` since 0.8**, so
+`zfs create -o mountpoint=/home/<user>` mounts straight over the live directory
+and hides every file in it, silently. So the dataset is created on a staging
+path under `/run`, filled, verified against the original, and only then moved
+into place — after the original has been renamed aside, never deleted, with the
+boot environment snapshotted first. `installer/testing/check-home-logic.py` runs
+all of that against a fake `zfs` whose datasets are real tmpfs mounts, in
+seconds: 45 checks, green.
+
+**WHAT IS STILL OWED, and it is the whole of the reason this entry is not
+closed:** `./installer/testing/run-phase3.py all` has not been run. It is
+`qemu-system-aarch64 -machine virt,accel=hvf` and needs the Apple Silicon host;
+the work above was done on Windows. The installer is the only code path in this
+repository proven to produce a machine that boots, and it has been changed. The
+migration has additionally never touched real ZFS — BACKUP-PLAN B-6.
+
 ## 75. A package can enable a timer whose services are gated on a file it does not ship
 
 **Found 2026-08-26**, reading the `sanoid` package's own postinst and units.
@@ -3572,3 +3624,61 @@ $script:ZfsCommandOverride = {
 The object reference is captured; the object it points at is shared. Same family
 as #60, #65 and #68 — PowerShell doing exactly what it documents, somewhere
 nobody looks.
+
+## 77. `useradd -m` does nothing at all when the home directory already exists
+
+**Measured 2026-08-26**, on Ubuntu 26.04's own `passwd 1:4.17.4-2ubuntu3`, while
+fixing #74. Three runs of the identical command, differing only in what was at
+`/home/<user>` beforehand:
+
+```
+home does not exist          exit 0   home is  fresh:fresh 750   [.bash_logout .bashrc .profile]
+home exists as a directory   exit 0   home is  root:root   755   []
+home exists as a MOUNT       exit 0   home is  root:root  1777   []
+```
+
+and in the second and third cases, on stderr:
+
+```
+useradd: warning: the home directory /home/<user> already exists.
+useradd: Not copying any file from skel directory into it.
+```
+
+**A warning, and exit 0.** That is shadow-utils behaving exactly as documented —
+`create_home()` does nothing if the directory is there, and the `copy_tree` of
+`/etc/skel` is inside the branch that created it, as is the `chown`. Nothing is
+wrong with `useradd`. What is wrong is expecting `-m` to mean "make sure the
+home is usable" when it means "make the directory if there is none".
+
+**Why it matters to OS/7 specifically, and why it is the OPPOSITE of a corner
+case here.** The fix for #74 is that `New-OS7Storage` creates the USERDATA
+dataset for `/home/<user>` in Phase 2 and ZFS mounts it. So on an OS/7 install
+the home directory ALWAYS exists before `useradd` runs, and this path is the
+only one ever taken. The naive one-parameter fix would therefore have produced:
+
+```
+/home/os7admin   rpool/USERDATA/os7admin_<suffix>, correctly placed,
+                 owned by root:root, mode 0755, and empty
+```
+
+— a home its owner cannot write to and that has no `.profile`, on a machine
+where every automated check passes. That is a worse machine than the one #74
+describes, arrived at by fixing #74.
+
+**So the step that creates an account owns the home, not `useradd`.**
+`AccountStep` copies `/etc/skel` when the directory is empty (and deliberately
+not when it is not — `R=Repair` installs beside an existing USERDATA), chowns,
+chmods to the `HOME_MODE` it READS out of `/etc/login.defs` — 0750 on this
+image, not the 0755 that gets assumed — and then asks the filesystem what it
+actually did: owner, mode, and how many entries are in there.
+
+**The check for skel was wrong the first time, and running it is what said so.**
+It asserted `.bashrc` unconditionally, which fails the repair case where not
+copying skel is the correct behaviour. Both the correct case and the two failure
+cases were exercised by extracting the generated script out of `os7-setup
+--dry-run`'s log and running it against a real `useradd` in a container — the
+same argument as #16 and #64: the shell an installer GENERATES is a program, and
+nobody had ever run it.
+
+Same family as #72 and #75, and the family is the largest in this file: **a
+command reported success and the thing it was meant to change did not change.**

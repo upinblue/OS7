@@ -260,6 +260,25 @@ internal sealed class PoolsAndDatasetsStep : IStep
     ///
     /// The module writes progress to stderr and exactly one JSON object to
     /// stdout, so the two can be read apart.
+    ///
+    /// AND IT PASSES `-UserName`, which is BUILD-NOTES #74 and the reason this
+    /// comment exists. The module creates `rpool/USERDATA/&lt;name&gt;_&lt;suffix&gt;` at
+    /// `/home/&lt;name&gt;`, and until 2026-08-26 the name it used was the module's
+    /// own default — `os7` — because this command string carried four arguments
+    /// and not five. The account is created six steps later by `useradd -m`
+    /// under whatever the operator typed, so every machine this repository has
+    /// installed came out with an empty dataset at `/home/os7` and the real
+    /// home an ordinary directory inside the boot environment. `Restore-OS7`
+    /// then rolls a user's files back with the system, which is exactly what
+    /// §4.4 puts USERDATA outside ROOT to prevent.
+    ///
+    /// THE NAME IS AVAILABLE HERE, and that is the whole fix. `InstallPlan` is
+    /// validated as a whole before the executor starts — `ExecuteScreen.Start`
+    /// and `--unattend` are its only two callers — so by the time any storage
+    /// step runs, `plan.Account.Username` has been through
+    /// `AccountPlan.IsValidUsername`. It is not a violation of #45's rule
+    /// (a screen validates only what IT collected): this is not a screen, it is
+    /// the executor, and the executor's contract is a complete plan.
     /// </summary>
     public void Run(Executor x)
     {
@@ -276,6 +295,7 @@ internal sealed class PoolsAndDatasetsStep : IStep
             $"-RootDevice '{device}' " +
             $"-BootDevice '{StorageSteps.BpoolPath}' " +
             $"-BootEnvironment '{be}' " +
+            UserNameArgument() +
             (x.DryRun ? "-WhatIf" : "-Confirm:$false");
 
         // Registered BEFORE the call, not after: if New-OS7Storage fails halfway
@@ -291,6 +311,42 @@ internal sealed class PoolsAndDatasetsStep : IStep
 
         string json = RunPwsh(x, script);
         if (!x.DryRun && json.Length > 0) Log.Info($"New-OS7Storage: {json.Trim()}");
+    }
+
+    /// <summary>
+    /// `-UserName '&lt;account&gt;' ` — or nothing at all, and the empty case is a
+    /// decision rather than a fallback.
+    ///
+    /// `--storage-only` stops before an account exists (Program.cs: it
+    /// validates `plan.Storage` alone, deliberately), so there is no name to
+    /// pass. The module's answer to that is to create NO home dataset and to
+    /// say so in its result — not to invent one. A dataset named after a
+    /// default is what #74 was.
+    ///
+    /// An invalid name here would be a plan that reached the executor without
+    /// being validated, which cannot happen through either caller — so it is a
+    /// bug in Setup rather than a bad answer from an operator, and it stops the
+    /// install BEFORE the disk is touched rather than producing a machine whose
+    /// home is in the wrong place. The name is also the last defence for the
+    /// single-quoted PowerShell string it lands in.
+    /// </summary>
+    private string UserNameArgument()
+    {
+        string name = _plan.Account.Username;
+        if (string.IsNullOrEmpty(name))
+        {
+            Log.Info("no account is named in this plan (--storage-only): "
+                     + "New-OS7Storage will create no home dataset");
+            return "";
+        }
+        if (!AccountPlan.IsValidUsername(name))
+            throw new StepException(
+                "Setup cannot create the storage layout for this account.",
+                "New-OS7Storage -UserName",
+                $"'{name}' is not a valid account name and reached the executor anyway. "
+                + "The plan should have been refused before the disk was touched.");
+        Log.Info($"the home dataset will be /home/{name}");
+        return $"-UserName '{name}' ";
     }
 
     private string ReadBootEnvironmentName(Executor x)
