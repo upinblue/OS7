@@ -1,3 +1,4 @@
+using System.Linq;
 using OS7.Setup.Diagnostics;
 using OS7.Setup.Model;
 using OS7.Setup.Steps;
@@ -42,6 +43,31 @@ internal sealed class ExecuteScreen : Screen
     private bool _finished;
     private StepException? _failure;
     private Exception? _crash;
+
+    // ---- the progress bar's arithmetic (§3.1's bar, BUILD-NOTES #79) -------
+    //
+    // WEIGHTED, AND CALIBRATED AGAINST ITSELF. Counting steps put the bar at
+    // 25% for the whole of the pool step and at 31% for the several minutes of
+    // the copy, in 6.25% jumps - a bar that stands still and then leaps, which
+    // is exactly the shape that reads as "hung". Two changes fix it:
+    //
+    //   * a step's slice is its IStep.Weight, not 1/n, so a step that takes
+    //     seconds gets a sliver and `unsquashfs` gets half of the bar;
+    //   * inside a slice the bar keeps moving. A step that can count its own
+    //     work says so (IStep.Percent); the rest get a time-based estimate.
+    //
+    // The estimate needs a seconds-per-weight scale and NOTHING KNOWS THAT IN
+    // ADVANCE - the same install is fifteen minutes on one machine and an hour
+    // on another. So it is measured during the run: once any weight has been
+    // completed, the scale is the elapsed time divided by the weight behind it,
+    // and the estimate for the running step follows the machine it is on.
+    // The arithmetic itself is in ProgressModel, which has no thread and no
+    // disk and is therefore the half of this screen that `--self-test` can
+    // walk a whole simulated install through.
+    private readonly ProgressModel _progress;
+    private readonly System.Diagnostics.Stopwatch _clock =
+        System.Diagnostics.Stopwatch.StartNew();
+    private double _stepStartedAt;             // seconds on _clock
 
     /// <summary>
     /// Set once from --dry-run, before the flow starts.
@@ -93,6 +119,9 @@ internal sealed class ExecuteScreen : Screen
         // Two runs would each roll back only their own half, and the half left
         // behind is the one holding the disk (SystemSteps.Everything).
         _steps = SystemSteps.Everything(plan, _target);
+
+        _progress = new ProgressModel(_steps.Select(s => s.Weight).ToList());
+
         _executor = new Executor(DryRun);
         _worker = new Thread(Work) { IsBackground = true, Name = "os7-install" };
         _worker.Start();
@@ -104,7 +133,15 @@ internal sealed class ExecuteScreen : Screen
         {
             _executor.Run(_steps, (step, done, total) =>
             {
-                lock (_gate) { _current = step; _done = done; }
+                // The moment the slice starts, so the creep below measures from
+                // it. Taken here rather than in Draw: the screen repaints on an
+                // idle tick and may not run at all in the first 200 ms.
+                lock (_gate)
+                {
+                    _current = step;
+                    _done = done;
+                    _stepStartedAt = _clock.Elapsed.TotalSeconds;
+                }
             });
             lock (_gate) { _finished = true; _done = _steps.Count; }
             Log.Info("install: done");
@@ -130,7 +167,12 @@ internal sealed class ExecuteScreen : Screen
         string current;
         int done;
         bool finished;
-        lock (_gate) { current = _current; done = _done; finished = _finished; }
+        double stepStartedAt;
+        lock (_gate)
+        {
+            current = _current; done = _done; finished = _finished;
+            stepStartedAt = _stepStartedAt;
+        }
 
         // WHICH SCREEN THIS IS, decided by the step that is running. The copy
         // is the long one and the one §3.1 gives its own mockup to; everything
@@ -146,22 +188,11 @@ internal sealed class ExecuteScreen : Screen
         const int barWidth = 52;
         f.Box(9, barLeft, barWidth, 3);
 
-        // The copy gets its OWN percentage, from unsquashfs's own output.
-        //
-        // Counting steps would have this bar sit at one twelfth for the several
-        // minutes the copy takes, which is the interval during which somebody
-        // decides the installer has hung. UnsquashfsStep publishes what it has
-        // written; this reads it and scales it into that step's slice of the
-        // whole, so the bar never goes backwards.
-        int percent;
-        if (_steps.Count == 0) percent = 100;
-        else if (copying)
-        {
-            int slice = 100 / _steps.Count;
-            percent = done * 100 / _steps.Count + slice * UnsquashfsStep.Percent / 100;
-        }
-        else percent = done * 100 / _steps.Count;
-        percent = Math.Clamp(percent, 0, 100);
+        // The running step's own figure, or -1 where it has none. Read through
+        // IStep, so "the copy" is not a special case in here any more.
+        int reported = done < _steps.Count ? _steps[done].Percent : -1;
+        int percent = _progress.Percent(done, finished, stepStartedAt,
+                                        _clock.Elapsed.TotalSeconds, reported);
         int filled = (barWidth - 2) * percent / 100;
         for (int i = 0; i < barWidth - 2; i++)
         {

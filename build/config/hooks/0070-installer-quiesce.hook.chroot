@@ -1,0 +1,159 @@
+#!/bin/bash
+# OS/7 — the generator that quietens the setup medium, checked in the image.
+# docs/BUILD-NOTES.md #79.
+#
+# The file itself is /usr/lib/systemd/system-generators/os7-setup-quiesce, put
+# there verbatim by includes.chroot. This hook exists because EVERY WAY that
+# file can fail is silent:
+#
+#   * a generator without the executable bit is skipped by systemd without a
+#     word — includes.chroot carries whatever mode git recorded, and git on
+#     Windows does not record one;
+#   * a CR before the newline makes the shebang name an interpreter called
+#     "sh\r" (BUILD-NOTES #70), and the failure is a unit that was not masked;
+#   * a typo in a unit name masks a name nothing will ever ask for, which looks
+#     exactly like success;
+#   * and the gate — os7.setup=1 — is the one line that decides whether a LIVE
+#     session gets its cron and its snapd taken away. A substring match there
+#     would be wrong in a way nobody would look for.
+#
+# So all four are asked here, and the last two are asked by RUNNING the thing
+# against a command line this hook writes.
+
+set -euo pipefail
+
+GEN=/usr/lib/systemd/system-generators/os7-setup-quiesce
+
+echo "OS/7 hook 0070: the setup medium's quiesce generator"
+
+# ---------------------------------------------------------------------------
+# 1. It is there, it has no CR, and it is executable
+# ---------------------------------------------------------------------------
+if [ ! -s "${GEN}" ]; then
+	echo "OS/7 hook 0070: ${GEN} is missing or empty (includes.chroot)" >&2
+	exit 1
+fi
+
+if grep -qU $'\r' "${GEN}"; then
+	echo "OS/7 hook 0070: ${GEN} contains a CR byte." >&2
+	echo "OS/7 hook 0070: .gitattributes should have prevented this - BUILD-NOTES #70." >&2
+	exit 1
+fi
+
+chmod 0755 "${GEN}"
+if [ ! -x "${GEN}" ]; then
+	echo "OS/7 hook 0070: ${GEN} is not executable; systemd would skip it in silence" >&2
+	exit 1
+fi
+
+if ! sh -n "${GEN}"; then
+	echo "OS/7 hook 0070: ${GEN} does not parse" >&2
+	exit 1
+fi
+echo "OS/7 hook 0070:   present, 0755, no CR, parses"
+
+# ---------------------------------------------------------------------------
+# 2. The unit list, READ OUT OF THE GENERATOR so this cannot drift from it
+# ---------------------------------------------------------------------------
+mapfile -t UNITS < <(
+	sed -n '/^UNITS="/,/^"$/p' "${GEN}" \
+		| grep -oE '[A-Za-z0-9@._-]+\.(service|socket|timer|path)$'
+)
+if [ "${#UNITS[@]}" -lt 20 ]; then
+	echo "OS/7 hook 0070: read only ${#UNITS[@]} unit names out of ${GEN}." >&2
+	echo "OS/7 hook 0070: the UNITS list or the way this hook reads it has changed." >&2
+	exit 1
+fi
+echo "OS/7 hook 0070:   ${#UNITS[@]} unit(s) named in the list"
+
+# HOW MANY OF THEM ARE REAL. A name that matches nothing masks nothing, and a
+# list of typos would pass every other check in this file. arm64 is server-only
+# and legitimately has no cups and no packagekit, so this is a floor and not an
+# equality — but a list where almost nothing resolves is a broken list.
+present=0
+missing=()
+for u in "${UNITS[@]}"; do
+	if [ -e "/usr/lib/systemd/system/${u}" ] || [ -e "/lib/systemd/system/${u}" ] \
+		|| [ -e "/etc/systemd/system/${u}" ]; then
+		present=$((present + 1))
+	else
+		missing+=("${u}")
+	fi
+done
+echo "OS/7 hook 0070:   ${present} of ${#UNITS[@]} exist in this image"
+if [ "${#missing[@]}" -gt 0 ]; then
+	echo "OS/7 hook 0070:   not in this image: ${missing[*]}"
+fi
+if [ "${present}" -lt 10 ]; then
+	echo "OS/7 hook 0070: only ${present} of the named units exist. That is a typo'd" >&2
+	echo "OS/7 hook 0070: list, not a lean image." >&2
+	exit 1
+fi
+
+# unattended-upgrades is the unit the OOM killer actually took (#79). If it is
+# not in the image, the note this hook is named after no longer describes it.
+if [ ! -e /usr/lib/systemd/system/unattended-upgrades.service ] \
+	&& [ ! -e /lib/systemd/system/unattended-upgrades.service ]; then
+	echo "OS/7 hook 0070: unattended-upgrades.service is not in this image." >&2
+	echo "OS/7 hook 0070: BUILD-NOTES #79 is about that unit; re-check the note." >&2
+	exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 3. THE GATE, RUN. Three command lines, three answers.
+#
+# The generator reads /proc/cmdline and nothing can rewrite that here, so what
+# is exercised is a COPY with that one path substituted — and the substitution
+# is asserted to have hit exactly one line, so the copy cannot quietly be a
+# different program from the original (BUILD-NOTES #66).
+# ---------------------------------------------------------------------------
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK}"' EXIT
+
+sed "s#/proc/cmdline#${WORK}/cmdline#g" "${GEN}" > "${WORK}/gen"
+chmod 0755 "${WORK}/gen"
+subs="$(diff <(cat "${GEN}") "${WORK}/gen" | grep -c '^>' || true)"
+if [ "${subs}" != "1" ]; then
+	echo "OS/7 hook 0070: substituting /proc/cmdline changed ${subs} line(s), not 1." >&2
+	echo "OS/7 hook 0070: the copy under test is not the generator plus one path." >&2
+	exit 1
+fi
+
+check_gate() {
+	local cmdline="$1" expect="$2" label="$3"
+	local early="${WORK}/early"
+	rm -rf "${early}"; mkdir -p "${early}"
+	echo "${cmdline}" > "${WORK}/cmdline"
+	"${WORK}/gen" "${WORK}/normal" "${early}" "${WORK}/late" 2>/dev/null || true
+	local n
+	n="$(find "${early}" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')"
+	if [ "${expect}" = "many" ]; then
+		if [ "${n}" != "${#UNITS[@]}" ]; then
+			echo "OS/7 hook 0070: ${label}: masked ${n} unit(s), expected ${#UNITS[@]}" >&2
+			exit 1
+		fi
+		# ...and they must be masks, i.e. symlinks to /dev/null.
+		local target
+		target="$(readlink "${early}/unattended-upgrades.service" || true)"
+		if [ "${target}" != "/dev/null" ]; then
+			echo "OS/7 hook 0070: ${label}: mask points at '${target}', not /dev/null" >&2
+			exit 1
+		fi
+	elif [ "${n}" != "0" ]; then
+		echo "OS/7 hook 0070: ${label}: masked ${n} unit(s), expected none" >&2
+		exit 1
+	fi
+	echo "OS/7 hook 0070:   gate: ${label} -> ${n} masked"
+}
+
+check_gate "BOOT_IMAGE=/casper/vmlinuz boot=casper os7.setup=1 quiet" many \
+	"the Install entry"
+check_gate "BOOT_IMAGE=/casper/vmlinuz boot=casper quiet splash" none \
+	"the live entry"
+# THE SUBSTRING TRAP. `grep os7.setup=1` matches both of these, and taking cron
+# and snapd away from a session nobody asked to install from is the failure that
+# would never be looked for.
+check_gate "BOOT_IMAGE=/casper/vmlinuz noos7.setup=10 quiet" none \
+	"a command line that merely CONTAINS the token"
+
+echo "OS/7 hook 0070: done"

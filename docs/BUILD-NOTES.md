@@ -3773,6 +3773,156 @@ command reported success and the thing it was meant to change did not change.**
 
 ---
 
+## 79. The setup medium boots a desktop's background workload while it installs, and the kernel writes its complaints across Setup's screen
+
+**Reported from a Hyper-V VM on 2026-08-26**, and it is the first install this
+repository has ever heard about on **amd64** — HANDOFF's table says "nothing
+past the menu is measured" and this is what was past the menu. A generation 2
+VM, 6 GB of RAM, a 64 GB virtual disk, booting `OS7-1.0.0.95-amd64.iso` from
+the Install entry. Setup reached **"Creating the ZFS pools and datasets", 25%**,
+and then, at 258 seconds of kernel time:
+
+```
+Out of memory: Killed process 1099 (networkd-dispat) total-vm:46488kB, anon-rss:4kB, …
+Out of memory: Killed process 1283 (unattended-upgr) total-vm:124832kB, anon-rss:4kB, …
+```
+
+and at 492 seconds, still on the same step and the same 25%:
+
+```
+INFO: task systemd:1 blocked for more than 122 seconds.
+INFO: task cron:1180 blocked for more than 122 seconds.
+INFO: task DefaultAggregat:2093 blocked for more than 122 seconds.
+```
+
+**The two names in the OOM lines are the whole finding.** Nothing in `os7-setup`
+starts `networkd-dispatcher` or `unattended-upgrades`. They are the shipped
+image's own enabled units, running while Setup installs — and by the time the
+kernel was choosing between them, they were among the largest things it was
+allowed to kill.
+
+### What the image says, asked rather than assumed
+
+The squashfs was taken off the ISO in a container and read directly — no VM, no
+boot, about four minutes:
+
+```bash
+bsdtar -xOf out/OS7-1.0.0.95-amd64.iso casper/filesystem.squashfs > fs.squashfs
+unsquashfs -d x fs.squashfs /etc/systemd/system /usr/lib/sysctl.d \
+                            /etc/modprobe.d /var/lib/dpkg/status
+```
+
+Three facts came back, and each is one third of the failure.
+
+**One — the Install entry starts a full Ubuntu desktop's background workload.**
+`/etc/systemd/system/multi-user.target.wants/` holds **39** units and
+`timers.target.wants/` holds **15**. Among them: `unattended-upgrades.service`,
+**six** `snapd` units, `packagekit`, `cups` and `cups-browsed`, `avahi-daemon`,
+`sssd`, `openvpn`, `rsyslog`, `sysstat`, `apport`/`whoopsie`,
+`ubuntu-advantage` — and `apt-daily.timer` with
+`APT::Periodic::Update-Package-Lists "1"` in `/etc/apt/apt.conf.d/10periodic`,
+which is an `apt update` downloading into a filesystem that is RAM.
+
+`systemd.unit=multi-user.target` on the Install entry was put there to keep
+gdm3 off tty1 (#49). It does that. It does **not** make the medium an
+installer: everything above is in multi-user.target, which is exactly where the
+command line sends it.
+
+**Two — there is nowhere for any of it to go.** casper's writable root is a
+tmpfs on the overlay, so an apt download is resident memory that cannot be
+evicted, and a live medium has **no swap at all**.
+
+**Three — the ZFS ARC had no ceiling.** `/etc/modprobe.d` and
+`/usr/lib/modprobe.d` in the shipped image contain **no `zfs` options
+whatsoever**, so `zfs_arc_max` is the OpenZFS default of half of physical
+memory — about 2.9 GB of this machine — and Setup was about to hand ZFS a disk.
+
+### And a fourth thing, which is why any of it was visible
+
+The Install entry carries `quiet loglevel=0`, and the comment beside it in
+`build/lib/efi-remaster.sh` said that was the kernel dealt with. **It is not**,
+and the image says so in one line:
+
+```
+/usr/lib/sysctl.d/55-console-messages.conf:  kernel.printk = 4 4 1 7
+```
+
+`systemd-sysctl` applies that during boot, long before Setup paints anything, so
+`console_loglevel` is back to 4 by the first frame and everything at KERN_ERR or
+above lands on top of the installer. That is why an out-of-memory cascade was
+legible only as a photograph of a corrupted screen: the kernel had taken the
+screen, and Setup's own log — which would have carried it properly — said
+nothing about memory at all, because nothing had ever asked.
+
+This is the same shape as #25 and #62 and #67, for the third and fourth time:
+**a kernel command-line parameter is a request, and the image gets the last
+word.** Set it, then read back what the running system actually has.
+
+### What was changed
+
+Four things, in three places, and none of them touches the live entries — "try
+before you install" (L14) still boots a desktop with its snapd and its cron.
+
+* **`/usr/lib/systemd/system-generators/os7-setup-quiesce`** — a systemd
+  generator, so it runs *before* systemd builds its first transaction and the
+  units are never queued rather than started and stopped. It masks 62 units
+  (symlink to `/dev/null` in the early generator directory) **only** when
+  `os7.setup=1` is on the kernel command line. Deliberately not masked:
+  `casper-md5check` (it is the check that catches a bad USB stick, and it is
+  I/O rather than memory), `cloud-init` (not implicated, and casper's
+  relationship with it has not been measured here), `NetworkManager` and
+  `wpa_supplicant` (screen 9 needs them), `thermald`, `ufw`, `systemd-oomd`.
+* **`InstallerEnvironmentStep`** — the new first step of every install, before
+  `HostIdStep`, at the head of `StorageSteps.For` so that `--storage-only` gets
+  it too. It writes `min(MemTotal/8, 1 GiB)` (floor 128 MiB) to
+  `/sys/module/zfs/parameters/zfs_arc_max` and then **reads the file back**,
+  because a `write(2)` that returned is not a ceiling that moved. On the machine
+  in this note that is **742.6 MiB instead of ~2.9 GB**. It also logs
+  MemTotal/MemAvailable/Shmem/SwapTotal, and warns below 4 GiB.
+* **`Terminal.QuietTheKernel`** — Setup takes `console_loglevel` to 1 for as
+  long as it owns the console and puts the original back on the way out, on the
+  same ProcessExit/SIGINT/SIGTERM/SIGHUP guarantee as raw mode and the palette.
+  Nothing is lost: the ring buffer is untouched, and `Diagnostics.KernelLog`
+  copies the kernel's error-and-worse lines into Setup's own log when an install
+  fails — which is where they were needed in the first place.
+* **The executor logs the machine**: `MemTotal/MemAvailable/Shmem/SwapTotal`
+  before the first step, every step's real duration and the MemAvailable either
+  side of it, and the whole lot again at a failure. "Was it memory?" is now a
+  question `/var/log/os7-setup/install.log` answers.
+
+### What was measured about the fix, and what was not
+
+The generator's gate was run rather than read, against four command lines:
+
+| `/proc/cmdline` | units masked |
+|---|---|
+| `… boot=casper os7.setup=1 quiet` | **62**, each a symlink to `/dev/null` |
+| `… boot=casper quiet splash` (the live entry) | **0** |
+| `… noos7.setup=10 quiet` (the substring trap) | **0** |
+| `os7.setup=1x quiet` | **0** |
+
+The third row is the one that matters: `grep os7.setup=1` matches it, and taking
+cron and snapd away from a session nobody asked to install from is a failure
+that would never be looked for. Hook `0070-installer-quiesce.hook.chroot` runs
+all of it again inside the chroot at build time, plus the mode, the CR check
+(#70) and a count of how many of the 62 names resolve to a real unit — a list of
+typos passes every other check there is.
+
+**NOT MEASURED: no ISO has been rebuilt and no install has been run.** Every
+claim above about the fix is a claim about code and about a squashfs; the claim
+about the *failure* is a claim about a computer. What settles it is a fresh
+amd64 build and an install in the same VM — and the first thing to look at
+afterwards is `/var/log/os7-setup/install.log`, which now carries the numbers
+this note had to go and find by hand.
+
+**And one thing this note cannot answer**: whether that VM really had 6 GB.
+Hyper-V's Dynamic Memory gives a guest its startup allocation and grows it only
+if the guest onlines what the balloon hot-adds, so "configured with 6 GB" and
+"MemTotal says 6 GB" are different sentences. `Get-VM` needs Hyper-V
+Administrator rights, which the session that found this did not have. It is
+why `InstallerEnvironmentStep` logs `MemTotal` rather than trusting anybody's
+recollection of a dialog box.
+
 ## 80. Microsoft's own tools disagree about which `/etc/os-release` field names the distribution — and OS/7 branded the one Arc reads
 
 **Measured 2026-08-26**, by downloading Microsoft's code rather than by hitting

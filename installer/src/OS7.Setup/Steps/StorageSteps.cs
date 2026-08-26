@@ -38,8 +38,17 @@ internal static class StorageSteps
     public static string LuksPath => $"/dev/disk/by-partlabel/{LuksLabel}";
     public static string MapperPath => $"/dev/mapper/{LuksName}";
 
+    /// <summary>
+    /// FIRST IS <see cref="InstallerEnvironmentStep"/>, and it is at the head of
+    /// THIS list rather than of `SystemSteps.Everything` on purpose: both ways
+    /// into the executor go through here — the whole install, and
+    /// `--storage-only` — so this is the only position from which it cannot be
+    /// skipped. It has to precede the pools, because a ceiling on the ZFS ARC
+    /// is worth nothing once the ARC has grown (BUILD-NOTES #79).
+    /// </summary>
     public static List<IStep> For(InstallPlan plan) => new()
     {
+        new InstallerEnvironmentStep(),
         new HostIdStep(),
         new PartitionStep(plan.Storage),
         new EspStep(plan.Storage),
@@ -52,6 +61,8 @@ internal static class StorageSteps
 internal sealed class HostIdStep : IStep
 {
     public string Describe => "Generating the host identifier";
+
+    public int Weight => 1;
 
     /// <summary>
     /// L13, and the single most expensive ZFS-root footgun there is.
@@ -86,6 +97,8 @@ internal sealed class PartitionStep : IStep
     public PartitionStep(StoragePlan plan) => _plan = plan;
 
     public string Describe => $"Partitioning {_plan.Disk}";
+
+    public int Weight => 2;
 
     public void Run(Executor x)
     {
@@ -158,6 +171,8 @@ internal sealed class EspStep : IStep
 
     public string Describe => "Creating the EFI system partition";
 
+    public int Weight => 1;
+
     /// <summary>
     /// FAT32, and there is no configuration in which this goes away on a UEFI
     /// machine: firmware can only read FAT from the ESP. That is the UEFI
@@ -170,6 +185,11 @@ internal sealed class EspStep : IStep
 // ---------------------------------------------------------------------------
 internal sealed class LuksStep : IStep
 {
+    /// <summary>`cryptsetup luksFormat` with LUKS2's argon2id PBKDF spends
+    /// seconds on purpose — it benchmarks the machine and sizes the key
+    /// derivation to it. Nothing here can report progress inside that.</summary>
+    public int Weight => 8;
+
     private readonly StoragePlan _plan;
 
     public LuksStep(StoragePlan plan) => _plan = plan;
@@ -246,6 +266,10 @@ internal sealed class PoolsAndDatasetsStep : IStep
     public PoolsAndDatasetsStep(InstallPlan plan) => _plan = plan;
 
     public string Describe => "Creating the ZFS pools and datasets";
+
+    /// <summary>two `pwsh` starts and a module import, then two pools: seconds, not minutes</summary>
+
+    public int Weight => 6;
 
     public string? BootEnvironment { get; private set; }
 

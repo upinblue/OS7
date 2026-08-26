@@ -83,6 +83,20 @@ internal sealed class UnsquashfsStep : IStep
     /// <summary>The file being written, for the line under the bar (§3.1).</summary>
     public static volatile string Current = "";
 
+    /// <summary>
+    /// The heaviest step in the list by a wide margin, and the only one that
+    /// can COUNT its own work — `unsquashfs -i` names every inode as it writes
+    /// it, against a total it prints up front.
+    ///
+    /// Explicit interface implementation because the class already has a static
+    /// `Percent` and a type cannot hold both under one name. The bar reads it
+    /// through <see cref="IStep"/> like every other step's, so there is no
+    /// special case left in the screen for "the copy".
+    /// </summary>
+    public int Weight => 100;
+
+    int IStep.Percent => Percent;
+
     public void Run(Executor x)
     {
         if (!x.DryRun && !File.Exists(SystemSteps.Squashfs))
@@ -200,6 +214,10 @@ internal sealed class TargetIdentityStep : IStep
     public TargetIdentityStep(InstallPlan plan, TargetRoot t) { _plan = plan; _t = t; }
 
     public string Describe => "Configuring the system";
+
+    /// <summary>`locale-gen` in the chroot for the chosen locale is most of this</summary>
+
+    public int Weight => 5;
 
     public void Run(Executor x)
     {
@@ -320,6 +338,8 @@ internal sealed class ReleaseIdentityStep : IStep
 
     public string Describe => "Recording the OS/7 release";
 
+    public int Weight => 1;
+
     /// <summary>
     /// D8 / L16, and the half of it that until now nothing did.
     ///
@@ -411,6 +431,8 @@ internal sealed class AccountStep : IStep
     public AccountStep(InstallPlan plan, TargetRoot t) { _plan = plan; _t = t; }
 
     public string Describe => "Creating the administrator account";
+
+    public int Weight => 2;
 
     /// <summary>
     /// THE SQUASHFS HAS NO USERS AT ALL.
@@ -641,6 +663,14 @@ internal sealed class InstallModeStep : IStep
         ? "Configuring the desktop" : "Configuring a headless system";
 
     /// <summary>
+    /// The one step whose weight depends on the plan. GUI sets a default target
+    /// and stops; headless purges the whole desktop and then runs
+    /// `apt-get autoremove -y --purge` over about a thousand packages, which is
+    /// minutes. One number for both would be wrong for both.
+    /// </summary>
+    public int Weight => _plan.Mode == InstallMode.Gui ? 2 : 30;
+
+    /// <summary>
     /// The GUI/headless split, done OFFLINE.
     ///
     /// README makes this an install-time choice over ONE shared package base per
@@ -739,6 +769,10 @@ internal sealed class InitramfsStep : IStep
 
     public string Describe => "Building the startup image";
 
+    /// <summary>`update-initramfs` in the chroot: minutes, and it says nothing while it runs</summary>
+
+    public int Weight => 25;
+
     /// <summary>
     /// The initramfs, and then THE CHECK THAT IT CAN ACTUALLY UNLOCK AND IMPORT.
     ///
@@ -816,6 +850,8 @@ internal sealed class TpmEnrolStep : IStep
     public TpmEnrolStep(InstallPlan plan, TargetRoot t) { _plan = plan; _t = t; }
 
     public string Describe => "Sealing the disk key to the TPM";
+
+    public int Weight => 2;
 
     /// <summary>
     /// TPM2 auto-unlock. Decided into Phase 3 on 2026-08-24, and it is NOT
@@ -1101,6 +1137,10 @@ internal sealed class BootloaderStep : IStep
 
     public string Describe => "Installing the bootloader";
 
+    /// <summary>`grub-install` and then `update-grub`, which probes every disk</summary>
+
+    public int Weight => 15;
+
     /// <summary>
     /// GRUB, and the four things that decide whether this machine starts.
     ///
@@ -1297,6 +1337,8 @@ internal sealed class InstallLogStep : IStep
 
     public string Describe => "Saving the installation record";
 
+    public int Weight => 1;
+
     /// <summary>Where it goes inside the target: `Log.Installed` without its leading slash.</summary>
     private static string Relative => Log.Installed.TrimStart('/');
 
@@ -1376,6 +1418,10 @@ internal sealed class TeardownStep : IStep
     public TeardownStep(InstallPlan plan, TargetRoot t) { _plan = plan; _t = t; }
 
     public string Describe => "Finishing";
+
+    /// <summary>`zpool export` waits for the last transaction group to land</summary>
+
+    public int Weight => 5;
 
     /// <summary>
     /// Unmount everything and EXPORT BOTH POOLS, in spike S3's order.

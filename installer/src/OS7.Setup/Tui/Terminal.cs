@@ -45,6 +45,24 @@ internal sealed class Terminal : IDisposable
     private static string? _device;
     private static bool _isVirtualConsole;
 
+    /// <summary>
+    /// `/proc/sys/kernel/printk` as it was before Setup lowered it, or null if
+    /// it was never lowered. See <see cref="QuietTheKernel"/>.
+    /// </summary>
+    private static string? _savedPrintk;
+
+    /// <summary>The four numbers: console, default message, minimum console,
+    /// default console. Only the first is Setup's business.</summary>
+    public const string PrintkPath = "/proc/sys/kernel/printk";
+
+    /// <summary>
+    /// KERN_EMERG and nothing else. 0 is not available — the kernel clamps
+    /// console_loglevel to `minimum_console_loglevel`, which is 1 on this image
+    /// — so 1 is the quietest honest value, and a panic still reaches the
+    /// screen, which is right.
+    /// </summary>
+    public const string QuietPrintk = "1";
+
     private Terminal(int cols, int rows, Termios.TermiosStruct saved)
     {
         Cols = cols;
@@ -88,19 +106,38 @@ internal sealed class Terminal : IDisposable
         Log.Info($"surface: {_device ?? "(not a tty)"} — "
                  + (_isVirtualConsole ? "Linux virtual console" : "not a virtual console"));
 
-        LoadFont(geometry);
-        ApplyPalette(Tui.Palette.Default);
+        // FIRST, before a single cell is painted. Everything below draws a
+        // screen that the kernel is otherwise free to write over.
+        QuietTheKernel();
 
-        Termios.TermiosStruct saved = Termios.MakeRaw(StdIn);
-        int dropped = Termios.Drain(StdIn);
-        if (dropped > 0)
-            Log.Info($"discarded {dropped} byte(s) queued before the first screen");
+        try
+        {
+            LoadFont(geometry);
+            ApplyPalette(Tui.Palette.Default);
 
-        var t = new Terminal(0, 0, saved);
-        t._geometry = geometry;
-        t.Measure(geometry, "start-up");
-        t.Write("\x1b[?25l");        // hide the cursor: Setup never shows one
-        return t;
+            Termios.TermiosStruct saved = Termios.MakeRaw(StdIn);
+            int dropped = Termios.Drain(StdIn);
+            if (dropped > 0)
+                Log.Info($"discarded {dropped} byte(s) queued before the first screen");
+
+            var t = new Terminal(0, 0, saved);
+            t._geometry = geometry;
+            t.Measure(geometry, "start-up");
+            t.Write("\x1b[?25l");        // hide the cursor: Setup never shows one
+            return t;
+        }
+        catch
+        {
+            // THE ONE DOOR WITH NO Restore() BEHIND IT. Everything below this
+            // line is undone by Restore(), which is wired to ProcessExit and to
+            // three signals — but only once there is a Terminal to call it on.
+            // A failure here (Termios.MakeRaw on a surface that is not a tty)
+            // would otherwise leave the console silenced for the rest of the
+            // live session, on a machine whose installer has just died and
+            // where the kernel's messages are the only thing left to read.
+            LoudenTheKernel();
+            throw;
+        }
     }
 
     /// <summary>
@@ -271,6 +308,7 @@ internal sealed class Terminal : IDisposable
             Write("\x1b[22;37;40m\x1b[2J\x1b[H\x1b[?25h");
             Termios.Restore(StdIn, _saved);
             if (Palette != Tui.Palette.Default) ApplyPalette(Tui.Palette.Default);
+            LoudenTheKernel();
         }
         catch (Exception ex)
         {
@@ -295,6 +333,73 @@ internal sealed class Terminal : IDisposable
     // image already ships — so doing it here in C# would mean a second copy of a
     // decision (build/lib/palette.py) for no gain.
     // -----------------------------------------------------------------------
+    /// <summary>
+    /// TAKE THE CONSOLE AWAY FROM THE KERNEL for as long as Setup owns it.
+    ///
+    /// The Install boot entry asks for `quiet loglevel=0`, and the comment on it
+    /// in `build/lib/efi-remaster.sh` used to say that this was the kernel dealt
+    /// with. IT IS NOT, and the image itself says so:
+    ///
+    ///     /usr/lib/sysctl.d/55-console-messages.conf:  kernel.printk = 4 4 1 7
+    ///
+    /// — read out of the shipped amd64 squashfs on 2026-08-26. `systemd-sysctl`
+    /// applies that during boot, long before Setup starts, so the command line's
+    /// `loglevel=0` is undone by the image it booted and console_loglevel is 4
+    /// by the time the first frame is drawn. Anything the kernel logs at KERN_ERR
+    /// or above then lands on top of Setup: the OOM killer's four lines per
+    /// victim, `hung_task`'s three per blocked task, every device that
+    /// disconnects. BUILD-NOTES #79.
+    ///
+    /// Nothing is lost by this. The ring buffer is untouched — `dmesg` on tty2
+    /// has every line, and <see cref="Diagnostics.KernelLog"/> copies the
+    /// serious ones into Setup's own log when an install fails, which is a
+    /// better place for them than across a progress bar.
+    ///
+    /// It is put back by <see cref="Restore"/>, which runs on the normal exit,
+    /// on ProcessExit, and on SIGINT/SIGTERM/SIGHUP — the same guarantee raw
+    /// mode and the palette get, and for the same reason: a machine whose
+    /// console never speaks again is worse than one that speaks over a screen.
+    /// </summary>
+    private static void QuietTheKernel()
+    {
+        try
+        {
+            if (!File.Exists(PrintkPath)) return;
+            string was = File.ReadAllText(PrintkPath).Trim();
+            File.WriteAllText(PrintkPath, QuietPrintk);
+
+            // Read it back. A write that returned is not a console that went
+            // quiet — this file is a sysctl with a handler that clamps.
+            string now = File.ReadAllText(PrintkPath).Trim();
+            _savedPrintk = was;
+            Log.Info($"console messages: {PrintkPath} was '{was}', now '{now}' "
+                     + "(the kernel keeps logging; it just stops painting)");
+        }
+        catch (Exception ex)
+        {
+            // Not fatal, and not even unusual: Setup runs as a normal user
+            // under --dry-run on a developer's machine, where /proc/sys is
+            // read-only. The screen is then merely as exposed as it was before.
+            Log.Info($"could not quieten {PrintkPath}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Give the console back, exactly as it was found.</summary>
+    private static void LoudenTheKernel()
+    {
+        if (_savedPrintk is null) return;
+        try
+        {
+            File.WriteAllText(PrintkPath, _savedPrintk);
+            Log.Info($"console messages: {PrintkPath} back to '{_savedPrintk}'");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"could not restore {PrintkPath}: {ex.Message}");
+        }
+        _savedPrintk = null;
+    }
+
     private static void LoadFont(Geometry geometry)
     {
         if (!_isVirtualConsole)

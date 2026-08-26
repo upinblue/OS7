@@ -53,19 +53,47 @@ internal sealed class Executor
     public void Run(IReadOnlyList<IStep> steps, Progress? progress = null)
     {
         int done = 0;
+
+        // THE MACHINE, ONCE, BEFORE ANY OF IT. An install that dies of memory
+        // leaves a log that says which command was running and nothing about
+        // the conditions it was running under, so the question "was there
+        // enough RAM?" ends up being answered from a photograph of the screen.
+        // It was, on 2026-08-26 (BUILD-NOTES #79). One line fixes that.
+        Log.Info($"machine: {Diagnostics.Memory.Summary}");
+
         try
         {
             foreach (IStep step in steps)
             {
                 progress?.Invoke(step.Describe, done, steps.Count);
                 Log.Info($"step: {step.Describe}");
+
+                // Stopwatch and not DateTime: this is a duration, and the
+                // target's clock is set by TargetIdentityStep mid-run.
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                long before = Diagnostics.Memory.AvailableBytes;
                 step.Run(this);
+                clock.Stop();
                 done++;
+
+                // WHAT THE WEIGHTS ABOVE ARE MEANT TO BE MEASURED FROM, and the
+                // only record of where the memory went. Both numbers come from
+                // the kernel and the clock, never from the step's own opinion.
+                long after = Diagnostics.Memory.AvailableBytes;
+                Log.Info($"step done: {step.Describe} after {clock.Elapsed.TotalSeconds:0.0} s"
+                         + (before > 0 && after > 0
+                            ? $"; MemAvailable {Diagnostics.Memory.Human(before)}"
+                              + $" -> {Diagnostics.Memory.Human(after)}"
+                            : ""));
             }
             progress?.Invoke("done", done, steps.Count);
         }
         catch
         {
+            // BEFORE THE ROLLBACK, because the rollback runs `zpool destroy` and
+            // whatever the kernel says about that is not what went wrong.
+            Log.Error($"machine at the failure: {Diagnostics.Memory.Summary}");
+            Diagnostics.KernelLog.LogRecent("Setup's console is quiet while it runs");
             Rollback();
             throw;
         }
@@ -254,4 +282,34 @@ internal interface IStep
 {
     string Describe { get; }
     void Run(Executor x);
+
+    /// <summary>
+    /// What share of the progress bar this step is worth, relative to the
+    /// others. Default 1; a step that takes twenty times as long says 20.
+    ///
+    /// THESE ARE ESTIMATES AND THEY ARE ALLOWED TO BE — nothing but a drawn
+    /// rectangle depends on them, and a wrong weight makes the bar uneven, not
+    /// the install wrong. They are here because the alternative was worse: with
+    /// sixteen equal steps the bar moved in 6.25% jumps and then stood still
+    /// for the several minutes `unsquashfs` and `update-initramfs` take, which
+    /// is the interval during which somebody decides the machine has hung.
+    ///
+    /// They are estimates that can STOP being estimates. `Executor.Run` logs
+    /// every step's real duration ("step done: … after 41.2 s"), so an install
+    /// log off any machine is a measurement of what these should have been.
+    /// Correct them from a log; do not re-derive them by reading the code.
+    /// </summary>
+    int Weight => 1;
+
+    /// <summary>
+    /// How far through itself this step is, 0..100 — or -1 for "cannot say",
+    /// which is the honest answer for most of them and the default.
+    ///
+    /// A step that can genuinely count its own work overrides this and the bar
+    /// uses the real number. A step that cannot gets a time-based estimate from
+    /// the screen instead, which never overtakes the step's own slice — so a
+    /// bar that is guessing can be slow, but it can never be a lie in the
+    /// direction that matters (claiming to be past work that has not happened).
+    /// </summary>
+    int Percent => -1;
 }

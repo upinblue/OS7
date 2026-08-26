@@ -1,0 +1,160 @@
+#!/bin/sh
+# os7-setup-quiesce - the setup medium is an installer, not a workstation
+#
+# A systemd GENERATOR, run before systemd computes its first transaction, which
+# masks the background workload of a full Ubuntu desktop for the duration of an
+# install. It does this ONLY when the kernel command line says os7.setup=1, so
+# the ISO's "live session, without installing" entry is untouched and still
+# promises what it says (SETUP-PLAN L14).
+#
+# WHY THIS EXISTS - docs/BUILD-NOTES.md #79.
+#
+# On 2026-08-26 an amd64 install into a 6 GB VM reached "Creating the ZFS pools
+# and datasets" and the kernel began killing processes:
+#
+#   Out of memory: Killed process 1099 (networkd-dispat) ...
+#   Out of memory: Killed process 1283 (unattended-upgr) ...
+#   INFO: task systemd:1 blocked for more than 122 seconds.
+#
+# The two victims are the evidence. Nothing in os7-setup starts either of them:
+# they are the shipped amd64 image's own enabled units, running while Setup
+# installs. Asked of the squashfs on the ISO afterwards, the Install entry's
+# multi-user.target pulls in unattended-upgrades.service, six snapd units,
+# packagekit, cups, avahi, sssd, openvpn, rsyslog and sysstat, plus FIFTEEN
+# timers including apt-daily.timer and apt-daily-upgrade.timer.
+#
+# All of that competes for a machine where:
+#
+#   * the writable root is a tmpfs on the casper overlay, so an apt download is
+#     resident memory and cannot be evicted;
+#   * there is no swap at all, so nothing can be pushed out under pressure;
+#   * ZFS is about to be given a disk, and its ARC takes half of physical
+#     memory by default (capped by InstallerEnvironmentStep, the other half of
+#     the same fix).
+#
+# WHAT IS DELIBERATELY NOT HERE:
+#
+#   casper-md5check.service    verifies the medium. It is I/O, not memory, and
+#                              it is the check that catches a bad download or a
+#                              bad USB stick. Slow is better than unverified.
+#   cloud-init*                not implicated, and casper's relationship with it
+#                              has not been measured here. Not masked on a guess.
+#   NetworkManager, wpa_supplicant, ModemManager
+#                              screen 9 needs a network to configure.
+#   thermald, ufw, systemd-oomd
+#                              safety, and all three are cheap.
+#
+# This file is copied to the installed machine too, by unsquashfs like
+# everything else. It is INERT there: an installed OS/7 never boots with
+# os7.setup=1 on its command line. It is left in place rather than deleted
+# because SETUP-PLAN's R=Repair will one day run Setup on an installed machine,
+# and it should quieten that machine the same way.
+
+set -eu
+
+# systemd calls a generator with three directories: normal, early, late. EARLY
+# beats /usr/lib/systemd/system and /run/systemd/system in the unit search path,
+# which is what makes a symlink to /dev/null here a mask.
+EARLY="${2:-}"
+[ -n "${EARLY}" ] || exit 0
+
+# THE GATE. Token by token, not a substring match: "os7.setup=1" as a substring
+# is also inside "noos7.setup=10", and a generator that masks cron on a live
+# session nobody asked to install from is a bug that is very hard to see.
+asked=0
+for token in $(cat /proc/cmdline 2>/dev/null || true); do
+	if [ "${token}" = "os7.setup=1" ]; then
+		asked=1
+		break
+	fi
+done
+[ "${asked}" = "1" ] || exit 0
+
+# One unit per line. A unit that is not installed on this architecture is
+# harmless: the symlink masks a name that nothing will ever ask for. arm64 is
+# server-only and legitimately has no cups, no packagekit and no desktop.
+UNITS="
+	unattended-upgrades.service
+	apt-daily.service
+	apt-daily.timer
+	apt-daily-upgrade.service
+	apt-daily-upgrade.timer
+	packagekit.service
+	packagekit-offline-update.service
+	esm-cache.service
+	ubuntu-advantage.service
+	ua-timer.timer
+	ua-reboot-cmds.service
+	update-notifier-download.timer
+	update-notifier-motd.timer
+	motd-news.service
+	motd-news.timer
+
+	snapd.service
+	snapd.socket
+	snapd.seeded.service
+	snapd.autoimport.service
+	snapd.apparmor.service
+	snapd.core-fixup.service
+	snapd.recovery-chooser-trigger.service
+	snapd.snap-repair.service
+	snapd.snap-repair.timer
+
+	cron.service
+	anacron.service
+	anacron.timer
+	man-db.service
+	man-db.timer
+	dpkg-db-backup.service
+	dpkg-db-backup.timer
+	logrotate.service
+	logrotate.timer
+	fstrim.service
+	fstrim.timer
+	e2scrub_all.service
+	e2scrub_all.timer
+	e2scrub_reap.service
+	sysstat.service
+	sysstat-collect.timer
+	sysstat-rotate.timer
+	sysstat-summary.timer
+	fwupd-refresh.service
+	fwupd-refresh.timer
+
+	apport.service
+	apport-autoreport.service
+	apport-autoreport.timer
+	apport-autoreport.path
+	apport-forward.socket
+	whoopsie.service
+	whoopsie.path
+
+	cups.service
+	cups.socket
+	cups.path
+	cups-browsed.service
+	avahi-daemon.service
+	avahi-daemon.socket
+	openvpn.service
+	sssd.service
+	rsyslog.service
+	networkd-dispatcher.service
+	secureboot-db.service
+"
+
+mkdir -p "${EARLY}"
+
+masked=0
+for unit in ${UNITS}; do
+	if ln -sf /dev/null "${EARLY}/${unit}" 2>/dev/null; then
+		masked=$((masked + 1))
+	else
+		echo "os7-setup-quiesce: could not mask ${unit}" >&2
+	fi
+done
+
+# To the journal, where `journalctl -b -u systemd-*generator*` finds it. A
+# generator that changes what a machine runs and says nothing is a generator
+# nobody will think of when the machine behaves oddly.
+echo "os7-setup-quiesce: os7.setup=1 - masked ${masked} unit(s) for the install" >&2
+exit 0

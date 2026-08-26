@@ -1109,6 +1109,148 @@ internal static class Program
                   "live test: a global address is reported with its prefix");
         }
 
+        // -------------------------------------------------------------------
+        // The machine Setup is running ON, and the bar that says how it is
+        // getting on. BUILD-NOTES #79.
+        // -------------------------------------------------------------------
+        {
+            // /proc/meminfo as it looks on the machine the note is about, plus
+            // the two shapes the parser has to get right and one it must not.
+            string[] meminfo =
+            {
+                "MemTotal:        6083440 kB",
+                "MemFree:          201364 kB",
+                "MemAvailable:    4820188 kB",
+                "Shmem:            256000 kB",
+                "SwapTotal:             0 kB",
+                "HugePages_Total:       0",
+            };
+            Check(Memory.Field(meminfo, "MemTotal") == 6083440L * 1024,
+                  "meminfo: a kB field is bytes",
+                  Memory.Human(Memory.Field(meminfo, "MemTotal")));
+            Check(Memory.Field(meminfo, "SwapTotal") == 0,
+                  "meminfo: no swap reads as zero, not as absent");
+            Check(Memory.Field(meminfo, "HugePages_Total") == 0,
+                  "meminfo: a field with no unit is not multiplied by 1024");
+            // "Mem" is a prefix of three keys in that file. A parser that
+            // matched on prefix would answer MemTotal to a question about
+            // MemFree, and be wrong by a factor of thirty on this machine.
+            Check(Memory.Field(meminfo, "Mem") == 0,
+                  "meminfo: a prefix is not a key");
+            Check(Memory.Field(meminfo, "NoSuchField") == 0,
+                  "meminfo: an absent field is zero, not an exception");
+            Check(Memory.Field(Array.Empty<string>(), "MemTotal") == 0,
+                  "meminfo: an empty file is zero");
+            Check(Memory.Human(0) == "unknown" && Memory.Human(1536) == "1.5 KiB"
+                  && Memory.Human(6083440L * 1024) == "5.8 GiB",
+                  "meminfo: sizes read as sizes", Memory.Human(6083440L * 1024));
+
+            // The ARC ceiling. The default it replaces is HALF of physical
+            // memory, which on the machine above is 2.9 GiB of a machine that
+            // ran out at 5.8 GiB.
+            long sixGiB = 6083440L * 1024;
+            Check(InstallerEnvironmentStep.WantedArcMax(sixGiB) < sixGiB / 2,
+                  "ARC: the ceiling is well below the default of half of memory",
+                  Memory.Human(InstallerEnvironmentStep.WantedArcMax(sixGiB)));
+            Check(InstallerEnvironmentStep.WantedArcMax(512L * 1024 * 1024)
+                  == InstallerEnvironmentStep.FloorBytes,
+                  "ARC: a tiny machine gets the floor, not a tiny ARC");
+            Check(InstallerEnvironmentStep.WantedArcMax(64L * 1024 * 1024 * 1024)
+                  == InstallerEnvironmentStep.CeilingBytes,
+                  "ARC: a large machine gets the ceiling, not half of itself");
+            Check(InstallerEnvironmentStep.WantedArcMax(0)
+                  == InstallerEnvironmentStep.FloorBytes,
+                  "ARC: an unreadable meminfo does not become an unlimited ARC");
+
+            // WHERE THE STEP SITS, which is the whole of what it can promise.
+            // A ceiling on the ARC is worth nothing once the ARC has grown, so
+            // "before the pools" is not a preference.
+            var envPlan = new InstallPlan();
+            List<IStep> storageOnly = StorageSteps.For(envPlan);
+            List<IStep> everything = SystemSteps.Everything(envPlan, TargetRoot.Install);
+            Check(storageOnly.Count > 0 && storageOnly[0] is InstallerEnvironmentStep,
+                  "--storage-only prepares the installer environment first");
+            Check(everything.Count > 0 && everything[0] is InstallerEnvironmentStep,
+                  "a full install prepares the installer environment first");
+            int env = everything.FindIndex(x => x is InstallerEnvironmentStep);
+            int pools = everything.FindIndex(x => x is PoolsAndDatasetsStep);
+            Check(env >= 0 && pools > env,
+                  "the ARC ceiling is set before ZFS is given a disk",
+                  $"step {env} then step {pools}");
+
+            // ---- the progress bar -----------------------------------------
+            //
+            // A WHOLE INSTALL, SIMULATED. The screen repaints on the flow's
+            // 200 ms idle tick, so that is the sampling rate; every step is
+            // given a duration proportional to its weight but on a machine
+            // 60% slower than the constant guesses, so the self-calibration is
+            // exercised rather than flattered.
+            List<int> weights = everything.Select(x => Math.Max(1, x.Weight)).ToList();
+            var model = new ProgressModel(weights);
+
+            int total = 0;
+            foreach (int w in weights) total += w;
+            var before = new int[weights.Count + 1];
+            for (int i = 0; i < weights.Count; i++) before[i + 1] = before[i] + weights[i];
+
+            bool monotone = true, overshoot = false;
+            int last = 0, worstStall = 0, stall = 0, lastPercent = -1;
+            double now = 0;
+            for (int i = 0; i < weights.Count; i++)
+            {
+                double started = now;
+                double duration = weights[i] * 6.4;   // seconds; a slow machine
+                // UnsquashfsStep is the one step that counts its own work; the
+                // simulation gives it a real figure and the rest -1, exactly as
+                // the screen does.
+                bool counts = everything[i] is UnsquashfsStep;
+                for (double t = 0; t <= duration; t += 0.2)
+                {
+                    int reported = counts ? (int)(100 * t / Math.Max(0.001, duration)) : -1;
+                    int pc = model.Percent(i, false, started, started + t, reported);
+                    if (pc < last) monotone = false;
+                    if (pc > before[i + 1] * 100 / total + 1) overshoot = true;
+                    last = pc;
+
+                    if (pc == lastPercent) { stall++; if (stall > worstStall) worstStall = stall; }
+                    else { stall = 0; lastPercent = pc; }
+                }
+                now = started + duration;
+            }
+            int ended = model.Percent(weights.Count, true, now, now, -1);
+
+            Check(monotone, "progress: the bar never goes backwards");
+            Check(!overshoot,
+                  "progress: an estimate never reaches into the next step's slice");
+            Check(ended == 100, "progress: a finished run reads 100%", $"{ended}%");
+            // THE COMPLAINT THIS IS ANSWERING, as a number. Counting sixteen
+            // steps equally left the bar on one figure for the entire length of
+            // whichever step was running - minutes at a time, and the interval
+            // during which somebody decides the machine has hung.
+            // 100 integer points over a twenty-minute install is one change
+            // every 12 s at BEST, whatever the curve does, so this bound is
+            // close to the arithmetic floor rather than to a preference. The
+            // bar it replaced changed once per step — sixteen times in twenty
+            // minutes, with multi-minute freezes inside the long ones.
+            Check(worstStall * 0.2 < 25,
+                  "progress: the longest the bar stands still is under 25 s",
+                  $"{worstStall * 0.2:0.0} s over a {now / 60:0} minute install");
+
+            // A step that CAN count its own work is believed, exactly.
+            var flat = new ProgressModel(new[] { 1, 1 });
+            Check(flat.Percent(0, false, 0, 0, 50) == 25,
+                  "progress: a step's own figure is used as it stands",
+                  $"{flat.Percent(0, false, 0, 0, 50)}%");
+            var one = new ProgressModel(new[] { 5, 5 });
+            Check(one.Percent(1, false, 0, 0, 0) == 50,
+                  "progress: the second of two equal steps starts at half");
+            // Nothing may take it backwards, including the inputs going backwards.
+            var ratchet = new ProgressModel(new[] { 1, 1 });
+            ratchet.Percent(1, false, 0, 0, 100);
+            Check(ratchet.Percent(0, false, 0, 0, 0) == 100,
+                  "progress: even an input that goes backwards does not");
+        }
+
         // Rendering must not depend on a terminal existing. Every screen is
         // drawn into an off-screen frame at the reference geometry, which is
         // what makes the golden-frame tests in §6.5 possible at all.

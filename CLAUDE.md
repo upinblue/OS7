@@ -241,6 +241,19 @@ the ones a fresh session hits first.
   first, so this is the only path an OS/7 install takes: the naive one-parameter
   fix yields a correctly-placed home that is `root:root`, empty, and unwritable
   by its owner. `AccountStep` finishes the job and proves it from `stat`.
+- **#79 — the setup medium boots a DESKTOP's background workload while it
+  installs, and `loglevel=0` does not keep the kernel off Setup's screen.**
+  Both halves measured out of the shipped amd64 squashfs after a 6 GB VM's
+  install died at the pool step: the Install entry's `multi-user.target` pulls
+  in **39** units and **15** timers — `unattended-upgrades`, six `snapd` units,
+  `apt-daily.timer` — onto a medium whose writable root is RAM and which has no
+  swap, with `zfs_arc_max` at its default half of memory; and
+  `/usr/lib/sysctl.d/55-console-messages.conf` sets `kernel.printk = 4 4 1 7`,
+  so `systemd-sysctl` undoes the command line before the first frame. Fixed by
+  `os7-setup-quiesce` (a *generator*, so nothing is started and then stopped;
+  keyed to `os7.setup=1`, so the live entry is untouched),
+  `InstallerEnvironmentStep` (caps the ARC and reads it back), and
+  `Terminal.QuietTheKernel`. **Not verified on a machine.**
 - **#66 — code that replaces a spike must be DIFFED against it.** The installer's
   TPM step was written from the same notes as `s4-tpm-enroll.sh` and took a
   different route: no LUKS2 token handler in the initramfs, and

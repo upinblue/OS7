@@ -35,7 +35,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -140,8 +139,8 @@ emit setup.dryrun.gui  bash -c 'cat /mnt/root/var/log/os7-setup/setup.log 2>/dev
 # Because that environment is the one #38 says not to build on, the result is
 # read in two parts: whether PowerShell got as far as producing a verdict at
 # all, and what the verdict was. Only the second one can fail the image.
-chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Zfs/Zfs.psd1 -Force; Test-ZfsModule' >/tmp/zfs.txt 2>&1
-echo "EXIT=$?" >> /tmp/zfs.txt
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Zfs/Zfs.psd1 -Force; Test-ZfsModule' >/tmp/zfs.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/zfs.txt
 emit zfs.selftest      bash -c 'tail -30 /tmp/zfs.txt'
 
 # THE BACKUP LAYER'S SELF-TEST, in the same chroot and read the same way
@@ -149,14 +148,58 @@ emit zfs.selftest      bash -c 'tail -30 /tmp/zfs.txt'
 # snapshot policy away from the boot environments, the sanoid.conf renderer, the
 # path-to-dataset resolution and the syncoid command line — none of which needs
 # ZFS, sanoid or a disk.
-chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; Test-OS7Backup' >/tmp/backup.txt 2>&1
-echo "EXIT=$?" >> /tmp/backup.txt
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; Test-OS7Backup' >/tmp/backup.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/backup.txt
 emit backup.selftest   bash -c 'tail -30 /tmp/backup.txt'
 
 # The three facts about backups that are properties of the IMAGE rather than of
 # any program: the two binaries are there, the defaults file OS/7 reads its
 # legal-key list out of is there, and no policy has been baked in.
 emit backup.files      bash -c 'for f in /mnt/root/usr/sbin/sanoid /mnt/root/usr/sbin/syncoid /mnt/root/usr/share/sanoid/sanoid.defaults.conf /mnt/root/usr/libexec/os7-backup-replicate /mnt/root/usr/libexec/os7-backup-firstboot /mnt/root/usr/lib/systemd/system/os7-backup-replicate.timer; do [ -s "$f" ] && echo "ok $f" || echo "MISSING $f"; done; for f in /mnt/root/etc/sanoid/sanoid.conf /mnt/root/etc/os7/backup.json; do [ -e "$f" ] && echo "BAKED-IN $f" || echo "absent $f"; done'
+
+# THE GENERATOR THAT QUIETENS THE SETUP MEDIUM, run out of the SHIPPED image.
+#
+# Hook 0070 checks all of this during the build. This checks it again on the
+# artefact, and the two are not the same question: includes.chroot files have
+# been dropped between the chroot and the binary stage before, and a generator
+# without its executable bit is skipped by systemd in complete silence.
+# BUILD-NOTES #79, and the same argument as the pin check above.
+#
+# The gate is exercised rather than read - against a copy with /proc/cmdline
+# substituted for a file, and the substitution is counted, so the thing under
+# test cannot quietly be a different program (BUILD-NOTES #66).
+cat > /tmp/quiesce.sh <<'QSH'
+G=/mnt/sq/usr/lib/systemd/system-generators/os7-setup-quiesce
+[ -s "$G" ] || { echo "MISSING $G"; exit 0; }
+echo "mode $(stat -c %a "$G")"
+echo "units $(sed -n '/^UNITS="/,/^"$/p' "$G" | grep -cE '[A-Za-z0-9@._-]+\.(service|socket|timer|path)$')"
+if sh -n "$G" 2>/dev/null; then echo "parses"; else echo "PARSE-ERROR"; fi
+W=$(mktemp -d)
+sed "s#/proc/cmdline#$W/cmdline#g" "$G" > "$W/gen"
+chmod 0755 "$W/gen"
+echo "substituted $(diff "$G" "$W/gen" | grep -c '^>')"
+gate() {
+    rm -rf "$W/early"; mkdir -p "$W/early"
+    printf '%s\n' "$2" > "$W/cmdline"
+    "$W/gen" "$W/n" "$W/early" "$W/l" >/dev/null 2>&1 || true
+    echo "gate.$1 $(find "$W/early" -maxdepth 1 -type l | wc -l) $(readlink "$W/early/unattended-upgrades.service" 2>/dev/null || echo none)"
+}
+gate install "BOOT_IMAGE=/casper/vmlinuz boot=casper os7.setup=1 quiet"
+gate live    "BOOT_IMAGE=/casper/vmlinuz boot=casper quiet splash"
+gate trap    "BOOT_IMAGE=/casper/vmlinuz noos7.setup=10 quiet"
+QSH
+emit quiesce           bash /tmp/quiesce.sh
+
+# WHAT THE IMAGE WOULD DO TO THE CONSOLE LOGLEVEL. `loglevel=0` on the Install
+# entry is undone by this file, which is the second half of BUILD-NOTES #79 and
+# the reason os7-setup takes console_loglevel itself. Read here so that a future
+# image which stops shipping it is noticed rather than assumed.
+emit printk.sysctl     bash -c 'grep -rh "kernel.printk" /mnt/sq/usr/lib/sysctl.d/ /mnt/sq/etc/sysctl.d/ 2>/dev/null || echo "(none)"'
+
+# THE ZFS ARC's CEILING AS THE IMAGE LEAVES IT. No modprobe.d options at all is
+# the measured state and is exactly why InstallerEnvironmentStep exists; if a
+# later image starts shipping one, the step and the file have to be reconciled.
+emit zfs.modprobe      bash -c 'grep -rh "zfs" /mnt/sq/etc/modprobe.d/ /mnt/sq/usr/lib/modprobe.d/ 2>/dev/null || echo "(none)"'
 
 emit volume            bash -c 'blkid -o value -s LABEL /iso/ISONAME'
 emit grub.cfg          bash -c 'cat /mnt/iso/boot/grub/grub.cfg 2>/dev/null | head -40'
@@ -190,6 +233,28 @@ def read_image(arch: str) -> dict[str, str]:
         elif key:
             sections[key].append(line)
     return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def bash_syntax(text: str) -> str:
+    """`bash -n` over a script, returning "" when it parses or the first error.
+
+    ON STDIN, NOT IN A FILE. `bash -n <path>` needs a path bash can open, and
+    on Windows `tempfile` produces one it cannot — every generated script came
+    back "No such file or directory", which reads as seven broken scripts and
+    is one broken harness. Nothing here needs a file: the text is in hand.
+    """
+    # BYTES, NOT text=True. On Windows, Python opens the pipe in text mode and
+    # turns every newline into CR-LF on the way out, so bash receives a script
+    # whose every line ends in a carriage return and reports a syntax error
+    # near an unexpected token, about seven scripts that are all fine. Same
+    # family as BUILD-NOTES #70, arriving through a different door: the
+    # encoding here is the only place that can decide it.
+    rc = subprocess.run(["bash", "-n"], input=text.encode("utf-8"),
+                        capture_output=True)
+    if rc.returncode == 0:
+        return ""
+    err = rc.stderr.decode("utf-8", "replace").strip().splitlines()
+    return err[0] if err else f"bash -n exited {rc.returncode}"
 
 
 def generated_scripts(log: str) -> dict[str, list[str]]:
@@ -394,14 +459,9 @@ def main() -> None:
     else:
         bad_scripts = []
         for name, body in scripts.items():
-            text = "#!/bin/bash\nset -euo pipefail\n" + "\n".join(body) + "\n"
-            with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
-                fh.write(text)
-                path = fh.name
-            rc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
-            os.unlink(path)
-            if rc.returncode != 0:
-                bad_scripts.append(f"{name}: {rc.stderr.strip().splitlines()[0]}")
+            err = bash_syntax("#!/bin/bash\nset -euo pipefail\n" + "\n".join(body) + "\n")
+            if err:
+                bad_scripts.append(f"{name}: {err}")
         check(not bad_scripts,
               f"all {len(scripts)} generated chroot scripts are valid bash",
               "; ".join(bad_scripts) if bad_scripts else ", ".join(scripts))
@@ -420,14 +480,8 @@ def main() -> None:
             check(bool(gui_body), "the GUI branch of the mode step is generated",
                   ", ".join(gui) if gui else "no 'graphical target' script in the GUI dry-run")
             if gui_body:
-                text = "#!/bin/bash\nset -euo pipefail\n" + gui_body + "\n"
-                with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
-                    fh.write(text)
-                    path = fh.name
-                rc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
-                os.unlink(path)
-                check(rc.returncode == 0, "the GUI mode script is valid bash",
-                      rc.stderr.strip().splitlines()[0] if rc.returncode else "bash -n")
+                err = bash_syntax("#!/bin/bash\nset -euo pipefail\n" + gui_body + "\n")
+                check(not err, "the GUI mode script is valid bash", err or "bash -n")
                 proves = ("systemctl get-default" in gui_body
                           and "display-manager.service" in gui_body
                           and "exit 1" in gui_body)
@@ -508,6 +562,60 @@ def main() -> None:
           "; ".join(missing))
     check(not baked, "no backup policy is baked into the image (it is written on first boot)",
           "; ".join(baked))
+
+    # -- the setup medium's quiesce generator (BUILD-NOTES #79) -------------
+    #
+    # The install this exists for died because the medium was running a
+    # desktop's background workload while ZFS was being handed a disk. Three
+    # things have to be true of the artefact, and the third is the one that
+    # cannot be read off a source tree: the gate must actually gate.
+    q = img.get("quiesce", "")
+    qline = dict(
+        (parts[0], parts[1:])
+        for parts in (l.split() for l in q.splitlines()) if parts
+    )
+    check("MISSING" not in q and qline.get("mode", [""])[0] == "755",
+          "the quiesce generator is in the image and executable",
+          f"mode {qline.get('mode', ['absent'])[0]}")
+    check("parses" in q, "the quiesce generator parses as sh")
+    n_units = int((qline.get("units") or ["0"])[0])
+    check(n_units >= 40, "the quiesce generator names a real unit list",
+          f"{n_units} units")
+    check((qline.get("substituted") or ["0"])[0] == "1",
+          "the copy under test is the generator plus one path (#66)")
+
+    def gate(name: str) -> tuple[int, str]:
+        v = qline.get(f"gate.{name}")
+        return (int(v[0]), v[1]) if v and len(v) > 1 else (-1, "?")
+
+    masked, target = gate("install")
+    check(masked == n_units and target == "/dev/null",
+          "os7.setup=1 masks the whole list, to /dev/null",
+          f"{masked} of {n_units} -> {target}")
+    check(gate("live")[0] == 0,
+          "the LIVE entry is untouched (L14: try before you install)",
+          f"{gate('live')[0]} masked")
+    # `grep os7.setup=1` matches "noos7.setup=10". Taking cron and snapd away
+    # from a session nobody asked to install from is the failure that would
+    # never be looked for.
+    check(gate("trap")[0] == 0,
+          "a command line that merely CONTAINS the token masks nothing",
+          f"{gate('trap')[0]} masked")
+
+    # The two image facts the fix is built on, recorded rather than assumed.
+    # Neither fails an image: they are what a later image would have to change
+    # for the reasoning in #79 to stop holding.
+    pk = img.get("printk.sysctl", "")
+    print(f"      note  the image sets the console loglevel: "
+          f"{pk.splitlines()[0] if pk else '(nothing)'} — os7-setup overrides it "
+          f"while it owns the console (#79)")
+    zm = img.get("zfs.modprobe", "").strip()
+    if zm and zm != "(none)":
+        print(f"      note  ZFS module options shipped in the image: {zm}")
+    else:
+        print("      note  the image ships no ZFS module options, so zfs_arc_max is "
+              "the default half of memory — InstallerEnvironmentStep caps it at "
+              "install time (#79)")
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

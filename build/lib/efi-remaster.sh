@@ -136,7 +136,30 @@ echo ">>> ${ARCH} EFI: kernel=${VMLINUZ} initrd=${INITRD}"
 #   fbcon=font:TER16x32    the closest built-in match until setfont runs (L20)
 #   fbcon=nodefer          the framebuffer console exists from the start
 #   plymouth.enable=0      nothing scrolls over the field
-#   quiet loglevel=0       nor does the kernel
+#   quiet loglevel=0       the kernel, until systemd-sysctl overrules it - see
+#                          below, this line is NOT the whole answer
+#
+# `loglevel=0` DOES NOT KEEP THE KERNEL OFF THIS SCREEN, and for two months the
+# line above said it did. The image overrules it:
+#
+#     /usr/lib/sysctl.d/55-console-messages.conf:  kernel.printk = 4 4 1 7
+#
+# read out of the shipped amd64 squashfs on 2026-08-26. systemd-sysctl applies
+# that during boot, so by the time Setup paints its first frame console_loglevel
+# is 4 again and everything at KERN_ERR or above lands on top of the installer -
+# which is how an out-of-memory cascade came to be legible only in a photograph
+# of the screen. The command line still earns its place: it covers the interval
+# between the kernel starting and systemd-sysctl running. The REST of the answer
+# is that os7-setup takes console_loglevel down to 1 for as long as it owns the
+# console and puts it back on the way out (Tui/Terminal.cs, QuietTheKernel), and
+# that the serious lines are copied into Setup's own log when an install fails
+# (Diagnostics/KernelLog.cs). docs/BUILD-NOTES.md #79.
+#
+# The same note is why the Install entry now boots a QUIET medium as well as a
+# quiet console: /usr/lib/systemd/system-generators/os7-setup-quiesce masks the
+# desktop image's background workload - unattended-upgrades, snapd, packagekit,
+# apt-daily and fifteen other timers - whenever os7.setup=1 is on this line. It
+# is keyed to THIS entry's token, so the live entries below are untouched.
 #
 # `nodefer` is not a tuning flag. By default fbcon DEFERS taking the console
 # over and completes the takeover only when something writes to it, so tty1
