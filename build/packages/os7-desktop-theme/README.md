@@ -14,11 +14,49 @@ Everything below is a consequence of that sentence.
 
 | Layer | What it is | Survives a generation upgrade? |
 |---|---|---|
+| **Which session runs at all** | `org.gnome.desktop.session session-name = 'gnome-classic'` in the dconf database | **Yes**, and it is the load-bearing one — see below |
 | Session | GNOME Classic extensions from GNOME's **own** `gnome-shell-extensions` source package | **Yes.** Ubuntu updates them with `gnome-shell` — `50.0-1` against `gnome-shell` `50.1`, `Depends: gnome-shell (>= 50~), (<< 51~)` |
 | Widgets | `gtk-3.0/gtk.css` | **Yes.** GTK 3 is frozen at 3.24 and imports Adwaita rather than replacing it |
 | Shell | `gnome-shell/gnome-shell.css` via `user-theme` | **Partly.** Shell CSS is internal; the file styles colour only, so a renamed node costs one surface, not the desktop |
 | GTK 4 | `os7-theme/gtk-4.0/os7-classic.css`, colours only | **Partly.** `@define-color` is the only lever libadwaita honours; structural CSS there breaks on upgrade and is therefore forbidden in that file |
 | Defaults | `/etc/dconf/db/os7.d/` | **Yes.** A key GNOME drops becomes silently inert instead of failing |
+
+## The one key that decides whether any of the rest is seen
+
+Added 2026-08-26, after this package had shipped in an ISO and been verified by
+its own hook while producing **an Ubuntu desktop**.
+
+GDM reads `org.gnome.desktop.session session-name` to pick the session for a
+user who has not chosen one. Ubuntu sets it to `"ubuntu"` in
+`10_ubuntu-settings.gschema.override`. This package set sixty-odd keys and not
+that one, so the session that ran was Ubuntu's — and `modes/ubuntu.json` carries
+its **own** `stylesheetName` (`Yaru/gnome-shell.css`), its own
+`themeResourceName`, and its own extension list including `ding`. A session
+mode's stylesheet is not a default a user theme can be relied on to beat.
+
+So the theme was installed, selected, correct, and never asked for. The panel
+stayed Yaru-dark, `ding` drew desktop icons onto a desktop that is meant to be
+bare, and every check in hook 0090 passed. [BUILD-NOTES #85](../../../docs/BUILD-NOTES.md).
+
+The fix is one key. The **second** part of the fix matters as much: hook 0090
+and `check-image.py` now also assert that the session that key names is on the
+image, because dconf stores any string happily and GDM falls back without a
+word.
+
+## Antialiasing is on, and that is not a change of taste
+
+The keyfile used to set `font-antialiasing='none'`, on the correct observation
+that Windows 2000 drew its UI text without antialiasing. GNOME 50 will not do
+it: GTK 4 / libadwaita text loses vertical stems while GTK 3 text on the same
+screen at the same size stays crisp, because the Shell draws through a GPU glyph
+atlas and a 1-bit glyph has no partial coverage to spend when anything
+downstream resamples it.
+
+Twelve renderings outside the desktop — two rasterisers, six sizes, both AA
+modes — say the font is not at fault. [BUILD-NOTES #84](../../../docs/BUILD-NOTES.md)
+has them. `font-hinting` stays `'full'`; the palette, the bevels, the square
+corners and the metrics are what carry the classic look, and none of them is
+touched by this.
 
 ## Why not the obvious alternatives
 

@@ -72,6 +72,25 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**THE amd64 DESKTOP WAS LOOKED AT ON A SCREEN FOR THE FIRST TIME ON
+2026-08-26, AND IT WAS UBUNTU'S.** `1.0.0.109` booted into the **Ubuntu
+session**, not OS/7 Classic, so the theme that hook 0090 verified was never
+loaded — `00-os7-classic` never set `org.gnome.desktop.session session-name`
+and `modes/ubuntu.json` carries its own Shell stylesheet (BUILD-NOTES **#85**).
+On the same screen, `font-antialiasing='none'` was tearing vertical stems out of
+every GTK 4 surface while GTK 3 stayed crisp (**#84**). Both are fixed in
+`1.0.0.111`, together with the removal of `gnome-initial-setup`, the telemetry,
+the crash reporters, Firefox and the Ubuntu boot logo — and VS Code beside Edge
+and Intune. **None of it has been seen on a booted machine.**
+
+```bash
+./installer/testing/check-image.py amd64   # 11 new checks, seconds, no VM
+```
+
+then boot it and look at the panel: it is `#d4d0c8` or the session default is
+still not taking. [SESSION-DESKTOP-DEBRAND.md](SESSION-DESKTOP-DEBRAND.md) says
+what was measured and — longer — what was not.
+
 **THE BACKUP FEATURE LANDED ON 2026-08-26 AND HAS NEVER TOUCHED A MACHINE.**
 That is the first thing to do next, and it is one command on the Mac:
 

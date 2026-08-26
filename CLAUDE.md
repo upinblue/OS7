@@ -211,6 +211,19 @@ the ones a fresh session hits first.
   because "Intune matches on `ID`" — never verified, and wrong for at least one
   tool. Never protect "the field they match on"; make the brand independent of
   all of them ([docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) I1).
+- **#85 — a theme can be installed, verified, and never loaded.** Hook 0090
+  reported the classic desktop verified and every statement was true; the screen
+  was Ubuntu's, because `00-os7-classic` set sixty keys and not
+  `org.gnome.desktop.session session-name`, and `modes/ubuntu.json` carries its
+  own `stylesheetName` that no user theme beats. Same shape as #62: every
+  declaration satisfied, and the thing they were about decided elsewhere. The
+  second half of the fix is checking that the session the key names **exists** —
+  dconf stores any string and GDM falls back silently.
+- **#84 — GNOME 50 will not draw 1-bit text.** `font-antialiasing='none'` was a
+  deliberate Windows-2000 choice against a GNOME that no longer honours it: GTK 4
+  loses vertical stems, GTK 3 on the same screen at the same size does not.
+  Twelve renderings outside the desktop say the font is fine. Never conclude a
+  font is at fault before rendering it somewhere the toolkit is not.
 - **#15 — a ZFS root needs `boot=zfs` on the kernel command line**, and nothing
   generates it for you.
 - **#16 — driving a serial console:** Enter is `\r`; an unanswered terminal query
