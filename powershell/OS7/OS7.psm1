@@ -2257,10 +2257,31 @@ function Restore-OS7 {
 # the fact the backup policy, Restore-OS7 and the installer all depend on and
 # none of them owned. Dot-sourced AFTER the backup files because Get-OS7Home
 # uses Get-OS7PathDataset, which OS7.BackupRestore.ps1 defines.
+#
+# .NET AND NOT `Join-Path`/`Test-Path`, AND THAT IS NOT A STYLE CHOICE — it is
+# BUILD-NOTES #38, reached from the one direction that note did not consider.
+#
+# #38's rule is about hooks: a build-time hook may Import-Module by path and
+# list what it exports, but must not CALL anything that needs a cmdlet
+# autoloaded out of $PSHOME/Modules, because live-build's chroot mangles that
+# lookup. Hook 0060 has always obeyed it — `Get-Command` and
+# `[Console]::WriteLine`, nothing else.
+#
+# This loop runs at IMPORT. So when it was added it moved `Join-Path` and
+# `Test-Path` — both Microsoft.PowerShell.Management, both autoloaded by name —
+# to the far side of that line without touching the hook at all, and
+# `Import-Module` itself became the forbidden call. Every ISO build after that
+# died here:
+#
+#     OS/7 hook 0060:   OS7: FAILED: The term 'Join-Path' is not recognized …
+#
+# and it was invisible for a day because no ISO was built in between.
+# [System.IO.Path] and [System.IO.File] are .NET types, always present, never
+# looked up by name. BUILD-NOTES #81.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1')) {
-	$file = Join-Path $PSScriptRoot $part
-	if (-not (Test-Path -LiteralPath $file)) {
+	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
+	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
 			"$part is missing from $PSScriptRoot. The OS7 module is staged by copying the " +
 			'whole directory (build.sh stage_ps_module); a partial copy is what this looks ' +
