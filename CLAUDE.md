@@ -224,6 +224,13 @@ the ones a fresh session hits first.
   loses vertical stems, GTK 3 on the same screen at the same size does not.
   Twelve renderings outside the desktop say the font is fine. Never conclude a
   font is at fault before rendering it somewhere the toolkit is not.
+- **#86 — `/etc/profile.d` is read by LOGIN shells, and a terminal window is not
+  one.** PowerShell greeted every console and ssh login and never once greeted a
+  GUI terminal, because a terminal emulator starts bash non-login and
+  `/etc/bash.bashrc` on this image sources nothing at all. Fixed with
+  `login-shell=true` on gnome-terminal's default profile, so the *same* guarded
+  hand-off runs. Hook 0050 now proves it by piping a PowerShell expression into
+  `bash --login -i` and requiring the pinned version back.
 - **#15 — a ZFS root needs `boot=zfs` on the kernel command line**, and nothing
   generates it for you.
 - **#16 — driving a serial console:** Enter is `\r`; an unanswered terminal query

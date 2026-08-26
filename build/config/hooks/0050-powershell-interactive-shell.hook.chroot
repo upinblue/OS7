@@ -47,4 +47,71 @@ exec /usr/bin/pwsh -NoLogo
 DROPIN
 
 chmod 0644 /etc/profile.d/95-os7-powershell.sh
+
+# ---------------------------------------------------------------------------
+# PROVE IT. Not "the file was written" - that is a diagnostic about a `cat`.
+#
+# Until 2026-08-26 this hook wrote a file and stopped, and the drop-in had never
+# been shown to fire anywhere: the evidence that PowerShell greeted a login was
+# a human looking at a serial console once. Meanwhile the GUI half of it was
+# simply false - /etc/profile.d is read by LOGIN shells, a terminal emulator
+# starts bash as an interactive NON-login shell, and /etc/bash.bashrc (which a
+# non-login interactive bash does read) sources nothing at all on this image.
+# Nobody had asked, because nothing had opened a terminal on a desktop.
+#
+# `bash --login -i` reaches the drop-in the same way a console login does. Its
+# stdin is a pipe rather than a tty, so bash complains about job control on
+# stderr and carries on; -i is what puts `i` in $- and satisfies guard 1. If the
+# hand-off works, what reads the piped lines is PowerShell, and it answers with
+# its own version. If it does not, bash reads them and fails.
+#
+# This runs under chroot(2), where PowerShell's module DISCOVERY is broken
+# (hook 0020 documents that at length). $PSVersionTable is an automatic
+# variable compiled into the binary, not a cmdlet from the module tree, so it is
+# one of the things that does work there - verified against the shipped
+# OS7-1.0.0.109 image before this check was written.
+# ---------------------------------------------------------------------------
+[ -r /usr/lib/os7/release.conf ] || {
+	echo "OS/7 hook 0050: /usr/lib/os7/release.conf missing - build.sh did not stage the pin" >&2
+	exit 1
+}
+# shellcheck source=/dev/null
+. /usr/lib/os7/release.conf
+
+echo "OS/7 hook 0050: proving the hand-off"
+
+CLEAN_ENV=(env -i HOME=/root TERM=dumb
+	PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
+
+GOT="$(printf '$PSVersionTable.PSVersion.ToString()\nexit\n' \
+	| "${CLEAN_ENV[@]}" bash --login -i 2>/dev/null || true)"
+
+case "${GOT}" in
+	*"${OS7_PWSH_VERSION}"*)
+		echo "OS/7 hook 0050:   ok: an interactive login lands in PowerShell ${OS7_PWSH_VERSION}"
+		;;
+	*)
+		echo "OS/7 hook 0050: FAIL: an interactive login did NOT reach PowerShell." >&2
+		echo "OS/7 hook 0050:   expected the pinned version ${OS7_PWSH_VERSION} in the reply" >&2
+		echo "OS/7 hook 0050:   got: ${GOT}" >&2
+		exit 1
+		;;
+esac
+
+# The opt-out is load-bearing: it is how an administrator gets plain bash
+# without editing system files, and a guard nobody checks is a guard nobody can
+# rely on.
+GOT_BASH="$(printf 'echo OS7_BASH=$BASH_VERSION\nexit\n' \
+	| "${CLEAN_ENV[@]}" OS7_NO_PWSH=1 bash --login -i 2>/dev/null || true)"
+case "${GOT_BASH}" in
+	*OS7_BASH=*)
+		echo "OS/7 hook 0050:   ok: OS7_NO_PWSH=1 still gets bash"
+		;;
+	*)
+		echo "OS/7 hook 0050: FAIL: OS7_NO_PWSH=1 did not leave the session in bash." >&2
+		echo "OS/7 hook 0050:   got: ${GOT_BASH}" >&2
+		exit 1
+		;;
+esac
+
 echo "OS/7 hook 0050: done"

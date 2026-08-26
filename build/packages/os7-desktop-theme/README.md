@@ -58,6 +58,23 @@ has them. `font-hinting` stays `'full'`; the palette, the bevels, the square
 corners and the metrics are what carry the classic look, and none of them is
 touched by this.
 
+## The terminal lands in PowerShell, and that is also one boolean
+
+`login-shell=true` on gnome-terminal's default profile. Not a custom command:
+OS/7 already hands interactive human sessions to PowerShell from
+`/etc/profile.d/95-os7-powershell.sh`, with five guards and an `OS7_NO_PWSH`
+opt-out, and `/etc/profile.d` is read by **login shells only** — which a
+terminal window is not, unless it is told to be one.
+
+`use-custom-command=/usr/bin/pwsh` would have skipped `/etc/profile` entirely,
+so `PATH`, the locale and the .NET environment would be missing inside the
+window and the opt-out would not exist. [BUILD-NOTES #86](../../../docs/BUILD-NOTES.md).
+
+The profile UUID is gnome-terminal's built-in default, read back out of the
+image (`gsettings get org.gnome.Terminal.ProfilesList default`) rather than
+copied from anywhere, and hook 0090 asks the same question at build time — if a
+future gnome-terminal changes it, this setting lands in a profile nobody opens.
+
 ## Why not the obvious alternatives
 
 **Why not dash-to-panel and ArcMenu**, which `README.md` used to call for?

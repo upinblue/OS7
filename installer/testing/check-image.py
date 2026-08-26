@@ -112,8 +112,24 @@ emit desktop.kept      bash -c 'for p in ubuntu-desktop-minimal gnome-shell gdm3
 emit desktop.pin       bash -c 'cat /mnt/sq/etc/apt/preferences.d/os7-desktop-exclusions.pref 2>/dev/null || true'
 emit desktop.pinforce  bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin apt-cache policy gnome-initial-setup firefox ubuntu-report 2>/dev/null || true'
 emit desktop.logo      bash -c 'ls -l /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png.distrib 2>&1 || true'
-emit desktop.autostart bash -c 'for f in update-notifier ubuntu-advantage-notification; do printf "%s %s\n" "$f" "$(grep -c "^Hidden=true" /mnt/sq/etc/xdg/autostart/$f.desktop 2>/dev/null || echo 0)"; done'
+# `grep -c` prints 0 AND exits 1 when nothing matches, so `$(grep -c … || echo 0)`
+# yields TWO lines and the parser on the other side gets a row with one field.
+# grep -q in an if, which answers the question that was actually asked.
+emit desktop.autostart bash -c 'for f in update-notifier ubuntu-advantage-notification; do if grep -q "^Hidden=true" /mnt/sq/etc/xdg/autostart/$f.desktop 2>/dev/null; then echo "$f hidden"; else echo "$f LIVE"; fi; done'
 emit desktop.relupg    bash -c 'grep -E "^Prompt=" /mnt/sq/etc/update-manager/release-upgrades 2>/dev/null || true'
+
+# THE TERMINAL, and what it lands in.
+#
+# `desktop.handoff` is the one that matters and it is not a file check: it
+# starts bash the way gnome-terminal will once login-shell=true, feeds it a
+# PowerShell expression, and reports what answered. If the hand-off works, the
+# reply is PowerShell's own version string; if it does not, bash gets the line
+# and fails. -i is what puts `i` in $- and satisfies the drop-in's first guard;
+# stdin being a pipe costs a job-control complaint on stderr and nothing else.
+emit desktop.termlogin chroot /mnt/root env -i PATH=/usr/bin:/bin DCONF_PROFILE=/etc/dconf/profile/user dconf read /org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/login-shell
+emit desktop.termalt   bash -c 'readlink /mnt/sq/etc/alternatives/x-terminal-emulator 2>&1 || true'
+emit desktop.pwsh      bash -c 'readlink /mnt/sq/usr/bin/pwsh 2>&1; ls -d /mnt/sq/opt/microsoft/powershell/* 2>&1'
+emit desktop.handoff   bash -c "printf '\$PSVersionTable.PSVersion.ToString()\nexit\n' | chroot /mnt/root env -i HOME=/root TERM=dumb PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin bash --login -i 2>/dev/null || true"
 
 emit setup.version     chroot /mnt/root /usr/lib/os7-setup/os7-setup --version
 emit setup.selftest    bash -c 'chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/lib/os7-setup/os7-setup --self-test | tail -3'
@@ -790,22 +806,64 @@ def main() -> None:
               "and apt in the image agrees it would install none of them",
               ", ".join(cands) if cands else "<apt-cache said nothing>")
 
-        # The boot mark. `.distrib` existing is what proves the diversion took:
-        # it is the name dpkg-divert --rename moved Ubuntu's file to.
-        logo = img.get("desktop.logo", "")
-        check("os7.svg" in logo and "No such file" not in logo.split("os7.svg")[0],
-              "the product mark exists for LOGO=os7")
-        check("bgrt-fallback.png.distrib" in logo,
+        # The boot mark. `ls -l a b c 2>&1` prints an error LINE for each file
+        # it cannot stat, so presence is "a line naming it that is not an error
+        # line" — not "the name appears in the output", which an error line also
+        # satisfies.
+        def listed(name: str) -> bool:
+            for line in img.get("desktop.logo", "").splitlines():
+                if name in line and not line.startswith("ls:"):
+                    return True
+            return False
+
+        check(listed("os7.svg"), "the product mark exists for LOGO=os7")
+        # `.distrib` is the name dpkg-divert --rename moved Ubuntu's file to, so
+        # its existence is what proves the diversion took — the replacement file
+        # being present proves only that something wrote it.
+        check(listed("bgrt-fallback.png.distrib"),
               "and plymouth's Ubuntu logo is diverted out of the boot splash")
 
-        auto = dict(l.split() for l in img.get("desktop.autostart", "").splitlines() if l.split())
-        check(auto.get("update-notifier") == "1" and
-              auto.get("ubuntu-advantage-notification") == "1",
+        auto = {}
+        for line in img.get("desktop.autostart", "").splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                auto[parts[0]] = parts[1]
+        check(auto.get("update-notifier") == "hidden" and
+              auto.get("ubuntu-advantage-notification") == "hidden",
               "the update and Ubuntu Pro autostart entries are hidden",
-              str(auto))
+              ", ".join(f"{k}={v}" for k, v in sorted(auto.items())) or "<nothing read>")
         check(img.get("desktop.relupg", "").strip() == "Prompt=never",
               "the release upgrader will not offer a do-release-upgrade",
               img.get("desktop.relupg", "").strip() or "<unset>")
+
+        # -- the terminal lands in PowerShell ------------------------------
+        check(img.get("desktop.termlogin", "").strip() == "true",
+              "the GUI terminal starts a login shell (which is what reaches pwsh)",
+              img.get("desktop.termlogin", "").strip() or "<unset>")
+        check("gnome-terminal" in img.get("desktop.termalt", ""),
+              "x-terminal-emulator is the terminal OS/7 configures",
+              img.get("desktop.termalt", "").strip() or "<unset>")
+
+        # /usr/bin/pwsh must be the VERSION-FREE path. A link into a 7.6.5
+        # directory would be true today and stale after the first PowerShell
+        # bump, and nothing would say so.
+        pwsh = img.get("desktop.pwsh", "")
+        check("/opt/microsoft/powershell/7/pwsh" in pwsh,
+              "/usr/bin/pwsh is the version-free path, not a pinned directory",
+              pwsh.splitlines()[0] if pwsh else "<absent>")
+
+        # THE PROOF, and the only check here that is not about a file: an
+        # interactive login shell in the shipped image was asked a PowerShell
+        # question and PowerShell answered. The version it reports must be the
+        # one the release pin names.
+        want_pwsh = ""
+        for line in img.get("release.conf", "").splitlines():
+            if line.startswith("OS7_PWSH_VERSION="):
+                want_pwsh = line.split("=", 1)[1].strip().strip('"')
+        handoff = img.get("desktop.handoff", "")
+        check(bool(want_pwsh) and want_pwsh in handoff,
+              f"an interactive login lands in PowerShell {want_pwsh or '?'}",
+              handoff.replace("\n", " ")[-80:] if handoff else "<no reply>")
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

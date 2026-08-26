@@ -193,6 +193,50 @@ a packaging discovery.
 
 ---
 
+## 6a. The terminal was bash, and had always been
+
+Asked for after the rest of the session, and it turned out to be a real hole
+rather than a setting: **PowerShell greeted every console login and every ssh
+session and had never once greeted a terminal window.**
+
+Full account in [BUILD-NOTES #86](BUILD-NOTES.md). Three ordinary facts and a
+fourth that closes it:
+
+| | |
+|---|---|
+| `/etc/profile.d/95-os7-powershell.sh` is sourced by | `/etc/profile` — **login shells only** |
+| a terminal emulator starts bash as | an interactive **non-login** shell |
+| a non-login interactive bash reads | `/etc/bash.bashrc` |
+| `/etc/bash.bashrc` on this image sources | **nothing at all** — 79 lines, no drop-in directory |
+
+So the hand-off had no route into a GUI terminal, and nothing reported a
+problem, because from every component's point of view nothing had gone wrong.
+
+And there were **two terminals**: OS/7's package list names `gnome-terminal`,
+`ubuntu-desktop-minimal` Recommends `ptyxis`, both register `x-terminal-emulator`
+at priority **40**, and the tie went to ptyxis — the one OS/7 does not
+configure — while `favorite-apps` named GNOME Terminal. Three places naming a
+terminal, two answers.
+
+The fix is one boolean, `login-shell=true` on gnome-terminal's default profile,
+so the **same** drop-in runs with the same five guards and the same
+`OS7_NO_PWSH` opt-out. `use-custom-command=/usr/bin/pwsh` was rejected: it skips
+`/etc/profile`, so `PATH`, the locale and the .NET environment would be missing
+inside the window and the opt-out would not exist. `ptyxis` is purged and
+pinned; `x-terminal-emulator` is `--set` to `gnome-terminal.wrapper`, which puts
+the link in manual mode so a future priority-41 package cannot take it back.
+
+`/usr/bin/pwsh` already points at `/opt/microsoft/powershell/**7**/pwsh`, not at
+a `7.6.5` directory, so "the installed PowerShell version" stays true across an
+upgrade with nothing here to edit. `check-image.py` now asserts that too, because
+a version-specific link would be correct today and stale silently.
+
+**And the hand-off is now proven rather than asserted.** Hook 0050 used to write
+a file and stop. It now runs the mechanism — `bash --login -i` fed a PowerShell
+expression must answer with the version the release pin names, and
+`OS7_NO_PWSH=1` must still answer with `$BASH_VERSION`. Measured working inside
+a chroot against the shipped image before the check was written.
+
 ## 7. What was measured, and what was not
 
 **Measured**, all against the shipped ISO or files taken out of it:
@@ -221,6 +265,16 @@ a packaging discovery.
   been put to an actual enrollment.
 * `authd`/`authd-msentraid` still is not installed, so keeping `snapd` is a
   decision made for a path nobody has walked yet.
+* The PowerShell hand-off is proven **in a chroot**, which is not a session on a
+  desktop. What a `gnome-terminal` window does when a person opens it has not
+  been seen. The chroot proof covers the shell side of the chain; `login-shell`
+  being honoured is gnome-terminal's side, and only a booted machine says so.
+* **VS Code's integrated terminal is not covered.** It runs `$SHELL` — bash from
+  `/etc/passwd` — as a non-login shell, and VS Code has no system-wide settings
+  file. The two ways to reach it both have a cost this session declined to pay:
+  a per-user `settings.json`, which never reaches the homes `authd` creates for
+  Entra ID accounts, or overwriting `base-files`' `/etc/bash.bashrc` conffile,
+  which would fight every `base-files` upgrade. Named so it is a known gap.
 
 ## 8. Next
 

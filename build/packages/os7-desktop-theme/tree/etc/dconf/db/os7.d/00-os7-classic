@@ -171,6 +171,53 @@ edge-tiling=true
 attach-modal-dialogs=false
 center-new-windows=false
 
+[org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9]
+# THE TERMINAL LANDS IN POWERSHELL, and this one boolean is the whole mechanism.
+#
+# OS/7 hands interactive human sessions over to PowerShell from
+# /etc/profile.d/95-os7-powershell.sh (hook 0050), deliberately rather than by
+# chsh: bash stays the login shell so cron, systemd units, dpkg maintainer
+# scripts and Intune's bash compliance scripts keep working.
+#
+# But /etc/profile.d is read by LOGIN shells only, and a terminal emulator
+# starts bash as an interactive NON-login shell by default. MEASURED on the
+# shipped image: /etc/bash.bashrc - the file a non-login interactive bash does
+# read - sources nothing at all, and Debian ships no drop-in directory for it.
+# So on the console and over ssh you got PowerShell, and in the GUI you got
+# bash, and nothing anywhere said so.
+#
+# login-shell=true makes the terminal start bash the same way a console login
+# does, so the SAME hand-off runs, with the same five guards and the same
+# OS7_NO_PWSH opt-out. The alternative - use-custom-command with
+# /usr/bin/pwsh - was rejected: it skips /etc/profile entirely, so PATH,
+# locale and the .NET environment would all be missing, and the opt-out would
+# not exist.
+#
+# THE UUID IS NOT INVENTED. gnome-terminal's built-in default profile has a
+# fixed identifier, read back out of the image rather than copied from a blog:
+#     gsettings get org.gnome.Terminal.ProfilesList default
+#     'b1dcc9dd-5262-4d8d-a863-c897e6d979b9'
+# and hook 0090 checks the key against the RELOCATABLE schema this path belongs
+# to (org.gnome.Terminal.Legacy.Profile), because the group is a path and not a
+# schema name and the naive check in that hook would silently pass it.
+login-shell=true
+
+[org/gnome/desktop/default-applications/terminal]
+# Which terminal opens when something asks for "a terminal" - Files' "Open in
+# Terminal", and anything else still reading this deprecated-but-present schema.
+#
+# It has to be said out loud because the image ships TWO terminals: OS/7's
+# package list names gnome-terminal, and ubuntu-desktop-minimal Recommends
+# ptyxis, which won /etc/alternatives/x-terminal-emulator - both register at
+# priority 40 and ptyxis sorted first. Hook 0035 purges ptyxis and pins it, and
+# sets the alternative explicitly, so this key, the alternative and the
+# favourites list all name the same program.
+#
+# gnome-terminal is also the GTK 3 one, which after #84 is not a small thing:
+# it is the toolkit that still draws 1-bit-clean text.
+exec='gnome-terminal'
+exec-arg='--'
+
 [org/gnome/desktop/sound]
 event-sounds=false
 

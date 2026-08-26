@@ -125,6 +125,11 @@ if [ -s /etc/dconf/db/os7 ]; then
 	check_key /org/gnome/desktop/session/session-name "'gnome-classic'"
 	# 1-bit text and GNOME 50 do not agree; docs/BUILD-NOTES.md #84.
 	check_key /org/gnome/desktop/interface/font-antialiasing "'grayscale'"
+	# The GUI terminal must reach PowerShell the same way the console does, and
+	# the only thing that makes it happen is bash being started as a login
+	# shell. docs/BUILD-NOTES.md #86.
+	check_key "/org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/login-shell" "true"
+	check_key /org/gnome/desktop/default-applications/terminal/exec "'gnome-terminal'"
 else
 	note "/etc/dconf/db/os7 was not compiled"
 fi
@@ -162,12 +167,37 @@ ALL_SCHEMAS="$(gsettings list-schemas 2>/dev/null || true)"
 if [ -z "${ALL_SCHEMAS}" ]; then
 	note "gsettings lists no schemas at all - cannot verify the defaults"
 else
+	# RELOCATABLE SCHEMAS. A dconf group is a PATH, and for most of GNOME the
+	# path happens to spell the schema id with slashes. For a relocatable
+	# schema it does not: gnome-terminal's per-profile settings all live under
+	# org.gnome.Terminal.Legacy.Profile, instantiated at
+	#   /org/gnome/terminal/legacy/profiles:/:<uuid>/
+	# The naive transform below turns that into
+	#   org.gnome.terminal.legacy.profiles:.:<uuid>
+	# which is not a schema, and the check would report "no such schema" for a
+	# group that is perfectly correct - a check that fails on right answers gets
+	# deleted, and then it stops catching the wrong ones too.
+	#
+	# So: a table, small and explicit, mapping a group PREFIX to the schema it
+	# instantiates. gsettings takes SCHEMA:PATH, so the authority is still
+	# GSettings and the question is still "does this key exist" - only the way
+	# of naming the schema changes.
+	relocatable_schema() {
+		case "$1" in
+			org/gnome/terminal/legacy/profiles:*) echo "org.gnome.Terminal.Legacy.Profile" ;;
+			*) echo "" ;;
+		esac
+	}
+
 	checked=0
+	reloc=0
 	group=""
+	rawgroup=""
 	while IFS= read -r line || [ -n "${line}" ]; do
 		case "${line}" in
 			\[*\])
-				group="$(printf '%s' "${line}" | tr -d '[]' | sed 's|^/||; s|/$||; s|/|.|g')"
+				rawgroup="$(printf '%s' "${line}" | tr -d '[]' | sed 's|^/||; s|/$||')"
+				group="$(printf '%s' "${rawgroup}" | sed 's|/|.|g')"
 				;;
 			""|\#*)
 				;;
@@ -176,6 +206,20 @@ else
 				key="${line%%=*}"
 				key="$(printf '%s' "${key}" | tr -d '[:space:]')"
 				checked=$((checked + 1))
+
+				schema="$(relocatable_schema "${rawgroup}")"
+				if [ -n "${schema}" ]; then
+					reloc=$((reloc + 1))
+					if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${schema}"; then
+						note "no such relocatable schema: ${schema} (for key ${key})"
+						continue
+					fi
+					if ! gsettings list-keys "${schema}:/${rawgroup}/" 2>/dev/null | grep -qx "${key}"; then
+						note "${schema} at /${rawgroup}/ has no key '${key}'"
+					fi
+					continue
+				fi
+
 				if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${group}"; then
 					note "no such schema: ${group} (for key ${key})"
 					continue
@@ -186,7 +230,7 @@ else
 				;;
 		esac
 	done < "${KEYFILE}"
-	ok "${checked} defaults checked against GNOME's own schema list"
+	ok "${checked} defaults checked against GNOME's own schema list (${reloc} through a relocatable schema)"
 fi
 
 # --- 4. The font ---------------------------------------------------------
@@ -201,6 +245,64 @@ if command -v fc-match >/dev/null 2>&1; then
 		note "fc-match Tahoma -> '${MATCH}': the UI font would silently substitute"
 	fi
 fi
+
+# --- 5. The terminal, and what it lands in -------------------------------
+# The GUI half of a decision the rest of the system already made. OS/7 hands
+# interactive human sessions to PowerShell from /etc/profile.d (hook 0050, which
+# proves the hand-off itself); this checks the three things that decide whether
+# a terminal on a DESKTOP ever gets there.
+echo "OS/7 hook 0090: checking the terminal"
+
+# 5a. The profile our defaults write to must be the profile gnome-terminal
+#     actually uses. The UUID in the keyfile is gnome-terminal's built-in
+#     default, and if a future version changes it our login-shell=true lands in
+#     a profile nobody opens - stored, readable, and inert. Ask gnome-terminal.
+WANT_UUID="b1dcc9dd-5262-4d8d-a863-c897e6d979b9"
+GOT_UUID="$(gsettings get org.gnome.Terminal.ProfilesList default 2>/dev/null | tr -d "'" || true)"
+if [ "${GOT_UUID}" = "${WANT_UUID}" ]; then
+	ok "gnome-terminal's default profile is the one the defaults configure"
+else
+	note "gnome-terminal defaults to profile '${GOT_UUID:-<unset>}', the keyfile writes to ${WANT_UUID}"
+fi
+
+# 5b. One terminal on the image, and it is the configured one.
+if dpkg -s gnome-terminal >/dev/null 2>&1; then
+	ok "gnome-terminal installed"
+else
+	note "gnome-terminal is not installed - nothing carries the login-shell default"
+fi
+if dpkg -s ptyxis >/dev/null 2>&1; then
+	note "ptyxis is still installed - two terminals, and only one lands in PowerShell"
+else
+	ok "ptyxis is gone (hook 0035)"
+fi
+
+# 5c. What "a terminal" resolves to for everything that asks Debian rather than
+#     GNOME.
+XTERM_ALT="$(readlink -f /etc/alternatives/x-terminal-emulator 2>/dev/null || true)"
+case "${XTERM_ALT}" in
+	*gnome-terminal*) ok "x-terminal-emulator -> ${XTERM_ALT}" ;;
+	"")               note "x-terminal-emulator resolves to nothing" ;;
+	*)                note "x-terminal-emulator -> ${XTERM_ALT}, not gnome-terminal" ;;
+esac
+
+# 5d. And the thing at the end of the chain. /usr/bin/pwsh is a VERSION-FREE
+#     path on purpose - it points into /opt/microsoft/powershell/7, not into a
+#     7.6.5 directory - so that "the installed PowerShell" stays true across an
+#     upgrade without anything here being edited.
+if [ -x /usr/bin/pwsh ]; then
+	PWSH_TARGET="$(readlink -f /usr/bin/pwsh || true)"
+	ok "/usr/bin/pwsh -> ${PWSH_TARGET}"
+	case "${PWSH_TARGET}" in
+		*/powershell/7/*) ok "and it is the version-free path, not a pinned directory" ;;
+		*) note "/usr/bin/pwsh resolves to ${PWSH_TARGET} - a version-specific path goes stale on upgrade" ;;
+	esac
+else
+	note "/usr/bin/pwsh is missing or not executable - the terminal would land in bash"
+fi
+[ -r /etc/profile.d/95-os7-powershell.sh ] \
+	&& ok "/etc/profile.d/95-os7-powershell.sh" \
+	|| note "the PowerShell drop-in is missing - hook 0050 did not run"
 
 if [ "${fail}" -ne 0 ]; then
 	echo "OS/7 hook 0090: the classic desktop is NOT correctly installed." >&2

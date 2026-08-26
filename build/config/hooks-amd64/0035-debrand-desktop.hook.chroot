@@ -22,6 +22,7 @@
 #   apport-gtk                  Recommends: ubuntu-desktop-minimal, update-notifier
 #   ubuntu-docs                 Recommends: ubuntu-desktop-minimal
 #   firefox                     Recommends: ubuntu-desktop-minimal
+#   ptyxis                      Recommends: ubuntu-desktop-minimal
 #   plymouth-theme-ubuntu-text  Recommends: plymouth, ubuntu-standard
 #
 # AND WHAT CANNOT LEAVE, measured the same way, recorded so it is not
@@ -132,6 +133,15 @@ Package: firefox
 Pin: release *
 Pin-Priority: -1
 
+# The second terminal. OS/7's package list names gnome-terminal and its dconf
+# defaults make it start a login shell, which is what hands the session to
+# PowerShell. ptyxis arrives beside it as a Recommends, registers
+# x-terminal-emulator at the SAME priority 40, and wins the tie - so "Open in
+# Terminal" opened a terminal that lands in bash. One terminal, one answer.
+Package: ptyxis
+Pin: release *
+Pin-Priority: -1
+
 # The Ubuntu wordmark on the text boot splash. Unused while default.plymouth is
 # bgrt, and pinned so that it stays unused.
 Package: plymouth-theme-ubuntu-text
@@ -156,6 +166,7 @@ PURGE=(
 	apport apport-gtk apport-core-dump-handler apport-symptoms
 	ubuntu-docs gnome-user-docs
 	firefox
+	ptyxis
 	plymouth-theme-ubuntu-text
 )
 
@@ -197,6 +208,29 @@ do
 		note "${p} was removed as collateral - the purge cascaded"
 	fi
 done
+
+# --- 5a. One terminal, and it is the one that lands in PowerShell -------------
+# MEASURED on the shipped image: /etc/alternatives/x-terminal-emulator pointed
+# at /usr/bin/ptyxis. Both candidates register at priority 40 -
+# gnome-terminal.wrapper and ptyxis - so the tie was broken by sort order, not
+# by a decision, and the winner was the terminal OS/7 does not configure.
+#
+# Purging ptyxis above already leaves gnome-terminal.wrapper as the only
+# candidate. `--set` is done anyway, and it is not belt-and-braces for the same
+# thing: it moves the link into MANUAL mode, so a future package registering at
+# priority 41 cannot quietly take the terminal back.
+TERM_WRAPPER=/usr/bin/gnome-terminal.wrapper
+if [ -x "${TERM_WRAPPER}" ]; then
+	update-alternatives --set x-terminal-emulator "${TERM_WRAPPER}"
+	got="$(readlink -f /etc/alternatives/x-terminal-emulator || true)"
+	if [ "${got}" = "${TERM_WRAPPER}" ]; then
+		ok "x-terminal-emulator -> ${got}"
+	else
+		note "x-terminal-emulator resolves to ${got:-<nothing>}, not ${TERM_WRAPPER}"
+	fi
+else
+	note "${TERM_WRAPPER} is missing - gnome-terminal is in the amd64 package list and should be here"
+fi
 
 # --- 6. Ask APT whether the pin is in force -----------------------------------
 # THE POINT OF THIS CHECK: it does not read the file written in step 1. It asks

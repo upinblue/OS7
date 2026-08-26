@@ -4290,3 +4290,115 @@ both against the shipped ISO.
 removed while GDM is the greeter. They are inert once the default names a
 different session, and inert-and-present is a state a support case can inspect;
 a curated desktop package set with something missing is not.
+
+---
+
+## 86. `/etc/profile.d` is read by login shells, and a terminal window is not one
+
+**Measured on 2026-08-26** out of the shipped `OS7-1.0.0.109-amd64.iso`.
+
+OS/7 hands interactive human sessions to PowerShell from
+`/etc/profile.d/95-os7-powershell.sh`, written by hook 0050. That is a
+deliberate design and it is a good one: `bash` stays the login shell in
+`/etc/passwd`, so cron, systemd units, dpkg maintainer scripts and Intune's
+bash-based compliance scripts all keep working, and only real interactive
+humans get `exec /usr/bin/pwsh`. On the console and over ssh it works — the
+repository has watched it work.
+
+On the desktop it never ran. Three facts, each ordinary:
+
+| | |
+|---|---|
+| `/etc/profile.d/*.sh` is sourced by | `/etc/profile`, which **only a login shell reads** |
+| a terminal emulator starts bash as | an interactive **non-login** shell |
+| a non-login interactive bash reads | `/etc/bash.bashrc` |
+
+and the fourth, which is the one that closes it: **`/etc/bash.bashrc` on this
+image sources nothing at all.** 79 lines, no `.d` loop, no `source`, no `.` —
+Debian ships no drop-in directory for it. So the hand-off had no path into a
+GUI terminal, and nothing anywhere reported a problem, because from every
+component's point of view nothing had gone wrong.
+
+**And there were two terminals.** OS/7's amd64 package list names
+`gnome-terminal`; `ubuntu-desktop-minimal` **Recommends** `ptyxis`, which
+Ubuntu 26.04 ships as its terminal. Both register `x-terminal-emulator` at
+**priority 40**, so the winner was decided by sort order rather than by anyone,
+and on the shipped image it was:
+
+```
+/etc/alternatives/x-terminal-emulator -> /usr/bin/ptyxis
+```
+
+while OS/7's `favorite-apps` named `org.gnome.Terminal.desktop`. Three places
+naming a terminal and two answers between them.
+
+### The fix, and why it is one boolean
+
+```ini
+[org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9]
+login-shell=true
+```
+
+`login-shell=true` makes the terminal start bash the way a console login does,
+so the **same** drop-in runs, with the same five guards and the same
+`OS7_NO_PWSH` opt-out. The obvious alternative — `use-custom-command=true`,
+`custom-command=/usr/bin/pwsh` — was rejected: it skips `/etc/profile`
+altogether, so `PATH`, the locale and the .NET environment would all be missing
+inside the window, and the opt-out would not exist.
+
+`ptyxis` is purged and pinned, and `x-terminal-emulator` is `--set` to
+`gnome-terminal.wrapper` — which is not belt-and-braces for the purge: `--set`
+moves the link to **manual** mode, so a future package registering at priority
+41 cannot quietly take the terminal back.
+
+**The UUID is read, not copied.** `b1dcc9dd-5262-4d8d-a863-c897e6d979b9` is
+gnome-terminal's built-in default profile, and the image was asked:
+
+```
+gsettings get org.gnome.Terminal.ProfilesList default
+  -> 'b1dcc9dd-5262-4d8d-a863-c897e6d979b9'
+```
+
+Hook 0090 asks the same question at build time, because if a future
+gnome-terminal changes it, `login-shell=true` lands in a profile nobody opens —
+stored, readable, and inert.
+
+### Two checks that had to be repaired to make this checkable
+
+**A relocatable schema is not a path with dots in it.** Hook 0090 verifies every
+key in the dconf keyfile against `gsettings`, by turning the group into a schema
+name with `s|/|.|g`. For a per-profile terminal setting that produces
+`org.gnome.terminal.legacy.profiles:.:<uuid>`, which is not a schema — the check
+would have reported "no such schema" about a group that is perfectly correct.
+A check that fails on right answers gets deleted, and then it stops catching the
+wrong ones. It now carries a small explicit table mapping a group prefix to the
+schema it instantiates, and asks `gsettings list-keys SCHEMA:PATH`.
+
+**The hand-off itself had never been proven anywhere.** Hook 0050 wrote a file
+and stopped; the evidence that it worked was a human looking at a console once.
+It now runs the mechanism:
+
+```sh
+printf '$PSVersionTable.PSVersion.ToString()\nexit\n' | bash --login -i
+```
+
+If the hand-off fires, what reads those lines is PowerShell and it answers with
+its own version, which must equal `OS7_PWSH_VERSION` from the release pin. If it
+does not, bash reads them and fails. The opt-out is checked the same way:
+`OS7_NO_PWSH=1` must still answer with `$BASH_VERSION`.
+
+This runs under `chroot(2)`, where PowerShell's module **discovery** is broken
+(hook 0020 documents that at length). `$PSVersionTable` is an automatic variable
+compiled into the binary rather than a cmdlet from the module tree, which is why
+it is the expression used here — confirmed against the shipped image before the
+check was written, not after it failed.
+
+### The surface this does not reach
+
+VS Code's integrated terminal runs `$SHELL` — `/bin/bash` from `/etc/passwd` —
+as a non-login shell, and VS Code has no system-wide settings file. Making
+*that* PowerShell means either `terminal.integrated.defaultProfile.linux` in a
+per-user `settings.json`, which never reaches the home directories `authd`
+creates for Entra ID accounts, or overwriting `base-files`' `/etc/bash.bashrc`
+conffile, which would then fight every `base-files` upgrade. Neither was done.
+It is named here so that it is a known gap rather than a surprise.
