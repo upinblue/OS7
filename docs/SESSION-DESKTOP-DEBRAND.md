@@ -237,6 +237,40 @@ expression must answer with the version the release pin names, and
 `OS7_NO_PWSH=1` must still answer with `$BASH_VERSION`. Measured working inside
 a chroot against the shipped image before the check was written.
 
+## 6b. The first build failed, and that is the part worth keeping
+
+`1.0.0.111` stopped at hook 0035:
+
+```
+OS/7 hook 0035: FAIL: ubuntu-desktop-minimal was removed as collateral
+OS/7 hook 0035: FAIL: gnome-shell was removed as collateral
+OS/7 hook 0035: FAIL: gdm3 was removed as collateral
+E: config/hooks/0035-debrand-desktop.hook.chroot failed (exit non-zero)
+```
+
+No later hook ran, no ISO was written, and the image already in `out/` was
+untouched. Full account in [BUILD-NOTES #87](BUILD-NOTES.md).
+
+The cause was one name in the purge list that had never been measured:
+`whoopsie-preferences`, added beside `whoopsie` because it is obviously the same
+feature. `gnome-control-center` **Depends** on it, and `gnome-shell` and
+`ubuntu-desktop-minimal` depend on `gnome-control-center`. Purged alone it takes
+**eighteen** packages; every other name on the list takes between one and three.
+
+Two things to carry out of it:
+
+* **The header of that hook stayed true and stopped describing the code.**
+  Reverse dependencies were measured for the names in the list at the time; one
+  more was added afterwards and the measurement was not re-run.
+* **The check that caught it was the weaker of the two available.** A survivor
+  list checked *after* the purge only catches collateral somebody thought to
+  name. The hook now simulates first — the set apt would remove must be exactly
+  the set asked for, and apt must need to install **nothing**. That second half
+  is not redundant: the failing transaction wanted to *install*
+  `notification-daemon` and `policykit-1-gnome`, because `gnome-shell` Provides
+  those and was about to be removed. An `Inst` line in a purge simulation is a
+  cascade wearing a different hat.
+
 ## 7. What was measured, and what was not
 
 **Measured**, all against the shipped ISO or files taken out of it:
@@ -252,7 +286,7 @@ a chroot against the shipped image before the check was written.
 **NOT measured — the whole point of writing it down:**
 
 * **None of the fixes has been seen on a booted machine.** The build that
-  carries them is `1.0.0.111`; `check-image.py amd64` checks the artefact, and
+  carries them is `1.0.0.114`; `check-image.py amd64` checks the artefact, and
   an artefact is not a running desktop.
 * The GTK 4 glyph-atlas explanation for #84 is the best account of the evidence,
   and it is an *explanation*, not a measurement. What is measured is that
@@ -278,7 +312,7 @@ a chroot against the shipped image before the check was written.
 
 ## 8. Next
 
-1. Boot `1.0.0.111` in the VM and look at the panel. It is grey or it is not.
+1. Boot `1.0.0.114` in the VM and look at the panel. It is grey or it is not.
 2. `./installer/testing/check-image.py amd64` — eleven new checks about this.
 3. If the panel is right and the text is legible, the remaining Ubuntu surfaces
    worth a decision are the GDM greeter (Yaru, and `gdm3` Depends on it) and

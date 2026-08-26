@@ -79,7 +79,7 @@ loaded — `00-os7-classic` never set `org.gnome.desktop.session session-name`
 and `modes/ubuntu.json` carries its own Shell stylesheet (BUILD-NOTES **#85**).
 On the same screen, `font-antialiasing='none'` was tearing vertical stems out of
 every GTK 4 surface while GTK 3 stayed crisp (**#84**). Both are fixed in
-`1.0.0.111`, together with the removal of `gnome-initial-setup`, the telemetry,
+`1.0.0.114`, together with the removal of `gnome-initial-setup`, the telemetry,
 the crash reporters, Firefox and the Ubuntu boot logo — and VS Code beside Edge
 and Intune. **None of it has been seen on a booted machine.**
 
