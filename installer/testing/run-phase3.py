@@ -499,9 +499,9 @@ def phase_walk(font):
         w, h, rgb = shoot("41-licence", 1.5)
         press("f8", 1.5)
         # The defaults are accepted: this phase is about the flow, and the
-        # regional values have their own coverage in run-phase1.
-        for _ in range(3):
-            press("down")
+        # regional values have their own coverage in run-phase1. ENTER continues
+        # on arrival; this was three DOWNs to get past a screen that came up on
+        # Language (BUILD-NOTES #77).
         time.sleep(0.5)
         press("ret")
 

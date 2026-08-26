@@ -527,8 +527,10 @@ def phase_existing(font):
         for key, pause in (("ret", 1.5), ("f8", 1.5)):
             q.send_key(key)
             time.sleep(pause)
-        for _ in range(3):
-            q.send_key("down")
+        # ENTER continues on arrival: screen 3 comes up on "The settings are
+        # correct." This was three DOWNs, which is what the screen needed when
+        # it came up on Language — a workaround every harness carried and no
+        # operator was told about (BUILD-NOTES #77).
         time.sleep(0.5)
         q.send_key("ret")
         w, h, rgb = shoot("30-disk-existing", 2.0)

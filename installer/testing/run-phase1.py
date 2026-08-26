@@ -408,17 +408,31 @@ def phase_walk(c, q, font):
     time.sleep(1.5)
     w, h, rgb = lab.shoot(q, "04-regional")
     ok &= expect_text(w, h, rgb, font, "regional settings", "screen 3 is Regional")
-    # Black on grey: this row is the selection, so white finds nothing.
-    ok &= expect_text(w, h, rgb, font, "Language:", "the settings box rendered", fg=(0, 0, 0))
+    ok &= expect_text(w, h, rgb, font, "Language:", "the settings box rendered")
     ok &= expect_text(w, h, rgb, font, "Time zone:", "every setting is listed")
+    # Black on grey: THIS row is the selection, so white finds nothing.
+    ok &= expect_text(w, h, rgb, font, "The settings are correct.",
+                      "the accept row is on the screen", fg=(0, 0, 0))
 
-    # The selected row is black on light grey and spans the full inner width —
-    # checked as a REGION, because "grey is present somewhere" is not a
-    # statement about which row is selected (BUILD-NOTES #30).
-    ok &= assert_region(w, h, rgb, CELL, (6, 6, 74, 7), {GREY, (0, 0, 0)}, GREY,
-                        "the Language row is the selection")
+    # WHICH ROW IS SELECTED ON ARRIVAL, and it is checked because it is the
+    # thing that decides what the ENTER in the status bar does. It was Language,
+    # where ENTER opens a picker instead of continuing, and every harness
+    # carried three literal DOWNs past it — so nothing was ever wrong to look
+    # at (BUILD-NOTES #77). Row 10 is the accept row; row 6 is Language.
+    #
+    # A REGION, because "grey is present somewhere" is not a statement about
+    # which row is selected (BUILD-NOTES #30).
+    ok &= assert_region(w, h, rgb, CELL, (6, 10, 74, 11), {GREY, (0, 0, 0)}, GREY,
+                        "the accept row is the selection on arrival")
 
     # ---- the picker ------------------------------------------------------
+    # DOWN from the accept row wraps to Language, which is where the picker
+    # coverage below starts.
+    q.send_key("down")
+    time.sleep(0.8)
+    w, h, rgb = lab.shoot(q, "04b-regional-language")
+    ok &= assert_region(w, h, rgb, CELL, (6, 6, 74, 7), {GREY, (0, 0, 0)}, GREY,
+                        "DOWN moves the selection to Language")
     q.send_key("ret")
     time.sleep(1.5)
     w, h, rgb = lab.shoot(q, "05-language-picker")

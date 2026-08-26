@@ -20,7 +20,21 @@ internal sealed class RegionalScreen : Screen
     private enum Setting { Language, Keyboard, Timezone, Accept }
 
     private readonly InstallPlan _plan;
-    private Setting _row = Setting.Language;
+
+    // ACCEPT, not Language, and it is the same starting row as screen 5 because
+    // it is the same screen. The status bar says "ENTER=Continue" and the body
+    // says "If all the settings are correct, press ENTER." Starting on Language
+    // made both of those sentences false: ENTER there opens the language
+    // picker, ESC comes back to the SAME row, and ESC again leaves screen 3
+    // for the licence, where ESC means quit. So the key the screen names is a
+    // loop, and the way out is three DOWNs nothing on the screen asks for.
+    //
+    // MS-DOS 6.22 Setup highlighted "The settings are correct." on arrival for
+    // exactly this reason, and LayoutScreen - the same box, the same sentence -
+    // already did. Every harness that walks this screen carried the three DOWNs
+    // as a literal, which is why a green walk never said anything.
+    // docs/BUILD-NOTES.md #77.
+    private Setting _row = Setting.Accept;
     private SelectionList? _picker;
     private Setting _picking;
     private Choice[] _choices = Array.Empty<Choice>();
