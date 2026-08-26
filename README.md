@@ -19,9 +19,10 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 
 > [!WARNING]
 > **OS/7 is in active development and has not been released.** It installs and boots
-> on arm64 today; the x86-64 half — which is the half with the desktop, Edge and Intune —
-> has never been installed on any machine. Please don't put this on hardware you care
-> about. [What actually works](#status) is kept honest below.
+> on arm64 today. The x86-64 half — the half with the desktop, Edge, Intune and VS Code —
+> builds and boots, and its desktop has been looked at exactly once; it has never
+> completed an install onto a disk. Please don't put this on hardware you care about.
+> [What actually works](#status) is kept honest below.
 
 ---
 
@@ -50,7 +51,13 @@ teams already have:
   and the Windows 2000 text phase, because a 4.4 MB keyboard-driven binary with no .NET
   runtime behind it serves a headless arm64 server and a desktop workstation equally well.
 - 🪟 **OS/7 Classic** on the desktop: GNOME wearing a Windows 2000 surface, built from
-  GNOME's own Classic extensions rather than third-party shell hacks.
+  GNOME's own Classic extensions rather than third-party shell hacks — so an Ubuntu
+  release upgrade leaves it working. Opening a terminal there lands you in PowerShell,
+  the same hand-off the console and ssh use.
+- 🧹 **No onboarding wizard, no telemetry, no crash reports to Canonical.** The
+  first-login wizard, `ubuntu-report`, `ubuntu-insights`, `whoopsie`, `apport` and
+  Firefox are removed *and* pinned at `Pin-Priority: -1`, so a later `apt full-upgrade`
+  cannot quietly bring them back. A managed machine reports to whoever manages it.
 
 It is aimed at IT admins, MSPs and Microsoft-centric organisations — not at consumers
 looking for a daily driver.
@@ -62,14 +69,14 @@ from [docs/HANDOFF.md](docs/HANDOFF.md). Every "no" is a thing nobody has tried 
 
 |  | **arm64** — server only | **x86-64** — desktop or server |
 |---|---|---|
-| ISO builds | ✅ locally *and* in CI | ⚙️ in CI only — Docker's x86 emulation on Apple Silicon cannot unpack a Debian rootfs |
+| ISO builds | ✅ natively on Apple Silicon, ~5 min | ✅ natively on any x86-64 host, ~20 min. **Not** on Apple Silicon — Docker's x86 emulation cannot unpack a Debian rootfs |
 | Medium boots | ✅ | ✅ firmware → GRUB → OS/7's menu |
-| Setup runs | ✅ the whole flow, by keypress, to the Complete screen | ⚠️ starts, then loses tty1 to GNOME. The one-line fix is measured by hand; no ISO has been built with it yet |
-| Installs to a disk | ✅ ESP + LUKS2 + `bpool`/`rpool` + datasets + account + bootloader | ❌ never attempted — there is no x86_64 test harness here |
+| Setup runs | ✅ the whole flow, by keypress, to the Complete screen | ⚠️ the fix for the desktop stealing tty1 is now **in** the image; nobody has watched Setup run on an x86-64 machine |
+| Installs to a disk | ✅ ESP + LUKS2 + `bpool`/`rpool` + datasets + account + bootloader | ❌ never completed — the one attempt anybody has reported ran out of memory at the pool step |
 | Installed disk boots alone | ✅ verified with **no setup medium attached** | ❌ |
 | Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ❌ |
 | Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❌ |
-| GNOME · Edge · Intune portal | — (arm64 is server-only by design) | 📦 in the image, never launched |
+| GNOME · Edge · Intune portal · VS Code | — (arm64 is server-only by design) | ⚠️ the desktop comes up and the Intune portal opens — but see the caveat below |
 | `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back, walked in a VM | ❌ |
 | `Update-OS7` — apply the next release | 🚧 designed in full; waiting on there being a release to apply | 🚧 |
 | Backup — snapshots, replication, file restore | 🚧 written and self-tested offline; **never run on a machine** | 🚧 |
@@ -77,6 +84,18 @@ from [docs/HANDOFF.md](docs/HANDOFF.md). Every "no" is a thing nobody has tried 
 **The two architectures are different products.** Microsoft ships no arm64 build of Edge,
 `intune-portal` or `microsoft-identity-broker`, so arm64 is server-only and managed by
 Azure Arc. That is a decision, not a gap. See [docs/DECISIONS.md](docs/DECISIONS.md).
+
+**The desktop was looked at on a screen for the first time on 2026-08-26, and it was
+Ubuntu's.** GNOME came up, Edge and the Intune portal were there and launched — and the
+OS/7 Classic theme, which its own build-time check reported as installed and verified,
+was not on the screen at all. Ubuntu's session mode carries its own Shell stylesheet, and
+OS/7 had never said which session to start; separately, the setting that gave the UI its
+1999-crisp font was telling GNOME 50 to draw text with no antialiasing at all, which
+GTK 4 cannot do without losing letters. Both are fixed, along with the removal of
+Canonical's onboarding wizard, telemetry and crash reporting, and **none of it has been
+seen on a booted machine yet** — the fixes are verified against the ISO, and an ISO is
+not a running desktop. [docs/SESSION-DESKTOP-DEBRAND.md](docs/SESSION-DESKTOP-DEBRAND.md)
+says what was measured and, at greater length, what was not.
 
 **Two honest caveats about the setup medium.** Its GRUB is unsigned on both
 architectures, so you must turn **Secure Boot off to install** and can turn it back on
@@ -102,7 +121,7 @@ a ZFS root that likes memory, and a LUKS2 header whose Argon2id unlock is pinned
 | **UEFI** | Mandatory. OS/7 boots via shim + Canonical-signed GRUB and ships no BIOS/CSM path at all. |
 | **Secure Boot** | Supported on the installed system; **switch it off to install**, because the setup medium's GRUB is unsigned. |
 | **TPM 2.0** | Optional but wanted. Without it, OS/7 asks for the LUKS2 passphrase on every boot instead of unlocking itself. |
-| **Setup medium** | A USB stick of **4 GB** or more (arm64 ISO ≈ 2.2 GB, x86-64 ≈ 3.3 GB); 8 GB is comfortable. |
+| **Setup medium** | A USB stick of **4 GB** or more (arm64 ISO ≈ 1.8 GB, x86-64 ≈ 3.1 GB); 8 GB is comfortable. |
 | **Disk** | One whole disk. The installer refuses anything under **16 GB** outright — that is the floor at which the layout can be laid down at all, not a recommendation. |
 | **Intune enrolment** | Microsoft supports **Ubuntu Desktop 26.04 LTS on x86-64 only**, physical or Hyper-V. GNOME and Microsoft Edge are mandatory for enrolment, not optional extras. |
 
@@ -115,7 +134,7 @@ Nothing here is a round number picked for looking sensible.
 
 - **6 GB RAM on x86-64** is [Ubuntu Desktop 26.04's own figure](https://ubuntu.com/download/desktop)
   (2 GHz dual-core, 6 GB, 25 GB), and x86-64 is the product that carries GNOME, Edge and
-  the Intune portal — 1528 packages against arm64's 549.
+  the Intune portal — 1491 packages against arm64's 518.
 - **4 GB RAM on arm64.** [Ubuntu Server's floor](https://ubuntu.com/server/docs/reference/installation/system-requirements/)
   is 1.5 GB for an ISO install, with 3 GB suggested. OS/7 adds two appetites on top: ZFS
   caches in ARC, which by default may grow to half of RAM and which OS/7 does not cap,
@@ -185,9 +204,14 @@ make build-amd64
 > on it. `uname -m` inside WSL 2 reports `x86_64`, so `make build-amd64` runs native and
 > fast — the same code path CI uses.
 >
-> **Not yet proven:** no amd64 ISO has ever been produced on a local machine. Every one
-> that exists came off a hosted x86_64 CI runner. The route above is the documented one
-> and it is the one CI takes, but nobody has walked it on Windows yet.
+> **This is the route the x86-64 ISOs are actually built on.** Four of them have come
+> off one Windows box since 2026-08-25, in about twenty minutes each. Getting the first
+> one there cost two traps that have nothing to do with the build —
+> [docs/SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md) — of which the
+> one to know about is `core.autocrlf`: git on Windows rewrites the shell scripts on
+> **checkout**, and the build then fails with `env: 'bash\r': No such file or
+> directory`. `.gitattributes` fixes it; a tree cloned before that has to be re-checked
+> out.
 
 ### Any machine → let CI do it
 
@@ -212,10 +236,10 @@ twenty minutes reaching a known failure.
 
 | Tier | Components |
 |---|---|
-| **Core, everywhere** | PowerShell 7.6.5 · .NET 10 SDK · ZFS 2.4.1 on Linux 7.0 · `authd` — its `authd-msentraid` broker is a Canonical snap and is **not in the image yet** |
-| **Desktop installs (x86-64)** | GNOME 50 in OS/7 Classic · Microsoft Edge · Intune portal + `microsoft-identity-broker` |
+| **Core, everywhere** | PowerShell 7.6.5 · .NET 10 **runtime** (not the SDK — nothing in the image compiles) · ZFS 2.4.1 on Linux 7.0 · `authd` — its `authd-msentraid` broker is a Canonical snap and is **not in the image yet** |
+| **Desktop installs (x86-64)** | GNOME 50 in OS/7 Classic · Microsoft Edge · Intune portal + `microsoft-identity-broker` · **Visual Studio Code** |
 | **Server installs** | Azure Connected Machine agent (Azure Arc) — x86-64 *and* arm64 |
-| **Recommended additions** | Azure CLI · VSCodium (the official VS Code build is opt-in) |
+| **Recommended additions** | Azure CLI |
 | **Backup** | `sanoid` + `syncoid` (GPL-3.0+, from the archive) — policy-driven ZFS snapshots and `zfs send`/`receive` replication, wrapped by the OS7 module |
 | **Out of scope for v1** | OneDrive sync · Microsoft Defender for Endpoint |
 

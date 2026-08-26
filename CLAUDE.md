@@ -5,8 +5,23 @@ the interactive shell, Entra ID / Intune / Azure Arc as the management path, ZFS
 root with rollback-safe updates, and an OS/7-authored text-mode installer styled
 after MS-DOS 6.22 Setup and the Windows 2000 text phase.
 
-Everything runs **locally on an Apple Silicon Mac**. No cloud, no CI, no paid
-services. Builds are Docker; VMs are QEMU.
+Everything runs **locally**. No cloud, no paid services. Builds are Docker; VMs
+are QEMU.
+
+**Two hosts, and which one you are on decides what you can do.** This line used
+to read "locally on an Apple Silicon Mac", and it stopped being the whole truth
+on 2026-08-25:
+
+| host | builds | tests |
+|---|---|---|
+| **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness — they are `qemu-system-aarch64 -machine virt,accel=hvf` |
+| **x64 Windows + Docker Desktop** | `make build-amd64`, native, ~20 min. Four amd64 ISOs have come off one ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py` and the container-based checks. **No QEMU harness runs here** — the VM work is Hyper-V by hand |
+
+So "not yet verified on a machine" means different things on the two hosts, and
+a session that cannot run `run-phase3.py` should say so rather than leave the
+next reader to assume it was run. There **is** a GitHub Actions workflow
+(`.github/workflows/build-iso.yml`), dispatch-only; nothing in this repository
+depends on it having run.
 
 ---
 
