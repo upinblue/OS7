@@ -18,11 +18,12 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 </div>
 
 > [!WARNING]
-> **OS/7 is in active development and has not been released.** It installs and boots
-> on arm64 today. The x86-64 half — the half with the desktop, Edge, Intune and VS Code —
-> builds and boots, and its desktop has been looked at exactly once; it has never
-> completed an install onto a disk. Please don't put this on hardware you care about.
-> [What actually works](#status) is kept honest below.
+> **OS/7 is in active development and has not been released.** Both architectures
+> install and boot today — arm64 as a server, x86-64 as a desktop with GNOME, Edge and
+> Intune. What is missing is not "does it work" but "does anyone notice when it stops":
+> the x86-64 half is checked by hand, has no scripted harness, and has never been
+> through Entra sign-in, Secure Boot or a rollback. Please don't put this on hardware
+> you care about. [What actually works](#status) is kept honest below.
 
 ---
 
@@ -64,38 +65,51 @@ looking for a daily driver.
 
 ## Status
 
-Every "yes" below was measured on a real (virtual) machine, and the evidence is linked
-from [docs/HANDOFF.md](docs/HANDOFF.md). Every "no" is a thing nobody has tried yet.
+Every "yes" below happened on a real (virtual) machine. **The two columns are checked
+differently, and the difference is worth knowing**: arm64 is driven by the scripted
+harnesses in `installer/testing/`, which assert their results and are re-runnable;
+x86-64 is driven by a person in a Hyper-V VM, because those harnesses are
+`qemu-system-aarch64` and there is no x86_64 equivalent yet. So an arm64 ✅ is a test
+anyone can re-run, and an x86-64 ✅ is an operator report. Both are evidence. Only one
+of them notices a regression on its own.
 
-|  | **arm64** — server only | **x86-64** — desktop or server |
+|  | **arm64** — server only<br><sub>harness-verified</sub> | **x86-64** — desktop or server<br><sub>operator-verified</sub> |
 |---|---|---|
 | ISO builds | ✅ natively on Apple Silicon, ~5 min | ✅ natively on any x86-64 host, ~20 min. **Not** on Apple Silicon — Docker's x86 emulation cannot unpack a Debian rootfs |
 | Medium boots | ✅ | ✅ firmware → GRUB → OS/7's menu |
-| Setup runs | ✅ the whole flow, by keypress, to the Complete screen | ⚠️ the fix for the desktop stealing tty1 is now **in** the image; nobody has watched Setup run on an x86-64 machine |
-| Installs to a disk | ✅ ESP + LUKS2 + `bpool`/`rpool` + datasets + account + bootloader | ❌ never completed — the one attempt anybody has reported ran out of memory at the pool step |
-| Installed disk boots alone | ✅ verified with **no setup medium attached** | ❌ |
-| Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ❌ |
-| Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❌ |
-| GNOME · Edge · Intune portal · VS Code | — (arm64 is server-only by design) | ⚠️ the desktop comes up and the Intune portal opens — but see the caveat below |
-| `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back, walked in a VM | ❌ |
+| Setup runs | ✅ the whole flow, by keypress, to the Complete screen | ✅ several times, in **GUI mode**, to the Complete screen |
+| Installs to a disk | ✅ ESP + LUKS2 + `bpool`/`rpool` + datasets + account + bootloader | ✅ the same layout, from the same code |
+| Installed disk boots alone | ✅ verified with **no setup medium attached** | ✅ boots to GDM and logs in as the account Setup created |
+| Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ❔ not tested |
+| Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❔ not tested |
+| GNOME · Edge · Intune portal | — (arm64 is server-only by design) | ✅ desktop comes up, Intune portal opens — see the caveat below |
+| Visual Studio Code | — | 📦 in the image since 1.0.0.116, never launched |
+| `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back, walked in a VM | ❔ not tested |
 | `Update-OS7` — apply the next release | 🚧 designed in full; waiting on there being a release to apply | 🚧 |
 | Backup — snapshots, replication, file restore | 🚧 written and self-tested offline; **never run on a machine** | 🚧 |
+
+The one x86-64 install failure on record is worth keeping: on `1.0.0.95` Setup died at
+the pool step because the setup medium was booting a **desktop's** background workload
+while it installed — 39 units and 15 timers, on a medium whose writable root is RAM,
+with ZFS's ARC free to take half of it. That is fixed
+([BUILD-NOTES #79](docs/BUILD-NOTES.md)), and installs have completed since.
 
 **The two architectures are different products.** Microsoft ships no arm64 build of Edge,
 `intune-portal` or `microsoft-identity-broker`, so arm64 is server-only and managed by
 Azure Arc. That is a decision, not a gap. See [docs/DECISIONS.md](docs/DECISIONS.md).
 
-**The desktop was looked at on a screen for the first time on 2026-08-26, and it was
-Ubuntu's.** GNOME came up, Edge and the Intune portal were there and launched — and the
-OS/7 Classic theme, which its own build-time check reported as installed and verified,
-was not on the screen at all. Ubuntu's session mode carries its own Shell stylesheet, and
-OS/7 had never said which session to start; separately, the setting that gave the UI its
-1999-crisp font was telling GNOME 50 to draw text with no antialiasing at all, which
-GTK 4 cannot do without losing letters. Both are fixed, along with the removal of
-Canonical's onboarding wizard, telemetry and crash reporting, and **none of it has been
-seen on a booted machine yet** — the fixes are verified against the ISO, and an ISO is
-not a running desktop. [docs/SESSION-DESKTOP-DEBRAND.md](docs/SESSION-DESKTOP-DEBRAND.md)
-says what was measured and, at greater length, what was not.
+**The desktop worked, and it was wearing the wrong clothes.** Up to `1.0.0.109` an
+installed x86-64 machine came up in **Ubuntu's** GNOME session, not OS/7 Classic — the
+theme was installed, selected, and its own build-time check called it verified, but
+Ubuntu's session mode carries its own Shell stylesheet and OS/7 had never said which
+session to start. On the same screen, the setting that was meant to give the UI a
+1999-crisp font was asking GNOME 50 to draw text with no antialiasing at all, which
+GTK 4 cannot do without dropping the stems out of letters. Both are fixed in
+`1.0.0.116`, together with the removal of Canonical's onboarding wizard, telemetry and
+crash reporting — all of it verified against the ISO, **none of it seen on a screen
+yet**, because an ISO is not a running desktop.
+[docs/SESSION-DESKTOP-DEBRAND.md](docs/SESSION-DESKTOP-DEBRAND.md) says what was
+measured and, at greater length, what was not.
 
 **Two honest caveats about the setup medium.** Its GRUB is unsigned on both
 architectures, so you must turn **Secure Boot off to install** and can turn it back on
