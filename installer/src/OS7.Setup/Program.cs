@@ -1103,6 +1103,56 @@ internal static class Program
                 Check(rendered.Length > 0, $"screen renders: {s.GetType().Name}",
                       $"{rendered.Length} bytes");
             }
+
+            // WHICH ROW A SETTINGS SCREEN ARRIVES ON — the fact that decides
+            // whether the ENTER its own status bar names continues or opens a
+            // picker.
+            //
+            // Screen 3 arrived on Language, where ENTER opens the language
+            // picker and ESC returns to the same row, so the key the screen
+            // asks for was a loop; the way out was three DOWNs nothing on the
+            // screen mentions. Every VM harness that walks screen 3 carried
+            // those three DOWNs as a literal, so all of them stayed green and
+            // the only thing that could see it was a person driving the screen
+            // by hand. docs/BUILD-NOTES.md #77.
+            //
+            // Checked HERE, and not only in a harness, because it costs no VM
+            // and no ISO: the answer is in the cells of a frame that is already
+            // being rendered, so hook 0080 asks it during the build.
+            foreach (Screen s in new Screen[]
+                     { new RegionalScreen(new InstallPlan()),
+                       new LayoutScreen(new InstallPlan(), disk) })
+            {
+                var f = new Frame(80, 25);
+                s.Layout(80, 25);
+                f.Chrome(s.Title, s.Status, Release.Current.TitleBar);
+                s.Draw(f);
+                Check(AcceptRowIsSelected(f),
+                      $"{s.GetType().Name} arrives on the accept row, so ENTER continues",
+                      s.Status);
+            }
+
+            // The selection is drawn black on grey and spans the row
+            // (Screen.Row), so the question is what the accept row's cells are
+            // wearing. Ordinal and case-sensitive on purpose: the body line
+            // "If all the settings are correct, press ENTER." is a different
+            // string and must not answer for the row inside the box.
+            static bool AcceptRowIsSelected(Frame f)
+            {
+                const string Accept = "The settings are correct.";
+                var chars = new char[f.Cols];
+                for (int r = 0; r < f.Rows; r++)
+                {
+                    for (int c = 0; c < f.Cols; c++) chars[c] = f[r, c].Rune;
+                    if (!new string(chars).Contains(Accept, StringComparison.Ordinal))
+                        continue;
+                    for (int c = 0; c < f.Cols; c++)
+                        if (f[r, c].Bg == Slot.Grey && f[r, c].Fg == Slot.Black)
+                            return true;
+                    return false;
+                }
+                return false;   // the row is not on the screen at all
+            }
         }
         catch (Exception ex)
         {

@@ -3625,6 +3625,72 @@ The object reference is captured; the object it points at is shared. Same family
 as #60, #65 and #68 — PowerShell doing exactly what it documents, somewhere
 nobody looks.
 
+## 77. Screen 3 arrived on a row where its own `ENTER=Continue` opened a picker, and every harness walked past it with three literal DOWNs
+
+**Found 2026-08-26**, from a report of the first amd64 ISO being driven by hand
+in a Hyper-V VM: *"it sticks on the regional settings and I can't proceed."*
+Nothing about amd64 or Hyper-V is involved. Screen 3 was a dead end on every
+architecture from the day it was written, and three green harnesses said it was
+fine.
+
+`RegionalScreen` came up with the selection on **Language**:
+
+```csharp
+private Setting _row = Setting.Language;      // screen 3
+private Setting _row = Setting.Accept;        // screen 5, the SAME box
+```
+
+The screen tells the operator two things, and both were false where the cursor
+actually was:
+
+```
+ ENTER=Continue   ↑↓=Select   F3=Quit          <- the status bar
+     If all the settings are correct, press ENTER.   <- the body, row 13
+```
+
+ENTER on the Language row opens the language picker — 490 entries out of
+`/usr/share/i18n/SUPPORTED`. ESC closes it and returns to **the same row**, so
+ENTER opens it again. And ESC on the summary is `Transition.Back`, which lands
+on the licence, where ESC means *I do not agree* and quits Setup. So the two
+keys the screen names are a loop and an exit, and the way forward is three DOWNs
+that nothing on the screen asks for.
+
+**Why nothing was red.** All three VM harnesses encode the workaround as a
+literal:
+
+```python
+run-phase1.py   assert_region(..., (6, 6, 74, 7), ...)  # "the Language row is the selection"
+run-phase2.py   for _ in range(3): q.send_key("down")
+run-phase3.py   for _ in range(3): press("down")
+```
+
+`run-phase1.py` did not merely tolerate the wrong row — it **asserted** it, and
+`expect_text("Language:", fg=(0,0,0))` asserted its colour too. A harness that
+replays a key sequence tests the sequence, not the screen: it cannot notice that
+the sequence is one no operator would find. Same family as **#45** (a screen
+unreachable for a whole commit while `--unattend`, `--storage-only` and the
+walker each missed it for a different reason) and the note in `DiskScreen.Layout`
+about a rebuilt list that "looked like a keyboard that was not working rather
+than like a bug".
+
+**The fix is the sibling screen.** `LayoutScreen` draws the same box, ends it
+with the same `The settings are correct.` row and prints the same sentence
+underneath, and it already started on `Accept` — which is also what MS-DOS 6.22
+Setup did, and the only arrangement in which `ENTER=Continue` is true. Screen 3
+now does the same, and the three harnesses lost their DOWNs.
+
+**And it is checked without a VM.** `--self-test` renders screen 3 and screen 5
+into an off-screen frame and asserts that the row carrying
+`The settings are correct.` is the one drawn black on grey. Hook 0080 runs
+`--self-test` inside the chroot, so the ISO build fails if this regresses.
+Verified by putting the bug back: `RegionalScreen` goes red, `LayoutScreen`
+stays green, `failures=11 image-files-absent=10` — so the count no longer
+matches the "every failure is an image file" note either.
+
+**What is still owed:** no ISO has been rebuilt with this, and nobody has driven
+the fixed screen 3 on a machine. The evidence here is the source, the three
+harnesses, and `--self-test` on the host.
+
 ## 78. `useradd -m` does nothing at all when the home directory already exists
 
 **Measured 2026-08-26**, on Ubuntu 26.04's own `passwd 1:4.17.4-2ubuntu3`, while
