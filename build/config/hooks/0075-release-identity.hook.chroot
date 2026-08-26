@@ -42,25 +42,67 @@ set -a
 set +a
 
 ARCH="$(dpkg --print-architecture)"
-echo "OS/7 hook 0075:   OS/7 ${OS7_VERSION} (${OS7_CHANNEL}), ${ARCH}"
+
+# THE DISPLAY RULE IS NOT IMPLEMENTED HERE. docs/IDENTITY-PLAN.md §5 is
+# implemented in C#, in PowerShell, in Python and in shell, and four is already
+# one more than anybody can hold in their head; build.sh applies the shell one
+# (build/lib/version-rule.sh) and hands the rendered strings in through
+# build.conf. A fifth copy inside a chroot hook would be the one nothing can
+# reach to check.
+#
+# Missing means an old build.conf, and that has to stop the build rather than
+# produce an image whose PRETTY_NAME is the empty string.
+for var in OS7_VERSION OS7_CHANNEL OS7_VERSION_SHORT OS7_PRODUCT; do
+	eval "value=\${${var}-}"
+	if [ -z "${value}" ]; then
+		echo "OS/7 hook 0075: ${var} is not set - build.sh did not hand it in." >&2
+		echo "OS/7 hook 0075: build/lib/version-rule.sh renders it into build.conf." >&2
+		exit 1
+	fi
+done
+
+echo "OS/7 hook 0075:   ${OS7_PRODUCT}, build ${OS7_VERSION}, ${ARCH}"
+
+# Read a field the way every real consumer does — by SOURCING the file, never by
+# scraping it. os-release(5) defines it as shell-compatible, and a reader that
+# strips one quote style agrees with a correct file right up to the first value
+# quoted the other way (BUILD-NOTES #37). In a subshell, because sourcing it
+# here would overwrite this script's own NAME and VERSION_ID.
+osrel_get() { ( . /etc/os-release; eval "printf '%s' \"\${$1-}\"" ); }
 
 # ---------------------------------------------------------------------------
-# 1. /etc/os-release (§3.5, and D8 in installer/SETUP-PLAN.md §9)
+# 1. /etc/os-release (docs/IDENTITY-PLAN.md §4, release plan §3.5, D8)
 #
-# THE FIELDS THAT MUST NOT BE TOUCHED: ID, ID_LIKE, VERSION_ID.
+# THE FIELDS THAT MUST NOT BE TOUCHED:
+#     ID  ID_LIKE  VERSION_ID  VERSION  VERSION_CODENAME  NAME
 #
-# Intune's "Allowed distributions" compliance rule matches on them. Branding
-# ID=os7 would make every OS/7 device fail a policy written for Ubuntu 26.04,
-# and README makes Intune's constraints outrank OS/7's preferences wherever the
-# two collide. So the product identity goes somewhere else entirely.
+# The first three are D8's list and are Intune's: its "Allowed distributions"
+# rule is evaluated by the SERVICE from what the agent reports, and
+# `intune-agent` reads ID and VERSION_ID out of this file.
 #
-# IMAGE_ID + IMAGE_VERSION are that somewhere, and they are the correct fields
-# rather than merely free ones. os-release(5) defines BUILD_ID as identifying
-# the image originally used as the INSTALLATION BASE and says explicitly that it
-# does not change during incremental updates - the opposite of what is wanted.
-# IMAGE_ID/IMAGE_VERSION are defined for systems "prepared, built, shipped and
-# updated as comprehensive, consistent" units, which is exactly the OS/7 release
-# train.
+# **NAME IS ON THAT LIST SINCE 2026-08-26, AND IT USED TO BE BRANDED.**
+# BUILD-NOTES #80: Microsoft's Azure Arc onboarding script reads NAME, matches
+# `*buntu*`, and exits 133 on anything else — it never reaches ID=ubuntu at all.
+# D8's reasoning ("Intune matches on ID, so NAME is free") was a guess about one
+# vendor tool out of three, and it was wrong for that one. VERSION and
+# VERSION_CODENAME join the list for the cheaper reason: `intune-agent` reads
+# VERSION too, the contract is undocumented, and leaving a field alone costs
+# nothing.
+#
+# So the brand lives in fields nobody else's software reads. IMAGE_ID +
+# IMAGE_VERSION are the correct ones rather than merely free ones: os-release(5)
+# defines BUILD_ID as the image originally used as the INSTALLATION BASE and
+# says explicitly that it does not change during incremental updates — the
+# opposite of what is wanted — while IMAGE_ID/IMAGE_VERSION are defined for
+# systems "prepared, built, shipped and updated as comprehensive, consistent"
+# units, which is exactly the OS/7 release train.
+#
+# PRETTY_NAME is branded and is the ONE branded field that is provisional
+# (IDENTITY-PLAN I3/IL1): `intune-agent` reads it through a function called
+# `tryReadPrettyName`, in its HTTP and token layer, which reads as telemetry
+# rather than compliance — but strings in a binary say what a program CAN read,
+# not what it sends. If a first enrolment says otherwise, this line reverts and
+# nothing else moves, because no other surface depends on it (I1).
 #
 # NOTE: /etc/os-release on Ubuntu is a symlink to ../usr/lib/os-release, and
 # base-files owns that file as a CONFFILE. So an `apt` run that reinstalls
@@ -70,6 +112,15 @@ echo "OS/7 hook 0075:   OS/7 ${OS7_VERSION} (${OS7_CHANNEL}), ${ARCH}"
 # ---------------------------------------------------------------------------
 OSREL=/usr/lib/os-release
 [ -f "${OSREL}" ] || { echo "OS/7 hook 0075: ${OSREL} does not exist" >&2; exit 1; }
+
+# What the untouchable fields say BEFORE the rewrite. Compared again after, so
+# the check is "these did not change" rather than "these still match a literal
+# somebody typed here" - the second passes for a file the hook mangled into the
+# same wrong value it expected.
+PROTECTED_BEFORE="$(mktemp)"
+for key in ID ID_LIKE VERSION_ID VERSION VERSION_CODENAME UBUNTU_CODENAME NAME; do
+	printf '%s=%s\n' "${key}" "$(osrel_get "${key}")" >> "${PROTECTED_BEFORE}"
+done
 
 # VARIANT describes what this IMAGE can be, not what an installed machine chose.
 #   arm64  Server, permanently - it is a server-only product (README) and ships
@@ -105,26 +156,51 @@ def quote(value):
     return f'"{escaped}"'
 
 # The branded fields, in the order they should appear if they are new.
+#
+# PRETTY_NAME is the THREE-field form with the channel — "OS/7 1.0.0
+# (development)" — because it describes rather than identifies. IMAGE_VERSION
+# right below it is all FOUR, because it identifies. Both come from build.conf;
+# neither is composed here (IDENTITY-PLAN §5).
 brand = {
-    "NAME":          "OS/7",
-    "PRETTY_NAME":   f"OS/7 {env['OS7_VERSION']}",
-    "HOME_URL":      "https://github.com/upinblue/OS7",
-    "IMAGE_ID":      "os7",
-    "IMAGE_VERSION": env["OS7_VERSION"],
-    "VARIANT":       env["OS7_VARIANT"],
-    "VARIANT_ID":    env["OS7_VARIANT_ID"],
+    "PRETTY_NAME":       env["OS7_PRODUCT"],
+    "IMAGE_ID":          "os7",
+    "IMAGE_VERSION":     env["OS7_VERSION"],
+    "VARIANT":           env["OS7_VARIANT"],
+    "VARIANT_ID":        env["OS7_VARIANT_ID"],
+    "HOME_URL":          "https://github.com/upinblue/OS7",
+    # Where a person goes when the product misbehaves. Leaving Ubuntu's is
+    # WORSE than leaving these unset: it sends OS/7's bugs to Canonical.
+    "SUPPORT_URL":       "https://github.com/upinblue/OS7/issues",
+    "BUG_REPORT_URL":    "https://github.com/upinblue/OS7/issues",
+    "DOCUMENTATION_URL": "https://github.com/upinblue/OS7",
+    # For the amd64 desktop's About panel, once an icon by that name exists. A
+    # LOGO naming nothing renders as nothing, which is what it renders as today.
+    "LOGO":              "os7",
+    # The brand blue, #1289ff (SETUP-PLAN D5), as a truecolor SGR parameter
+    # string. hostnamectl and the fetch tools use it; a terminal without
+    # truecolor ignores the sequence rather than mangling it.
+    "ANSI_COLOR":        "0;38;2;18;137;255",
 }
 
-# Untouchable. Named here so that adding a field to `brand` above can never
-# silently capture one of them.
-protected = {"ID", "ID_LIKE", "VERSION_ID"}
-assert not (protected & brand.keys()), "hook 0075 tried to brand an Intune-matched field"
+# Ubuntu's privacy policy is not OS/7's, and pointing a user at a document that
+# does not describe this system is worse than pointing them at none.
+drop = {"PRIVACY_POLICY_URL"}
+
+# Untouchable. Named here so that adding a field to `brand` or `drop` above can
+# never silently capture one of them. NAME is on this list since 2026-08-26 —
+# see the block comment above and BUILD-NOTES #80.
+protected = {"ID", "ID_LIKE", "VERSION_ID", "VERSION", "VERSION_CODENAME",
+             "UBUNTU_CODENAME", "NAME"}
+assert not (protected & brand.keys()), "hook 0075 tried to brand a protected field"
+assert not (protected & drop), "hook 0075 tried to delete a protected field"
 
 lines, seen = [], set()
 with open(path, encoding="utf-8") as fh:
     for line in fh:
         line = line.rstrip("\n")
         key = line.split("=", 1)[0].strip() if "=" in line else None
+        if key in drop:
+            continue
         if key in brand:
             lines.append(f"{key}={quote(brand[key])}")
             seen.add(key)
@@ -141,16 +217,10 @@ PY
 
 # Read it BACK, through the symlink an ordinary program would use, and check the
 # fields that matter in both directions - the branded ones changed, and the
-# Intune-matched ones did not. A hook that writes a file and does not re-read it
-# is the shape of every expensive bug in docs/BUILD-NOTES.md.
-# SOURCE it, do not scrape it. os-release(5) defines the file as shell-compatible
-# and every real consumer reads it with `.`; a sed-and-strip-quotes reader agrees
-# with that right up to the first value that is quoted differently, and then
-# disagrees silently. In a subshell, because sourcing it here would overwrite
-# this script's own NAME and VERSION_ID.
-osrel_get() { ( . /etc/os-release; eval "printf '%s' \"\${$1-}\"" ); }
+# untouchable ones did not. A hook that writes a file and does not re-read it is
+# the shape of every expensive bug in docs/BUILD-NOTES.md.
 
-for pair in "IMAGE_ID=os7" "IMAGE_VERSION=${OS7_VERSION}" "NAME=OS/7"; do
+for pair in "IMAGE_ID=os7" "IMAGE_VERSION=${OS7_VERSION}" "PRETTY_NAME=${OS7_PRODUCT}"; do
 	key="${pair%%=*}"; want="${pair#*=}"; got="$(osrel_get "${key}")"
 	if [ "${got}" != "${want}" ]; then
 		echo "OS/7 hook 0075: /etc/os-release ${key} is '${got}', expected '${want}'" >&2
@@ -158,6 +228,8 @@ for pair in "IMAGE_ID=os7" "IMAGE_VERSION=${OS7_VERSION}" "NAME=OS/7"; do
 	fi
 done
 
+# The literal contract, for the two fields whose VALUES are the compatibility
+# promise rather than merely unchanged.
 for pair in "ID=ubuntu" "VERSION_ID=26.04"; do
 	key="${pair%%=*}"; want="${pair#*=}"; got="$(osrel_get "${key}")"
 	if [ "${got}" != "${want}" ]; then
@@ -166,7 +238,176 @@ for pair in "ID=ubuntu" "VERSION_ID=26.04"; do
 		exit 1
 	fi
 done
-echo "OS/7 hook 0075:   os-release branded (IMAGE_VERSION=${OS7_VERSION}, ID left as ubuntu)"
+
+# NAME, as a GLOB and not as a literal, because the glob IS the contract:
+# Install_linux_azcmagent.sh does `case "${distro}" in *buntu*)` and exits 133
+# on anything else, having read NAME and never ID (BUILD-NOTES #80). Asserting
+# `NAME=Ubuntu` would also pass today and would be asserting the wrong thing.
+NAME_GOT="$(osrel_get NAME)"
+case "${NAME_GOT}" in
+	*buntu*) ;;
+	*)
+		echo "OS/7 hook 0075: NAME is '${NAME_GOT}', which contains no 'buntu'." >&2
+		echo "OS/7 hook 0075: Microsoft's Azure Arc onboarding script reads THIS field," >&2
+		echo "OS/7 hook 0075: matches it against *buntu* and exits 133 otherwise - it" >&2
+		echo "OS/7 hook 0075: never reads ID at all. BUILD-NOTES #80, IDENTITY-PLAN I2." >&2
+		echo "OS/7 hook 0075: The brand belongs in PRETTY_NAME and IMAGE_*, not here." >&2
+		exit 1
+		;;
+esac
+
+# And nothing in the untouchable set moved at all.
+while IFS='=' read -r key want; do
+	got="$(osrel_get "${key}")"
+	if [ "${got}" != "${want}" ]; then
+		echo "OS/7 hook 0075: ${key} changed from '${want}' to '${got}'." >&2
+		echo "OS/7 hook 0075: that field is somebody else's (IDENTITY-PLAN I4)." >&2
+		exit 1
+	fi
+done < "${PROTECTED_BEFORE}"
+rm -f "${PROTECTED_BEFORE}"
+
+# The one field that had to GO. Ubuntu's privacy policy does not describe this
+# system, and a stale pointer is worse than none.
+if [ -n "$(osrel_get PRIVACY_POLICY_URL)" ]; then
+	echo "OS/7 hook 0075: PRIVACY_POLICY_URL is still set; it should have been dropped." >&2
+	exit 1
+fi
+
+echo "OS/7 hook 0075:   os-release: PRETTY_NAME='${OS7_PRODUCT}', IMAGE_VERSION=${OS7_VERSION}"
+echo "OS/7 hook 0075:   os-release: NAME='${NAME_GOT}', ID=ubuntu, VERSION_ID=26.04 - untouched"
+
+# ---------------------------------------------------------------------------
+# 1b. The product line, and the two banners that carry it
+#     (docs/IDENTITY-PLAN.md §6.1 and §6.2)
+#
+# /usr/lib/os7/product exists so that NOTHING USER-FACING HAS TO PARSE ANYTHING
+# AT RUN TIME. The MOTD header runs at every login; the display rule was already
+# applied when this file was written, so that script is three lines of shell and
+# starts no interpreter. It is also what makes I1 true in practice: the banner
+# reads OS/7's own file, so if PRETTY_NAME ever has to go back to Ubuntu (IL1),
+# the login banner does not change.
+# ---------------------------------------------------------------------------
+install -d -m 0755 /usr/lib/os7
+printf '%s\n' "${OS7_PRODUCT}" > /usr/lib/os7/product
+chmod 0644 /usr/lib/os7/product
+
+# /etc/issue - the local console, before login. `\n` and `\l` are agetty's
+# escapes for the hostname and the tty, and they are LITERAL backslashes in the
+# file; the doubled ones below are printf's, not shell's.
+printf '%s \\n \\l\n\n' "${OS7_PRODUCT}" > /etc/issue
+chmod 0644 /etc/issue
+
+# /etc/issue.net - the ssh banner, shown BEFORE authentication, which makes it a
+# different decision rather than the same file with different escapes: it is
+# displayed to whoever connects, including whoever should not, so it names the
+# product and nothing else. No version, no channel, no kernel.
+printf 'OS/7\n' > /etc/issue.net
+chmod 0644 /etc/issue.net
+
+for f in /etc/issue /etc/issue.net; do
+	if ! grep -q '^OS/7' "${f}"; then
+		echo "OS/7 hook 0075: ${f} does not name the product:" >&2
+		sed -n '1,3p' "${f}" >&2
+		exit 1
+	fi
+done
+# The one that must NOT carry it, checked in the other direction.
+if grep -qE '[0-9]+\.[0-9]+' /etc/issue.net; then
+	echo "OS/7 hook 0075: /etc/issue.net carries a version; it is shown before login." >&2
+	exit 1
+fi
+echo "OS/7 hook 0075:   /usr/lib/os7/product, /etc/issue and /etc/issue.net written"
+
+# ---------------------------------------------------------------------------
+# 1c. The MOTD (docs/IDENTITY-PLAN.md §6.1, decision I9)
+#
+# Today an ssh login opens with "Welcome to Ubuntu 26.04 LTS", Ubuntu
+# documentation links, and - depending on what the package lists pulled in -
+# 50-motd-news, which makes a NETWORK REQUEST to motd.ubuntu.com at login, plus
+# Ubuntu Pro and ESM announcements. On a Microsoft-administered corporate fleet
+# the news fetch is a privacy and latency problem before it is a branding one.
+#
+# DISABLED, NOT DELETED. `dpkg` restores a file it owns on the next apt run,
+# silently; `chmod a-x` is what run-parts honours and what survives.
+#
+# A KEEP-LIST, NOT A DENY-LIST, and it is a decision: nothing appears at login
+# that OS/7 did not put there, except the reboot notice - which is real,
+# product-neutral information an administrator wants. A deny-list would let the
+# next drop-in Ubuntu adds appear on every OS/7 machine unannounced.
+#
+# WHAT IS ACTUALLY IN THIS DIRECTORY HAS NEVER BEEN MEASURED (IDENTITY-PLAN
+# IL10), so nothing here names a file it expects to find. It enumerates, acts,
+# and prints what it did - and installer/testing/check-image.py reads the result
+# off the finished artefact.
+# ---------------------------------------------------------------------------
+MOTD_DIR=/etc/update-motd.d
+OS7_MOTD="${MOTD_DIR}/00-os7-header"
+
+if [ ! -s "${OS7_MOTD}" ]; then
+	echo "OS/7 hook 0075: ${OS7_MOTD} is missing or empty (includes.chroot)" >&2
+	exit 1
+fi
+# It ships 0644 from includes.chroot - a git checkout on a filesystem with no
+# executable bit is the normal case here, so the mode is set rather than
+# assumed (the same trade hook 0090 makes for the backup scripts).
+chmod 0755 "${OS7_MOTD}"
+
+disabled=""
+kept=""
+for f in "${MOTD_DIR}"/*; do
+	[ -f "${f}" ] || continue
+	name="$(basename "${f}")"
+	case "${name}" in
+		00-os7-header)
+			continue ;;
+		# The reboot notice: not Ubuntu branding, not an advertisement, and the
+		# one thing in that directory an operator would miss.
+		98-reboot-required)
+			[ -x "${f}" ] && kept="${kept} ${name}"
+			continue ;;
+	esac
+	if [ -x "${f}" ]; then
+		chmod a-x "${f}"
+		disabled="${disabled} ${name}"
+	fi
+done
+
+# motd-news also has an off switch of its own, and turning it off is worth doing
+# in addition to removing the executable bit: the two are independent, and the
+# package's postinst can restore the bit.
+if [ -f /etc/default/motd-news ]; then
+	sed -i -E 's/^[[:space:]]*ENABLED=.*/ENABLED=0/' /etc/default/motd-news
+	if ! grep -q '^ENABLED=0' /etc/default/motd-news; then
+		echo "OS/7 hook 0075: could not disable motd-news in /etc/default/motd-news" >&2
+		exit 1
+	fi
+	echo "OS/7 hook 0075:   /etc/default/motd-news: ENABLED=0 (no login-time fetch)"
+fi
+
+# Read the directory back rather than trusting the loop above.
+still="$(find "${MOTD_DIR}" -maxdepth 1 -type f -perm -u+x -printf '%f ' 2>/dev/null || true)"
+echo "OS/7 hook 0075:   MOTD: disabled ->${disabled:- (none)}"
+echo "OS/7 hook 0075:   MOTD: still executable -> ${still:-(none)}${kept:+ (kept:${kept} )}"
+case " ${still} " in
+	*" 00-os7-header "*) ;;
+	*)
+		echo "OS/7 hook 0075: 00-os7-header is not executable after chmod." >&2
+		exit 1
+		;;
+esac
+
+# The mechanism that displays any of this. If no PAM stack references pam_motd,
+# nothing in that directory is ever run - and that is a NOTE rather than a
+# failure, because it depends on which login packages the image carries and the
+# hook cannot tell "not installed" from "misconfigured" (BUILD-NOTES #38).
+if grep -rqs 'pam_motd' /etc/pam.d/; then
+	echo "OS/7 hook 0075:   MOTD: pam_motd is wired up in /etc/pam.d"
+else
+	echo "OS/7 hook 0075:   NOTE: no /etc/pam.d file references pam_motd, so the MOTD"
+	echo "OS/7 hook 0075:   NOTE: may never be displayed on this image. Not fatal here;"
+	echo "OS/7 hook 0075:   NOTE: check-image.py reads the artefact and run-phase*.py a boot."
+fi
 
 # ---------------------------------------------------------------------------
 # 2. The package manifest.

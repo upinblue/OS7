@@ -28,12 +28,15 @@ that had not been pushed, and the other session read the state it had, which was
 correct and out of date. `git fetch` first — a commit nobody can see is the same
 as a conversation.
 
-**#79 is claimed and NOT YET WRITTEN.** Four source comments already cite it —
-`Diagnostics/Memory.cs`, `Steps/EnvironmentSteps.cs`, `Steps/Executor.cs`,
-`Steps/StorageSteps.cs` — about an amd64 install running out of memory once the
-ARC had grown. Do not take it.
+*No number is currently claimed but unwritten.*
 
-Everything else below is written. Numbers above 80 are free.
+**#79 was, for a few hours on 2026-08-26, and the mechanism worked.** Four
+source comments cited it before the entry existed; a second session read this
+table, left it alone and took #80 instead. That is the first time this rule has
+been exercised on purpose rather than after a collision — worth recording,
+because the rule costs a commit and its value is invisible when it works.
+
+Everything below is written. Numbers above 81 are free.
 
 *(That line said 61 until 2026-08-26 and had been wrong since #62 landed —
 it is the one line in this file nothing checks, and it is exactly the line a
@@ -3992,3 +3995,42 @@ said, because either one alone misleads:
 
 Same family as #38: a check produced a confident answer to a question it was not
 actually asking.
+
+---
+
+## 81. Handing a shell program to `sh` from Windows Python: three ways, three wrong error messages
+
+**Measured 2026-08-26**, writing the shell arm of
+`installer/testing/check-version-rule.py` — a harness that sources
+`build/lib/version-rule.sh` and asks it to render eight version strings. The
+library was correct the whole time. Getting it *into* a shell took three
+attempts, and **not one of the three errors named the actual problem**:
+
+| How | What it said | What it was |
+|---|---|---|
+| `sh -c <program> sh <lib> <args…>` | `os7_short: command not found` | Python quotes the program for the Windows command line and the MSYS shell re-parses it with different backslash rules. The `\t` in `printf`'s format shifted the quoting far enough that **`$1` arrived empty**, so `. "$1"` sourced nothing. Reads like a broken library; was a broken argument. |
+| a temp script file | `…/drive-version-rule.sh: No such file or directory` | `tempfile.mkdtemp()` returned `C:/Users/BASTIA~1/…` and the shell cannot open an **8.3 short name**. |
+| `sh -s` with the path as `$1` | `…/version-rule.sh: No such file or directory` about a file `ls` finds | depends on **which** shell got picked. `/usr/bin/sh.exe` opens `C:/…` happily; the `bin\bash.exe` wrapper that a PowerShell `PATH` finds instead does not — and `shutil.which("sh")` returns different answers depending on whether Python was started from Git Bash or from PowerShell. |
+
+And a fourth, hit on the way: `subprocess.run(input=…, text=True)` wraps the
+pipe in a `TextIOWrapper` with `newline=None`, which **translates `\n` to
+`os.linesep` on write**. On Windows the shell therefore received the program
+with CRLF, `. "$1"` became `. "$1"\r`, and the path it could not open was the
+right path with a carriage return glued to the end. Same family as **#70**,
+where a CRLF checkout stopped a shebang from naming an interpreter: the
+carriage return is invisible in every error message it causes.
+
+**What works:** put both the library and the driver on **stdin** (`sh -s`),
+encode the bytes yourself, and let nothing but plain arguments cross the
+boundary — no program text, no paths.
+
+```python
+p = subprocess.run([sh, "-s", *args], input=program.encode("utf-8"),
+                   capture_output=True)          # bytes, NOT text=True
+```
+
+**The general rule, and it is not a Windows rule:** *the Windows/POSIX boundary
+reports every one of its own failures as a failure of the thing on the other
+side.* A harness that cannot run where the code is edited eventually reports NOT
+CHECKED forever, so it is worth crossing properly — but budget for the fact that
+the first three error messages will send you after the wrong file.

@@ -443,9 +443,27 @@ is implemented.** Two things from it belong here:
   AOT build. `Test-OS7Backup` is still 63/0 and `check-layering.py` still 0.
   What has NOT happened: none of it has been in an ISO or on a screen —
   `run-phase1.py` reads the title row off a framebuffer and needs the Mac.
-* **Phases B–E of the identity plan are untouched.** B is the image (hook 0075,
-  MOTD, `/etc/issue`), C is the installed machine, D is the boot, E is the
-  tenant.
+* **Phase B is written and has NEVER BEEN IN AN ISO.** Hook 0075 now leaves
+  `NAME` alone, brands `PRETTY_NAME` with the friendly form, adds the URL /
+  `LOGO` / `ANSI_COLOR` fields, drops `PRIVACY_POLICY_URL`, and writes
+  `/usr/lib/os7/product`, `/etc/issue` and `/etc/issue.net`; it disables
+  Ubuntu's MOTD drop-ins by a keep-list and installs `00-os7-header`.
+  `check-image.py` reads all of it back off the artefact. **The next step is one
+  command on the Mac:**
+
+  ```bash
+  make build-arm64 && ./installer/testing/check-image.py
+  ```
+
+  Verified so far *without* an ISO, by running the hook's identity sections
+  against a real Ubuntu 26.04 root in a container: the branded fields changed,
+  the seven untouchable ones did not, and `run-parts` produced the two-line
+  login header. That says nothing about whether live-build runs the hook or
+  whether `00-os7-header` reaches the image — which is exactly what the command
+  above is for.
+* **Phases C–E of the identity plan are untouched.** C is the installed machine
+  (`ReleaseIdentityStep` becomes the one re-assert function), D is the boot
+  (crypttab naming, then Plymouth), E is the tenant.
 
 ## 3. amd64 — why it fails here, what a native runner already got past, and the two local options
 

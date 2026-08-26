@@ -36,6 +36,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import os7version
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 SNAPSHOT_HOST = "snapshot.ubuntu.com"
@@ -71,6 +74,15 @@ emit release.json      cat /mnt/sq/usr/lib/os7/release.json
 emit release.conf      cat /mnt/sq/usr/lib/os7/release.conf
 emit build.conf        cat /mnt/sq/usr/lib/os7/build.conf
 emit os-release        cat /mnt/sq/etc/os-release
+# The identity as a PERSON meets it (docs/IDENTITY-PLAN.md §6). None of these is
+# derivable from os-release: the product line is OS/7's own file precisely so
+# that no user-facing surface depends on a field Microsoft's agents also read
+# (I1), and what is executable in update-motd.d is a property of the filesystem.
+emit product           cat /mnt/sq/usr/lib/os7/product
+emit issue             cat /mnt/sq/etc/issue
+emit issue.net         cat /mnt/sq/etc/issue.net
+emit motd.d            bash -c 'cd /mnt/sq/etc/update-motd.d 2>/dev/null && for f in *; do [ -f "$f" ] && printf "%s %s\n" "$f" "$(stat -c %A "$f")"; done || true'
+emit motd-news         bash -c 'cat /mnt/sq/etc/default/motd-news 2>/dev/null || true'
 emit sources.list      cat /mnt/sq/etc/apt/sources.list
 emit sources.list.d    bash -c 'cat /mnt/sq/etc/apt/sources.list.d/*.sources 2>/dev/null || true'
 emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
@@ -392,19 +404,85 @@ def main() -> None:
         for k, _, v in (l.partition("=") for l in img.get("os-release", "").splitlines())
         if k
     )
+    product = os7version.product(version, rel.get("channel", ""))
+
     check(osr.get("IMAGE_ID") == "os7", "IMAGE_ID", osr.get("IMAGE_ID", ""))
+    # FOUR FIELDS here and THREE in PRETTY_NAME below — this identifies, that
+    # describes (docs/IDENTITY-PLAN.md §5.2). Checking both against the same
+    # manifest is what makes the pair meaningful rather than two loose strings.
     check(osr.get("IMAGE_VERSION") == version,
-          "IMAGE_VERSION matches the manifest", osr.get("IMAGE_VERSION", ""))
-    check(osr.get("NAME") == "OS/7", "NAME is branded", osr.get("NAME", ""))
-    check(osr.get("PRETTY_NAME") == f"OS/7 {version}", "PRETTY_NAME", osr.get("PRETTY_NAME", ""))
-    # The three Intune's "Allowed distributions" rule matches on (L16 / D8).
-    # Branding these would make every OS/7 device fail a policy written for
-    # Ubuntu 26.04, which README makes a hard requirement rather than a
-    # preference — so this is a check that something did NOT happen.
+          "IMAGE_VERSION is the manifest's four-field version",
+          osr.get("IMAGE_VERSION", ""))
+    check(osr.get("PRETTY_NAME") == product,
+          "PRETTY_NAME is the friendly form", osr.get("PRETTY_NAME", ""))
+    # And the invariant the two forms exist to keep: one names the other's
+    # release. If this ever fails, the machine is quoting two different builds.
+    check(version.startswith(os7version.friendly(version) or "")
+          and os7version.friendly(version) in osr.get("PRETTY_NAME", ""),
+          "the two forms name the same release",
+          f'{osr.get("PRETTY_NAME", "")} / {osr.get("IMAGE_VERSION", "")}')
+
+    # THE FIELDS THAT MUST NOT BE BRANDED. Checks that something did NOT happen.
+    #
+    # NAME IS ON THIS LIST SINCE 2026-08-26 AND USED TO BE ON THE OTHER ONE.
+    # BUILD-NOTES #80: Microsoft's Azure Arc onboarding script reads NAME,
+    # matches it against `*buntu*` and exits 133 otherwise — it never reads ID.
+    # The glob is asserted rather than the literal "Ubuntu", because the glob is
+    # the actual contract and a literal check would be checking the wrong thing.
+    check("buntu" in osr.get("NAME", ""),
+          "NAME still matches Arc's *buntu* glob (BUILD-NOTES #80)", osr.get("NAME", ""))
     check(osr.get("ID") == "ubuntu", "ID is left as ubuntu (Intune)", osr.get("ID", ""))
     check(osr.get("VERSION_ID") == "26.04", "VERSION_ID is untouched (Intune)",
           osr.get("VERSION_ID", ""))
     check(osr.get("ID_LIKE", "") != "", "ID_LIKE is untouched (Intune)", osr.get("ID_LIKE", ""))
+    check("26.04" in osr.get("VERSION", ""), "VERSION is untouched", osr.get("VERSION", ""))
+    check(osr.get("VERSION_CODENAME", "") == "resolute", "VERSION_CODENAME is untouched",
+          osr.get("VERSION_CODENAME", ""))
+
+    # The branded extras. SUPPORT_URL and BUG_REPORT_URL matter more than they
+    # look: leaving Ubuntu's is worse than leaving them unset, because it sends
+    # OS/7's bug reports to Canonical.
+    for field in ("HOME_URL", "SUPPORT_URL", "BUG_REPORT_URL", "DOCUMENTATION_URL"):
+        check("upinblue" in osr.get(field, ""), f"{field} points at OS/7",
+              osr.get(field, "(unset)"))
+    check(osr.get("LOGO", "") == "os7", "LOGO", osr.get("LOGO", ""))
+    check(osr.get("PRIVACY_POLICY_URL", "") == "",
+          "PRIVACY_POLICY_URL is gone — Ubuntu's does not describe this system",
+          osr.get("PRIVACY_POLICY_URL", ""))
+
+    # -- the banners (IDENTITY-PLAN §6.1, §6.2) ------------------------------
+    check(img.get("product", "").strip() == product,
+          "/usr/lib/os7/product carries the product line", img.get("product", "").strip())
+
+    issue = img.get("issue", "")
+    check(issue.startswith(product), "/etc/issue names the product", issue.splitlines()[:1])
+    # agetty's escapes, and they must be LITERAL backslashes in the file. A
+    # console that greets you with a stray "OS/7 1.0.0 (development) n l" is
+    # what a printf that expanded them looks like.
+    check("\\n" in issue and "\\l" in issue,
+          "/etc/issue keeps agetty's \\n and \\l unexpanded", repr(issue))
+
+    net = img.get("issue.net", "").strip()
+    check(net == "OS/7",
+          "/etc/issue.net names the product and NOTHING else — it is shown "
+          "before authentication", net)
+
+    # -- the MOTD (IDENTITY-PLAN §6.1, I9) -----------------------------------
+    #
+    # Read off the artefact because the hook cannot know what it will find:
+    # which drop-ins Ubuntu ships in this image has never been measured (IL10),
+    # so the hook enumerates and this checks the result.
+    motd = [l.split() for l in img.get("motd.d", "").splitlines() if l.strip()]
+    executable = sorted(name for name, mode in motd if "x" in mode)
+    check(executable == ["00-os7-header"] or executable == ["00-os7-header", "98-reboot-required"],
+          "only OS/7's header and the reboot notice run at login",
+          " ".join(executable) or "(none)")
+    check(any(name == "00-os7-header" and "x" in mode for name, mode in motd),
+          "00-os7-header is executable")
+    # The one that makes a network request at login.
+    news = img.get("motd-news", "")
+    check("ENABLED=1" not in news, "motd-news does not fetch at login",
+          news.strip() or "(no /etc/default/motd-news)")
 
     # -- THE PIN, IN THE SHIPPED IMAGE --------------------------------------
     #

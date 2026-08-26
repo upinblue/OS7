@@ -181,7 +181,8 @@ Replaces the table in [RELEASE-AND-UPDATE-PLAN.md](RELEASE-AND-UPDATE-PLAN.md)
 | `VERSION_ID` | `"26.04"` | **untouched.** Read by both agents *and* by the Arc script |
 | `VERSION` | `26.04 LTS (Resolute Raccoon)` | **untouched.** Read by `intune-agent`'s `.*VERSION="(.*)".*`. Never previously named as protected |
 | `VERSION_CODENAME` | `resolute` | **untouched.** Same reasoning, zero cost |
-| `NAME` | `Ubuntu` | **CHANGED BACK from `OS/7`.** §3.1. This is I2 |
+| `UBUNTU_CODENAME` | `resolute` | **untouched.** Not in the original list; added when a container run showed it sitting in the file unprotected |
+| `NAME` | `Ubuntu` | **NO LONGER WRITTEN AT ALL**, where it used to be branded `OS/7`. §3.1, I2. The hook does not set it to `Ubuntu` either — it is Ubuntu's field and OS/7 leaves it alone — and the read-back asserts the **glob** `*buntu*` rather than the literal, because the glob is what Arc's script actually matches and a literal check would be checking the wrong thing |
 | `PRETTY_NAME` | `OS/7 1.0.0` | branded, **provisional**. §3.2, I3 |
 | `IMAGE_ID` | `os7` | the product identity, machine-readable |
 | `IMAGE_VERSION` | `1.0.0.95` | **four fields.** This identifies; it does not describe. I6 |
@@ -219,10 +220,15 @@ the channel in brackets while it is not `stable`.
 
 ### 5.2 Where each form goes
 
+There is **one** rendering of each form and everything that shows a version uses
+it. `PRETTY_NAME`, `/etc/issue` and the MOTD header all carry the identical
+string — `OS/7 1.0.0 (development)` — because they are the same sentence in
+three places, and three formatters would be three chances to disagree.
+
 | Surface | Form | |
 |---|---|---|
-| `PRETTY_NAME` | `OS/7 1.0.0` | describes |
-| MOTD header, `/etc/issue` | `OS/7 1.0.0 (development)` | describes |
+| `PRETTY_NAME`, `/etc/issue`, MOTD header, `/usr/lib/os7/product` | `OS/7 1.0.0 (development)` | describes |
+| `/etc/issue.net` | `OS/7` | describes — and **no version at all**: it is shown before authentication |
 | `hostnamectl`, GNOME *About* | via `PRETTY_NAME` | describes |
 | PowerShell login banner | `OS/7 1.0.0 (development)` | describes |
 | Setup title row, every screen | `Version 1.0.0 (development)` | describes |
@@ -454,7 +460,7 @@ exactly" is `Get-OS7Version`.
 | **I6** | Four fields wherever the number **identifies**; three wherever it **describes** | §5.1. The boundary is a question with an answer, not a matter of taste |
 | **I7** | `Get-OS7Version` never reports "no drift" when it did not look | `Drift` is empty until `-CheckDrift`. A check that cannot distinguish absence of evidence from evidence of absence will eventually report the first as the second |
 | **I8** | `uname` is **not** branded, and that is a decision rather than an omission | §8 |
-| **I9** | MOTD: OS/7 writes its own header; Ubuntu's are **disabled, not deleted** | `dpkg` restores deleted files it owns, silently, on the next `apt` run. `chmod -x` is what `run-parts` honours |
+| **I9** | MOTD: OS/7 writes its own header; Ubuntu's are **disabled, not deleted**, by a **keep-list** — `00-os7-header` and `98-reboot-required` run, everything else has its executable bit removed | `dpkg` restores deleted files it owns, silently, on the next `apt` run; `chmod -x` is what `run-parts` honours. A keep-list rather than a deny-list because what is in that directory has never been measured (IL10) and Ubuntu can add to it: nothing appears at login that OS/7 did not put there, except the reboot notice, which is real product-neutral information. Run against a real 26.04 root the rule caught `60-unminimize`, which no deny-list would have named |
 | **I10** | `/etc/legal` is a **licence** review, not a branding task | §6.3 |
 
 ---
@@ -509,10 +515,38 @@ anything else:
   newline that decide the hash. Those are now reached by handing the package
   list in, which also removed every per-platform shim from the harness.
 
-**Phase B — the image.** Hook 0075: `NAME` back to `Ubuntu`, `PRETTY_NAME`
-friendly, the URL fields, `LOGO`, `ANSI_COLOR`. `/etc/issue`, `/etc/issue.net`,
-the MOTD header and the drop-in disabling. Read every one of them back in the
-hook, and again on the artefact in `check-image.py`.
+**Phase B — the image. DONE 2026-08-26, but NOT YET IN AN ISO.**
+Hook 0075 stops branding `NAME`, brands `PRETTY_NAME` with the friendly form,
+adds the URL fields, `LOGO` and `ANSI_COLOR`, drops `PRIVACY_POLICY_URL`, and
+writes `/usr/lib/os7/product`, `/etc/issue` and `/etc/issue.net`. It disables
+Ubuntu's MOTD drop-ins and installs `00-os7-header` from `includes.chroot`.
+`check-image.py` reads all of it back off the artefact.
+
+Two things are worth calling out about *how* it does it:
+
+* **The display rule is not implemented in the hook.** `build.sh` applies the
+  shell implementation (`build/lib/version-rule.sh`) and hands the rendered
+  strings in through `build.conf`. That keeps the count at four — C#,
+  PowerShell, Python, shell — and every one of the four is reachable by
+  `check-version-rule.py`, which now drives all of them over one case table:
+  **133 checks, green.** A fifth copy inside a chroot hook would have been the
+  one nothing could reach.
+* **The MOTD is a keep-list, and the hook enumerates rather than assumes.** What
+  Ubuntu actually ships in `/etc/update-motd.d` has never been measured (IL10),
+  so nothing names a file it expects to find: the hook disables everything that
+  is not OS/7's header or `98-reboot-required`, and prints what it disabled.
+  Run against a real Ubuntu 26.04 root it found `60-unminimize`, which was not
+  on anybody's list — which is the argument for a keep-list in one line.
+
+**Verified without an ISO** by running the hook's identity sections against a
+real Ubuntu 26.04 filesystem in a container: `PRETTY_NAME` branded, `NAME`,
+`ID`, `VERSION`, `VERSION_ID`, `VERSION_CODENAME` and `UBUNTU_CODENAME`
+untouched, `PRIVACY_POLICY_URL` gone, the banners written, and `run-parts`
+producing the two-line login header. **What that does not prove:** that
+live-build runs the hook in the real chroot, that the image ships
+`00-os7-header` at all, or that anything is on a screen. `make build-arm64`
+followed by `check-image.py` and `run-phase1.py all` is the next step, and needs
+the Mac.
 
 **Phase C — the installed machine, and the update.** `ReleaseIdentityStep`
 rewrites `VARIANT` alone today; it becomes the single re-assert function of IL6,
@@ -532,7 +566,7 @@ passes. Both are one enrolment. Until then IL1 and IL2 stand.
 
 | Check | What it proves | Cost |
 |---|---|---|
-| `check-version-rule.py` | C# and PowerShell produce the same two strings for the same manifest, the object's types are the types an operator can compare, and drift reports `Unknown` rather than `Clean` when it could not look. **82 checks, green** | seconds; the C# half needs a Linux binary, so `--docker os7-build:<arch>` off a Mac or Windows box |
+| `check-version-rule.py` | **all four implementations** — C#, PowerShell, Python and shell — produce the same strings for the same cases; the object's types are the types an operator can compare; and drift reports `Unknown` rather than `Clean` when it could not look. **133 checks, green.** It names which implementations a given run actually compared, so a run that could not reach one says so instead of claiming agreement | seconds; the C# arm needs a Linux binary, so `--docker os7-build:<arch>` off a Mac or Windows box |
 | `os7-setup --self-test` | the C# half on its own, including the two forms and the channel rule — and it runs in the chroot during every ISO build (hook 0080), so that half is never *unchecked*, only sometimes un*compared* | the build stops |
 | hook 0075's read-back | the image's `os-release` carries the branded fields *and* the untouched ones — **now including `NAME=Ubuntu`, which today's hook would fail** | the build stops |
 | `check-image.py` | the finished artefact: `NAME`, the `PRETTY_NAME` prefix, `IMAGE_VERSION` having four fields whose first three equal `PRETTY_NAME`'s, `/etc/issue`, and which MOTD drop-ins are executable | seconds, no VM |

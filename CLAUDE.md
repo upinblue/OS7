@@ -130,14 +130,25 @@ apt afterwards.
 
 **A person is shown three fields, a machine four** (2026-08-26,
 [docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) §5). `1.0.0 (development)` is
-chrome — the title row, the MOTD, `Get-OS7Version`; `1.0.0.95` is anything that
-has to tell two builds apart — dataset names, `IMAGE_VERSION`, the ISO filename,
-`--version`, the boot-environment menu, the Complete screen. It is a **display
-rule, not a second number**, and it is implemented twice — `Model/Release.cs`
-`Short`/`Full` and `Get-OS7Version` — so `check-version-rule.py` owns the case
-table and drives both. `Get-OS7Version` reads the same
-`/usr/lib/os7/release.json` os7-setup and `New-OS7BootEnvironmentName` read, and
-its `Drift` is **empty until `-CheckDrift`, never `$false`**.
+chrome — the title row, `PRETTY_NAME`, `/etc/issue`, the MOTD,
+`Get-OS7Version`; `1.0.0.95` is anything that has to tell two builds apart —
+dataset names, `IMAGE_VERSION`, the ISO filename, `--version`, the
+boot-environment menu, the Complete screen. It is a **display rule, not a second
+number**, implemented **four times** — `Model/Release.cs` `Short`/`Full`,
+`Get-OS7Version`, `installer/testing/os7version.py` and
+`build/lib/version-rule.sh` — so `check-version-rule.py` owns the case table and
+drives all four, and says which ones a given run reached. `Get-OS7Version` reads
+the same `/usr/lib/os7/release.json` os7-setup and `New-OS7BootEnvironmentName`
+read, and its `Drift` is **empty until `-CheckDrift`, never `$false`**.
+
+**And the machine says OS/7 where a person looks, Ubuntu where software does.**
+`PRETTY_NAME`, `/etc/issue`, the MOTD header and the GRUB menu are branded;
+`NAME`, `ID`, `ID_LIKE`, `VERSION`, `VERSION_ID`, `VERSION_CODENAME`,
+`/etc/lsb-release` and `uname` are not, and **`NAME` is on that list because
+Microsoft's Arc onboarding script reads it and exits 133 on anything without
+`buntu` in it** (#80). Every branded surface reads
+`/usr/lib/os7/product` — OS/7's own file — so if `PRETTY_NAME` ever has to be
+given back, nothing else changes.
 
 Building `os7-setup` alone, without an ISO:
 

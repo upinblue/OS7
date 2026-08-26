@@ -36,6 +36,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import os7version
 from vmscreen import (FB_W, REPO, Lab, assert_region, hexc, histogram,
                       load_font, read_text, run)
 
@@ -117,29 +118,18 @@ def fetch_release():
     return _release
 
 
-def friendly(version):
-    """The first three fields — "1.0.0" out of "1.0.0.95".
-
-    docs/IDENTITY-PLAN.md §5. Derived here the way Model/Release.cs derives it,
-    including the part that matters: a version with fewer than four fields comes
-    back unchanged rather than padded.
-    """
-    fields = version.split(".")
-    return version if len(fields) <= 3 else ".".join(fields[:3])
-
-
 def title_stamp():
     """What Setup should be putting on the right of every title row.
 
-    Composed here the way Model/Release.cs composes it, from the manifest's own
-    fields — so this asserts the RULE rather than one particular string. Two
-    halves to the rule and this checks both: the title row is CHROME, so it
-    carries three fields (IDENTITY-PLAN I6), and a channel that is not `stable`
-    names itself.
+    Composed from the manifest's own fields by os7version, which is the Python
+    implementation of the same rule Model/Release.cs implements — so this
+    asserts the RULE rather than one particular string, and
+    check-version-rule.py is what keeps the two implementations from drifting
+    apart underneath it. The title row is CHROME, so it carries the three-field
+    form (docs/IDENTITY-PLAN.md I6).
     """
     r = fetch_release()
-    version, channel = friendly(r["version"]), r.get("channel", "unknown")
-    return f"Version {version}" if channel == "stable" else f"Version {version} ({channel})"
+    return f"Version {os7version.short(r['version'], r.get('channel', ''))}"
 
 
 def fetch_font():

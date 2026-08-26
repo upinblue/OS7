@@ -41,6 +41,8 @@ import subprocess
 import sys
 import tempfile
 
+import os7version
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 MODULE = os.path.join(REPO, "powershell", "OS7", "OS7.psd1")
@@ -129,6 +131,123 @@ def powershell_rule(lab):
     for (version, channel, short, full), (gs, gf) in zip(CASES, got):
         check(gs == short, f"{version} ({channel}) -> short", gs)
         check(gf == full, f"{version} ({channel}) -> full", gf)
+
+
+# ---------------------------------------------------------------------------
+# 1b. The rule, in Python — os7version.py
+#
+# The harnesses' implementation: `run-phase1.py` composes the string it expects
+# to find on a framebuffer with it, and `check-image.py` the string it expects
+# in an image. Checked FIRST, because if it is wrong every other harness is
+# quietly wrong in the same direction and would still pass.
+# ---------------------------------------------------------------------------
+def python_rule():
+    print("\n  the display rule — Python, os7version.py")
+
+    for version, channel, want_short, want_full in CASES:
+        check(os7version.short(version, channel) == want_short,
+              f"{version} ({channel}) -> short", os7version.short(version, channel))
+        check(os7version.full(version, channel) == want_full,
+              f"{version} ({channel}) -> full", os7version.full(version, channel))
+
+    check(os7version.product("1.0.0.95", "development") == "OS/7 1.0.0 (development)",
+          "the product line is the friendly form with OS/7 in front",
+          os7version.product("1.0.0.95", "development"))
+    check(os7version.short("", "stable") == "unknown" and os7version.full("", "") == "unknown",
+          "no version reads as 'unknown', not as an empty string")
+
+
+# ---------------------------------------------------------------------------
+# 1c. The rule, in shell — build/lib/version-rule.sh
+#
+# This is the one the IMAGE gets: build.sh applies it and hands the rendered
+# strings to hook 0075 through build.conf, which is what becomes PRETTY_NAME,
+# /etc/issue and /usr/lib/os7/product. A drift here is a drift on every
+# installed machine's login banner.
+# ---------------------------------------------------------------------------
+def shell_rule(lab):
+    print("\n  the display rule — shell, build/lib/version-rule.sh")
+
+    sh = shutil.which("sh") or shutil.which("bash")
+    if not sh:
+        print("      NOTE  NOT CHECKED: no POSIX shell on this host.")
+        return False
+
+    lib = os.path.join(REPO, "build", "lib", "version-rule.sh")
+    if not os.path.isfile(lib):
+        check(False, "build/lib/version-rule.sh exists", lib)
+        return True
+    library = open(lib, encoding="utf-8").read()
+
+    # THE LIBRARY AND THE DRIVER BOTH GO IN ON STDIN (`sh -s`). Nothing but the
+    # version strings crosses the process boundary, and none of those contains a
+    # quote, a backslash or a path.
+    #
+    # That is not fastidiousness. Three different ways of handing this to a
+    # shell were tried on 2026-08-26 and all three broke on Windows, each with
+    # an error that named the wrong thing:
+    #
+    #   `sh -c <program>`   Python quotes the program for the Windows command
+    #                       line, the MSYS shell re-parses it with different
+    #                       backslash rules, and the `\t` in printf's format
+    #                       shifted the quoting until `$1` arrived EMPTY.
+    #                       Symptom: `os7_short: command not found` — reads like
+    #                       a broken library, was a broken argument.
+    #   a script file       the temp path came back as `C:/Users/BASTIA~1/…` and
+    #                       the shell could not open an 8.3 short name.
+    #   the path as `$1`    depends on WHICH shell got picked. `/usr/bin/sh`
+    #                       opens `C:/…` happily; the `bin/bash.exe` wrapper
+    #                       that a PowerShell PATH finds instead does not, and
+    #                       says "No such file or directory" about a file that
+    #                       is plainly there.
+    #
+    # Reading the library here loses one thing and it is worth naming: this no
+    # longer proves the file can be SOURCED, only that the rule inside it is
+    # right. build.sh sources it on Linux with a POSIX path, and a build that
+    # could not source it would not produce an ISO at all.
+    driver = (
+        "while [ $# -gt 0 ]; do\n"
+        "\tprintf '%s\\t%s\\t%s\\n' \\\n"
+        '\t\t"$(os7_short "$1" "$2")" \\\n'
+        '\t\t"$(os7_full "$1" "$2")" \\\n'
+        '\t\t"$(os7_product "$1" "$2")"\n'
+        "\tshift 2\n"
+        "done\n"
+    )
+    program = library + "\n" + driver
+
+    argv = [sh, "-s"]
+    for version, channel, _, _ in CASES:
+        argv += [version, channel]
+
+    # BYTES, not text=True. Python's text mode wraps the pipe in a TextIOWrapper
+    # with newline=None, which translates '\n' to os.linesep ON WRITE — so on
+    # Windows the shell received the program with CRLF, `. "$1"` became
+    # `. "$1"\r`, and the path it could not open was the library path with a
+    # carriage return glued to it. The error names the file and looks like a
+    # missing file. Third Windows papercut in this one function; encoding by
+    # hand is the end of them.
+    p = subprocess.run(argv, input=program.encode("utf-8"), capture_output=True)
+    stdout = p.stdout.decode("utf-8", "replace")
+    stderr = p.stderr.decode("utf-8", "replace")
+    if p.returncode != 0:
+        check(False, "version-rule.sh sourced and ran", f"{p.returncode}: {stderr.strip()}")
+        return True
+
+    got = [line.split("\t") for line in stdout.replace("\r", "").strip("\n").split("\n")]
+    if not check(len(got) == len(CASES), "every case produced a line",
+                 f"{len(got)} of {len(CASES)}"):
+        return True
+    for (version, channel, want_short, want_full), row in zip(CASES, got):
+        if not check(len(row) == 3, f"{version}: three fields on the line", "\t".join(row)):
+            continue
+        check(row[0] == want_short, f"{version} ({channel}) -> short", row[0])
+        check(row[1] == want_full, f"{version} ({channel}) -> full", row[1])
+        # os7_product is what becomes PRETTY_NAME, /etc/issue and the MOTD line,
+        # so it is checked as itself rather than assumed to follow os7_short.
+        check(row[2] == f"OS/7 {want_short}",
+              f"{version} ({channel}) -> product line", row[2])
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -428,26 +547,29 @@ def main():
 
     print("### the version display rule (docs/IDENTITY-PLAN.md §5)")
     lab = tempfile.mkdtemp(prefix="os7-version-rule-")
-    compared = False
+    ran = []
     try:
-        powershell_rule(lab)
+        python_rule();            ran.append("Python")
+        powershell_rule(lab);     ran.append("PowerShell")
         object_shape(lab)
         drift(lab)
+        if shell_rule(lab):
+            ran.append("shell")
 
         setup = find_setup(args.setup)
         if setup:
-            compared = csharp_rule(setup_argv(setup, args.docker))
+            if csharp_rule(setup_argv(setup, args.docker)):
+                ran.append("C#")
         else:
             print("\n  the display rule — C#")
             print("      NOTE  NOT CHECKED. No os7-setup was found.")
             print("      NOTE  Pass --setup <path>, or set OS7_SETUP, or drop one in out/.")
-        if not compared:
-            print("      NOTE  The two halves of this rule have NOT been compared in this run.")
+        if "C#" not in ran:
             print("      NOTE  Build one with the container one-liner in CLAUDE.md, then either")
             print("      NOTE  run this on Linux or add --docker os7-build:<arch>.")
-            print("      NOTE  `os7-setup --self-test` checks the C# half on its own, and runs")
-            print("      NOTE  in the chroot during every ISO build (hook 0080) — so the C# side")
-            print("      NOTE  is never unchecked, only unCOMPARED.")
+            print("      NOTE  `os7-setup --self-test` checks the C# side on its own, and runs")
+            print("      NOTE  in the chroot during every ISO build (hook 0080) — so it is")
+            print("      NOTE  never unchecked, only unCOMPARED.")
     finally:
         if os.environ.get("VERSION_RULE_KEEP"):
             print(f"\n(kept: {lab})")
@@ -458,13 +580,13 @@ def main():
     if FAILS:
         print(f"{len(FAILS)} check(s) FAILED")
         return 1
-    # Two different sentences, because they are two different claims and only
-    # one of them was earned.
-    if compared:
-        print("all checks passed — the rule is the same rule on both sides of it.")
-    else:
-        print("all checks passed — but ONLY THE POWERSHELL HALF RAN. The claim this")
-        print("script exists to make, that C# and PowerShell agree, was not tested.")
+    # Name what actually ran. "All four agree" and "the two that could run agree"
+    # are different claims, and only one of them is ever earned in a given run.
+    missing = [n for n in ("Python", "PowerShell", "shell", "C#") if n not in ran]
+    print(f"all checks passed — {', '.join(ran)} produce the same strings for the same cases.")
+    if missing:
+        print(f"NOT COMPARED IN THIS RUN: {', '.join(missing)}. The rule has "
+              f"{len(ran) + len(missing)} implementations and this run exercised {len(ran)}.")
     return 0
 
 
