@@ -144,6 +144,487 @@ function Import-OS7ZfsLayer {
 }
 
 # ---------------------------------------------------------------------------
+# The release identity (docs/IDENTITY-PLAN.md)
+#
+# ONE READER for the manifest, shared by everything that needs to know which
+# OS/7 this is: New-OS7BootEnvironmentName, which puts the version into a
+# dataset name, and Get-OS7Version, which reports it. os7-setup's
+# Model/Release.cs is the third reader of the same file, in another language,
+# and installer/testing/check-version-rule.py is what keeps it honest.
+# ---------------------------------------------------------------------------
+$script:OS7ReleaseManifest  = '/usr/lib/os7/release.json'
+$script:OS7PackagesManifest = '/usr/lib/os7/packages.manifest'
+$script:OS7OsRelease        = '/etc/os-release'
+
+function Read-OS7ReleaseManifest {
+	<#
+	.SYNOPSIS
+		The release manifest as an object, or $null. Internal.
+
+	.DESCRIPTION
+		A missing file and a malformed one both come back as $null, and that is
+		deliberate: the callers all have to handle "cannot say" anyway, and a
+		manifest is metadata — refusing to name a boot environment because a
+		JSON file has a stray comma would turn a cosmetic fault into a failed
+		install (the same choice Model/Release.cs makes with Release.Unknown).
+	#>
+	param([Parameter(Mandatory)][string]$Path)
+
+	if (-not (Test-Path -LiteralPath $Path)) { return $null }
+	try { return (Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json) }
+	catch { return $null }
+}
+
+function Get-OS7ManifestField {
+	<#
+	.SYNOPSIS
+		One field of a parsed manifest, or $null. Internal.
+
+	.DESCRIPTION
+		Set-StrictMode -Version Latest turns a missing property on the object
+		ConvertFrom-Json produces into a terminating error, so every read of an
+		OPTIONAL field has to ask whether it is there first. An older manifest
+		is missing fields a newer module wants, which is the ordinary case and
+		not an error.
+	#>
+	param($Document, [Parameter(Mandatory)][string]$Name)
+
+	if ($null -eq $Document) { return $null }
+	if ($Document.PSObject.Properties.Name -notcontains $Name) { return $null }
+	return $Document.$Name
+}
+
+function ConvertTo-OS7FriendlyVersion {
+	<#
+	.SYNOPSIS
+		The first three fields — "1.0.0" out of "1.0.0.95". Internal.
+
+	.DESCRIPTION
+		docs/IDENTITY-PLAN.md §5. DERIVED, never stored: there is one version
+		number, in one pin file, and a second stored form is how two numbers
+		start disagreeing.
+
+		Fewer than four fields comes back unchanged rather than padded. Nothing
+		should ever produce one — build.sh composes four — but a manifest is a
+		file, and a display rule must not throw on a file.
+	#>
+	param([string]$Version)
+
+	if (-not $Version) { return $null }
+	$fields = $Version.Split('.')
+	if ($fields.Count -le 3) { return $Version }
+	return ($fields[0..2] -join '.')
+}
+
+function Format-OS7Version {
+	<#
+	.SYNOPSIS
+		The display rule. Internal, and the twin of Model/Release.cs's
+		Short/Full.
+
+	.DESCRIPTION
+		docs/IDENTITY-PLAN.md §5.1, and the rule is one question: does the
+		number IDENTIFY a thing or DESCRIBE one?
+
+		  -Full absent   three fields. Chrome somebody reads in passing.
+		  -Full present  four. An explicit query, a name that must be unique, a
+		                 menu that exists to choose between two builds.
+
+		A channel that is not `stable` names itself in brackets, in both forms,
+		because a preview build mistaken for a released one is the whole reason
+		the channel field exists.
+
+		THIS FUNCTION AND Model/Release.cs ARE TWO IMPLEMENTATIONS OF ONE
+		SPECIFICATION. installer/testing/check-version-rule.py drives both over
+		the same cases and fails if they disagree; that check is the only thing
+		standing between here and the failure mode where an installer screen and
+		a cmdlet quote different numbers for the same machine.
+	#>
+	param([string]$Version, [string]$Channel, [switch]$Full)
+
+	if (-not $Version) { return 'unknown' }
+	$n = if ($Full) { $Version } else { ConvertTo-OS7FriendlyVersion $Version }
+	if (-not $Channel) { $Channel = 'unknown' }
+	if ($Channel -eq 'stable') { return $n }
+	return "$n ($Channel)"
+}
+
+function Get-OS7OsReleaseField {
+	<#
+	.SYNOPSIS
+		One field out of /etc/os-release, by SOURCING it. Internal.
+
+	.DESCRIPTION
+		BUILD-NOTES #37: os-release(5) defines the file as shell-compatible and
+		every real consumer reads it with `.`, so a scraper that strips one
+		quote style agrees with a correct file right up to the first value
+		quoted the other way, and then disagrees silently. The first version of
+		hook 0075's own read-back had exactly that bug. PowerShell cannot source
+		a shell file, so this asks a shell to.
+
+		Returns $null when there is no /bin/sh, no file, or no such field —
+		which is the honest answer on a machine that is not OS/7 and on the
+		developer laptop this module is edited on.
+	#>
+	param([Parameter(Mandatory)][string]$Name, [string]$Path = $script:OS7OsRelease)
+
+	if (-not (Test-Path -LiteralPath $Path)) { return $null }
+	try {
+		$value = & /bin/sh -c ". '$Path' 2>/dev/null; printf '%s' `"`${$Name-}`"" 2>$null
+		# Guarded, for the reason spelled out in Get-OS7PackageDrift.
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+		if ($code -ne 0) { return $null }
+		if ([string]::IsNullOrEmpty($value)) { return $null }
+		return [string]$value
+	}
+	catch { return $null }
+}
+
+function Get-OS7PackageDrift {
+	<#
+	.SYNOPSIS
+		What this machine holds against what the release recorded. Internal.
+
+	.DESCRIPTION
+		docs/RELEASE-AND-UPDATE-PLAN.md §5. The manifest hook 0075 wrote is
+		`package<TAB>version<TAB>architecture`, sorted under LC_ALL=C — NOT
+		`dpkg --get-selections`, which records names and an install state and so
+		cannot see a kernel moving from 7.0.0-30 to 7.0.0-31 (BUILD-NOTES #37).
+		This recomputes that file from the running system and compares.
+
+		THREE OUTCOMES, NOT TWO. `Unknown` is a first-class result and is what
+		comes back when there is no dpkg, no manifest, or no recorded hash — a
+		check that cannot distinguish absence of evidence from evidence of
+		absence will eventually report the first as the second, which is the
+		failure this whole repository keeps re-learning (IDENTITY-PLAN I7).
+
+		AND `Drifted` IS THE EXPECTED STATE ON A REAL MACHINE, at least at
+		first: Phase 3 installs azcmagent after the image was measured, so an
+		installed system legitimately differs from the ISO it came from. That is
+		why this reports WHAT changed and not merely THAT something did.
+
+	.PARAMETER Installed
+		The package list, as dpkg-query would emit it. Defaults to asking this
+		machine. Two callers want to hand one in: a future Update-OS7, which has
+		to compare a STAGED boot environment rather than the running one, and
+		installer/testing/check-version-rule.py — which is how the sort and the
+		hashing below are checked at all on a host with no dpkg.
+	#>
+	param(
+		[string]$Recorded,
+		[string]$ManifestPath = $script:OS7PackagesManifest,
+		[string[]]$Installed
+	)
+
+	$unknown = {
+		param($why)
+		[pscustomobject]@{
+			PSTypeName  = 'OS7.VersionDrift'
+			State       = 'Unknown'
+			Packages    = $null
+			Differences = $null
+			Added       = @()
+			Removed     = @()
+			Changed     = @()
+			Installed   = $null
+			Recorded    = $Recorded
+			Note        = $why
+		}
+	}
+
+	if (-not $Recorded) {
+		return (& $unknown 'the release manifest records no packages_manifest hash to compare against.')
+	}
+
+	$raw = @($Installed)
+	if ($raw.Count -eq 0) {
+		if (-not (Get-Command dpkg-query -CommandType Application -ErrorAction SilentlyContinue)) {
+			return (& $unknown 'dpkg-query is not on this system, so what is installed cannot be listed.')
+		}
+		# The SAME format string hook 0075 uses, byte for byte. A different one
+		# would hash differently while every package matched.
+		$raw = @(& dpkg-query -W '-f=${binary:Package}\t${Version}\t${Architecture}\n' 2>$null)
+
+		# $LASTEXITCODE through Test-Path, not directly. It is an automatic
+		# variable the engine sets when a native command COMPLETES THROUGH the
+		# pipeline, and there is at least one way for that not to happen even
+		# after the command has visibly run (measured on Windows against a .cmd
+		# shim, 2026-08-26). Reading it unguarded under Set-StrictMode is then a
+		# terminating error inside the function whose entire job is to report
+		# that it could not tell.
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+		if ($code -ne 0 -or $raw.Count -eq 0) {
+			return (& $unknown 'dpkg-query returned nothing; the package list could not be read.')
+		}
+	}
+
+	# LC_ALL=C sort is BYTE order. Sort-Object is culture-aware even with
+	# -CaseSensitive, and a culture that orders 'a' before 'B' produces a
+	# different file and therefore a different hash from an identical package
+	# set — a drift report caused entirely by the reader.
+	$lines = [string[]]($raw | Where-Object { $_ })
+	[System.Array]::Sort($lines, [System.StringComparer]::Ordinal)
+
+	# The file ends in a newline, because `sort` writes one after the last line.
+	$text = ($lines -join "`n") + "`n"
+	$digest = [System.Security.Cryptography.SHA256]::HashData(
+		[System.Text.Encoding]::UTF8.GetBytes($text))
+
+	# `$computed`, NOT `$installed` — BUILD-NOTES #65, hit again here and caught
+	# by check-version-rule.py on its first run. PowerShell variable names are
+	# case-insensitive, so `$installed` IS the `-Installed` parameter, and
+	# assigning a string to a [string[]] coerces it to a one-element ARRAY.
+	# Everything downstream still worked: `@('sha256:x') -eq 'sha256:x'` returns
+	# the matching element, which is truthy, so the Clean case passed and only
+	# the value that reached the caller was wrong. Never reuse a parameter name
+	# for a local.
+	$computed = 'sha256:' + (($digest | ForEach-Object { $_.ToString('x2') }) -join '')
+
+	if ($computed -eq $Recorded) {
+		return [pscustomobject]@{
+			PSTypeName  = 'OS7.VersionDrift'
+			State       = 'Clean'
+			Packages    = $lines.Count
+			Differences = 0
+			Added       = @()
+			Removed     = @()
+			Changed     = @()
+			Installed   = $computed
+			Recorded    = $Recorded
+			Note        = 'every package and version matches what this release recorded.'
+		}
+	}
+
+	# The hashes differ, so say what differs. Without the shipped manifest the
+	# only honest answer is "something", and that is what gets reported.
+	$now = @{}
+	foreach ($line in $lines) {
+		$f = $line.Split("`t")
+		if ($f.Count -ge 2) { $now[$f[0]] = $f[1] }
+	}
+	$then = @{}
+	if (Test-Path -LiteralPath $ManifestPath) {
+		foreach ($line in (Get-Content -LiteralPath $ManifestPath)) {
+			$f = $line.Split("`t")
+			if ($f.Count -ge 2) { $then[$f[0]] = $f[1] }
+		}
+	}
+
+	if ($then.Count -eq 0) {
+		return [pscustomobject]@{
+			PSTypeName  = 'OS7.VersionDrift'
+			State       = 'Drifted'
+			Packages    = $lines.Count
+			Differences = $null
+			Added       = @()
+			Removed     = @()
+			Changed     = @()
+			Installed   = $computed
+			Recorded    = $Recorded
+			Note        = "the hashes differ, but $ManifestPath is not readable, " +
+			              'so which packages moved cannot be said.'
+		}
+	}
+
+	$added   = @($now.Keys   | Where-Object { -not $then.ContainsKey($_) } | Sort-Object)
+	$removed = @($then.Keys  | Where-Object { -not $now.ContainsKey($_)  } | Sort-Object)
+	$changed = @($now.Keys |
+		Where-Object { $then.ContainsKey($_) -and $then[$_] -ne $now[$_] } |
+		Sort-Object |
+		ForEach-Object { "$_ $($then[$_]) -> $($now[$_])" })
+
+	return [pscustomobject]@{
+		PSTypeName  = 'OS7.VersionDrift'
+		State       = 'Drifted'
+		Packages    = $lines.Count
+		Differences = $added.Count + $removed.Count + $changed.Count
+		Added       = $added
+		Removed     = $removed
+		Changed     = $changed
+		Installed   = $computed
+		Recorded    = $Recorded
+		Note        = 'this machine is not the package set the release recorded.'
+	}
+}
+
+function Get-OS7Version {
+	<#
+	.SYNOPSIS
+		Which OS/7 this is.
+
+	.DESCRIPTION
+		docs/IDENTITY-PLAN.md §7, and docs/RELEASE-AND-UPDATE-PLAN.md §6.
+
+		Reads /usr/lib/os7/release.json — the same file os7-setup reads for its
+		title row and New-OS7BootEnvironmentName reads to name a dataset, so the
+		three cannot quote different numbers for one machine.
+
+		TWO FORMS OF THE NUMBER, and the difference is the point:
+
+		  Version      1.0.0      three fields, what a person is shown
+		  Build        95         the fourth, on its own
+		  FullVersion  1.0.0.95   all four, what identifies a build
+
+		Both are [version] rather than strings, so `(Get-OS7Version).Version -ge
+		[version]'1.1.0'` works without a parse. **Mind the vocabulary
+		collision**: [version] calls its own third field `Build` and its fourth
+		`Revision`, so `FullVersion.Build` is OS/7's PATCH and
+		`FullVersion.Revision` is OS/7's BUILD. The `Build` property on this
+		object is OS/7's meaning. The collision cannot be removed; it can only
+		be known about.
+
+		WHAT IT DOES NOT DO. It does not ask ZFS anything, so it works in a
+		chroot, over a serial line, and on a machine whose pools will not
+		import. Which boot environment is running is `Get-OS7BootEnvironment`'s
+		question and is deliberately not answered here.
+
+		DRIFT IS NOT CHECKED UNLESS ASKED. `Drift` is $null until -CheckDrift,
+		never $false: hashing dpkg's output over ~550 packages is seconds rather
+		than milliseconds, and a check that did not run must never read as a
+		clean result (IDENTITY-PLAN I7).
+
+	.PARAMETER Detailed
+		Add the bill of materials — components, Microsoft agents, the archive
+		snapshot, the git provenance. RELEASE-AND-UPDATE-PLAN §3.4.
+
+	.PARAMETER CheckDrift
+		Recompute the package manifest and compare it with what the release
+		recorded. Seconds. Only meaningful for the running system.
+
+	.PARAMETER Path
+		Another root's manifest — /target/usr/lib/os7/release.json during an
+		install, or a mounted disk. Drift is not checked for a path that is not
+		this system's, because dpkg-query cannot be pointed at another root from
+		here and reporting the running system's drift under another root's
+		version would be a wrong answer rather than a missing one.
+
+	.EXAMPLE
+		Get-OS7Version
+		OS/7 1.0.0 (development)
+
+	.EXAMPLE
+		Get-OS7Version -Detailed | Format-List
+		Everything the release recorded about itself.
+
+	.EXAMPLE
+		(Get-OS7Version).FullVersion.Revision
+		The build number, on its own, for a support case.
+
+	.EXAMPLE
+		(Get-OS7Version -CheckDrift).Drift.Changed
+		Which packages moved since this release was built.
+	#>
+	[CmdletBinding()]
+	[OutputType('OS7.Version')]
+	param(
+		[switch]$Detailed,
+		[switch]$CheckDrift,
+		[string]$Path = $script:OS7ReleaseManifest
+	)
+
+	$doc     = Read-OS7ReleaseManifest -Path $Path
+	$version = [string](Get-OS7ManifestField $doc 'version')
+	$channel = [string](Get-OS7ManifestField $doc 'channel')
+	if (-not $channel) { $channel = 'unknown' }
+
+	# "Known" is the same three-way honesty Model/Release.cs keeps: a missing or
+	# unreadable manifest produces an object that says so, not a plausible
+	# number. 0.0.0.0 would sort, compare and print like a release.
+	$known = [bool]$version
+
+	# Two parses, two variables. Reusing one name across both would be the shape
+	# of BUILD-NOTES #65 — and here it would be worse than a crash, because both
+	# values are [version] and the wrong one prints perfectly well.
+	$friendly    = ConvertTo-OS7FriendlyVersion $version
+	$fullParsed  = [version]::new(0, 0)
+	$shortParsed = [version]::new(0, 0)
+	$full     = if ($known -and [version]::TryParse($version, [ref]$fullParsed)) { $fullParsed } else { $null }
+	$shortVer = if ($friendly -and [version]::TryParse($friendly, [ref]$shortParsed)) { $shortParsed } else { $null }
+
+	# The fourth field as an integer, from the STRING rather than from
+	# $full.Revision — a three-field version parses fine and gives Revision -1,
+	# which is not "build 0" and is not a build number at all.
+	# @( ) around the WHOLE if, not inside its else. `$x = if (…) {…} else { @() }`
+	# assigns $null, because PowerShell unrolls an empty array coming out of a
+	# statement — and then `$x.Count` is a terminating error under StrictMode.
+	# Found by running it: the no-manifest path threw before it could report
+	# that there was no manifest.
+	$fields = @(if ($version) { $version.Split('.') })
+	$build  = if ($fields.Count -ge 4 -and $fields[3] -match '^\d+$') { [int]$fields[3] } else { $null }
+
+	$base = Get-OS7ManifestField $doc 'base'
+
+	$built = $null
+	$builtRaw = [string](Get-OS7ManifestField $doc 'built')
+	if ($builtRaw) {
+		$parsedDate = [datetime]::MinValue
+		if ([datetime]::TryParse($builtRaw, [cultureinfo]::InvariantCulture,
+				[System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsedDate)) {
+			$built = $parsedDate
+		}
+	}
+
+	# The edition is the ONE field that does not come from the manifest, and it
+	# is not a shortcut: the manifest says what the IMAGE was, and GUI-or-Server
+	# is chosen at install time and written to os-release by the installer. The
+	# image cannot know it and the installed machine can.
+	$variant = Get-OS7OsReleaseField -Name 'VARIANT'
+
+	$out = [ordered]@{
+		PSTypeName      = 'OS7.Version'
+		ProductName     = 'OS/7'
+		Known           = $known
+		Version         = $shortVer
+		Build           = $build
+		FullVersion     = $full
+		Channel         = $channel
+		Edition         = $variant
+		Architecture    = [string](Get-OS7ManifestField $doc 'architecture')
+		BaseRelease     = [string](Get-OS7ManifestField $base 'release')
+		Built           = $built
+		Reproducible    = [bool](Get-OS7ManifestField $doc 'reproducible')
+		# The display rule, computed once and carried, so that a caller
+		# formatting a message and check-version-rule.py comparing against
+		# os7-setup are looking at the same two strings.
+		Short           = (Format-OS7Version -Version $version -Channel $channel)
+		Full            = (Format-OS7Version -Version $version -Channel $channel -Full)
+		Display         = $(
+			if ($known) { "OS/7 " + (Format-OS7Version -Version $version -Channel $channel) }
+			else        { "OS/7 (no release manifest at $Path)" })
+		Drift           = $null
+		ManifestPath    = $Path
+	}
+
+	if ($Detailed) {
+		$out['ArchiveSnapshot']  = [string](Get-OS7ManifestField $base 'archive_snapshot')
+		$out['ArchiveBase']      = [string](Get-OS7ManifestField $base 'archive_base')
+		$out['Codename']         = [string](Get-OS7ManifestField $base 'codename')
+		$out['Source']           = Get-OS7ManifestField $doc 'source'
+		$out['Components']       = Get-OS7ManifestField $doc 'components'
+		$out['Microsoft']        = Get-OS7ManifestField $doc 'microsoft'
+		$out['PackagesManifest'] = [string](Get-OS7ManifestField $doc 'packages_manifest')
+		# A second type name and not a flag, because the DEFAULT VIEW has to
+		# change with it: the compact view would hide everything -Detailed was
+		# asked for, and a switch that adds properties nothing displays is a
+		# switch that appears to do nothing.
+		$out['PSTypeName']       = 'OS7.Version.Detailed'
+	}
+
+	if ($CheckDrift) {
+		if ($Path -ne $script:OS7ReleaseManifest) {
+			Write-Warning ("-CheckDrift compares THIS system's packages, and -Path names " +
+				"another root's manifest ($Path). Not checked.")
+		}
+		else {
+			$out['Drift'] = Get-OS7PackageDrift `
+				-Recorded ([string](Get-OS7ManifestField $doc 'packages_manifest'))
+		}
+	}
+
+	return [pscustomobject]$out
+}
+
+# ---------------------------------------------------------------------------
 # Boot-environment naming
 # ---------------------------------------------------------------------------
 function New-OS7BootEnvironmentName {
@@ -175,10 +656,11 @@ function New-OS7BootEnvironmentName {
 	)
 
 	if (-not $Release) {
-		$manifest = '/usr/lib/os7/release.json'
-		if (Test-Path $manifest) {
-			$Release = (Get-Content -Raw $manifest | ConvertFrom-Json).version
-		}
+		# Through the shared reader, so that this function and Get-OS7Version
+		# cannot end up disagreeing about which file the version comes from or
+		# about what an unreadable one means.
+		$doc = Read-OS7ReleaseManifest -Path $script:OS7ReleaseManifest
+		$Release = [string](Get-OS7ManifestField $doc 'version')
 	}
 	# A boot environment with no version in its name still has to sort, so the
 	# fallback is a value rather than an error - but it is an obviously wrong
@@ -1787,7 +2269,8 @@ foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore
 	. $file
 }
 
-Export-ModuleMember -Function New-OS7Storage, New-OS7BootEnvironmentName,
+Export-ModuleMember -Function Get-OS7Version,
+	New-OS7Storage, New-OS7BootEnvironmentName,
 	Get-OS7BootEnvironment, New-OS7BootEnvironment, Set-OS7BootEnvironment,
 	Remove-OS7BootEnvironment,
 	Get-OS7Theme, Set-OS7Theme,

@@ -227,15 +227,25 @@ alongside `VERSION_ID` as what changes when the system image is replaced.
 
 Resulting file:
 
+> **SUPERSEDED IN ONE ROW, 2026-08-26 — `NAME` MUST STAY `Ubuntu`.**
+> `NAME="OS/7"` below was written on the assumption that Intune keys on `ID`.
+> Microsoft's Azure Arc onboarding script reads **`NAME`**, matches `*buntu*`
+> and exits 133 on anything else, never reaching `ID` — measured from the
+> script's own source, BUILD-NOTES #80. The corrected, field-by-field table and
+> the reasoning behind it are [IDENTITY-PLAN.md](IDENTITY-PLAN.md) §4, which is
+> now the authority for what this file contains. Everything else in this section
+> stands.
+
 ```sh
 ID=ubuntu                      # untouched — Intune "Allowed distributions"
-ID_LIKE=ubuntu                 # untouched
-VERSION_ID="26.04"             # untouched — Intune matches on this
-NAME="OS/7"                    # branded
-PRETTY_NAME="OS/7 1.0.0.0"     # branded
+ID_LIKE=debian                 # untouched (the file says debian, not ubuntu)
+VERSION_ID="26.04"             # untouched — read by both agents AND by Arc
+VERSION="26.04 LTS (…)"        # untouched — intune-agent reads it too
+NAME="Ubuntu"                  # untouched — Arc's onboarding script keys on it
+PRETTY_NAME="OS/7 1.0.0"       # branded, three fields (IDENTITY-PLAN §5)
 HOME_URL="https://…"           # branded
 IMAGE_ID=os7                   # OS/7 product identity
-IMAGE_VERSION=1.0.0.0          # OS/7 product version
+IMAGE_VERSION=1.0.0.95         # OS/7 product version — FOUR fields, it identifies
 VARIANT="Server"               # GUI | Server, from Set-OS7Mode
 VARIANT_ID=server
 ```
@@ -253,6 +263,23 @@ Three further places carry the version, all derived from the manifest:
 | Boot environment name | `os7_1.0.0.0_202608231430` — the scheme SETUP-PLAN §4.4 already pins, with `<release>` now defined |
 | GRUB menu entry title | Fixes the L4 complaint that the menu reads "Ubuntu 26.04 LTS": the generator titles from the manifest, not from `PRETTY_NAME` |
 | ISO volume / filename | `OS7-1.0.0.0-arm64.iso` |
+
+### 3.6 Three fields for people, four for machines
+
+**Added 2026-08-26.** §3.3's four fields are the number. What a *person* is shown
+is three of them — `1.0.0`, plus the channel in brackets while it is not
+`stable` — and the fourth appears only where somebody has asked for it or where
+it is the information.
+
+This is a **display rule, not a second version number.** Nothing stores a
+three-field value; there is one number, in one pin file, and two formatters read
+it. The boundary is a single question — *does this number identify a thing, or
+describe one?* Dataset names, filenames, `IMAGE_VERSION`, `release.json`, the
+boot-environment menu and every explicit query carry four fields because they
+have to tell two builds apart. Chrome a person reads in passing carries three.
+
+The surface-by-surface table, the `Get-OS7Version` shape and the reason `uname`
+is not part of any of it: [IDENTITY-PLAN.md](IDENTITY-PLAN.md) §5, §7 and §8.
 
 ---
 
@@ -391,7 +418,7 @@ guarantee is gone.
 
 | Cmdlet | Purpose |
 |---|---|
-| `Get-OS7Version [-Detailed]` | The number; with `-Detailed`, the manifest. **Reports drift** (§5). |
+| `Get-OS7Version [-Detailed] [-CheckDrift] [-Path]` | The number; with `-Detailed`, the manifest. **Reports drift** (§5) — but only under `-CheckDrift`, and `Drift` is empty rather than `$false` until it is asked, because a check that did not run must never read as a clean result. Object shape, types and the `[version]` trap: [IDENTITY-PLAN.md](IDENTITY-PLAN.md) §7. |
 | `Get-OS7Release -Available` | What the channel offers, without applying it. |
 | `Update-OS7 [-WhatIf] [-Stage] [-Reboot]` | Build the new BE. `-Stage` prepares without activating; `-WhatIf` is already promised by the stub's help. |
 | `Get-OS7BootEnvironment` | List BEs with version, creation date, active/next flags. |

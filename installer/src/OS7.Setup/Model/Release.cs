@@ -117,23 +117,77 @@ internal sealed class Release
     }
 
     /// <summary>
-    /// "1.0.0.32", or "1.0.0.32 (development)" when the channel is not stable —
-    /// a preview build mistaken for a released one is the whole reason the
-    /// channel field exists. One property, because the three places that show a
-    /// version differ only in what they put in front of it, and three formatters
-    /// would be three chances to disagree about the same number.
+    /// The first three fields of <see cref="Version"/> — "1.0.0" out of
+    /// "1.0.0.95". docs/IDENTITY-PLAN.md §5.
+    ///
+    /// It is DERIVED and never stored: there is one version number, in one pin
+    /// file, and a second stored form is how two numbers start disagreeing.
+    ///
+    /// A version with fewer than four fields comes back unchanged rather than
+    /// padded. Nothing should ever produce one — build.sh composes four — but a
+    /// manifest is a file and a display rule must not throw on a file.
+    /// </summary>
+    public string FriendlyVersion
+    {
+        get
+        {
+            string[] fields = Version.Split('.');
+            return fields.Length <= 3 ? Version : string.Join('.', fields, 0, 3);
+        }
+    }
+
+    /// <summary>
+    /// What a person is shown: "1.0.0", or "1.0.0 (development)" when the
+    /// channel is not stable — a preview build mistaken for a released one is
+    /// the whole reason the channel field exists.
+    ///
+    /// THREE FIELDS, since 2026-08-26 (IDENTITY-PLAN I6). The rule is one
+    /// question: does the number IDENTIFY a thing or DESCRIBE one? Chrome
+    /// somebody reads in passing describes, so it gets three; anything that has
+    /// to tell two builds apart identifies, and gets <see cref="Full"/>.
+    ///
+    /// One property per form, because the places that show a version differ
+    /// only in what they put in front of it, and a formatter per call site
+    /// would be a chance per call site to disagree about the same number.
     /// </summary>
     public string Short =>
+        !Known                ? "unknown"
+        : Channel is "stable" ? FriendlyVersion
+                              : $"{FriendlyVersion} ({Channel})";
+
+    /// <summary>
+    /// All four fields: "1.0.0.95", or "1.0.0.95 (development)". For everywhere
+    /// the number identifies rather than describes — an explicit query, the
+    /// record of what was installed, a menu that exists to choose between two
+    /// builds.
+    /// </summary>
+    public string Full =>
         !Known                ? "unknown"
         : Channel is "stable" ? Version
                               : $"{Version} ({Channel})";
 
-    /// <summary>For the title row on every screen.</summary>
+    /// <summary>For the title row on every screen. Chrome, so friendly.</summary>
     public string TitleBar => $"Version {Short}";
 
-    /// <summary>"OS/7 1.0.0.32 (development)", for a body line.</summary>
+    /// <summary>"OS/7 1.0.0 (development)", for a body line.</summary>
     public string Display =>
         Known ? $"OS/7 {Short}" : "OS/7 (no release manifest on this medium)";
+
+    /// <summary>
+    /// "OS/7 1.0.0.95 (development)". The Welcome screen, the Complete screen
+    /// and `--version` use this one: the first two are the screens somebody
+    /// photographs for a ticket, and the third is somebody asking.
+    /// </summary>
+    public string DisplayFull =>
+        Known ? $"OS/7 {Full}" : "OS/7 (no release manifest on this medium)";
+
+    /// <summary>
+    /// A release that exists only to have the display rule applied to it, for
+    /// `--version-rule`. Not for anything that installs: it has no archive, no
+    /// base and no provenance, because the rule does not read any of them.
+    /// </summary>
+    internal static Release ForRule(string version, string channel) =>
+        new(version, channel, null, null, reproducible: true, known: true);
 }
 
 /// <summary>

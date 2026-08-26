@@ -43,7 +43,12 @@ internal sealed class CompleteScreen : Screen
         // because this is the screen someone reads when the install is over: it
         // is the record of what was put on this machine, and the boot
         // environment on the disk is named after this exact number.
-        f.Text(6, left + 3, $"OS/7 version: {Release.Current.Short}");
+        //
+        // Which is why it is `Full` and not `Short` (IDENTITY-PLAN §5.2): the
+        // sentence above was already true of the four-field number and this
+        // line used to print three of them, so the record and the dataset name
+        // did not match. The title row two rows up carries the friendly form.
+        f.Text(6, left + 3, $"OS/7 version: {Release.Current.Full}");
         f.Text(7, left + 3, $"Language:     {_plan.Language}");
         f.Text(8, left + 3, $"Keyboard:     {_plan.Keyboard}");
         f.Text(9, left + 3, $"Time zone:    {_plan.Timezone}");

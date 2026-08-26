@@ -28,9 +28,12 @@ that had not been pushed, and the other session read the state it had, which was
 correct and out of date. `git fetch` first — a commit nobody can see is the same
 as a conversation.
 
-*No number is currently claimed but unwritten.*
+**#79 is claimed and NOT YET WRITTEN.** Four source comments already cite it —
+`Diagnostics/Memory.cs`, `Steps/EnvironmentSteps.cs`, `Steps/Executor.cs`,
+`Steps/StorageSteps.cs` — about an amd64 install running out of memory once the
+ARC had grown. Do not take it.
 
-Everything below is written. Numbers above 76 are free.
+Everything else below is written. Numbers above 80 are free.
 
 *(That line said 61 until 2026-08-26 and had been wrong since #62 landed —
 it is the one line in this file nothing checks, and it is exactly the line a
@@ -2946,6 +2949,25 @@ it — the second half of the loop would have cloned from
 the same shape of PowerShell behaviour that is correct, documented, and lethal
 in a place nobody looks.
 
+### It happened again on 2026-08-26, and the second one was quieter
+
+`Get-OS7PackageDrift` computed a hash into `$installed` while carrying an
+`-Installed` parameter typed `[string[]]`. Same collision, opposite direction:
+the string was coerced into a **one-element array**, and nothing threw.
+
+What makes this one worth recording separately is that **every downstream
+comparison went on being right**. `@('sha256:x') -eq 'sha256:x'` returns the
+matching element, which is truthy, so `if ($computed -eq $Recorded)` still took
+the Clean branch for a clean machine. The only thing that was wrong was the
+value handed back to the caller — an array where a hash belonged — which is
+invisible until somebody prints it or compares it with `-is [string]`.
+
+`installer/testing/check-version-rule.py` caught it on its first run, by
+comparing the reported hash against one computed independently in Python. Rule 2
+above, holding for the second time: the class of bug is found in seconds by a
+harness that asks an independent question, and not at all by one that asks the
+module whether it agrees with itself.
+
 ## 67. `10_linux_zfs` lists ONE boot environment per machine, unless zsys is installed
 
 **Found 2026-08-25** by spike S5, on its third run, after two other bugs had been
@@ -3748,3 +3770,75 @@ nobody had ever run it.
 
 Same family as #72 and #75, and the family is the largest in this file: **a
 command reported success and the thing it was meant to change did not change.**
+
+---
+
+## 80. Microsoft's own tools disagree about which `/etc/os-release` field names the distribution — and OS/7 branded the one Arc reads
+
+**Measured 2026-08-26**, by downloading Microsoft's code rather than by hitting
+the failure, because [../CLAUDE.md](../CLAUDE.md) requires anything touching OS
+identity to be checked against Microsoft's live material first. It belongs in
+this file anyway: the ISO in `out/` ships the broken value today, and the only
+reason nobody has hit it is that nothing in this repository has ever enrolled a
+device.
+
+D8 decided the product identity may brand `NAME` and `PRETTY_NAME` while `ID`,
+`ID_LIKE` and `VERSION_ID` stay Ubuntu's, on the grounds that Intune's "Allowed
+distributions" rule matches on `ID`. Hook 0075 asserts exactly that, in both
+directions, and passes.
+
+**`ID` is not the field the Azure Arc onboarding script reads.**
+`https://aka.ms/azcmagent`, 1014 lines,
+`sha256 4a8ecb57997d12ed9f2c5fb9c0370e60c92e8a980e6092b47d562b073643682b`:
+
+```sh
+372   distro=$(grep ^NAME /etc/os-release | awk -F"=" '{ print $2 }' | tr -d '"')
+597   *buntu*)
+749   exit_failure 133 "$0: unsupported Linux distribution: ${distro}:..."
+```
+
+`NAME="OS/7"` matches no arm of that `case`, so the script exits 133 having
+never looked at `ID=ubuntu`.
+
+And the Intune agent reads a third set. Strings in
+`intune-portal_1.2607.4-resolute_amd64.deb` —
+`sha256 5978332c7eee9af07be686f34c6616f84677784d73c5d20934534a71a358d38b`, the
+version the amd64 image already ships:
+
+| Binary | reads |
+|---|---|
+| `intune-agent`, `intune-portal` | `/etc/os-release`, `/usr/lib/os-release`, and `ID`, `VERSION`, `VERSION_ID` — plus `PRETTY_NAME`, through a function called `tryReadPrettyName` |
+| `intune-daemon`, `pam_intune.so` | none of it |
+
+Three consumers, three different field sets, and **the field D8 chose to protect
+is not the one either script keys on first**. There is no hardcoded distribution
+allowlist anywhere in the agent — the only `ubuntu` literals in 11 MB of binary
+are `/run/mnt/ubuntu-seed` and `/run/mnt/ubuntu-boot`, inside the *encryption*
+check. It reports `OSDistribution` and `OSVersion` to the service and the
+service decides, so the value that actually matters is one the machine cannot
+observe.
+
+**The reusable part is the general shape:** `/etc/os-release` looks like a schema
+and behaves like a folk convention. `os-release(5)` says what each field *means*;
+it does not say which one a given program will use, and three programs from one
+vendor picked three answers. A design that protects "the field Intune matches
+on" is protecting a guess.
+
+So the fix is not to protect a different field. It is to stop the product
+identity depending on any single one — [IDENTITY-PLAN.md](IDENTITY-PLAN.md) I1:
+every user-facing surface reads `/usr/lib/os7/release.json`, which no Microsoft
+component reads, and `os-release` carries only what has to be there.
+
+Two things that keep this from being bigger than it is, and both have to be
+said, because either one alone misleads:
+
+* **OS/7 does not run that script.** Hook 0040 caches the `azcmagent` `.deb` and
+  Phase 3 installs it. What breaks is the path Microsoft's own documentation
+  tells an administrator to take.
+* **The script rejects 26.04 anyway**, at `-eq 24`, for reasons that have
+  nothing to do with branding. A green Arc install today would therefore prove
+  nothing, and a green one after Microsoft adds 26.04 would expose this
+  immediately. Do not read the first as evidence about the second.
+
+Same family as #38: a check produced a confident answer to a question it was not
+actually asking.

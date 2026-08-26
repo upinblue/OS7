@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OS/7 display formats.
+
+  THE POINT OF THIS FILE (docs/IDENTITY-PLAN.md §7): Get-OS7Version returns an
+  OBJECT — [version] fields that compare and sort, a [datetime] build stamp, a
+  drift report with lists in it — and a person who typed `Get-OS7Version` wants
+  two lines of text. Both are true at once only if the rendering is separate
+  from the value, which is what a format file is for. The alternative is a
+  module that stores a pre-formatted string in place of the number, and then
+  nobody can compare two versions without parsing one back.
+
+  Same argument as powershell/Zfs/Zfs.format.ps1xml, and the same reason.
+
+  THE COMPACT VIEW SHOWS THE FRIENDLY VERSION and the detailed view shows both.
+  That is not a formatting preference; it is IDENTITY-PLAN I6 applied at the one
+  place a person actually reads the number.
+-->
+<Configuration>
+  <ViewDefinitions>
+
+    <!--
+      Get-OS7Version, plain. Two lines, and a third or fourth only when there is
+      something a reader must not miss: a build that cannot identify its own
+      source, or a package set that is not the one the release recorded.
+      A warning that has to be asked for is not a warning.
+    -->
+    <View>
+      <Name>OS7.Version</Name>
+      <ViewSelectedBy><TypeName>OS7.Version</TypeName></ViewSelectedBy>
+      <CustomControl>
+        <CustomEntries>
+          <CustomEntry>
+            <CustomItem>
+              <ExpressionBinding>
+                <ScriptBlock>
+                  $lines = @($_.Display)
+
+                  $facts = @()
+                  if ($_.BaseRelease)  { $facts += "Ubuntu $($_.BaseRelease) base" }
+                  if ($_.Edition)      { $facts += [string]$_.Edition }
+                  if ($_.Architecture) { $facts += [string]$_.Architecture }
+                  if ($facts.Count -gt 0) { $lines += ($facts -join ', ') }
+
+                  if ($_.Known -and -not $_.Reproducible) {
+                    $lines += 'This release was not built from a clean source tree,'
+                    $lines += 'so this number does not identify the source it came from.'
+                  }
+
+                  if ($null -ne $_.Drift) {
+                    $lines += switch ($_.Drift.State) {
+                      'Clean'   { "Packages: all $($_.Drift.Packages) match this release." }
+                      'Drifted' { "Packages: $($_.Drift.Differences) differ from this release. See (Get-OS7Version -CheckDrift).Drift" }
+                      default   { "Packages: not checked - $($_.Drift.Note)" }
+                    }
+                  }
+
+                  $lines -join [Environment]::NewLine
+                </ScriptBlock>
+              </ExpressionBinding>
+              <NewLine/>
+            </CustomItem>
+          </CustomEntry>
+        </CustomEntries>
+      </CustomControl>
+    </View>
+
+    <!--
+      Get-OS7Version -Detailed. A second TYPE NAME rather than a flag on the
+      first, because the compact view above would hide everything -Detailed was
+      asked for, and a switch whose output looks identical is a switch that
+      appears not to work.
+
+      Version and FullVersion are BOTH here on purpose. This is the view a
+      support case is read from, and the whole friendly-version design rests on
+      the two forms naming one release; showing them together is what lets
+      somebody see that they do.
+    -->
+    <View>
+      <Name>OS7.Version.Detailed</Name>
+      <ViewSelectedBy><TypeName>OS7.Version.Detailed</TypeName></ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><PropertyName>ProductName</PropertyName></ListItem>
+              <ListItem><PropertyName>Version</PropertyName></ListItem>
+              <ListItem><PropertyName>Build</PropertyName></ListItem>
+              <ListItem><PropertyName>FullVersion</PropertyName></ListItem>
+              <ListItem><PropertyName>Channel</PropertyName></ListItem>
+              <ListItem><PropertyName>Edition</PropertyName></ListItem>
+              <ListItem><PropertyName>Architecture</PropertyName></ListItem>
+              <ListItem><PropertyName>BaseRelease</PropertyName></ListItem>
+              <ListItem><PropertyName>Codename</PropertyName></ListItem>
+              <ListItem><PropertyName>ArchiveSnapshot</PropertyName></ListItem>
+              <ListItem><PropertyName>Built</PropertyName></ListItem>
+              <ListItem><PropertyName>Reproducible</PropertyName></ListItem>
+              <ListItem>
+                <Label>Commit</Label>
+                <ScriptBlock>if ($_.Source) { $_.Source.commit } else { $null }</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>Kernel</Label>
+                <ScriptBlock>if ($_.Components) { $_.Components.kernel } else { $null }</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>ZFS</Label>
+                <ScriptBlock>if ($_.Components) { $_.Components.zfs } else { $null }</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>PowerShell</Label>
+                <ScriptBlock>if ($_.Components) { $_.Components.powershell.version } else { $null }</ScriptBlock>
+              </ListItem>
+              <ListItem><PropertyName>PackagesManifest</PropertyName></ListItem>
+              <ListItem><PropertyName>Drift</PropertyName></ListItem>
+              <ListItem><PropertyName>ManifestPath</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <!--
+      The drift report. State is FIRST and is a word rather than a boolean,
+      because it has three values and only two of them are answers: `Unknown` is
+      what comes back when the check could not run, and it must not be able to
+      be mistaken for `Clean` at a glance (IDENTITY-PLAN I7).
+    -->
+    <View>
+      <Name>OS7.VersionDrift</Name>
+      <ViewSelectedBy><TypeName>OS7.VersionDrift</TypeName></ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><PropertyName>State</PropertyName></ListItem>
+              <ListItem><PropertyName>Packages</PropertyName></ListItem>
+              <ListItem><PropertyName>Differences</PropertyName></ListItem>
+              <ListItem><PropertyName>Added</PropertyName></ListItem>
+              <ListItem><PropertyName>Removed</PropertyName></ListItem>
+              <ListItem><PropertyName>Changed</PropertyName></ListItem>
+              <ListItem><PropertyName>Installed</PropertyName></ListItem>
+              <ListItem><PropertyName>Recorded</PropertyName></ListItem>
+              <ListItem><PropertyName>Note</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+  </ViewDefinitions>
+</Configuration>

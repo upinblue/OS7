@@ -15,7 +15,19 @@
 
 	PowerShellVersion = '7.0'
 
+	# Get-OS7Version returns an OBJECT — [version] fields that compare, a
+	# [datetime] build stamp, a drift report — and a person reading it wants two
+	# lines of text. Both are true at once only if the rendering is separate
+	# from the value, which is what a format file is for and why the module does
+	# not store a pre-formatted string in place of the number. Same argument as
+	# Zfs.format.ps1xml, and the same reason.
+	FormatsToProcess  = @('OS7.format.ps1xml')
+
 	FunctionsToExport = @(
+		# Implemented — the release identity (docs/IDENTITY-PLAN.md §7). Reads
+		# the same /usr/lib/os7/release.json os7-setup and the boot-environment
+		# namer read, so the three cannot quote different numbers.
+		'Get-OS7Version',
 		# Implemented — the ZFS layer os7-setup and Update-OS7 share (SETUP-PLAN §6.3)
 		'New-OS7Storage', 'New-OS7BootEnvironmentName',
 		# Implemented — boot environments (RELEASE-AND-UPDATE-PLAN §4.2, §4.3, §6).

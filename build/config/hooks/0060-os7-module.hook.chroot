@@ -92,7 +92,14 @@ check_module Zfs Get-Zpool Get-ZpoolStatus Get-ZfsDataset Get-ZfsSnapshot \
 # Get-OS7Home and Move-OS7Home are named for a third reason: they are what an
 # operator reaches for when BUILD-NOTES #74 has already happened to a machine,
 # so an image shipping without them is an image that cannot repair itself.
-check_module OS7 Set-OS7Mode Update-OS7 Restore-OS7 \
+#
+# Get-OS7Version is named for a fourth: it is the ONLY way an operator can ask
+# an installed machine which OS/7 it is (docs/IDENTITY-PLAN.md §7), and it is
+# also the first cmdlet in this module that needs OS7.format.ps1xml — a manifest
+# whose FormatsToProcess names a file `cp -a` did not bring makes the module
+# fail to IMPORT, which this check turns into a build failure rather than a
+# first-login one.
+check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Get-OS7BootEnvironment New-OS7BootEnvironment \
 	Set-OS7BootEnvironment Remove-OS7BootEnvironment \
 	Get-OS7BackupPolicy Set-OS7BackupPolicy Enable-OS7Backup Disable-OS7Backup \
@@ -106,14 +113,19 @@ check_module OS7 Set-OS7Mode Update-OS7 Restore-OS7 \
 # A file that is PRESENT AND EMPTY still imports and still exports nothing, so
 # the export check above cannot see it. `cp -a` onto a full filesystem produces
 # exactly that.
+#
+# OS7.format.ps1xml rides along in the same list. It is not dot-sourced — it is
+# what FormatsToProcess names — but it fails the same way for the same reason,
+# and an empty one is a `Get-OS7Version` that prints a bare property bag on a
+# machine somebody is trying to identify.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
-	OS7.BackupSelfTest.ps1 OS7.Home.ps1; do
+	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.format.ps1xml; do
 	if [ ! -s "${MODULES_ROOT}/OS7/${part}" ]; then
 		echo "OS/7 hook 0060: ${MODULES_ROOT}/OS7/${part} is missing or empty" >&2
 		exit 1
 	fi
 done
-echo "OS/7 hook 0060:   OS7: the five dot-sourced files are present and non-empty"
+echo "OS/7 hook 0060:   OS7: the dot-sourced files and the format file are present"
 
 # The fixtures travel with the Zfs module so that Test-ZfsModule can run without
 # ZFS. Their absence would not break an import, so it is checked separately -

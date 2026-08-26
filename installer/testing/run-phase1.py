@@ -117,15 +117,28 @@ def fetch_release():
     return _release
 
 
+def friendly(version):
+    """The first three fields — "1.0.0" out of "1.0.0.95".
+
+    docs/IDENTITY-PLAN.md §5. Derived here the way Model/Release.cs derives it,
+    including the part that matters: a version with fewer than four fields comes
+    back unchanged rather than padded.
+    """
+    fields = version.split(".")
+    return version if len(fields) <= 3 else ".".join(fields[:3])
+
+
 def title_stamp():
     """What Setup should be putting on the right of every title row.
 
     Composed here the way Model/Release.cs composes it, from the manifest's own
-    fields — so this asserts the RULE (stable builds show a bare number, every
-    other channel names itself) rather than one particular string.
+    fields — so this asserts the RULE rather than one particular string. Two
+    halves to the rule and this checks both: the title row is CHROME, so it
+    carries three fields (IDENTITY-PLAN I6), and a channel that is not `stable`
+    names itself.
     """
     r = fetch_release()
-    version, channel = r["version"], r.get("channel", "unknown")
+    version, channel = friendly(r["version"]), r.get("channel", "unknown")
     return f"Version {version}" if channel == "stable" else f"Version {version} ({channel})"
 
 
@@ -364,9 +377,15 @@ def phase_boot(c, q, font):
     # is the half that turns "OS/7 1.0.0.32" from the name of a product into the
     # name of a STATE (RELEASE-AND-UPDATE-PLAN §3.1), so it is asserted rather
     # than assumed to be decoration.
+    #
+    # AND THIS IS THE OTHER HALF OF THE DISPLAY RULE. The string asserted here
+    # is the manifest's version in FULL, four fields — while `title_stamp()`
+    # two rows above it asserts three. Both are read off the same framebuffer in
+    # the same phase, so a build that collapsed the two forms into one fails
+    # here or there, whichever way it collapsed them (IDENTITY-PLAN §5.2).
     rel = fetch_release()
     ok &= expect_text(w, h, rgb, font, f"OS/7 {rel['version']}",
-                      "screen 1 names the release")
+                      "screen 1 names the release in full, with the build field")
     ok &= expect_text(w, h, rgb, font, rel["base"]["archive_snapshot"],
                       "screen 1 names the archive snapshot it was built from")
     return ok

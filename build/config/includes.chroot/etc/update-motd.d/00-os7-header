@@ -1,0 +1,47 @@
+#!/bin/sh
+# OS/7 — the login banner. docs/IDENTITY-PLAN.md §6.1.
+#
+# This replaces base-files' 00-header, which reads /etc/lsb-release and prints
+# "Welcome to Ubuntu 26.04 LTS". That file stays exactly as Ubuntu wrote it
+# (IDENTITY-PLAN I4): it is the compatibility layer, and what changes is who
+# reads it, not what it says.
+#
+# THREE THINGS THIS DELIBERATELY DOES NOT DO.
+#
+#   It does not read PRETTY_NAME. I1: no user-facing surface may depend on a
+#   single /etc/os-release field, because PRETTY_NAME is read by intune-agent
+#   and may yet have to be given back (IL1). If that happens, this banner does
+#   not change.
+#
+#   It does not parse release.json. This runs at EVERY login. The display rule
+#   was applied when /usr/lib/os7/product was written, so there is nothing here
+#   to parse, no python to start and no third-of-a-second on an ssh session.
+#
+#   It does not ask ZFS. The running boot environment is in /proc/mounts, which
+#   is a read; `zfs list` on a machine whose pool is degraded is a login that
+#   hangs.
+set -u
+
+# One line: "OS/7 1.0.0 (development)". Written by build hook 0075 and
+# re-asserted on the target by the installer, from the release manifest.
+if [ -r /usr/lib/os7/product ]; then
+	head -n 1 /usr/lib/os7/product
+else
+	# Not silence. A machine that cannot say which OS/7 it is should say that,
+	# because the alternative is a banner that looks like a plain Linux box.
+	echo "OS/7 (this machine carries no release identity)"
+fi
+
+# The dataset mounted at / — os7_<version>_<stamp> on an installed machine,
+# nothing on the live medium, where / is an overlay. Worth a line because on a
+# rollback-capable system "which one am I in" is the first question after
+# something has gone wrong, and it should not need a cmdlet.
+be=""
+if [ -r /proc/mounts ]; then
+	root="$(awk '$2 == "/" { print $1; exit }' /proc/mounts 2>/dev/null || true)"
+	case "${root}" in
+		*/ROOT/*) be=", boot environment ${root##*/}" ;;
+	esac
+fi
+
+printf 'kernel %s (%s)%s\n\n' "$(uname -r)" "$(uname -m)" "${be}"

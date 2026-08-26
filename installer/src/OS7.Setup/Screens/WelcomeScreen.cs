@@ -39,7 +39,11 @@ internal sealed class WelcomeScreen : Screen
         // (RELEASE-AND-UPDATE-PLAN §3.1), and it is the second thing a support
         // case needs after the version itself.
         Release r = Release.Current;
-        f.Body(17, 5, r.Display);
+        // THE FULL FOUR FIELDS, not the friendly three the title row carries
+        // (IDENTITY-PLAN §5.2). This is the screen somebody photographs for a
+        // ticket, and a build number that is not on it is a build number nobody
+        // will be able to supply afterwards.
+        f.Body(17, 5, r.DisplayFull);
         if (r.Known)
         {
             string based = r.BaseRelease is null ? "" : $"Ubuntu {r.BaseRelease} base";

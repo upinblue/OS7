@@ -414,6 +414,39 @@ Full detail in the two session documents. The ones that will bite again:
 * **L18 is still untouched.** Whether Intune's encryption check accepts the
   unencrypted `bpool` needs a real enrolment, not a VM.
 
+### The product identity — planned 2026-08-26, and one line of it is wrong in the shipped ISO
+
+[IDENTITY-PLAN.md](IDENTITY-PLAN.md) is new and is now the authority for what
+the machine calls itself and for the friendly `1.x.x` version. **Nothing in it
+is implemented.** Two things from it belong here:
+
+* **`NAME="OS/7"` in `/etc/os-release` is a defect, not a preference**, and
+  `out/OS7-1.0.0.95-amd64.iso` has it. Microsoft's Azure Arc onboarding script
+  reads `NAME`, matches `*buntu*` and exits 133 without ever looking at
+  `ID=ubuntu` — measured from the script's own source, BUILD-NOTES #80. It does
+  not block OS/7 today (hook 0040 caches the `.deb`; and that script rejects
+  26.04 outright anyway), but it breaks the path Microsoft's documentation
+  tells an administrator to take, and it will keep breaking it after they add
+  26.04. Hook 0075 currently *asserts* the wrong value, so this is a two-line
+  change plus a read-back that has to be inverted.
+* **Phase A is done — `Get-OS7Version` exists and the display rule is live.**
+  `Release.Short`/`Full`/`DisplayFull`, `Get-OS7Version` + `OS7.format.ps1xml`,
+  and `installer/testing/check-version-rule.py` — **82 checks, green**, both
+  languages compared:
+
+  ```bash
+  ./installer/testing/check-version-rule.py --docker os7-build:amd64
+  ```
+
+  `os7-setup --self-test` grew six checks for the same rule and passes
+  (`failures=10 image-files-absent=10`, i.e. no logic failures) on a linux-x64
+  AOT build. `Test-OS7Backup` is still 63/0 and `check-layering.py` still 0.
+  What has NOT happened: none of it has been in an ISO or on a screen —
+  `run-phase1.py` reads the title row off a framebuffer and needs the Mac.
+* **Phases B–E of the identity plan are untouched.** B is the image (hook 0075,
+  MOTD, `/etc/issue`), C is the installed machine, D is the boot, E is the
+  tenant.
+
 ## 3. amd64 — why it fails here, what a native runner already got past, and the two local options
 
 **Read this first, because three documents used to say the opposite.** amd64 has

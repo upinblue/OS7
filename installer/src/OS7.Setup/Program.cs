@@ -58,7 +58,10 @@ internal static class Program
             // `os7-setup --version` has to work on the tty2 rescue shell of a
             // machine where the thing being diagnosed is Setup itself.
             Release r = Release.Current;
-            Console.Out.WriteLine(r.Display);
+            // FOUR FIELDS HERE, not the friendly three the screens carry.
+            // `--version` is somebody asking, and IDENTITY-PLAN §5.1 gives the
+            // build number to everything that is asked rather than glanced at.
+            Console.Out.WriteLine(r.DisplayFull);
             if (r.Known)
             {
                 Console.Out.WriteLine($"base:     Ubuntu {r.BaseRelease ?? "?"}");
@@ -73,6 +76,39 @@ internal static class Program
             return 0;
         }
 
+        // The display rule, applied to versions handed in rather than to this
+        // medium's own. It exists for ONE caller —
+        // installer/testing/check-version-rule.py — and for one reason: the
+        // rule in Model/Release.cs and the rule in Get-OS7Version are two
+        // implementations of one specification, in two languages, and nothing
+        // else in this repository can make them disagree loudly.
+        //
+        // TSV and not JSON deliberately: NativeAOT trims the reflection
+        // serialiser away (spike S2), so JSON here would mean a second
+        // source-generated context for four strings. `version:channel` in,
+        // `version<TAB>channel<TAB>short<TAB>full` out, and the checker owns
+        // the cases so there is no second copy of the table to drift.
+        //
+        // Before the log ring, like --version and --self-test: a diagnostic
+        // that changes nothing must not create a file.
+        if (options.VersionRule is { } cases)
+        {
+            foreach (string spec in cases)
+            {
+                int colon = spec.LastIndexOf(':');
+                if (colon <= 0 || colon == spec.Length - 1)
+                {
+                    Console.Error.WriteLine(
+                        $"os7-setup: --version-rule takes <version>:<channel>, got '{spec}'");
+                    return 2;
+                }
+                Release r = Release.ForRule(spec[..colon], spec[(colon + 1)..]);
+                Console.Out.WriteLine(
+                    $"{r.Version}\t{r.Channel}\t{r.Short}\t{r.Full}");
+            }
+            return 0;
+        }
+
         // A DIAGNOSTIC THAT CHANGES NOTHING. `--self-test` runs in the chroot
         // during the ISO build, so a log file opened here is a file baked into
         // the squashfs and shipped to every installed machine. Before the ring,
@@ -80,7 +116,8 @@ internal static class Program
         if (options.SelfTest) Log.MemoryOnly();
 
         Log.Info($"os7-setup starting ({string.Join(' ', args)})");
-        Log.Info($"release: {Release.Current.Display} "
+        // The log is a support artefact, so it carries the build field.
+        Log.Info($"release: {Release.Current.DisplayFull} "
                  + $"(manifest {(Release.Current.Known ? Release.Path : "absent")})");
 
         if (options.PrintPlan)
@@ -432,6 +469,46 @@ internal static class Program
                   "a missing manifest reads as unknown");
         }
         finally { try { File.Delete(tmp); } catch { /* a temp file, not a result */ } }
+
+        // ---------------------------------------------------------------------
+        // THE DISPLAY RULE (docs/IDENTITY-PLAN.md §5), checked here and again in
+        // PowerShell by installer/testing/check-version-rule.py, which drives
+        // `--version-rule` and Get-OS7Version over the same cases.
+        //
+        // It is asserted on both sides of the channel test and on both forms,
+        // because the three ways this can go wrong are all silent: three fields
+        // where four were meant loses the build number a support case needs;
+        // four where three were meant puts a git commit count on a screen a
+        // customer reads; and a channel that stops being printed turns a
+        // development build into something that looks shipped.
+        {
+            Release dev = Release.ForRule("1.0.0.95", "development");
+            Check(dev.Short == "1.0.0 (development)",
+                  "the friendly version drops the build field", dev.Short);
+            Check(dev.Full == "1.0.0.95 (development)",
+                  "the full version keeps it", dev.Full);
+            Check(dev.TitleBar == "Version 1.0.0 (development)",
+                  "the title row is the friendly form", dev.TitleBar);
+            Check(dev.DisplayFull == "OS/7 1.0.0.95 (development)",
+                  "--version and the Welcome screen are the full form", dev.DisplayFull);
+
+            Release rel = Release.ForRule("2.1.4.1207", "stable");
+            Check(rel.Short == "2.1.4" && rel.Full == "2.1.4.1207",
+                  "a stable release names no channel", $"{rel.Short} / {rel.Full}");
+
+            // A short version must come back unchanged, not padded and not
+            // truncated to something that looks like a different release.
+            Release odd = Release.ForRule("1.0", "stable");
+            Check(odd.Short == "1.0" && odd.Full == "1.0",
+                  "a version with fewer than four fields survives", odd.Short);
+
+            // The invariant the two forms exist to keep: one is a prefix of the
+            // other. If this ever fails, two screens are naming two releases.
+            Check(Release.Current.Full.StartsWith(Release.Current.FriendlyVersion)
+                  || !Release.Current.Known,
+                  "this medium's two forms name the same release",
+                  $"{Release.Current.Short} / {Release.Current.Full}");
+        }
 
         // The title row has to hold both strings at the reference geometry, and
         // drop the version rather than mangle it when it cannot.
@@ -1181,6 +1258,9 @@ internal static class Program
           --print-plan               write the install plan as JSON and exit
           --self-test                check fonts, palettes, lists and screens
           --version                  the OS/7 release on this medium
+          --version-rule <v>:<ch> …  apply the display rule to versions given
+                                     here and print them; for the cross-language
+                                     check, not for humans
           --help                     this message
 
         Phase 3: from screen 10 onwards this WRITES TO A DISK, and the result
@@ -1191,6 +1271,14 @@ internal static class Program
     {
         public bool Help { get; init; }
         public bool Version { get; init; }
+
+        /// <summary>
+        /// `--version-rule <v>:<ch> …` — every remaining argument, for the
+        /// cross-language check. Null when the flag was not given; an EMPTY
+        /// array is a legitimate "apply the rule to nothing", so this cannot be
+        /// collapsed into a bool plus a list.
+        /// </summary>
+        public string[]? VersionRule { get; init; }
         public bool PrintPlan { get; init; }
         public bool SelfTest { get; init; }
         public bool DryRun { get; init; }
@@ -1207,6 +1295,7 @@ internal static class Program
         {
             bool help = false, print = false, self = false, dryRun = false;
             bool version = false;
+            string[]? versionRule = null;
             string? geometry = null, unattend = null, passphraseFile = null;
             string? passwordFile = null, wifiSecretFile = null, testNetwork = null;
             bool storageOnly = false;
@@ -1216,6 +1305,13 @@ internal static class Program
                 {
                     case "--help" or "-h": help = true; break;
                     case "--version" or "-V": version = true; break;
+                    // Everything after it, because the cases are a LIST and a
+                    // list terminated by the end of the command line cannot be
+                    // half-consumed by a later flag.
+                    case "--version-rule":
+                        versionRule = args[(i + 1)..];
+                        i = args.Length;
+                        break;
                     case "--print-plan": print = true; break;
                     case "--self-test": self = true; break;
                     case "--dry-run": dryRun = true; break;
@@ -1262,7 +1358,8 @@ internal static class Program
                 return new Options { Error = "--wifi-secret-file needs --unattend or --test-network" };
             return new Options
             {
-                Help = help, Version = version, PrintPlan = print,
+                Help = help, Version = version, VersionRule = versionRule,
+                PrintPlan = print,
                 SelfTest = self, Geometry = geometry,
                 DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,
                 PasswordFile = passwordFile, WifiSecretFile = wifiSecretFile,

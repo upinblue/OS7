@@ -21,6 +21,7 @@ here either — this file points, they rule.
 | What is locked, what is still open | [docs/DECISIONS.md](docs/DECISIONS.md) — "Locked decisions" and "Open questions". Moved out of README.md on 2026-08-25; the README is now the public front page and decides nothing |
 | The installer: design, screens, decisions D1–D10, limitations L1–L22, phases | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) — **authoritative** |
 | Versioning, the update train, rollback, `/var` | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
+| What the machine calls itself and to whom, the friendly `1.x.x`, `Get-OS7Version`, decisions I1–I10 | [docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) — **it supersedes the `NAME=` row of the release plan's §3.5** |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
 | ZFS from PowerShell: the two layers, decisions Z1–Z14, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
@@ -62,6 +63,10 @@ make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hou
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
 ./installer/testing/check-layering.py     # Z1: does OS7 still reach ZFS directly
+./installer/testing/check-version-rule.py # the version DISPLAY RULE, in both
+                                          #   languages: 82 checks, no VM, ~10s.
+                                          #   --docker os7-build:<arch> for the
+                                          #   C# half off a Mac or Windows box
 
 ./installer/testing/run-backup.py all     # backup, against real ZFS and real
                                           #   sanoid. NEVER RUN - it is the gate
@@ -123,6 +128,17 @@ That last one is the check nothing else can make: it reads
 escaped the pin. Hook 0075 runs mid-build and cannot see what live-build does to
 apt afterwards.
 
+**A person is shown three fields, a machine four** (2026-08-26,
+[docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) §5). `1.0.0 (development)` is
+chrome — the title row, the MOTD, `Get-OS7Version`; `1.0.0.95` is anything that
+has to tell two builds apart — dataset names, `IMAGE_VERSION`, the ISO filename,
+`--version`, the boot-environment menu, the Complete screen. It is a **display
+rule, not a second number**, and it is implemented twice — `Model/Release.cs`
+`Short`/`Full` and `Get-OS7Version` — so `check-version-rule.py` owns the case
+table and drives both. `Get-OS7Version` reads the same
+`/usr/lib/os7/release.json` os7-setup and `New-OS7BootEnvironmentName` read, and
+its `Drift` is **empty until `-CheckDrift`, never `$false`**.
+
 Building `os7-setup` alone, without an ISO:
 
 ```bash
@@ -177,6 +193,13 @@ the ones a fresh session hits first.
 - **#12 / #23 — amd64 ISOs cannot be built on Apple Silicon** (ENOSYS in
   debootstrap's tar under Docker emulation), but amd64 **.NET binaries can**. Do
   not generalise the first into the second.
+- **#80 — `/etc/os-release` is a folk convention, not a contract.** Three
+  Microsoft consumers read three different field sets: Arc's onboarding script
+  keys on **`NAME`** and exits 133 without ever reading `ID`; `intune-agent`
+  reads `ID`, `VERSION`, `VERSION_ID` **and** `PRETTY_NAME`. D8 branded `NAME`
+  because "Intune matches on `ID`" — never verified, and wrong for at least one
+  tool. Never protect "the field they match on"; make the brand independent of
+  all of them ([docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) I1).
 - **#15 — a ZFS root needs `boot=zfs` on the kernel command line**, and nothing
   generates it for you.
 - **#16 — driving a serial console:** Enter is `\r`; an unanswered terminal query
