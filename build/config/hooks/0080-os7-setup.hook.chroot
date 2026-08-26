@@ -63,6 +63,8 @@ fi
 # the actual question, cannot be poisoned by pipefail, and is what dlopen will
 # do anyway, since these are default search paths.
 #
+# BUILD-NOTES #83 has the numbers and the two rules this broke.
+#
 # The REAL proof is twenty lines below: `os7-setup --self-test` is a .NET binary
 # built with InvariantGlobalization=false, so a missing ICU aborts it before
 # Main runs. This check exists only so that the failure reads as a missing

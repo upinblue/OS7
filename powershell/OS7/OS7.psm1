@@ -2277,7 +2277,7 @@ function Restore-OS7 {
 #
 # and it was invisible for a day because no ISO was built in between.
 # [System.IO.Path] and [System.IO.File] are .NET types, always present, never
-# looked up by name. BUILD-NOTES #81.
+# looked up by name. BUILD-NOTES #82.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)

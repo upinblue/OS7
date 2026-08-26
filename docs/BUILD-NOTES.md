@@ -4034,3 +4034,125 @@ reports every one of its own failures as a failure of the thing on the other
 side.* A harness that cannot run where the code is edited eventually reports NOT
 CHECKED forever, so it is worth crossing properly — but budget for the fact that
 the first three error messages will send you after the wrong file.
+
+## 82. The OS7 module's IMPORT crossed the line #38 draws for hooks, and no ISO could be built for a day
+
+**Found on 2026-08-26** by the first ISO build since the backup feature landed.
+Hook 0060 failed:
+
+```
+OS/7 hook 0060:   OS7: FAILED: The term 'Join-Path' is not recognized as a name
+of a cmdlet, function, script file, or executable program.
+```
+
+Every build after `3a25763` (2026-08-26 00:17) would have failed the same way.
+Nobody saw it because **nobody built one in between** — the last amd64 ISO is
+`11dd6765`, 2026-08-25 19:35, and the Mac that builds arm64 was not in the room.
+
+#38's rule is written about hooks:
+
+> A build-time hook may `Import-Module` by path and inspect what it exports. It
+> must not CALL anything that needs a bundled cmdlet.
+
+Hook 0060 has always obeyed it and its comments say so: `Get-Command`, which is
+compiled into the engine, and `[Console]::WriteLine`, which is .NET. It touches
+nothing that has to be autoloaded by name out of `$PSHOME/Modules` — the lookup
+#14 mangles inside `chroot(2)`.
+
+**The module moved the work across the line on the hook's behalf.** The backup
+feature added a loop at MODULE SCOPE that dot-sources the five parts:
+
+```powershell
+foreach ($part in @('OS7.Backup.ps1', …)) {
+	$file = Join-Path $PSScriptRoot $part          # ← runs during Import-Module
+	if (-not (Test-Path -LiteralPath $file)) { … }
+	. $file
+}
+```
+
+`Join-Path` and `Test-Path` are both `Microsoft.PowerShell.Management`, both
+autoloaded by name. So `Import-Module` itself became the forbidden call, and it
+did so **without anybody editing a hook**. The note considers a hook calling a
+function; it did not consider the module doing the calling before the hook has
+run a statement of its own.
+
+The fix is that a module staged into an image must have an import path that
+needs nothing looked up by name:
+
+```powershell
+$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
+if (-not [System.IO.File]::Exists($file)) { … }
+```
+
+`[System.IO.Path]` and `[System.IO.File]` are .NET types. They are always
+present and are never resolved through `PSModulePath`.
+
+Every other statement at module scope in the six files was audited at the same
+time: they are string and array assignments, plus `Set-StrictMode`, which is
+`Microsoft.PowerShell.Core` and compiled in. `Test-OS7Backup` is 63 passed,
+0 failed with the change, and the ISO that follows this note builds.
+
+**The general shape, and it is the one worth carrying:** #38's rule bounds what
+a HOOK may do, and a hook's `Import-Module` is only as safe as the module's own
+top level. A rule about a caller is not a rule about everything the caller
+reaches. When the rule is "do not need an autoloaded cmdlet", the import path of
+every module in the image is inside the rule.
+
+## 83. `ldconfig -p | grep -q` under `pipefail` is a race, and it failed a build over a library that was there
+
+**Measured on 2026-08-26.** Hook 0080 stopped an amd64 build with
+
+```
+OS/7 hook 0080: no libicu in the image - os7-setup cannot start.
+```
+
+and the same build's log says, four hundred lines earlier,
+`Setting up libicu78:amd64 (78.2-2ubuntu1)`, and in hook 0020,
+`libicu78 is already the newest version`. The library was installed. The check
+was wrong. The line was:
+
+```sh
+set -euo pipefail
+…
+if ! ldconfig -p | grep -q 'libicuuc\.so'; then
+```
+
+`grep -q` exits at its first match and closes the pipe. Read out of the
+**previous shipped image**, `ldconfig -p` there is:
+
+| | |
+|---|---|
+| entries | 893 |
+| bytes | **75 100** |
+| pipe buffer | 65 536 |
+| `libicuuc` at | entry 437, **34 915 bytes in** |
+
+So `grep` leaves with roughly ten kilobytes still unwritten, `ldconfig` takes
+SIGPIPE for them, and `pipefail` makes the pipeline's status **141**. The `!`
+reads 141 as "no libicu". Whether it happens at all depends on scheduling —
+which is why the line stood for months and then failed, on an image that had got
+*smaller*.
+
+The mechanism was confirmed on its own (`yes | grep -q y` → 141 under
+`pipefail`) and the sizes above are why it applies here and to nothing else in
+the build: every other `| grep -q` pipes `ldd` on one binary, `head -c 2`,
+`systemctl show -p` or `gsettings list-keys`, all far below the buffer.
+
+**Two of this repository's standing rules were broken by one line**, and they
+are the two BUILD-NOTES keeps restating:
+
+* *A cache is a diagnostic.* `/etc/ld.so.cache` is a cache; the library file is
+  the thing itself.
+* *An exit status is a diagnostic.* This one was reporting on a signal, not on
+  the question that was asked.
+
+The check now globs the library directories, which cannot be poisoned by
+`pipefail` and is what `dlopen` does anyway — those are default search paths. It
+was checked both ways in a `resolute` container: MISSING before `libicu78` is
+installed, PRESENT after, and 0 under `set -euo pipefail`.
+
+**And the check was never the proof.** Twenty lines below it, hook 0080 runs
+`os7-setup --self-test` — a .NET binary built `InvariantGlobalization=false`,
+which aborts before `Main` without ICU. The `ldconfig` line exists so that the
+failure reads as a missing package instead of as a crashing installer, which is
+exactly the job it had stopped doing.
