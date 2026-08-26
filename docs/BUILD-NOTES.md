@@ -4374,6 +4374,22 @@ A check that fails on right answers gets deleted, and then it stops catching the
 wrong ones. It now carries a small explicit table mapping a group prefix to the
 schema it instantiates, and asks `gsettings list-keys SCHEMA:PATH`.
 
+**And then it failed on a right answer anyway**, one build later, for a second
+reason inside the same repair — worth recording because the two look identical
+from the log. The new branch confirmed the schema existed by looking for it in
+`gsettings list-schemas`, and it is not there:
+
+```
+gsettings list-schemas             | grep -cx org.gnome.Terminal.Legacy.Profile  -> 0
+gsettings list-relocatable-schemas | grep -cx org.gnome.Terminal.Legacy.Profile  -> 1
+```
+
+The two lists are **disjoint**: `list-schemas` reports only schemas with a fixed
+path. Build `1.0.0.114` died on `no such relocatable schema:
+org.gnome.Terminal.Legacy.Profile` about a schema that was installed, listed and
+answering `list-keys` correctly in the same hook eight lines further down.
+Measured against the shipped image before the next build rather than after it.
+
 **The hand-off itself had never been proven anywhere.** Hook 0050 wrote a file
 and stopped; the evidence that it worked was a human looking at a console once.
 It now runs the mechanism:

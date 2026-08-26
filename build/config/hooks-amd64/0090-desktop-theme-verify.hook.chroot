@@ -164,6 +164,9 @@ echo "OS/7 hook 0090: checking every default against the installed schemas"
 
 KEYFILE="/etc/dconf/db/os7.d/00-os7-classic"
 ALL_SCHEMAS="$(gsettings list-schemas 2>/dev/null || true)"
+# The two lists are DISJOINT, which is the whole reason this second one exists:
+# `list-schemas` omits every relocatable schema. See the note at its use below.
+RELOC_SCHEMAS="$(gsettings list-relocatable-schemas 2>/dev/null || true)"
 if [ -z "${ALL_SCHEMAS}" ]; then
 	note "gsettings lists no schemas at all - cannot verify the defaults"
 else
@@ -210,7 +213,13 @@ else
 				schema="$(relocatable_schema "${rawgroup}")"
 				if [ -n "${schema}" ]; then
 					reloc=$((reloc + 1))
-					if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${schema}"; then
+					# RELOC_SCHEMAS, not ALL_SCHEMAS. `gsettings list-schemas`
+					# lists only schemas with a fixed path; a relocatable one is
+					# NOT in it, and looking there reported "no such schema"
+					# about a schema that was installed and working - which
+					# failed a build (1.0.0.114) on a right answer, the exact
+					# thing the comment above says a check must not do.
+					if ! printf '%s\n' "${RELOC_SCHEMAS}" | grep -qx "${schema}"; then
 						note "no such relocatable schema: ${schema} (for key ${key})"
 						continue
 					fi
