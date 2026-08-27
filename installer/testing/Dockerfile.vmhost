@@ -14,12 +14,16 @@
 # a cross-compiler and live-build and none of QEMU, and this image wants to be
 # rebuildable in a minute when resolute moves.
 FROM ubuntu:26.04
+# python3 is for `python3 -m http.server`: the end-to-end update test serves
+# the OS/7 repository to the guest, and the guest's 10.0.2.2 is THIS
+# container's stack — a server on the Windows host would be unreachable.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         qemu-system-x86 \
         qemu-utils \
         ovmf \
         swtpm \
         xorriso \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 COPY vmhost-entry.sh /usr/local/bin/vmhost-entry
 RUN chmod +x /usr/local/bin/vmhost-entry

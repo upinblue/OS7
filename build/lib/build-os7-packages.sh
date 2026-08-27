@@ -260,6 +260,7 @@ build_os7_release() {
 		OS7_VARIANT_ID="${OS7_VARIANT_ID}"
 		OS7_GIT_COMMIT="${OS7_GIT_COMMIT:-}"
 		OS7_GIT_DIRTY=${OS7_GIT_DIRTY:-false}
+		OS7_DOTNET_SDK="${OS7_DOTNET_SDK:-$(DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 dotnet --version 2>/dev/null || echo unknown)}"
 	BUILDCONF
 	chmod 0644 "${stage}/usr/lib/os7/build.conf"
 
@@ -358,6 +359,14 @@ build_os7_release() {
 	# administrator who sees that on a fresh machine has no way to tell it from a
 	# broken mirror. Declared-and-off says the truth: OS/7 has a repository and
 	# this machine has not been told where it is.
+	# A CONFFILE (build/packages/os7-release/conffiles), since 2026-08-28 and
+	# because of what an upgrade would otherwise do: Set-OS7UpdateChannel
+	# rewrites this file to point the machine at its repository, os7-release
+	# ships it declared-and-off, and a plain file is REPLACED by dpkg on every
+	# upgrade of this package — so the first update a machine ever took would
+	# have reverted the channel that delivered it, and the timer's next check
+	# would have said "no channel configured". A conffile with --force-confold
+	# (which Update-OS7's apt runs already pass) keeps the operator's version.
 	install -d "${stage}/etc/apt/sources.list.d"
 	cat > "${stage}/etc/apt/sources.list.d/os7.sources" <<-SOURCES
 		# OS/7's own repository. CURATION-AND-DELIVERY-PLAN.md C7.
@@ -383,6 +392,25 @@ build_os7_release() {
 	install -d "${stage}/usr/lib/systemd/system/multi-user.target.wants"
 	ln -sfn ../os7-migrations-firstboot.service \
 		"${stage}/usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service"
+
+	# The unattended check (§6): timer, service, and the pwsh -File script —
+	# 0644 and no shebang, the os7-backup convention. The TIMER SHIPS ENABLED,
+	# by symlink like everything else here, and that is a decision with a
+	# reason: checking is a signed-index fetch and staging builds an INERT
+	# environment — the machine never activates and never reboots itself — so
+	# enabled-by-default is §6's "on a managed fleet nobody types Update-OS7"
+	# made true, at zero risk to anybody's uptime. On a machine with no channel
+	# configured (the shipped state) the check says so and exits 0.
+	chmod 0644 "${stage}/usr/lib/systemd/system/os7-update-check.service" \
+	           "${stage}/usr/lib/systemd/system/os7-update-check.timer" \
+	           "${stage}/usr/libexec/os7-update-check"
+	if head -c 2 "${stage}/usr/libexec/os7-update-check" | grep -q '#!'; then
+		echo "!!! os7-release: os7-update-check has a shebang; it is pwsh -File, never executed" >&2
+		exit 1
+	fi
+	install -d "${stage}/usr/lib/systemd/system/timers.target.wants"
+	ln -sfn ../os7-update-check.timer \
+		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-update-check.timer"
 
 	# THE MIGRATIONS THE RELEASE BEING CUT INTRODUCES, staged under ITS version.
 	#
@@ -421,6 +449,9 @@ build_os7_release() {
 		./usr/lib/systemd/system/os7-migrations-firstboot.service \
 		./usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service \
 		./usr/libexec/os7-migrate-firstboot \
+		./usr/lib/systemd/system/os7-update-check.timer \
+		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
+		./usr/libexec/os7-update-check \
 		./usr/share/keyrings/os7-archive-keyring.gpg \
 		./etc/apt/sources.list.d/os7.sources
 }
@@ -578,8 +609,12 @@ build_os7_backup() {
 		install -Dm644 "${inc}/usr/lib/systemd/system/${unit}" \
 			"${stage}/usr/lib/systemd/system/${unit}"
 	done
+	# 0644, NOT 0755: these are `pwsh -NoProfile -NonInteractive -File`
+	# scripts, never executed — hook 0090 refuses a shebang on them for the
+	# same reason, and until 2026-08-28 the package shipped them 0755 while
+	# the hook enforced 0644, a disagreement the switch to packages surfaced.
 	for unit in os7-backup-firstboot os7-backup-replicate; do
-		install -Dm755 "${inc}/usr/libexec/${unit}" "${stage}/usr/libexec/${unit}"
+		install -Dm644 "${inc}/usr/libexec/${unit}" "${stage}/usr/libexec/${unit}"
 	done
 
 	install -Dm644 "${REPO}/docs/BACKUP-PLAN.md" "${stage}/usr/share/os7/BACKUP-PLAN.md"

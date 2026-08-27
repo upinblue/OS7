@@ -495,7 +495,12 @@ doc = {
         },
         # Not in the image to measure - os7-setup is NativeAOT and the image
         # ships no .NET runtime (spike S2). This is the SDK that COMPILED it.
-        "dotnet_sdk": env["OS7_DOTNET_SDK"],
+        # From build.conf — since the switch to packages, the os7-release
+        # package's own copy, which records the SDK that compiled os7-setup
+        # in the SAME builder run. "unknown" is a fact about an old
+        # build.conf, not a default to hide behind; one build died on the
+        # strict form when the two build.confs traded places under dpkg.
+        "dotnet_sdk": env.get("OS7_DOTNET_SDK") or "unknown",
         "os7_setup":  {
             "version": env["OS7_VERSION"],
             "sha256":  env["SETUP_SHA"] or None,

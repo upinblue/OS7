@@ -70,8 +70,14 @@ if ! dpkg-divert --list /usr/lib/os-release | grep -q os7-release; then
 	echo "!!! os7-release is installed and /usr/lib/os-release is not diverted" >&2
 	exit 1
 fi
-if ! grep -q '^IMAGE_ID=os7$' /etc/os-release; then
-	echo "!!! os7-release's postinst did not brand the identity:" >&2
+# SOURCED, not scraped: os-release(5) values are shell-quoted and the
+# generator always double-quotes them, so a grep for the bare value agrees
+# with a wrong file and disagrees with a right one — measured: the first
+# build died HERE, on an identity that was perfectly branded (#37's lesson,
+# relearned at full ISO-build price).
+IMAGE_ID_GOT="$( ( . /etc/os-release; printf '%s' "${IMAGE_ID-}" ) )"
+if [ "${IMAGE_ID_GOT}" != "os7" ]; then
+	echo "!!! os7-release's postinst did not brand the identity (IMAGE_ID='${IMAGE_ID_GOT}'):" >&2
 	grep -E '^(IMAGE_ID|PRETTY_NAME)=' /etc/os-release >&2 || true
 	exit 1
 fi

@@ -595,6 +595,23 @@ and 7–10 are unchanged. Three corrections:
 `os7-release`, and must be idempotent because a rollback followed by a re-update
 runs them twice. Re-running a migration is normal operation, not an error path.
 
+**The firstboot half has its runner since 2026-08-28.** `Update-OS7` records
+what cannot run in a chroot at `/var/lib/os7/migrations/pending`;
+`os7-migrations-firstboot.service` + `/usr/libexec/os7-migrate-firstboot` —
+shipped and enabled by `os7-release`, modelled on the backup firstboot unit —
+run the list at the first boot of the new environment, validate every entry
+against the one directory os7-release owns, stamp runs, keep the pending
+record on failure and fail the unit loudly. The first real migration exists
+and is UL1's: `50-tpm2-reseal` asks whether the TPM2 seal opens against THIS
+boot and re-enrols when it does not — the exact case #69 banished from the
+chroot, and the exact failure the first amd64 boot measured (#100).
+Migrations are authored in `build/packages/os7-release/migrations.d/` and
+shipped under the version being cut, because a tree directory cannot know the
+Build number; the shipped README carries the mechanism. `check-os7-repo.py`
+drives the runner twice (idempotent), and refuses a pending entry outside the
+migrations directory. What no container shows — that the runner fires at the
+real first boot after a real `Update-OS7` — is `run-s5.py update`'s to show.
+
 ---
 
 ## 10. Upgrade from Setup, and version skew (C11)
@@ -697,7 +714,11 @@ the one place where this architecture is straightforwardly better than upstream'
 3. **C4's extent** — which graphics/audio firmware leaves which architecture.
 4. **U5 (still open from the release plan) — cadence.** Proposed unchanged:
    monthly `stable` plus an out-of-band hotfix on the Build field. C7 makes the
-   hotfix path cheap, because a hotfix is a repository with one package in it.
+   hotfix path cheap, because a hotfix is a repository with one package in it —
+   and since 2026-08-28 that sentence is executable: `build-os7-repo.sh` cuts
+   one (release plan §7), the checks apply one, and the unattended check runs
+   daily so a hotfix does not wait for a human to poll. The CADENCE itself —
+   how often `stable` rolls — remains the business decision it always was.
 5. **Support window per Major, and boot-environment retention.** Neither is
    defined anywhere. Both are needed before a customer asks.
 6. **Ubuntu Pro / ESM / Livepatch** (UL7). C8 reduces the exposure to four

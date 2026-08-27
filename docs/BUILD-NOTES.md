@@ -36,7 +36,9 @@ table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written. Numbers above 81 are free.
+Everything below is written. Numbers above 102 are free. (#94–#96 are claimed
+by the Active Directory session and land with its commit; this tree jumps from
+#93 to #97 on purpose rather than colliding.)
 
 *(That line said 61 until 2026-08-26 and had been wrong since #62 landed —
 it is the one line in this file nothing checks, and it is exactly the line a
@@ -4892,3 +4894,122 @@ cannot work on an OS/7 image as built today. That is C8a
 ([CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md)) as an open
 question already says, but it had been reasoned about rather than measured on
 the artefact. It is measured now.
+
+## #97 — gpg cannot put its agent socket on a Windows bind mount, and the failure was invisible
+
+**2026-08-28.** The first ISO build that had to generate the signing key inside
+the container died at `make build-amd64` with no line naming gpg at all: the
+keygen sat inside `>/dev/null 2>&1`, and `set -e` took the build down on its
+exit code alone.
+
+The cause is the same one that moved the harness's QMP endpoint to TCP:
+**a unix socket cannot be created on Docker Desktop's Windows file sharing.**
+`GNUPGHOME` was a bind mount of `out/os7-gnupg` (it has to be — the ISO and
+the repository must share one key, so the key lives outside both containers),
+and gpg-agent's first act is to bind `S.gpg-agent` inside it. On a 9p/drvfs
+mount, bind(2) is refused and every gpg operation dies before it starts.
+
+GnuPG's own answer is the socket directory under `/run/user/<uid>`, which it
+uses automatically **when it exists** — and a build container has no logind to
+create it. `build/lib/os7-signing-key.sh` creates it and runs
+`gpgconf --create-socketdir` before touching the keyring, and the keygen's
+output is no longer discarded, because a silenced failure cost the whole build
+to learn one line.
+
+### The rule
+
+A directory that must be SHARED across containers cannot also be where a
+program wants a SOCKET. Give the program its socket on a container-local
+filesystem and keep only the STATE on the mount — the same split
+`vmhost-entry.sh` makes for swtpm.
+
+## #98 — apt satisfies a strict `Depends (= old)` from CANDIDATE versions only
+
+**2026-08-28, measured by check-os7-repo.py.** With three releases of the OS/7
+suite in one pool, `apt-get install os7-server=1.0.0.130` fails:
+
+    os7-server:amd64=1.0.0.130 Depends os7-base (= 1.0.0.130)
+      but none of the choices are installable:
+      - os7-base:amd64=1.0.0.130 is not selected for install
+
+The version is IN the index — `apt-cache policy` lists it — but apt's resolver
+only considers each package's **candidate** (the newest, unless pinned) when
+satisfying dependencies. An exact-version metapackage whose members' candidates
+have moved on is therefore uninstallable by name alone, however complete the
+repository.
+
+The fix is a `preferences.d` pin (`Package: os7-* / Pin: version <v> /
+Pin-Priority: 1001`) for the duration of the operation — which is exactly the
+pin `Update-OS7` already writes for its own run, found independently by its
+review (SESSION-UPDATE-TRAIN §2a, "full-upgrade undid the pinned version").
+One apt fact, paid for twice, now written down once.
+
+## #99 — an installed amd64 machine says NOTHING on the serial line
+
+**2026-08-28.** The first amd64 `run-s5.py boot` hung for fifteen minutes on a
+machine that was booting perfectly: OVMF found shim, GRUB drew its menu into
+the serial console (via the firmware's ConOut), and then — silence. The kernel
+had put its console on tty0, and the passphrase prompt, the boot messages and
+the login all went to a display nothing was attached to.
+
+On arm64 nobody ever had to think about this: QEMU's `virt` machine hands the
+kernel a device tree whose `chosen` node names ttyAMA0, and Linux takes it as
+the console. **x86 has no such mechanism** — no `console=` on the command line
+means tty0, and the installed machine's command line is written by os7-setup,
+which (correctly) says nothing about serial consoles.
+
+The harness now gives the machine `console=ttyS0,115200` through its own
+`update-grub` after the install (`run-s5.py serialize`), inside
+`unshare --mount --propagation private` — the first attempt did the mounts in
+the shared namespace and re-measured #18: `zpool export` said "pool is busy"
+with nothing visibly mounted. Whether the PRODUCT should ship a serial console
+on the server image is a real question (§6 wants every cmdlet usable over
+serial) and is left open rather than decided by a test harness.
+
+## #100 — the install-time TPM seal does not open through shim: #69, now measured
+
+**2026-08-28, the first amd64 boot of a machine this repository installed.**
+The enrolment was perfect — token in slot 1, sealed to PCR 7, handler and
+libtss2 in the initramfs, ordered before cryptroot — and the machine asked for
+the passphrase anyway. `TpmEnrolStep` seals from the LIVE session, which QEMU
+boots via `-kernel`; the installed machine boots through `shimx64.efi`, which
+extends PCR 7. Same TPM, different measurement: exactly the road #69 named
+when it moved enrolment "to first boot", predicted and never before seen on a
+machine.
+
+arm64 never hit it because its live and installed boot paths measure alike on
+QEMU — which is why `run-s5.py boot` passed there with install-time sealing
+and would have kept passing forever.
+
+Two consequences, both built the same day: the harness performs S6's recovery
+(one `systemd-cryptenroll` on the booted machine; the NEXT boot must unlock
+with nothing typed, and did), and the UL1 firstboot migration
+(`50-tpm2-reseal`, shipped by os7-release, run by `os7-migrations-firstboot`)
+is the product's own version of the same move — it asks whether the seal opens
+against THIS boot and re-enrols when it does not. Unattended re-enrolment
+still needs a secret nobody escrows: U8 is open and the migration says so out
+loud instead of failing the boot.
+
+## #101 — a worktree made by Windows git is unreadable to WSL git
+
+**2026-08-28.** `make` on this box lives in WSL, and `make build-amd64` from a
+worktree died in `scripts/os7-source-facts.sh`: the worktree's `.git` is a
+FILE holding `gitdir: C:/Users/…/OS7/.git/worktrees/<name>` — an absolute
+WINDOWS path, which WSL's git resolves relative to the worktree and reports
+"not a git repository". #43's family, one layer up: not the container this
+time, but the OTHER operating system on the same machine.
+
+git accepts a RELATIVE gitdir pointer, and `gitdir: ../OS7/.git/worktrees/…`
+resolves under both roots. One line, and both worlds read the same repository.
+(The back-pointer in `.git/worktrees/<name>/gitdir` stays absolute and only
+matters to `git worktree` management commands run from the main checkout.)
+
+## #102 — Git Bash rewrites `--device /dev/kvm` into `--device C:/…`
+
+**2026-08-28.** `docker run --device /dev/kvm` from Git Bash (MSYS) fails with
+`error gathering device information while adding custom device "C"`: MSYS
+path conversion sees a leading `/` and helpfully turns `/dev/kvm` into a
+Windows path before docker ever sees it. The same command from PowerShell, or
+from Python's `subprocess` (no shell), passes the literal string and works —
+which is why the harness never hits this and an interactive probe does.
+`MSYS_NO_PATHCONV=1` or a doubled slash (`//dev/kvm`) are the escapes.

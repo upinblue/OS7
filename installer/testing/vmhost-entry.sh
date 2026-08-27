@@ -10,6 +10,13 @@
 # does not reliably send TPM2_Startup, and an un-started TPM answers every
 # command with TPM_RC_INITIALIZE.
 set -e
+# The repository server for the end-to-end update test: the guest's 10.0.2.2
+# is this container's own stack, so the files it must fetch are served from
+# here. Read-only mount, loopback-adjacent, gone with the container.
+if [ -n "${OS7_HTTP_PORT:-}" ] && [ -d "${OS7_HTTP_DIR:-}" ]; then
+    python3 -m http.server "${OS7_HTTP_PORT}" \
+        --directory "${OS7_HTTP_DIR}" --bind 0.0.0.0 >/dev/null 2>&1 &
+fi
 if [ "${OS7_SWTPM:-0}" = "1" ]; then
     mkdir -p /tpmstate
     swtpm socket --tpm2 \

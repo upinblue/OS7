@@ -155,6 +155,8 @@ class VmArch:
             raise SystemExit(f"unknown VM architecture {self.arch!r}")
         self._mounts = []          # (host_abs, container_dir, ro)
         self._image_ready = False
+        self._http = None          # (host_dir, port) once serve_http() is called
+        self._http_proc = None
 
     # -- what the harness prints and tests ----------------------------------
     @property
@@ -271,6 +273,29 @@ class VmArch:
         # Locally unique is all this has to be.
         return 4640 + (zlib.crc32(name.encode()) % 300)
 
+    def serve_http(self, host_dir, port):
+        """Serve `host_dir` to the GUEST at http://10.0.2.2:<port>/ — the
+        local repository transport for the end-to-end update test.
+
+        The guest's 10.0.2.2 is slirp's host side, which is wherever QEMU's
+        network stack lives: the Mac itself on the host-process path, the
+        os7-vm CONTAINER on the containerised one. So on the host path a
+        python http.server is started here as a sibling process, and on the
+        container path the server is started by vmhost-entry.sh inside the
+        SAME container as QEMU — command() carries the port and the read-only
+        mount in. Registered once; every subsequent boot serves it."""
+        self._http = (os.path.abspath(host_dir), int(port))
+        if not self.containerised and self._http_proc is None:
+            self._http_proc = subprocess.Popen(
+                [sys.executable, "-m", "http.server", str(port),
+                 "--directory", self._http[0], "--bind", "127.0.0.1"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            atexit.register(self._http_proc.terminate)
+
+    def guest_host_url(self, port):
+        """What the GUEST calls the machine QEMU runs on."""
+        return f"http://10.0.2.2:{port}"
+
     def command(self, args, name, tpm=None):
         """The argv Console gets: the QEMU args themselves on the host path,
         or the `docker run` that carries them on the container path."""
@@ -287,6 +312,10 @@ class VmArch:
         if tpm is not None and tpm.enabled:
             os.makedirs(tpm.state_dir, exist_ok=True)
             argv += ["-e", "OS7_SWTPM=1", "-v", f"{tpm.state_dir}:/tpmstate"]
+        if self._http is not None:
+            argv += ["-e", f"OS7_HTTP_PORT={self._http[1]}",
+                     "-e", "OS7_HTTP_DIR=/os7http",
+                     "-v", f"{self._http[0]}:/os7http:ro"]
         for a in args:
             m = re.match(r"tcp:0\.0\.0\.0:(\d+),server", a)
             if m:
@@ -341,15 +370,15 @@ class VmArch:
             raise SystemExit(f"xorriso did not produce {out_path}")
 
     def ensure_image(self):
-        """Build os7-vm:amd64 if it is not there. Once per process."""
+        """Build os7-vm:amd64. Once per process; the layer cache makes an
+        up-to-date rebuild a one-second no-op, and always building is what
+        keeps a harness run from using yesterday's image after
+        Dockerfile.vmhost changed."""
         if not self.containerised or self._image_ready or CHECK_MODE:
             return
-        have = subprocess.run(["docker", "image", "inspect", VM_IMAGE],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if have.returncode != 0:
-            print(f"    building {VM_IMAGE} (first run on this host) …")
-            run("docker", "build", "-t", VM_IMAGE,
-                "-f", os.path.join(TESTING, "Dockerfile.vmhost"), TESTING)
+        run("docker", "build", "-q", "-t", VM_IMAGE,
+            "-f", os.path.join(TESTING, "Dockerfile.vmhost"), TESTING,
+            stdout=subprocess.DEVNULL)
         self._image_ready = True
 
 

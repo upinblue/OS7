@@ -11,7 +11,11 @@ machine behind it.
     ./run-s5.py install   install from the current ISO, WITH A TPM ATTACHED
     ./run-s5.py boot      boot the disk alone and type NO passphrase
     ./run-s5.py cycle     clone -> change -> activate -> reboot -> roll back
-    ./run-s5.py all       all three, in one sitting                  (default)
+    ./run-s5.py update    Update-OS7 against a locally served repository:
+                          N -> N+1, firstboot migrations, and back (the gate)
+    ./run-s5.py timer     the unattended check's exit-code contract, measured
+    ./run-s5.py all       all five, in one sitting                   (default)
+    ./run-s5.py serialize give an existing amd64 disk a serial console
     ./run-s5.py reset     discard the VM state
 
 THREE THINGS ARE PROVED HERE AND THEY ARE DELIBERATELY IN ONE HARNESS, because
@@ -45,6 +49,7 @@ what `Restore-OS7` is.
 
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -910,6 +915,299 @@ def phase_cycle():
     return ok
 
 
+# ---------------------------------------------------------------------------
+# update — the end-to-end proof. RELEASE-AND-UPDATE-PLAN's whole promise, asked
+# of a machine: a release N+1 is built from this tree with the SAME development
+# key the ISO's os7-release trusts, served to the guest over local HTTP (the
+# guest's 10.0.2.2 is QEMU's host side — the os7-vm container on this box, the
+# Mac itself there), the machine is pointed at it with Set-OS7UpdateChannel,
+# and Update-OS7 does what until now only the harness's own hands had done.
+# Every claim below is answered by the machine, not by an exit code.
+# ---------------------------------------------------------------------------
+UPDATE_REPO = os.path.join(lab.dir, "repo")
+HTTP_PORT = 8907
+
+
+def next_build(version):
+    head, _, build = version.rpartition(".")
+    return f"{head}.{int(build) + 1}"
+
+
+def build_release_repo(version):
+    """Release <version> into UPDATE_REPO, signed with the shared key.
+
+    The key mount is the load-bearing part: the ISO's os7-release ships the
+    public half of out/os7-gnupg's key (Makefile KEYDIR), so a repository
+    signed from the same home is one the installed machine can verify —
+    and one signed anywhere else is the negative case check-os7-repo.py
+    already owns."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "check_os7_repo", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "check-os7-repo.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    facts = mod.source_facts()
+    if facts is None:
+        raise SystemExit("git could not be asked for the source facts (BUILD-NOTES #43)")
+    env_args = []
+    for line in facts.stdout.splitlines():
+        if "=" in line:
+            env_args += ["-e", line.strip()]
+    keydir = os.path.join(REPO, "out", "os7-gnupg")
+    os.makedirs(keydir, exist_ok=True)
+    os.makedirs(UPDATE_REPO, exist_ok=True)
+    print(f"    building release {version} into {UPDATE_REPO} …")
+    got = subprocess.run(
+        ["docker", "run", "--rm", "--platform", lab.arch.docker_platform,
+         "-v", f"{REPO}:/work", "-v", f"{UPDATE_REPO}:/out",
+         "-v", f"{keydir}:/os7-gnupg", "-e", "OS7_REPO_GNUPGHOME=/os7-gnupg",
+         *env_args,
+         "-e", f"OS7_VERSION={version}", "-e", f"OS7_ARCH={lab.arch.arch}",
+         "-e", f"OS7_REPO_URI={lab.arch.guest_host_url(HTTP_PORT)}",
+         "-e", "OS7_REPO_ENABLED=yes",
+         lab.arch.build_image, "bash", "-c",
+         "/work/build/lib/build-os7-repo.sh /work/build/config/os7-release.conf /out"],
+        capture_output=True, text=True)
+    for line in got.stdout.splitlines():
+        if line.startswith((">>>", "    ")):
+            print("      " + line.strip())
+    if got.returncode != 0:
+        print(got.stdout[-2500:])
+        print(got.stderr[-1500:])
+        raise SystemExit(f"the {version} repository did not build")
+
+
+def phase_update():
+    print("\n### update — Update-OS7 against a served repository, end to end")
+    for need, what in ((lab.target, "an installed disk"), (lab.vars, "a firmware store")):
+        if not os.path.exists(need):
+            print(f"      FAIL  no {what} at {need}. Run install first.")
+            return False
+    ok = True
+    lab.arch.serve_http(UPDATE_REPO, HTTP_PORT)
+    url = lab.arch.guest_host_url(HTTP_PORT)
+
+    with Machine("update-1") as m:
+        c = m.c
+        text = ps(c, "Import-Module OS7; (Get-OS7Version).FullVersion.ToString()",
+                  "the running version")
+        got = re.search(r"\b(\d+\.\d+\.\d+\.\d+)\b", body_of(text, "ToString()"))
+        if not got:
+            print("      FAIL  the machine does not know its version")
+            return False
+        vfrom = got.group(1)
+        vnext = next_build(vfrom)
+        print(f"      ok    1/8 the machine runs {vfrom}; the update target is {vnext}")
+
+        build_release_repo(vnext)
+
+        text = ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} "
+                     "-Channel development | Format-List Channel,Uri,Enabled | Out-String",
+                  "point the machine at the repository", timeout=600)
+        body = body_of(text, "Out-String")
+        if url in body and "Enabled" in body:
+            print(f"      ok    2/8 Set-OS7UpdateChannel took {url}, and apt verified it")
+        else:
+            print("      FAIL  2/8 the channel could not be configured:")
+            print(body.strip()[-800:])
+            return False
+
+        text = ps(c, "Import-Module OS7; $r = Update-OS7 -AllowDevelopment -Confirm:$false; "
+                     "$r | ConvertTo-Json -Compress",
+                  "Update-OS7", timeout=3600)
+        body = body_of(text, "ConvertTo-Json -Compress")
+        made = re.search(r'"BootEnvironment":\s*"(os7_[0-9.]+_\d{12})"', body)
+        if f'"To":"{vnext}"' in body.replace(" ", "") and '"Applied":true' in body.replace(" ", "") and made:
+            new_be = made.group(1)
+            print(f"      ok    3/8 UPDATE-OS7 RAN THROUGH: {vfrom} -> {vnext} into {new_be}")
+        else:
+            print("      FAIL  3/8 Update-OS7 did not apply the release:")
+            print(body.strip()[-1500:])
+            return False
+        old_be_text = ask(c, "printf 'S5-%s\\n' OLD; findmnt -no SOURCE /", "the old root")
+        found = re.search(r"rpool/ROOT/(os7_[0-9.]+_\d{12})", body_of(old_be_text, "S5-OLD"))
+        if not found:
+            print("      FAIL  the running root is not a boot environment")
+            return False
+        old_be = found.group(1)
+        m.power_off()
+
+    # ---- the machine that comes back must be N+1 ----------------------------
+    with Machine("update-2") as m:
+        c = m.c
+        text = ask(c, "printf 'S5-%s\\n' NOW; findmnt -no SOURCE /; "
+                      "dpkg-query -W -f='${Version}\\n' os7-base; "
+                      "cat /usr/lib/os7/release.json | grep -o '\"version\": *\"[^\"]*\"' | head -1",
+                   "which system came back", timeout=240)
+        now = body_of(text, "S5-NOW")
+        if f"rpool/ROOT/{new_be}" in now:
+            print(f"      ok    4/8 THE MACHINE BOOTED {vnext} — / is {new_be}")
+        else:
+            print("      FAIL  4/8 the machine did not boot the new environment:")
+            print(now.strip()[:600])
+            ok = False
+        if vnext in now:
+            print(f"      ok         os7-base and release.json both say {vnext}")
+        else:
+            print(f"      FAIL       the packages do not say {vnext}: {now.strip()[:300]}")
+            ok = False
+        text = ps(c, "Import-Module OS7; (Get-OS7Version).FullVersion.ToString()",
+                  "Get-OS7Version on the updated machine")
+        if vnext in body_of(text, "ToString()"):
+            print(f"      ok    5/8 Get-OS7Version says {vnext}")
+        else:
+            print(f"      FAIL  5/8 Get-OS7Version does not say {vnext}")
+            ok = False
+
+        # The firstboot migration runner (C10 §6', package C), on the machine:
+        # the stamp is there, the pending record was consumed, and the log
+        # says what ran. UL1's script found the seal opening (PCR 7 unmoved
+        # by an update, S6) and said "nothing to do" — that IS its verdict
+        # path, and the stamp proves the runner drove it.
+        text = ask(c, f"printf 'S5-%s\\n' MIG; ls /var/lib/os7/migrations/{vnext}/ 2>&1; "
+                      "test -e /var/lib/os7/migrations/pending && echo PENDING-STILL-THERE "
+                      "|| echo PENDING-CONSUMED; "
+                      "grep firstboot /var/log/os7/update.log | tail -3",
+                   "the firstboot migrations", timeout=180)
+        mig = body_of(text, "S5-MIG")
+        print("\n--- the firstboot migration state ---")
+        print(mig.strip()[:600])
+        print("---")
+        if "50-tpm2-reseal" in mig and "PENDING-CONSUMED" in mig and "ran " in mig:
+            print(f"      ok    6/8 THE FIRSTBOOT MIGRATION RAN at the first boot of {vnext}")
+        else:
+            print("      FAIL  6/8 the firstboot migration did not run (or left pending)")
+            ok = False
+
+        be = be_table(c, "after the update")
+        if be.count("os7_") >= 2 and old_be in be:
+            print(f"      ok    7/8 both environments are there — -Keep 2 kept {old_be}")
+        else:
+            print(f"      FAIL  7/8 the previous environment {old_be} is gone")
+            ok = False
+        text = ask(c, "printf 'S5-%s\\n' SRC; cat /etc/apt/sources.list.d/os7.sources",
+                   "the channel survived the upgrade", timeout=120)
+        if url in body_of(text, "S5-SRC"):
+            print("      ok         the upgrade kept the operator's channel (conffile)")
+        else:
+            print("      FAIL       os7-release's upgrade reverted the channel — the")
+            print("                 conffile did not hold")
+            ok = False
+
+        text = ps(c, "Import-Module OS7; Restore-OS7 -Confirm:$false | "
+                     "Format-List Name | Out-String", "roll back", timeout=900)
+        if old_be in body_of(text, "Out-String"):
+            print(f"      ok         Restore-OS7 chose {old_be}")
+        else:
+            print("      FAIL       Restore-OS7 did not choose the previous environment")
+            ok = False
+        m.power_off()
+
+    # ---- and the rollback must un-say the release ---------------------------
+    with Machine("update-3") as m:
+        c = m.c
+        text = ask(c, "printf 'S5-%s\\n' BACK; findmnt -no SOURCE /; "
+                      "dpkg-query -W -f='${Version}\\n' os7-base",
+                   "which system came back", timeout=240)
+        back = body_of(text, "S5-BACK")
+        if f"rpool/ROOT/{old_be}" in back and vfrom in back:
+            print(f"      ok    8/8 THE ROLLBACK TOOK — the machine runs {vfrom} again")
+        else:
+            print("      FAIL  8/8 the machine did not come back on the old release:")
+            print(back.strip()[:500])
+            ok = False
+        m.power_off()
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# timer — §6's unattended path, on the machine (package E's gate). The service
+# is asked for its REAL exit status through systemd, against the contract the
+# unit declares: 0 nothing-to-do, 2 staged, 1 failed.
+# ---------------------------------------------------------------------------
+def phase_timer():
+    print("\n### timer — the unattended check: nothing without a channel, staged with one")
+    if not os.path.isdir(UPDATE_REPO):
+        print("      FAIL  no repository at " + UPDATE_REPO + ". Run update first.")
+        return False
+    ok = True
+    lab.arch.serve_http(UPDATE_REPO, HTTP_PORT)
+    url = lab.arch.guest_host_url(HTTP_PORT)
+
+    def service_status(c, label):
+        text = ask(c, "systemctl start os7-update-check.service; "
+                      "printf 'S5-%s\\n' ST; "
+                      "systemctl show -p ExecMainStatus --value os7-update-check.service; "
+                      "tail -2 /var/log/os7/update.log",
+                   label, timeout=3600)
+        body = body_of(text, "S5-ST")
+        code = next((l.strip() for l in body.splitlines() if l.strip().isdigit()), "?")
+        return code, body
+
+    with Machine("timer-1") as m:
+        c = m.c
+        ask(c, "test -f /usr/lib/systemd/system/timers.target.wants/os7-update-check.timer "
+               "&& printf 'S5-%s\\n' TIMER-ENABLED || printf 'S5-%s\\n' TIMER-MISSING",
+            "the timer ships enabled")
+        if "TIMER-ENABLED" in c.text():
+            print("      ok    1/4 os7-update-check.timer ships enabled")
+        else:
+            print("      FAIL  1/4 the timer is not enabled on the machine")
+            ok = False
+
+        # A. No reachable channel: the machine is put back into the shipped
+        # state (the rollback brought the configured channel back with /etc).
+        ps(c, "Import-Module OS7; Set-OS7UpdateChannel -Disable | Out-Null",
+           "disable the channel", timeout=300)
+        code, body = service_status(c, "the check with no channel")
+        if code == "0" and "no update channel is configured" in body:
+            print("      ok    2/4 without a channel: exit 0, and the log says why")
+        else:
+            print(f"      FAIL  2/4 expected exit 0 + reason, got {code}:")
+            print(body.strip()[:400])
+            ok = False
+
+        # B. A reachable channel offering a release: the check STAGES it and
+        # says so with exit 2. The environment the update phase staged and the
+        # rollback left behind is removed first, so the timer's own staging is
+        # what is measured rather than found.
+        ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} -Channel development "
+             "| Out-Null", "re-enable the channel", timeout=600)
+        ask(c, "printf 'OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT=\"yes\"\\n' "
+               ">> /etc/os7/update.conf", "allow development releases unattended")
+        text = ps(c, "Import-Module OS7; Get-OS7BootEnvironment | Where-Object "
+                     "{ -not $_.Running } | Remove-OS7BootEnvironment -Confirm:$false; "
+                     "@(Get-OS7BootEnvironment).Count",
+                  "clear the staged leftovers", timeout=600)
+        code, body = service_status(c, "the check with a reachable channel")
+        if code == "2":
+            print("      ok    3/4 with a channel: exit 2 — staged, reboot pending")
+        else:
+            print(f"      FAIL  3/4 expected exit 2, got {code}:")
+            print(body.strip()[:500])
+            ok = False
+        text = ps(c, "Import-Module OS7; (Get-OS7BootEnvironment | Where-Object "
+                     "{ -not $_.Running } | Select-Object -Last 1).Release",
+                  "the staged release is there")
+        staged = body_of(text, ".Release").strip().splitlines()
+        staged = next((s.strip() for s in staged if re.match(r"^\d+\.\d+\.\d+\.\d+$", s.strip())), "")
+        if staged:
+            print(f"      ok         a boot environment for {staged} exists — the release is there")
+        else:
+            print("      FAIL       the check reported staged and no environment exists")
+            ok = False
+        # And running it again stages nothing twice.
+        code, body = service_status(c, "the check, again")
+        if code == "2" and "already" in body:
+            print("      ok    4/4 a second run finds it already staged — nothing minted twice")
+        else:
+            print(f"      FAIL  4/4 expected exit 2 + already-staged, got {code}")
+            ok = False
+        m.power_off()
+    return ok
+
+
 def phase_serialize():
     """The SERIAL_CONSOLE step alone, for a disk that was installed before the
     step existed (or whose configuration was lost with the pool). Boots the
@@ -944,6 +1242,7 @@ def phase_serialize():
 
 
 PHASES = {"install": phase_install, "boot": phase_boot, "cycle": phase_cycle,
+          "update": phase_update, "timer": phase_timer,
           "serialize": phase_serialize}
 
 
@@ -952,7 +1251,7 @@ def main():
     if what == "reset":
         lab.reset()
         return
-    order = ["install", "boot", "cycle"] if what == "all" else [what]
+    order = ["install", "boot", "cycle", "update", "timer"] if what == "all" else [what]
     if any(p not in PHASES for p in order):
         raise SystemExit(f"usage: run-s5.py [{'|'.join(PHASES)}|all|reset]")
 
