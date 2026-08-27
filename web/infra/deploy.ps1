@@ -29,7 +29,14 @@ param(
 	[string] $SiteName = 'os7-site',
 	[string] $Domain   = 'os7.org',
 	[int]    $Budget   = 25,
-	[switch] $NoDnsZone
+	[switch] $NoDnsZone,
+
+	# Creating a role assignment needs Microsoft.Authorization/roleAssignments/write,
+	# which Owner and User Access Administrator have and Contributor does NOT. If
+	# the deployment fails on the uploaderRole resource, re-run with this switch
+	# and have somebody with the rights grant Storage Blob Data Contributor on the
+	# storage account afterwards. Everything else deploys either way.
+	[switch] $NoRoleAssignment
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,8 +52,15 @@ az account show --query '{name:name, id:id, tenant:tenantId}' -o table
 # The object ID of whoever is signed in, so the template can grant them upload
 # rights. Shared-key access is disabled on the account, so without this the
 # first upload fails with an authorization error rather than a missing key.
-$principalId = az ad signed-in-user show --query id -o tsv
-Write-Host "==> uploads will be granted to object id $principalId"
+if ($NoRoleAssignment) {
+	$principalId = ''
+	Write-Host '==> role assignment SKIPPED. Somebody with Owner or User Access Administrator' -ForegroundColor Yellow
+	Write-Host '    has to grant Storage Blob Data Contributor on the storage account before' -ForegroundColor Yellow
+	Write-Host '    the first ISO can be uploaded.' -ForegroundColor Yellow
+} else {
+	$principalId = az ad signed-in-user show --query id -o tsv
+	Write-Host "==> uploads will be granted to object id $principalId"
+}
 
 Write-Host "==> resource group $ResourceGroup in $Location" -ForegroundColor Cyan
 az group create --name $ResourceGroup --location $Location --output none
