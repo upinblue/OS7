@@ -1,0 +1,12 @@
+Id=zfs-mount.service
+Description=Mount ZFS filesystems
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=/usr/lib/systemd/system/zfs-mount.service
+UnitFileState=enabled
+ActiveEnterTimestamp=
+Type=oneshot
+Result=success
+NRestarts=0
+ExecMainPID=0

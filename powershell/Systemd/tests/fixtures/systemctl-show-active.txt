@@ -1,0 +1,12 @@
+Id=chrony.service
+Description=chrony, an NTP client/server
+LoadState=loaded
+ActiveState=active
+SubState=running
+FragmentPath=/usr/lib/systemd/system/chrony.service
+UnitFileState=enabled
+ActiveEnterTimestamp=@1787840535
+Type=notify
+Result=success
+NRestarts=0
+ExecMainPID=533

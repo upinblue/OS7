@@ -1,0 +1,12 @@
+Id=tpm-udev.service
+Description=Handle dynamically added tpm devices
+LoadState=loaded
+ActiveState=failed
+SubState=failed
+FragmentPath=/usr/lib/systemd/system/tpm-udev.service
+UnitFileState=static
+ActiveEnterTimestamp=@1787840535
+Type=simple
+Result=start-limit-hit
+NRestarts=0
+ExecMainPID=716
