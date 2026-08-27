@@ -55,8 +55,17 @@
 		# of #74 is in os7-setup; this is the half for machines already
 		# installed. Never run against real ZFS — docs/BACKUP-PLAN.md B-6.
 		'Get-OS7Home', 'Move-OS7Home',
-		# Stubs — the command surface docs/DECISIONS.md documents
-		'Set-OS7Mode', 'Update-OS7')
+		# Implemented — the update train (docs/RELEASE-AND-UPDATE-PLAN.md §4.2 as
+		# corrected by docs/CURATION-AND-DELIVERY-PLAN.md C10). Update-OS7 applies
+		# a release into a CLONE of the boot environment, so the running system is
+		# untouched until it reboots and Restore-OS7 goes back. Get-OS7Release is
+		# what -WhatIf reports from and is part of the trust path: it verifies the
+		# signed index and each descriptor's hash before it lists anything.
+		# Set-OS7UpdateChannel points the machine at a repository and switches on
+		# the apt source os7-release deliberately ships disabled.
+		'Update-OS7', 'Get-OS7Release', 'Set-OS7UpdateChannel', 'Test-OS7Update',
+		# Stub — the command surface docs/DECISIONS.md documents
+		'Set-OS7Mode')
 	CmdletsToExport   = @()
 	VariablesToExport = @()
 	AliasesToExport   = @()

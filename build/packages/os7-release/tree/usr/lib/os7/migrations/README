@@ -1,0 +1,79 @@
+OS/7 release migrations — the contract
+======================================
+
+CURATION-AND-DELIVERY-PLAN.md C10 (step 6' of the update sequence):
+
+    run the release's migrations, ordered and idempotent, keyed by the version
+    being upgraded *from*. Dataset layout changes, initramfs hook installs,
+    TPM2 re-enrolment after a PCR 7 move (UL1) — none of which dpkg can express,
+    and all of which currently have no home.
+
+This directory is that home. `Update-OS7` runs what it finds here, inside the
+boot environment it is building.
+
+THE LAYOUT
+----------
+
+    /usr/lib/os7/migrations/<version>/<context>/NN-name
+
+  <version>   the release that INTRODUCED the migration — not the version being
+              upgraded from. A release declares what changed in IT; a machine
+              jumping several releases runs each intervening release's set, in
+              order, which is what makes C11's "1.0.0 -> 1.0.7 is one
+              operation" true without every release having to carry a migration
+              for every older version it might be reached from.
+
+  <context>   `chroot` or `firstboot`, and the split is not a convenience.
+
+              chroot     runs inside the assembled boot environment, before
+                         update-initramfs, with the new packages already
+                         installed. This is where a dataset layout change or an
+                         initramfs hook install belongs.
+
+              firstboot  CANNOT run there, and BUILD-NOTES #69 is why: sealing
+                         to PCR 7 from a chroot seals against the CHROOT's
+                         PCR 7. The installed machine boots through shim, which
+                         extends it differently. So anything that must observe
+                         the real boot — TPM2 re-enrolment after a policy move,
+                         UL1 — is recorded for the target's first boot and is
+                         NOT run by Update-OS7. The cmdlet says so on the way
+                         out rather than passing over it.
+
+  NN-         a two-digit numeric prefix, and the order is numeric rather than
+              lexical: `9-` sorts BEFORE `31-`. BUILD-NOTES #89 is the record of
+              the same mistake made with kernel names, where a string sort put
+              7.0.0-9 above 7.0.0-31 and would have booted the older kernel.
+
+IDEMPOTENCE IS NOT OPTIONAL
+---------------------------
+
+C10: migrations "must be idempotent because a rollback followed by a re-update
+runs them twice. Re-running a migration is normal operation, not an error path."
+
+Update-OS7 records what it has run under /var/lib/os7/migrations/<version>/,
+INSIDE the boot environment. That is deliberate and it is the other half of the
+same argument: /var/lib/os7 is not a dataset of its own, so it lands in the
+environment's root dataset and a rollback takes the record with it. After a
+rollback the machine genuinely has not run them, and a record that survived
+would make it claim otherwise.
+
+So: write every migration so that running it on a machine where it has already
+run is a no-op that exits 0. Check for the state you intend to create, not for a
+marker of your own.
+
+THE SHELL
+---------
+
+`sh`, not bash. A migration runs in the environment being built, and the
+guarantee that something is there is weaker than usual: the packages have moved
+underneath it. Use what /bin/sh gives you.
+
+Exit non-zero to fail the update. There is no partial success: an environment
+whose migrations did not complete is not the release it claims to be, and
+Update-OS7 leaves it inactive and names it rather than activating it anyway.
+
+THIS DIRECTORY IS EMPTY, AND THAT IS CORRECT
+--------------------------------------------
+
+1.0.0 is the first release. There is nothing to migrate from. The first entry
+here will be written by whoever needs the first thing dpkg cannot express.

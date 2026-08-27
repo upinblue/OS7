@@ -72,8 +72,34 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-**OS/7 IS NOW SOMETHING dpkg KNOWS ABOUT (2026-08-26), AND `Update-OS7` IS THE
-NEXT THING TO WRITE.** Until this week every OS/7-specific file on a running
+**`Update-OS7` IS WRITTEN (2026-08-27) AND HAS NEVER RUN ON A MACHINE. THAT IS
+THE FIRST THING TO DO ON THE MAC.** The update train is the §4.2 sequence as C10
+corrects it, in `powershell/OS7/OS7.Update.ps1`, with `Get-OS7Release`,
+`Set-OS7UpdateChannel` and `Test-OS7Update` beside it. It is checked without a
+VM and the gate has not been run:
+
+```bash
+./installer/testing/check-update-logic.py    # ~3 min, no VM — GREEN
+./installer/testing/check-ps-traps.py        # seconds — GREEN
+./installer/testing/run-s5.py all            # THE GATE. Needs the Mac. NOT RUN
+```
+
+`run-s5.py` already installs a machine, clones its boot environment, changes the
+clone, boots it and rolls back — steps 3 to 8 **by hand**, because the cmdlet did
+not exist. Pointing it at `Update-OS7` instead is what turns "a machine updated
+by this cmdlet boots" from a claim about code into a measurement.
+[SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md) is what was decided, what was
+found and — at greater length — what was not checked.
+
+**Writing it found four defects, three of them already in the tree**, which is
+the argument for the two no-VM checks above: BUILD-NOTES **#89** (the kernel
+picker chose the older kernel, and only an update could ever reveal it), **#90**
+(a freshness check that could not read its date, and warned), **#91**
+(`@('a', $b, $c + $d)` is four elements) and **#65 twice**.
+
+---
+
+**OS/7 IS SOMETHING dpkg KNOWS ABOUT (2026-08-26).** Until this week every OS/7-specific file on a running
 OS/7 system was unowned by a package — the PowerShell tarball, both modules,
 `os7-setup`, the release manifest, the console fonts, the os-release branding —
 so the update train could have reached Ubuntu's half of the product and nothing
@@ -89,13 +115,9 @@ make repo-amd64                           # nine .debs + a SIGNED suite os7-1.0
 
 What that leaves, in order:
 
-1. **`Update-OS7`.** §4.2 steps 1, 2 and 9 are real code and VM-proven; steps
-   3–8, as corrected by C10, are the S5 harness's shell and belong in the
-   cmdlet. There is now a suite, a metapackage and a signed descriptor to point
-   them at.
-2. **`Get-OS7Release -Available`**, which reads the signed index. Without it
-   `Update-OS7 -WhatIf` has nothing to report.
-3. **Switch the ISO over.** `build.sh` still stages the same files through
+1. ~~**`Update-OS7`**~~ and ~~**`Get-OS7Release -Available`**~~ — **both written
+   2026-08-27**, above. What they leave is the gate.
+2. **Switch the ISO over.** `build.sh` still stages the same files through
    `includes.chroot`, so the packages are correct and the image does not use
    them. That change resolves the one seam this left, which
    [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) §5 names: two

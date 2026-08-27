@@ -81,6 +81,13 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   from it, in a plain ubuntu:26.04,
                                           #   then swap the key and require apt
                                           #   to REFUSE. No VM, ~4 min
+./installer/testing/check-update-logic.py # the update train's DECISIONS and the
+                                          #   ORDER of them, against fake zfs,
+                                          #   apt and chroot - with REAL mounts
+                                          #   and REAL signatures. ~3 min, no VM
+./installer/testing/check-ps-traps.py     # two PowerShell traps this repo has
+                                          #   paid for (#65, #91), asked of the
+                                          #   parser. Seconds; needs only pwsh
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
                                           #   install again BY KEYPRESS (walk)

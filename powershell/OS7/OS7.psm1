@@ -1031,6 +1031,68 @@ function Split-OS7BootEnvironmentName {
 	}
 }
 
+function Get-OS7RootDataset {
+	<#
+	.SYNOPSIS
+		Internal. The dataset actually serving `/`, or $null.
+
+	.DESCRIPTION
+		"WHICH ENVIRONMENT IS RUNNING" IS NOT "WHICH DATASET IS MOUNTED".
+
+		A boot environment's `Active` is ZFS's `mounted` property, which means
+		mounted ANYWHERE. That was an adequate stand-in for as long as nothing
+		mounted a boot environment anywhere else — and `Update-OS7` does exactly
+		that, at /run/os7-update, for the whole of an update. While it does,
+		two environments report `mounted=yes` and every consumer that read
+		`Active` as "the running system" is looking at a coin toss.
+
+		The kernel knows. /proc/self/mountinfo's line for `/` names the source,
+		which for a ZFS root is the dataset. Field 5 is the mount point; the
+		fields after the ` - ` separator are fstype, source, superblock options.
+
+		Returns $null rather than guessing on a machine that is not ZFS-rooted —
+		a live medium, a container, a rescue shell — because every caller has a
+		sensible thing to do with "cannot tell" and none of them has a sensible
+		thing to do with a wrong answer.
+	#>
+	param([string]$Path = '/proc/self/mountinfo')
+
+	if (-not [System.IO.File]::Exists($Path)) { return $null }
+	foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+		$sep = $line.IndexOf(' - ')
+		if ($sep -lt 0) { continue }
+		$before = $line.Substring(0, $sep).Split(' ')
+		if ($before.Count -lt 5 -or $before[4] -ne '/') { continue }
+		$after = $line.Substring($sep + 3).Split(' ')
+		if ($after.Count -lt 2 -or $after[0] -ne 'zfs') { continue }
+		return $after[1]
+	}
+	return $null
+}
+
+function Test-OS7IsRunning {
+	<#
+	.SYNOPSIS
+		Internal. Is this boot environment the one executing?
+
+	.DESCRIPTION
+		`Running` when the kernel could answer, `Active` when it could not.
+
+		THE FALLBACK IS NOT LAZINESS. On a live medium the root is a casper
+		overlay, not a ZFS dataset, so Get-OS7RootDataset returns $null and
+		nothing is "running" in the boot-environment sense — but a pool imported
+		there may still have a mounted environment, and `Active` is then the
+		only signal there is. os7-setup works on exactly such a machine.
+
+		Everywhere else `Running` is the answer and `Active` is a superset of it
+		that grows a second member for the length of an update.
+	#>
+	param([Parameter(Mandatory)]$BootEnvironment)
+
+	if ($null -ne $BootEnvironment.Running) { return [bool]$BootEnvironment.Running }
+	return [bool]$BootEnvironment.Active
+}
+
 function Get-OS7MenuBootEnvironment {
 	<#
 	.SYNOPSIS
@@ -1151,16 +1213,58 @@ function Get-OS7BootEnvironmentKernel {
 	[CmdletBinding()]
 	param([Parameter(Mandatory)][object]$BootEnvironment)
 
+	# BY VERSION, NOT BY NAME, and that is a fix rather than a preference.
+	#
+	# This used to be `Sort-Object Name -Descending | Select-Object -First 1`,
+	# which is a STRING sort: measured 2026-08-27,
+	#
+	#   'vmlinuz-7.0.0-9-generic','vmlinuz-7.0.0-31-generic' | Sort-Object -Descending
+	#     -> vmlinuz-7.0.0-9-generic
+	#
+	# because '9' is greater than '3' at the fourth character of the ABI number.
+	# The menu fragment would then name the OLDER kernel, the machine would boot
+	# it against the newer root — §4.3's half-activated pair reached by a
+	# different road — and update-grub would report nothing wrong.
+	#
+	# It was invisible while every boot environment held exactly one kernel.
+	# `Update-OS7` is the operation that puts a second one there, which is what
+	# turned a latent sort into a boot. docs/BUILD-NOTES.md #89.
 	$read = {
 		param($dir)
-		$k = Get-ChildItem -Path $dir -Filter 'vmlinuz-*' -ErrorAction SilentlyContinue |
-			Sort-Object Name -Descending | Select-Object -First 1
-		$i = Get-ChildItem -Path $dir -Filter 'initrd.img-*' -ErrorAction SilentlyContinue |
-			Sort-Object Name -Descending | Select-Object -First 1
+		$pick = {
+			param($prefix)
+			$files = @(Get-ChildItem -Path $dir -Filter "$prefix*" -ErrorAction SilentlyContinue)
+			if ($files.Count -eq 0) { return $null }
+			# Every run of digits in the release, in order, as the sort key. The
+			# flavour ('generic') is not part of the ordering — two flavours of
+			# one version are not two versions — so it is the tie-break.
+			$keyed = $files | ForEach-Object {
+				$rel = $_.Name.Substring($prefix.Length)
+				[pscustomobject]@{
+					File = $_
+					N = @([regex]::Matches($rel, '\d+') | ForEach-Object { [int]$_.Value })
+					Rel = $rel
+				}
+			}
+			return ($keyed | Sort-Object `
+				@{ Expression = { if ($_.N.Count -gt 0) { $_.N[0] } else { 0 } } },
+				@{ Expression = { if ($_.N.Count -gt 1) { $_.N[1] } else { 0 } } },
+				@{ Expression = { if ($_.N.Count -gt 2) { $_.N[2] } else { 0 } } },
+				@{ Expression = { if ($_.N.Count -gt 3) { $_.N[3] } else { 0 } } },
+				@{ Expression = { $_.Rel } } | Select-Object -Last 1).File
+		}
+		$k = & $pick 'vmlinuz-'
+		$i = & $pick 'initrd.img-'
 		[pscustomobject]@{ Kernel = $(if ($k) { $k.Name }); Initrd = $(if ($i) { $i.Name }) }
 	}
 
-	if ($BootEnvironment.Active) { return (& $read $script:OS7BootDir) }
+	# THE RUNNING ONE, NOT MERELY A MOUNTED ONE. /boot belongs to the system
+	# that is executing; reading it for an environment that is merely mounted
+	# somewhere — which is what a clone under assembly is — names the running
+	# machine's kernel in another environment's menu entry. That is §4.3's
+	# half-activated pair produced by a menu rather than by a missing dataset,
+	# and update-grub would report nothing.
+	if (Test-OS7IsRunning $BootEnvironment) { return (& $read $script:OS7BootDir) }
 
 	New-Item -ItemType Directory -Force -Path $script:OS7BeScratch | Out-Null
 	try {
@@ -1353,6 +1457,11 @@ function Get-OS7BootEnvironment {
 	}
 
 	$menu = Get-OS7MenuBootEnvironment
+	# The dataset actually serving `/`, asked of the kernel. See
+	# Get-OS7RootDataset: `Active` is ZFS's `mounted`, which is "mounted
+	# anywhere", and while Update-OS7 has a clone assembled that is TWO
+	# environments. `Running` is the one this machine is executing.
+	$runningDs = Get-OS7RootDataset
 
 	$out = foreach ($r in $roots) {
 		$leaf = [string](Split-Path -Leaf $r.Name)
@@ -1365,7 +1474,15 @@ function Get-OS7BootEnvironment {
 			Name        = $leaf
 			Release     = if ($parts) { $parts.Release } else { $null }
 			Created     = $r.Creation
+			# Mounted ANYWHERE. Kept because that is the honest name for what
+			# ZFS reports, and because a mounted environment is a fact worth
+			# seeing — but it is not the same question as Running.
 			Active      = [bool]$r.Mounted
+			# Mounted at `/`: the system that is executing this code. $null
+			# when the machine is not ZFS-rooted at all — a live medium, a
+			# container — where "which environment is running" has no answer
+			# and a guess would be worse than none.
+			Running     = $(if ($null -eq $runningDs) { $null } else { $r.Name -eq $runningDs })
 			Menu        = ($leaf -eq $menu)
 			Complete    = ($null -ne $b)
 			RootDataset = $r.Name
@@ -1427,12 +1544,28 @@ function New-OS7BootEnvironment {
 
 	$all = @(Get-OS7BootEnvironment)
 	if (-not $From) {
-		$active = $all | Where-Object Active
-		if (-not $active) {
+		# `Active` IS ZFS'S `mounted`, WHICH IS "MOUNTED ANYWHERE".
+		#
+		# Get-OS7BootEnvironment sets Active from the root dataset's `mounted`
+		# property, not from "mounted at /". So the moment anything has a second
+		# environment mounted somewhere — which is exactly what Update-OS7 does
+		# to a clone while it applies a release into it — TWO objects match, and
+		# assigning them to the [string] parameter $From silently produces
+		# "os7_a os7_b". The next line then throws "no boot environment called
+		# 'os7_a os7_b'", which names neither the cause nor the file.
+		#
+		# BUILD-NOTES #65 is the same shape from the other side: a typed
+		# parameter coerces whatever it is given, in silence. Filtering to the
+		# oldest mounted COMPLETE environment is not a guess — an environment
+		# being assembled is newer than the one running, and an incomplete one
+		# is not a boot environment at all.
+		$active = @($all | Where-Object { (Test-OS7IsRunning $_) -and $_.Complete } |
+			Sort-Object Created | Select-Object -First 1)
+		if ($active.Count -eq 0) {
 			throw [System.InvalidOperationException]::new(
-				'no boot environment is mounted at / — pass -From to say which one to clone')
+				'no complete boot environment is mounted — pass -From to say which one to clone')
 		}
-		$From = $active.Name
+		$From = $active[0].Name
 	}
 	$source = $all | Where-Object Name -eq $From
 	if (-not $source) {
@@ -1678,7 +1811,7 @@ function Set-OS7BootEnvironment {
 	#
 	# The entries are built by substitution into the running one, which is a
 	# known-good entry for the same two pools — see New-OS7MenuFragment.
-	$running = $all | Where-Object Active | Select-Object -First 1
+	$running = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
 	if (-not $running) {
 		throw [System.InvalidOperationException]::new(
 			'no boot environment is mounted at / — there is no entry to build the others from')
@@ -1863,9 +1996,17 @@ function Remove-OS7BootEnvironment {
 		if (-not $be) {
 			throw [System.InvalidOperationException]::new("no boot environment called '$Name'")
 		}
-		if ($be.Active) {
+		if (Test-OS7IsRunning $be) {
 			throw [System.InvalidOperationException]::new(
 				"'$Name' is mounted at / — this is the system that is running")
+		}
+		# Mounted somewhere else is not the running system, and it is still a
+		# refusal: `zfs destroy` of a mounted dataset fails, and an environment
+		# under assembly is one Update-OS7 is in the middle of writing to.
+		if ($be.Active) {
+			throw [System.InvalidOperationException]::new(
+				"'$Name' is mounted — something is using it. If an update is running, " +
+				'let it finish; otherwise unmount it first.')
 		}
 		if ($be.Menu) {
 			throw [System.InvalidOperationException]::new(
@@ -2106,77 +2247,14 @@ function Set-OS7Mode {
 		'Set-OS7Mode is a stub. Mode semantics are unresolved — see the .DESCRIPTION help and README.md.')
 }
 
-function Update-OS7 {
-	<#
-	.SYNOPSIS
-		STUB. Applies the next curated OS/7 release into a new ZFS boot
-		environment.
-
-	.DESCRIPTION
-		NOT IMPLEMENTED. Intended behaviour per README.md:
-
-		  - Take a new ZFS boot environment, apply the curated release there,
-		    leave the running environment untouched so Restore-OS7 can roll back.
-		  - Carry PowerShell 7 itself along in that same release train — never a
-		    standalone 'apt upgrade powershell' — so the system stays atomically
-		    rollback-safe.
-
-		NO LONGER BLOCKED ON ZFS, AND NO LONGER BLOCKED ON BOOT ENVIRONMENTS.
-		Open Question #1 (ZFS on the Linux 7.0 kernel) was resolved 2026-08-22,
-		spike S3 installed a bootable ZFS-on-LUKS root 2026-08-23, and since
-		2026-08-25 §4.2's steps 1, 2 and 9 are real code that has been through a
-		VM: New-OS7BootEnvironment clones the pair, Set-OS7BootEnvironment
-		activates it, Restore-OS7 goes back. Spike S5 walked the whole cycle —
-		docs/SESSION-BOOT-ENVIRONMENTS.md.
-
-		AND SINCE 2026-08-26 THERE IS SOMETHING TO POINT IT AT. This paragraph
-		used to read "there is nothing yet to point them AT. There is no OS/7
-		package repository, nothing on a running system belongs to an OS/7
-		package, and no release index is published or signed." All three have
-		changed (docs/CURATION-AND-DELIVERY-PLAN.md C7,
-		docs/SESSION-OS7-REPOSITORY.md):
-
-		  - The OS/7 half of the product is nine .deb packages, built by
-		    build/lib/build-os7-packages.sh, with os7-base / os7-server /
-		    os7-desktop as the membership metapackages C6 asks for. So
-		    `apt install os7-server=<version>` moves the whole product and not
-		    only the versions of what a machine already has.
-		  - They live in a SIGNED suite, os7-1.0, with Valid-Until on the
-		    Release file, and a release DESCRIPTOR and a signed INDEX beside it.
-		  - A machine's own /usr/lib/os7/release.json now names its suite and
-		    its metapackage versions, so this cmdlet can read where to go from
-		    the machine rather than from a parameter.
-
-		WHAT IS STILL MISSING IS THIS CMDLET. §4.2 steps 1, 2 and 9 are real
-		code (New-/Set-OS7BootEnvironment, Restore-OS7 — VM-proven). Steps 3 to
-		8 — assemble the clone, point it at the new archive AND the OS/7 suite,
-		`apt install os7-<mode>=<version>` then full-upgrade then autoremove
-		(C10 corrects step 5), run the release's migrations (C10 step 6'),
-		rebuild the initramfs, regenerate the menu — have been performed by hand
-		in the S5 harness and belong here.
-
-		C7a — where a release signing key lives — is still open, and the
-		repository is signed by a development key that says so in its user ID
-		and in the descriptor. A cmdlet that applies a release must refuse an
-		unverified descriptor by default.
-
-	.PARAMETER WhatIf
-		STUB. Should report the pending release without applying it.
-
-	.EXAMPLE
-		Update-OS7 -WhatIf
-	#>
-	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
-	param()
-
-	throw [System.NotImplementedException]::new(
-		'Update-OS7 is a stub. Everything it needs now exists: boot environments ' +
-		'(New-OS7BootEnvironment, Set-OS7BootEnvironment, Restore-OS7) and, since ' +
-		'2026-08-26, a signed OS/7 package repository with membership metapackages, ' +
-		'a release descriptor and a signed index (CURATION-AND-DELIVERY-PLAN.md C7, ' +
-		'docs/SESSION-OS7-REPOSITORY.md). What is missing is steps 3 to 8 of ' +
-		'RELEASE-AND-UPDATE-PLAN.md §4.2 as corrected by C10 — this cmdlet.')
-}
+# Update-OS7 IS NO LONGER HERE. It, Get-OS7Release, Set-OS7UpdateChannel and
+# Test-OS7Update live in OS7.Update.ps1, dot-sourced at the end of this file
+# beside the backup and home files — the update train is a feature, and this
+# file is where the primitives it stands on live.
+#
+# The stub it replaces said, correctly, that there was "nothing yet to point
+# them AT". C7 built the thing to point at (CURATION-AND-DELIVERY-PLAN §6,
+# docs/SESSION-OS7-REPOSITORY.md) and OS7.Update.ps1 is the other half.
 
 function Restore-OS7 {
 	<#
@@ -2224,7 +2302,7 @@ function Restore-OS7 {
 	}
 
 	if (-not $BootEnvironment) {
-		$active = $all | Where-Object Active | Select-Object -First 1
+		$active = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
 		$older = if ($active) {
 			$all | Where-Object { $_.Created -lt $active.Created -and $_.Complete }
 		}
@@ -2248,7 +2326,7 @@ function Restore-OS7 {
 	}
 
 	$be = Set-OS7BootEnvironment -Name $BootEnvironment -Confirm:$false
-	$running = $all | Where-Object Active | Select-Object -First 1
+	$running = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
 	Write-OS7Step ("reboot to finish: this machine still runs " +
 		$(if ($running) { $running.Name } else { 'an environment it cannot name' }))
 	$be
@@ -2299,8 +2377,12 @@ function Restore-OS7 {
 # and it was invisible for a day because no ISO was built in between.
 # [System.IO.Path] and [System.IO.File] are .NET types, always present, never
 # looked up by name. BUILD-NOTES #82.
+#
+# OS7.Update.ps1 is LAST in the list, and that is a fact about line order rather
+# than taste: it calls Get-OS7Home's neighbours in the backup files and every
+# helper above, and PowerShell defines functions as the script runs.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1')) {
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -2316,7 +2398,12 @@ Export-ModuleMember -Function Get-OS7Version,
 	Get-OS7BootEnvironment, New-OS7BootEnvironment, Set-OS7BootEnvironment,
 	Remove-OS7BootEnvironment,
 	Get-OS7Theme, Set-OS7Theme,
-	Set-OS7Mode, Update-OS7, Restore-OS7,
+	Set-OS7Mode, Restore-OS7,
+	# The update train (docs/RELEASE-AND-UPDATE-PLAN.md §4.2 as corrected by
+	# CURATION-AND-DELIVERY-PLAN C10). Get-OS7Release is what -WhatIf reports
+	# from; Set-OS7UpdateChannel is what switches on the apt source os7-release
+	# deliberately ships disabled.
+	Update-OS7, Get-OS7Release, Set-OS7UpdateChannel, Test-OS7Update,
 	# Backup — policy and schedule
 	Get-OS7BackupPolicy, Set-OS7BackupPolicy, Enable-OS7Backup, Disable-OS7Backup,
 	Start-OS7Backup, Get-OS7BackupStatus, Get-OS7BackupCoverage,

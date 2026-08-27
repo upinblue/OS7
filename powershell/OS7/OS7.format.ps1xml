@@ -148,5 +148,121 @@
       </ListControl>
     </View>
 
+    <!--
+      Get-OS7Release -Available. A TABLE, because the question it answers is
+      "which of these" and that is a comparison between rows.
+
+      Applicable IS THE COLUMN TO READ, and it is deliberately not the same as
+      Newer: a 2.x release on a 1.x machine is newer and is not applicable,
+      because C12 says this train refuses to cross a generation. Two reasons for
+      "no" are two different conversations with the operator, so both are shown.
+
+      Development is a column and not a footnote. C7a — where a release signing
+      key lives — is open, so every release that exists today is signed by a
+      development key and Update-OS7 refuses it without -AllowDevelopment. A
+      person looking at this list needs to see that before they wonder why.
+    -->
+    <View>
+      <Name>OS7.Release</Name>
+      <ViewSelectedBy><TypeName>OS7.Release</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Version</Label><Width>14</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Channel</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Applicable</Label><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Dev</Label><Width>5</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Released</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Version</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Channel</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                  if ($_.Applicable) { 'yes' }
+                  elseif ($_.CrossesMajor) { 'no (2.x)' }
+                  elseif (-not $_.Newer) { 'no (older)' }
+                  else { 'no' }
+                </ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.Development) { 'yes' } else { '' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>Released</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!--
+      What Update-OS7 returns. A LIST, because it is one object and every field
+      on it is a fact about what just happened to this machine.
+
+      Reason IS ALWAYS PRESENT AND IS ALWAYS THE LAST LINE. On a successful run
+      it says the machine still runs the old release until it is rebooted; on a
+      staged run it names the two commands that finish or undo it; on a run that
+      did nothing it says why. An operator reading this at the end of an update
+      should not have to work out what to do next.
+    -->
+    <View>
+      <Name>OS7.Update</Name>
+      <ViewSelectedBy><TypeName>OS7.Update</TypeName></ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><PropertyName>From</PropertyName></ListItem>
+              <ListItem><PropertyName>To</PropertyName></ListItem>
+              <ListItem><PropertyName>BootEnvironment</PropertyName></ListItem>
+              <ListItem><PropertyName>Applied</PropertyName></ListItem>
+              <ListItem><PropertyName>Activated</PropertyName></ListItem>
+              <ListItem>
+                <Label>Staged</Label>
+                <PropertyName>Staged</PropertyName>
+                <ItemSelectionCondition><ScriptBlock>$_.Staged</ScriptBlock></ItemSelectionCondition>
+              </ListItem>
+              <ListItem>
+                <Label>Migrations</Label>
+                <ScriptBlock>$_.Migrations -join ', '</ScriptBlock>
+                <ItemSelectionCondition><ScriptBlock>@($_.Migrations).Count -gt 0</ScriptBlock></ItemSelectionCondition>
+              </ListItem>
+              <ListItem>
+                <Label>Removed</Label>
+                <ScriptBlock>$_.Removed -join ', '</ScriptBlock>
+                <ItemSelectionCondition><ScriptBlock>@($_.Removed).Count -gt 0</ScriptBlock></ItemSelectionCondition>
+              </ListItem>
+              <ListItem><PropertyName>Reason</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <!--
+      Set-OS7UpdateChannel. Enabled is shown because the source os7-release
+      ships is `Enabled: no` — nothing is published yet — and "did that take"
+      is the only question anybody asks this cmdlet.
+    -->
+    <View>
+      <Name>OS7.UpdateChannel</Name>
+      <ViewSelectedBy><TypeName>OS7.UpdateChannel</TypeName></ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><PropertyName>Channel</PropertyName></ListItem>
+              <ListItem><PropertyName>Uri</PropertyName></ListItem>
+              <ListItem><PropertyName>Suite</PropertyName></ListItem>
+              <ListItem><PropertyName>Enabled</PropertyName></ListItem>
+              <ListItem><PropertyName>SourceFile</PropertyName></ListItem>
+              <ListItem><PropertyName>Keyring</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
   </ViewDefinitions>
 </Configuration>

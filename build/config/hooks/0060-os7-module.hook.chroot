@@ -108,7 +108,8 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Test-OS7BackupTarget Start-OS7BackupReplication \
 	Mount-OS7BackupTarget Dismount-OS7BackupTarget \
 	Get-OS7FileVersion Restore-OS7File Test-OS7Backup \
-	Get-OS7Home Move-OS7Home
+	Get-OS7Home Move-OS7Home \
+	Get-OS7Release Set-OS7UpdateChannel Test-OS7Update
 
 # A file that is PRESENT AND EMPTY still imports and still exports nothing, so
 # the export check above cannot see it. `cp -a` onto a full filesystem produces
@@ -119,7 +120,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 # and an empty one is a `Get-OS7Version` that prints a bare property bag on a
 # machine somebody is trying to identify.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
-	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.format.ps1xml; do
+	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Update.ps1 OS7.format.ps1xml; do
 	if [ ! -s "${MODULES_ROOT}/OS7/${part}" ]; then
 		echo "OS/7 hook 0060: ${MODULES_ROOT}/OS7/${part} is missing or empty" >&2
 		exit 1

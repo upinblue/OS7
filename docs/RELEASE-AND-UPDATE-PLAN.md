@@ -1,7 +1,16 @@
 # OS/7 releases and updates — versioning and the update train
 
-**Status: plan only. Nothing below is implemented.** This document answers three
-questions asked on 2026-08-23 and turns the answers into a phased plan:
+**Status, 2026-08-27: the train is built and has not been run on a machine.**
+This line used to read "plan only. Nothing below is implemented." Phases 1 and 2
+were done in August 2026, and Phase 3 — `Update-OS7` — was written on 2026-08-27
+against the corrected §4.2 ([SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md)).
+What is still owed is the only thing that decides it: `run-s5.py` on a booted
+machine, which needs the Apple Silicon host. Read §10 for what each phase
+actually reached; the design below is unchanged except where a decision is
+marked with its date.
+
+This document answers three questions asked on 2026-08-23 and turns the answers
+into a phased plan:
 
 1. Can Ubuntu security patches be applied to OS/7 without changing OS/7's code?
 2. Can OS/7 be moved from one Ubuntu release to the next, and what does that cost?
@@ -419,12 +428,12 @@ guarantee is gone.
 | Cmdlet | Purpose |
 |---|---|
 | `Get-OS7Version [-Detailed] [-CheckDrift] [-Path]` | The number; with `-Detailed`, the manifest. **Reports drift** (§5) — but only under `-CheckDrift`, and `Drift` is empty rather than `$false` until it is asked, because a check that did not run must never read as a clean result. Object shape, types and the `[version]` trap: [IDENTITY-PLAN.md](IDENTITY-PLAN.md) §7. |
-| `Get-OS7Release -Available` | What the channel offers, without applying it. |
-| `Update-OS7 [-WhatIf] [-Stage] [-Reboot]` | Build the new BE. `-Stage` prepares without activating; `-WhatIf` is already promised by the stub's help. |
+| `Get-OS7Release -Available [-Channel] [-Source]` | **IMPLEMENTED 2026-08-27.** What the channel offers, without applying it — and it is part of the TRUST PATH, not a convenience: the index's signature and expiry and each descriptor's sha256 are checked before anything is listed, because a listing an operator can act on is a listing that must not show what nobody signed. `Applicable` is the property to read: false for a release that is not newer, and false for one that would cross a Major (C12). |
+| `Update-OS7 [-Version] [-Channel] [-Source] [-Stage] [-Reboot] [-Keep n] [-AllowDevelopment] [-Force] [-WhatIf]` | **IMPLEMENTED 2026-08-27.** Build the new BE. `-Stage` prepares without activating; `-WhatIf` performs the read-only preflight and returns the plan, changing nothing — it is not a run with the last step skipped. `-Keep` is UL9's retention. `-AllowDevelopment` is required while C7a is open, because every key that exists is a development key. `-Force` proceeds on a drifted machine (§5). |
 | `Get-OS7BootEnvironment` | List BEs with version, creation date, active/next flags. |
 | `Restore-OS7 [-BootEnvironment]` | Roll back. Defaults to the previous BE so the panic path is one word. |
 | `Remove-OS7BootEnvironment` | Prune old BEs — otherwise the pool fills, which is how BE systems fail in practice. |
-| `Set-OS7UpdateChannel -Channel Stable\|Preview` | Channel selection. |
+| `Set-OS7UpdateChannel [-Channel] [-Uri] [-Disable]` | **IMPLEMENTED 2026-08-27.** Channel selection — and one more thing the name does not suggest, which it has to do: the apt source `os7-release` ships is `Enabled: no` at a placeholder URI, because nothing is published and a source pointing at a URI that does not resolve prints an error on every `apt update` forever. This is the supported way to switch it on. It asks apt afterwards rather than trusting the file it just wrote. |
 | `Set-OS7Mode -Mode GUI\|Headless` | Unchanged in scope. |
 
 **This resolves the ambiguity the stub documents about itself.** `Set-OS7Mode`'s
@@ -481,7 +490,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 | UL6 | Canonical publishes no retention guarantee for `snapshot.ubuntu.com`; verified back to 2022 but not contractual | Archive the `.debs` a release actually installs — a few GB per release, not a mirror of the archive. Cheap insurance for the reproducibility claim. |
 | UL7 | Ubuntu Pro / ESM / Livepatch unexamined against this model (§7) | Position needed before an enterprise deal; not a v1 blocker. |
 | UL8 | A BE pair spans two pools and can half-activate (§4.3) | BE primitives treat the pair as one object; never expose the halves. |
-| UL9 | Boot environments accumulate and fill the pool | `Remove-OS7BootEnvironment` plus a retention policy shipped by default, not left to the operator. |
+| UL9 | Boot environments accumulate and fill the pool | **DECIDED 2026-08-27 — TWO, shipped by default.** After a successful activation `Update-OS7` keeps the new environment and the one it replaced, and removes older complete ones; `-Keep <n>` overrides it. Two is the smallest number for which `Restore-OS7` always has a target. The running environment and the one the menu names are never candidates, so a machine cannot prune the thing it is about to boot. No number existed anywhere before this — [CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md) open question 5 still says so. |
 | UL10 | `/etc/os-release` is a conffile of `base-files`; branding it is contested at every upgrade (§2.2 #2) | ~~Idempotent reassert as a step in the update sequence~~ — **CLOSED 2026-08-26 by mechanism.** `os7-release` `dpkg-divert`s `/usr/lib/os-release`, so `base-files` writes to `.distrib` and can no longer touch the real name; the postinst derives the branded file **from** `.distrib` (never inventing Ubuntu's fields) and a dpkg file trigger re-derives it when base-files writes a new one. Measured by reinstalling `base-files` over the divert and reading `/etc/os-release` back. A step that has to be remembered forever was the defect. [../docs/SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) §3, C7 §6.2 |
 | UL11 | A generation bump depends on Microsoft publishing a matching suite (§2.3) | Cannot be mitigated, only scheduled around. Azure CLI on `noble` is the standing precedent. |
 
@@ -587,6 +596,24 @@ Findings: [SESSION-BOOT-ENVIRONMENTS.md](SESSION-BOOT-ENVIRONMENTS.md).
 ### Phase 3 — `Update-OS7` / `Restore-OS7`
 
 The §4.2 sequence, `-WhatIf` first. Drift detection in `Get-OS7Version`.
+
+**WRITTEN 2026-08-27, AND NOT YET RUN ON A MACHINE.**
+`powershell/OS7/OS7.Update.ps1` implements the sequence as §4.2 specifies it and
+[CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md) C10 corrects it,
+with `Get-OS7Release`, `Set-OS7UpdateChannel` and `Test-OS7Update` beside it.
+`Restore-OS7` was already real (2026-08-25). Findings, decisions and the honest
+limitation list: [SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md).
+
+Checked by `installer/testing/check-update-logic.py` — the real module against a
+fake `zfs`, `apt-get` and `chroot`, with **real mounts, real signatures and the
+ORDER asserted** — and by `Test-OS7Update` (25 tier-1 checks). **The gate is
+`run-s5.py` on a booted machine and it has not been run**; until it has, this is
+a claim about code. Writing it found four defects, three of them latent in code
+that already existed: BUILD-NOTES **#89**, **#90**, **#91**, and **#65** twice.
+
+Three things §4.2 and C10 leave undecided were settled here rather than
+discovered later — the migrations of a multi-release jump, boot-environment
+retention (UL9), and which verbs land together. See the session note.
 
 ### Phase 4 — Channels, hotfixes, unattended operation
 

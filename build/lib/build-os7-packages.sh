@@ -371,6 +371,7 @@ build_os7_release() {
 		./usr/lib/os7/build.conf \
 		./usr/lib/os7/release.json \
 		./usr/lib/os7/os-release-identity.py \
+		./usr/lib/os7/migrations/README \
 		./usr/share/keyrings/os7-archive-keyring.gpg \
 		./etc/apt/sources.list.d/os7.sources
 }

@@ -4560,3 +4560,162 @@ file re-reads it, and it earned its place on the first run. The same shape as
 #25, #36, #62 and #72: a setting was accepted by the thing that was supposed to
 act on it, and the thing did not act on it. **A configuration key is not an
 interface. Read back what it was supposed to change.**
+
+## 89. `Sort-Object Name -Descending` picked the OLDER kernel, and only an update could reveal it
+
+**Measured on 2026-08-27**, while writing `Update-OS7`.
+
+`Get-OS7BootEnvironmentKernel` chose which kernel a boot environment's menu
+entry would name:
+
+```powershell
+$k = Get-ChildItem -Path $dir -Filter 'vmlinuz-*' |
+     Sort-Object Name -Descending | Select-Object -First 1
+```
+
+That is a **string** sort. Asked directly:
+
+```
+'vmlinuz-7.0.0-9-generic','vmlinuz-7.0.0-31-generic' | Sort-Object -Descending
+  -> vmlinuz-7.0.0-9-generic
+```
+
+because `'9'` is greater than `'3'` at the fourth character of the ABI number.
+The menu would have named `7.0.0-9` while `/boot` held `7.0.0-31`.
+
+### Why it had never mattered, and what changes that
+
+Every boot environment this repository has ever produced held **exactly one**
+kernel. An installer unpacks one; nothing afterwards added a second. With one
+candidate the sort cannot be wrong.
+
+**An update is precisely the operation that leaves two.** `apt full-upgrade`
+inside a cloned environment installs the new kernel and leaves the old one until
+an autoremove takes it — so the first release ever applied to a machine would
+have produced an environment whose menu entry named the kernel it was replacing.
+
+The symptom would have been a machine booting the **older kernel against the
+newer root**: §4.3's half-activated pair, reached by a different road. Nothing
+would have reported it. `update-grub` is not involved — OS/7 writes its own menu
+entries (#67) — and the entry it wrote would have been internally consistent and
+pointing at the wrong file.
+
+### The fix, and the shape to remember
+
+Sort on the numbers, in order, with the flavour as the tie-break:
+
+```powershell
+$n = @([regex]::Matches($release, '\d+') | ForEach-Object { [int]$_.Value })
+```
+
+`Get-OS7NewestKernel` in `OS7.Update.ps1` does the same thing for the same
+reason, and `Test-OS7Update` checks both against a `/boot` holding `7.0.0-9`,
+`7.0.0-30` and `7.0.0-31`.
+
+**The general shape: a sort that has only ever seen one element has not been
+tested.** The same applies to the migration ordering in step 6′, which is why
+that is a numeric prefix and not a lexical one.
+
+---
+
+## 90. A freshness check that cannot read the date is a freshness check that is not running
+
+**Measured on 2026-08-27** by `installer/testing/check-update-logic.py`, on its
+first run.
+
+`Get-OS7ReleaseIndex` refuses a release index whose `valid_until` has passed —
+CURATION-AND-DELIVERY-PLAN §6.3's defence against a withdrawn release being
+served forever, because *"authenticity and freshness are different properties"*.
+
+It parsed the field with
+
+```powershell
+[datetime]::TryParse($validUntil, [cultureinfo]::InvariantCulture, …, [ref]$when)
+```
+
+and, when that returned false, **warned and carried on**.
+
+Three spellings of the same instant are in circulation in this repository:
+
+| written by | spelling | `TryParse` |
+|---|---|---|
+| `apt-ftparchive` into the `Release` file | `Fri, 25 Sep 2026 19:00:55 +0000` | **yes** |
+| `.ToString('r')` in the self-test | `Fri, 25 Sep 2026 19:00:55 GMT` | **yes** |
+| `date -u +'%a, %d %b %Y %H:%M:%S UTC'` | `Fri, 25 Sep 2026 19:00:55 UTC` | **no** |
+
+RFC 1123 spells the zone `GMT`, and that is what .NET accepts. `UTC` is not a
+zone designator it knows. So an index carrying the third spelling — the one
+`build-os7-repo.sh` composed before it started reading the `Release` file back —
+parsed as nothing, produced a warning, and was **accepted while expired**.
+
+### Two fixes, and the second is the one that matters
+
+`" UTC"` is normalised to `" GMT"` before parsing. That is the small half.
+
+The large half is that the `else` branch now **throws**. A check that cannot run
+must never read as a check that passed, which is the same rule that keeps
+`Get-OS7Version`'s `Drift` empty rather than `$false` until it is asked for
+(IDENTITY-PLAN I7), and the same rule as #72 and #85. An index with no
+`valid_until` at all is refused for the same reason.
+
+**The warning was written by someone who knew the parse could fail** — that is
+what the branch was for — and who then made not-parsing the harmless case. It is
+the harmful one: it is the only case in which the field is doing nothing.
+
+---
+
+## 91. `@('a', $b, $c + $d)` is FOUR elements, and it reads as three
+
+**Measured on 2026-08-27**, five times in one file, the first three by a
+`mount` that refused its own arguments.
+
+```powershell
+Invoke-OS7Native -Command 'mount' -Arguments @('--bind', $mp, $Root + $mp)
+```
+
+produces
+
+```
+mount --bind /srv /run/os7-update /srv
+```
+
+Four arguments, not three. The array literal binds first and the `+` then
+**appends to it**: the expression is `('--bind', $mp, $Root) + $mp`. PowerShell's
+own parser says so exactly —
+
+```
+$ast.FindAll({ $args[0] -is [BinaryExpressionAst] }, $true)
+op=Plus  Left=ArrayLiteralAst ['--bind', $mp, $Root]  Right=$mp
+```
+
+— and parenthesising the concatenation gives the three elements that were meant.
+
+### Why this one got through five times
+
+It reads correctly. `$Root + $mp` beside two other arguments looks like a path
+being built, and in every other position in the language it would be. Nothing
+warns: the array is valid, the call is valid, and the command it produces is a
+command.
+
+**Three of the five failed loudly and two would not have.** `mount --bind /srv
+/run/os7-update /srv` is rejected by mount. But
+
+```powershell
+Invoke-OS7InRoot -Root $Root -Command @('sh', '-c', "…" + "…" + "…")
+```
+
+hands `sh -c` the first fragment and the rest as `$0 $1 $2` — a valid
+invocation, silently running a third of the intended script.
+
+### The mechanism
+
+`installer/testing/check-ps-traps.py` keys on that AST signature, which is
+unambiguous: a `BinaryExpressionAst` with operator `Plus` whose left side is an
+`ArrayLiteralAst`. A deliberate append is written `$list + $x`, with the list in
+a variable — a `VariableExpressionAst`, not a literal — so the rule cannot fire
+on correct code. It found the fifth instance thirty seconds after it was
+written, in code that had just been reviewed by its author.
+
+The same file carries #65's rule, for the same reason: **both are defects that
+read correctly, parse correctly, and mean something else.** A note is not a
+defence against that; a parser is.

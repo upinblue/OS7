@@ -281,6 +281,9 @@ DESCRIPTOR="${OUT_DIR}/releases/${OS7_VERSION}/release.json"
 export OS7_REPO_OUT="${OUT_DIR}"
 export OS7_REPO_KEY_ID="${KEY_ID}"
 export OS7_REPO_KEY_UID="${KEY_UID}"
+# Where the migrations os7-release ships live in the source tree. The descriptor
+# is generated from this directory so that declared and shipped cannot diverge.
+export OS7_MIGRATION_SRC="${REPO}/build/packages/os7-release/tree/usr/lib/os7/migrations"
 export OS7_VERSION OS7_CHANNEL OS7_ARCH OS7_BUILT OS7_SUITE
 export OS7_UBUNTU_RELEASE OS7_DISTRIBUTION OS7_ARCHIVE_SNAPSHOT OS7_ARCHIVE_BASE
 
@@ -345,11 +348,18 @@ descriptor = {
         "os7-desktop": os.environ["OS7_VERSION"],
     },
     "components": components,
-    # C10 step 6'. Declared here, ordered, keyed by the version being upgraded
-    # FROM, and idempotent because a rollback followed by a re-update runs them
-    # twice — re-running a migration is normal operation, not an error path.
-    # Empty until there is a first release to migrate from.
-    "migrations": [],
+    # C10 step 6'. READ FROM THE PACKAGE that ships them rather than written
+    # here, so a release cannot declare a migration it does not carry — or
+    # carry one it does not declare, which is the direction that fails silently:
+    # Update-OS7 reads the descriptor to decide which releases' migrations to
+    # run, so an undeclared one would ship and never execute.
+    #
+    # The contract — <version>/<chroot|firstboot>/NN-name, and why the split
+    # exists — is in build/packages/os7-release/tree/usr/lib/os7/migrations/README.
+    "migrations": sorted(
+        d for d in os.listdir(os.environ["OS7_MIGRATION_SRC"])
+        if os.path.isdir(os.path.join(os.environ["OS7_MIGRATION_SRC"], d))
+    ) if os.path.isdir(os.environ.get("OS7_MIGRATION_SRC", "")) else [],
     "signing": {
         "key":     os.environ["OS7_REPO_KEY_ID"],
         "user_id": os.environ["OS7_REPO_KEY_UID"],

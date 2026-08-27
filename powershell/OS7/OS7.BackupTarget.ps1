@@ -496,7 +496,18 @@ function New-OS7BackupTarget {
 		'Remote' { 'Remote' }
 		default { 'LocalPool' }
 	}
-	$poolName = switch ($PSCmdlet.ParameterSetName) {
+	# $targetPool AND NOT $poolName — BUILD-NOTES #65.
+	#
+	# `$poolName` IS the `-PoolName` parameter: PowerShell variable names are
+	# case-insensitive. This worked, and only by the order things happen in: the
+	# switch's branches are evaluated before the assignment lands, so the
+	# 'Create' branch read the parameter's own value and the assignment was a
+	# no-op — while the 'Remote' branch quietly set the [string] parameter to ''.
+	# One reordered branch, or one new branch that read $PoolName after another
+	# had written it, and it would have stopped working with an error naming
+	# neither. Found 2026-08-27 by installer/testing/check-ps-traps.py,
+	# which was written after the same shape cost an afternoon in Update-OS7.
+	$targetPool = switch ($PSCmdlet.ParameterSetName) {
 		'Pool' { $Pool }
 		'Create' { $PoolName }
 		default { $null }
@@ -530,16 +541,16 @@ function New-OS7BackupTarget {
 		}
 
 		if (-not $PSCmdlet.ShouldProcess($CreateOn,
-				"ERASE this disk, put LUKS2 on it and create the pool '$poolName'")) {
+				"ERASE this disk, put LUKS2 on it and create the pool '$targetPool'")) {
 			return
 		}
-		New-OS7BackupPool -Device $CreateOn -PoolName $poolName -Passphrase $Passphrase
+		New-OS7BackupPool -Device $CreateOn -PoolName $targetPool -Passphrase $Passphrase
 	}
 
 	if (-not $Dataset) {
 		$hostname = [System.Net.Dns]::GetHostName()
 		$safe = $hostname -replace '[^0-9A-Za-z._-]', '-'
-		$Dataset = if ($kind -eq 'Remote') { "os7/$safe" } else { "$poolName/os7/$safe" }
+		$Dataset = if ($kind -eq 'Remote') { "os7/$safe" } else { "$targetPool/os7/$safe" }
 	}
 
 	if ($kind -eq 'LocalPool') {
