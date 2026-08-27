@@ -97,6 +97,28 @@
 		# Set-OS7UpdateChannel points the machine at a repository and switches on
 		# the apt source os7-release deliberately ships disabled.
 		'Update-OS7', 'Get-OS7Release', 'Set-OS7UpdateChannel', 'Test-OS7Update',
+		# Implemented — the device manager (docs/POWERSHELL-SURFACE-PLAN.md P8).
+		# Get-OS7Device's DEFAULT IS NOT EVERY DEVICE: it returns the ones that
+		# need attention, because a wall of forty working devices in equal
+		# weight is what `lspci -k` already is. -All is the other half.
+		#
+		# Repair-OS7Driver is the reason the group is worth building. A DKMS
+		# driver that failed to rebuild after a kernel update is gone at the
+		# next reboot and NOTHING SAYS SO — `dkms status` has three words,
+		# `added`, `built` and `installed`, and a failed build reports `added`,
+		# which is what a module nobody has ever tried to build also reports
+		# (measured, dkms 3.2.2).
+		'Get-OS7Device', 'Get-OS7Driver', 'Get-OS7DeviceStatus',
+		'Install-OS7Driver', 'Repair-OS7Driver',
+		# The update gate. Update-OS7 refuses to activate a boot environment in
+		# which a driver that works TODAY did not rebuild; this is the
+		# comparison it makes, exposed so that an operator who was blocked can
+		# look at the same thing it looked at.
+		'Get-OS7DriverRegression',
+		# The ONLY cmdlet in this product that transmits anything about the
+		# machine to a third party. Nothing calls it, ConfirmImpact is High, and
+		# the tool it needs is deliberately not on an OS/7 image.
+		'Send-OS7HardwareProbe',
 		# Stub — the command surface docs/DECISIONS.md documents
 		'Set-OS7Mode')
 	CmdletsToExport   = @()

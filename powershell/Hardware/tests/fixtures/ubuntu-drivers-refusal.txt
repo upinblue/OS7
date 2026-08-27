@@ -1,0 +1,7 @@
+# RECORDED 2026-08-27, ubuntu-drivers-common 1:0.10.9. This is stdout, and the
+# command exited without listing a single device.
+#
+# Parsed as a device list it is ZERO DEVICES, and zero devices from this command
+# means "there is no better driver for anything on this machine". The tool
+# declining to answer would have become a confident answer of no.
+Your running kernel (7.0.12-linuxkit) requires DKMS modules, and ubuntu-drivers was unable to determine if Secure Boot is enabled. If you have SB enabled, you will need to enroll a MOK to proceed, which will require access to your UEFI menu and administrative privileges. Please use --include-dkms if you want to proceed.

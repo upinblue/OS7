@@ -238,6 +238,69 @@ before the content goes in, not after.
 
 ---
 
+### P8 — The device manager shows what is WRONG, not what is there. Decided 2026-08-27.
+
+`Get-OS7Device` with no arguments returns only the devices that need attention.
+`-All` returns the rest.
+
+This is the only decision in this document that is about a DEFAULT rather than
+about a shape, and it is here because the default is the product. Linux already
+has the other thing: `lspci -k` prints every device on the machine in the same
+weight, most of them working, and leaves the reader to know which of forty-odd
+lines matters. A prettier version of that is not worth building. What a Windows
+administrator opens Device Manager for is the yellow mark.
+
+Four states, and the fifth that keeps them honest:
+
+| | |
+|---|---|
+| `Working` | a driver is bound and nothing better is on offer |
+| `DriverAvailable` | a driver exists that this machine does not have, or has and has not loaded |
+| `NeedsRebuild` | a DKMS driver is not built for the kernel that matters |
+| `NotSupported` | nothing bound, nothing on offer, nothing in the kernel claims it |
+| `Unknown` | it could not be determined — **never** folded into `Working` |
+
+`NeedsRebuild` is the one worth building the feature for. It is a failure mode
+with no Windows equivalent — a driver compiled per kernel, silently absent after
+a kernel update — and **`dkms status` has no word for it**: `added`, `built` and
+`installed` are its complete vocabulary, and a module whose build FAILED reports
+`added`, byte for byte what a module nobody has ever tried to build reports
+(measured, dkms 3.2.2, [SESSION-DEVICE-MANAGER.md](SESSION-DEVICE-MANAGER.md)
+§1.1). Every reader in this product therefore asks whether an `installed` row
+EXISTS for the kernel in question. Absence is the answer; nothing looks for a
+bad word.
+
+`Unknown` is not padding. A machine whose running kernel has no module index
+cannot answer "does a driver exist for this device" for ANY device on it, and
+`modprobe` reports that with the same exit code and nearly the same sentence as
+"nothing claims this alias" (§1.5). Folding the two together reports a
+completely working computer as having no drivers for anything.
+
+**Every device that needs attention carries a sentence and a command.** A device
+manager that identifies a problem and offers no next step has done the easy
+half. `NotSupported` is the exception and is honest about it: there is no fix,
+and what it offers instead is `Send-OS7HardwareProbe`.
+
+### P9 — Detection that Ubuntu already maintains is wrapped, never rebuilt. Decided 2026-08-27.
+
+Deciding that an NVIDIA card would do more with `nvidia-driver-570` than with
+nouveau is a data problem: a table of modalias patterns against package names,
+per release, kept current as cards appear. Ubuntu maintains it and ships it in
+`ubuntu-drivers-common`. A copy of it in this repository is a copy that goes
+stale, on a product whose entire delivery model is a curated release train.
+
+The same rule applied in the other direction is why the device ENUMERATION is
+not `lspci`: `lspci -mm -vkn` on a machine that cannot load libkmod resources
+drops every `Module:` line and still exits 0 (measured), and pciutils is a
+package a minimal image does not have. P5 already says every cmdlet asks the
+thing itself, and for devices the thing itself is `/sys/bus/pci`.
+
+So: enumerate from the kernel, and wrap the tool for the judgement the tool
+maintains. `pci.ids` is used for the human name only, which is cosmetic and
+allowed to be missing.
+
+---
+
 ## 3. The surface
 
 Tiers are by whether §6's guarantee survives without them, not by effort.
@@ -264,7 +327,8 @@ feature.
 | **Disks and encryption** | `Get-OS7Disk`, `Get-OS7Volume`, `Get-OS7Encryption`, `Add-/Remove-OS7EncryptionKeyProtector`, `New-/Get-OS7RecoveryKey`, `Backup-OS7RecoveryKey`, `Unlock-OS7Volume` |
 | **Firewall** | `Get-/Set-OS7FirewallProfile`, `Get-/New-/Remove-OS7FirewallRule` |
 | **Remoting** | `Enable-/Disable-/Get-OS7Remoting` |
-| **Inventory** | `Get-OS7ComputerInfo`, `Get-OS7SecureBoot`, `Get-OS7Tpm`, `Get-OS7Hardware` |
+| **Inventory** | `Get-OS7ComputerInfo`, `Get-OS7SecureBoot`, `Get-OS7Tpm` |
+| **Devices and drivers** | `Get-OS7Device`, `Get-OS7Driver`, `Get-OS7DeviceStatus`, `Install-OS7Driver`, `Repair-OS7Driver`, `Get-OS7DriverRegression`, `Send-OS7HardwareProbe` — `Hardware` + OS7 (P2, P8) |
 | **Certificates** | `Get-/Import-/Remove-OS7Certificate`, `Test-OS7Certificate` |
 
 `New-OS7User` is not a `useradd` wrapper. It is the only correct path on this
@@ -275,6 +339,9 @@ joins the existing `Get-OS7Home` / `Move-OS7Home`.
 `Get-OS7Encryption` and the key-protector cmdlets are where #69 lands — TPM
 enrolment belongs on first boot, not in the installer, and no code owns that
 moment yet.
+
+The device group replaced the `Get-OS7Hardware` that used to sit in Inventory.
+That name described a dump; P8 is a decision that a dump is not what is wanted.
 
 `Get-OS7Certificate` must report the stores **separately**. The system store is
 not the only one: .NET, Edge and Firefox (NSS) and Java each keep their own, and
@@ -317,7 +384,10 @@ The network group's READ half, in both layers. Nothing writes yet.
 | **Services and logs** — OS/7 layer: `Get-OS7Service`, `Start-/Stop-/Restart-/Set-OS7Service`, `Get-OS7Log`, `Get-OS7InstallLog` | **Done.** `installer/testing/check-service-logic.py`, 15 checks over ten unit states. `check-layering.py` gained a fourth rule, `P2-systemd`, at a baseline of **2** with both remaining sites named. |
 | **Management plane** — `Get-OS7EntraStatus`, `Get-OS7IntuneEnrollment`, `Get-OS7ArcStatus`, `Get-OS7ManagementStatus` | **Done, READ only.** `installer/testing/check-management-logic.py`, 25 checks against a real image with systemd as PID 1. Registration (`Register-OS7Entra`, `Register-OS7Intune`, `Connect-OS7Arc`) is **not started**: it needs a tenant and credentials and cannot be checked here at all. |
 | The resolver, wireless scan/connect, proxy, hostname | **Not started.** `Get-NetResolver` is deliberately deferred: `resolvectl` needs dbus and could not be measured on the host that built this, and writing a parser for output nobody here has seen is the assertion this project does not make. |
-| Everything in Tiers 1–3 outside the network group | **Not started.** |
+| **Devices and drivers** — `powershell/Hardware/`: `Get-HardwareDevice`, `Get-HardwareIdName`, `Get-/Resolve-/Add-KernelModule`, `Get-DkmsModule`, `ConvertFrom-DkmsStatus`, `Invoke-DkmsBuild`, `Get-UbuntuDriver`, `ConvertFrom-UbuntuDriversDevices`, `Install-UbuntuDriver`, `Get-/Install-/Send-HwProbe`, `Wait-UdevSettle` | **Done.** `Test-HardwareModule`, 52 checks, against a **recorded real sysfs dump** and **recorded dkms 3.2.2 output** — including a module whose build FAILED and which reads `added`. Devices come from sysfs, never from lspci. |
+| **Devices and drivers** — OS/7 layer: `Get-OS7Device`, `Get-OS7Driver`, `Get-OS7DeviceStatus`, `Install-OS7Driver`, `Repair-OS7Driver`, `Get-OS7DriverRegression`, `Send-OS7HardwareProbe` | **Done.** `installer/testing/check-device-logic.py`, 67 checks: the state rule case by case, the cmdlets end to end over a built sysfs tree, and the update gate. `check-layering.py` gained a fifth rule, `P2-hardware`, at **0**. Never run against real hardware — [SESSION-DEVICE-MANAGER.md](SESSION-DEVICE-MANAGER.md) §7. |
+| **The update gate** — `Update-OS7` step 6'' | **Done, and never run on a machine.** A DKMS driver that works on this machine now and did not build for the kernel the new environment boots **refuses** the activation; one that was already broken warns. `-IgnoreDriverRebuild` overrides. `check-update-logic.py` drives it against the real sequence with a fake dkms, and asserts the refusal lands before `update-initramfs`. |
+| Everything in Tiers 1–3 outside the network and device groups | **Not started.** |
 
 `Set-OS7NetworkAdapter` **rolls back by default** (decided 2026-08-27). It
 writes, applies, then asks `ip` — and when no address appears it restores the

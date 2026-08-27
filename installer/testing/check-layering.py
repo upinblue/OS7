@@ -4,7 +4,7 @@ The layering rules: powershell/OS7 reaches a subsystem only through its module.
 
     ./check-layering.py            report, and fail if any rule got worse
 
-TWO RULES SINCE 2026-08-27, and they are the same rule twice.
+FIVE RULES SINCE 2026-08-27, and they are the same rule five times.
 
 Z1 (docs/ZFS-POWERSHELL-PLAN.md) says Layer 3 (`powershell/OS7`) never invokes
 `zfs` or `zpool` itself — every ZFS operation goes through Layer 2
@@ -48,6 +48,14 @@ def direct(*commands):
       Invoke-OS7Native -Command 'netplan'     the shape the newer cmdlets use
       & zfs / & ip                            a direct call operator
       Start-Process zpool                     the other way to start one
+      Invoke-HardwareCommand -Command 'modprobe'
+                                              the shape that ROUTES THROUGH a
+                                              Layer-2 module and still names the
+                                              program — which is the violation
+                                              the rule is about. Found in
+                                              Repair-OS7Driver the day
+                                              P2-hardware was written, and the
+                                              fix was Add-KernelModule.
 
     `(?<![\\w$-])` is what keeps `$ip`, `-ip` and `zip` out of it. It matters
     for the network rule and not for the ZFS one, which is why it arrived with
@@ -56,7 +64,7 @@ def direct(*commands):
     alt = "|".join(commands)
     return re.compile(
         rf"""(?:^|[^\w-])(?:
-              Invoke-OS7Native [^\n]*? ['"]? (?<![\w$-]) (?:{alt}) \b ['"]?
+              Invoke-(?:OS7Native|HardwareCommand) [^\n]*? ['"]? (?<![\w$-]) (?:{alt}) \b ['"]?
             | & \s* ['"]? (?<![\w$-]) (?:{alt}) [\s('"]
             | Start-Process \s+ ['"]? (?<![\w$-]) (?:{alt}) \b
             )""",
@@ -121,6 +129,31 @@ RULES = [
         ("systemctl", "journalctl", "systemd-analyze", "loginctl", "busctl",
          "systemd-cat", "systemd-run"),
         "powershell/OS7 reaches systemd only through the Systemd module",
+    ),
+    Rule(
+        "P2-hardware", "does powershell/OS7 reach hardware directly?", "Hardware",
+        # 0, AND 0 THE DAY IT WAS WRITTEN — the cheapest moment to draw a line,
+        # the same way P2 was drawn before powershell/OS7 had any network code.
+        #
+        # It did not START at 0. Repair-OS7Driver called
+        # `Invoke-HardwareCommand -Command 'modprobe'`, which routes through the
+        # Hardware module and still decides, in Layer 3, to run modprobe. Adding
+        # `Invoke-HardwareCommand` to the invoker pattern above is what found
+        # it; the fix was Add-KernelModule, which also asks /proc/modules back —
+        # something the inline call did not do, and modprobe exits 0 for a
+        # module that loads and immediately removes itself.
+        #
+        # `dkms` is in this list and matters most. The device manager's whole
+        # value is that a DKMS module's build state is read ONE way, in one
+        # place, because `dkms status` reports a FAILED build as `added` and
+        # `dkms status -k <kernel>` does not filter by kernel (both measured,
+        # dkms 3.2.2). Two readers of that would eventually disagree, and the
+        # one that was wrong would be the one that said the machine was fine.
+        0,
+        ("lspci", "lsusb", "lshw", "dkms", "modprobe", "modinfo", "insmod",
+         "rmmod", "lsmod", "depmod", "ubuntu-drivers", "hw-probe", "udevadm",
+         "hwinfo"),
+        "powershell/OS7 reaches hardware only through the Hardware module",
     ),
 ]
 

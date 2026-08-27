@@ -1,0 +1,51 @@
+#
+#	An EXCERPT of pci.ids, Version 2026.02.12, as shipped by the `pci.ids`
+#	package on Ubuntu resolute at /usr/share/misc/pci.ids. Every line below is
+#	copied verbatim; nothing has been reformatted.
+#
+#	It is here so that the parser is checked against the real file's quirks —
+#	two spaces between id and name, one tab for a device, TWO tabs for a
+#	subsystem (which this module deliberately does not keep), a separate class
+#	section introduced by "C xx", and names that contain spaces, brackets,
+#	commas and apostrophes.
+#
+106b  Apple Inc.
+	0007  O'Hare I/O
+10de  NVIDIA Corporation
+	2504  GA106 [GeForce RTX 3060 Lite Hash Rate]
+		1458 403e  Gaming OC 12G
+1af4  Red Hat, Inc.
+	1041  Virtio 1.0 network device
+	1042  Virtio 1.0 block device
+	1043  Virtio 1.0 console
+	1044  Virtio 1.0 RNG
+	1045  Virtio 1.0 balloon
+	1053  Virtio 1.0 socket
+	105a  Virtio 1.0 file system
+
+# List of known device classes, subclasses and programming interfaces
+
+C 00  Unclassified device
+	00  Non-VGA unclassified device
+	01  VGA compatible unclassified device
+C 01  Mass storage controller
+	00  SCSI storage controller
+	08  Non-Volatile memory controller
+		02  NVM Express
+	80  Mass storage controller
+C 02  Network controller
+	00  Ethernet controller
+	80  Network controller
+C 03  Display controller
+	00  VGA compatible controller
+		00  VGA controller
+	02  3D controller
+C 05  Memory controller
+	80  Memory controller
+C 06  Bridge
+	00  Host bridge
+	04  PCI bridge
+C 07  Communication controller
+	80  Communication controller
+C 10  Encryption controller
+	00  Network and computing encryption device

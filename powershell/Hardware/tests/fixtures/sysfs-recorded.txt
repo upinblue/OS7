@@ -1,0 +1,135 @@
+DEVICE pci 0000:00:00.0
+  ATTR vendor 0x106b
+  ATTR device 0x1a05
+  ATTR class 0x060000
+  ATTR modalias pci:v0000106Bd00001A05sv00000000sd00000000bc06sc00i00
+  ATTR subsystem_vendor 0x0000
+  ATTR subsystem_device 0x0000
+DEVICE pci 0000:00:01.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1041
+  ATTR class 0x020000
+  ATTR modalias pci:v00001AF4d00001041sv00001AF4sd00000041bc02sc00i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0041
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:05.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1043
+  ATTR class 0x078000
+  ATTR modalias pci:v00001AF4d00001043sv00001AF4sd00000043bc07sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0043
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:06.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1042
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d00001042sv00001AF4sd00000042bc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0042
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:07.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1042
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d00001042sv00001AF4sd00000042bc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0042
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:08.0
+  ATTR vendor 0x1af4
+  ATTR device 0x105a
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d0000105Asv00001AF4sd0000005Abc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x005a
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:09.0
+  ATTR vendor 0x1af4
+  ATTR device 0x105a
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d0000105Asv00001AF4sd0000005Abc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x005a
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:0a.0
+  ATTR vendor 0x1af4
+  ATTR device 0x105a
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d0000105Asv00001AF4sd0000005Abc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x005a
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:0b.0
+  ATTR vendor 0x1af4
+  ATTR device 0x105a
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d0000105Asv00001AF4sd0000005Abc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x005a
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:0c.0
+  ATTR vendor 0x1af4
+  ATTR device 0x105a
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d0000105Asv00001AF4sd0000005Abc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x005a
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:0d.0
+  ATTR vendor 0x1af4
+  ATTR device 0x105a
+  ATTR class 0x018000
+  ATTR modalias pci:v00001AF4d0000105Asv00001AF4sd0000005Abc01sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x005a
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:0e.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1053
+  ATTR class 0x078000
+  ATTR modalias pci:v00001AF4d00001053sv00001AF4sd00000053bc07sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0053
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:0f.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1044
+  ATTR class 0x100000
+  ATTR modalias pci:v00001AF4d00001044sv00001AF4sd00000044bc10sc00i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0044
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE pci 0000:00:10.0
+  ATTR vendor 0x1af4
+  ATTR device 0x1045
+  ATTR class 0x058000
+  ATTR modalias pci:v00001AF4d00001045sv00001AF4sd00000045bc05sc80i00
+  ATTR subsystem_vendor 0x1af4
+  ATTR subsystem_device 0x0045
+  LINK driver ../../../../../bus/pci/drivers/virtio-pci
+DEVICE usb 1-0:1.0
+  ATTR modalias usb:v1D6Bp0002d0700dc09dsc00dp01ic09isc00ip00in00
+  ATTR bInterfaceClass 09
+  LINK driver ../../../../../bus/usb/drivers/hub
+DEVICE usb 2-0:1.0
+  ATTR modalias usb:v1D6Bp0003d0700dc09dsc00dp03ic09isc00ip00in00
+  ATTR bInterfaceClass 09
+  LINK driver ../../../../../bus/usb/drivers/hub
+DEVICE usb usb1
+  ATTR idVendor 1d6b
+  ATTR idProduct 0002
+  ATTR manufacturer Linux 7.0.12-linuxkit vhci_hcd
+  ATTR product USB/IP Virtual Host Controller
+  ATTR bDeviceClass 09
+  ATTR bDeviceSubClass 00
+  LINK driver ../../../../bus/usb/drivers/usb
+DEVICE usb usb2
+  ATTR idVendor 1d6b
+  ATTR idProduct 0003
+  ATTR manufacturer Linux 7.0.12-linuxkit vhci_hcd
+  ATTR product USB/IP Virtual Host Controller
+  ATTR bDeviceClass 09
+  ATTR bDeviceSubClass 00
+  LINK driver ../../../../bus/usb/drivers/usb

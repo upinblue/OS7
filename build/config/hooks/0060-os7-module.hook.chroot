@@ -1,11 +1,12 @@
 #!/bin/bash
 # OS/7 — verify the PowerShell modules landed and are loadable.
 #
-# FIVE modules since 2026-08-27: Zfs (the generic ZFS layer,
+# SIX modules since 2026-08-27: Zfs (the generic ZFS layer,
 # docs/ZFS-POWERSHELL-PLAN.md), Net (the generic network layer,
 # docs/POWERSHELL-SURFACE-PLAN.md P2), Time (the generic clock layer, same
-# plan), Systemd (units and the journal, same plan) and OS7 (the product layer
-# on top of all four). All five are placed
+# plan), Systemd (units and the journal, same plan), Hardware (devices, kernel
+# modules and DKMS, same plan, P8) and OS7 (the product layer on top of all
+# five). All six are placed
 # by build.sh, which copies powershell/<name>/ into the staged
 # includes.chroot. That keeps ONE source of truth per module in the repo - the
 # June-2026 tree carried a second baked-in copy that could drift.
@@ -111,6 +112,20 @@ check_module Time Get-ChronyTracking Get-ChronySource Get-ChronySourceFile \
 check_module Systemd Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
 	Restart-SystemdUnit Set-SystemdUnitStartup Update-SystemdUnit Get-SystemdJournal \
 	Test-SystemdModule
+# Hardware is the fifth generic layer. ConvertFrom-DkmsStatus is named here
+# rather than left to Get-DkmsModule alone because it is the parser the UPDATE
+# TRAIN's driver gate depends on, and it is the one function in this module a
+# machine can be asked to run with no dkms installed at all.
+#
+# Send-HwProbe is named too, and for the opposite reason: it is the only
+# function in this product that transmits anything about the machine to a third
+# party, and naming it here means an image cannot silently gain or lose it
+# without this line changing.
+check_module Hardware Get-HardwareDevice Get-HardwareIdName \
+	Get-KernelModule Resolve-KernelModule Add-KernelModule \
+	Get-DkmsModule ConvertFrom-DkmsStatus Invoke-DkmsBuild \
+	Get-UbuntuDriver ConvertFrom-UbuntuDriversDevices Install-UbuntuDriver \
+	Get-HwProbe Install-HwProbe Send-HwProbe Wait-UdevSettle Test-HardwareModule
 # The boot-environment cmdlets are named here rather than left to the stub that
 # used to stand in for them: they are what Restore-OS7 AND Update-OS7 are built
 # out of (docs/SESSION-BOOT-ENVIRONMENTS.md), they are staged from the same one
@@ -156,7 +171,10 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Get-OS7Service Start-OS7Service Stop-OS7Service Restart-OS7Service \
 	Set-OS7Service Get-OS7Log Get-OS7InstallLog \
 	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
-	Get-OS7ManagementStatus
+	Get-OS7ManagementStatus \
+	Get-OS7Device Get-OS7Driver Get-OS7DeviceStatus \
+	Install-OS7Driver Repair-OS7Driver Get-OS7DriverRegression \
+	Send-OS7HardwareProbe
 
 # A file that is PRESENT AND EMPTY still imports and still exports nothing, so
 # the export check above cannot see it. `cp -a` onto a full filesystem produces
@@ -168,7 +186,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 # machine somebody is trying to identify.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
 	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.Management.ps1 \
-	OS7.Update.ps1 \
+	OS7.Device.ps1 OS7.Update.ps1 \
 	OS7.format.ps1xml os7-endpoints.json; do
 	if [ ! -s "${MODULES_ROOT}/OS7/${part}" ]; then
 		echo "OS/7 hook 0060: ${MODULES_ROOT}/OS7/${part} is missing or empty" >&2
@@ -193,6 +211,19 @@ echo "OS/7 hook 0060:   Zfs: ${n} recorded ZFS captures shipped for the self-tes
 # recorded `ip -j` and `rfkill -J` output, their absence would not break an
 # import, and without them Test-NetModule silently degrades from checking the
 # readers to checking the YAML escaping alone.
+# The same argument again for Hardware, with one difference worth stating: its
+# fixtures are .txt rather than .json, because a recorded sysfs dump and a
+# `dkms status` are line-oriented text and turning them into JSON would put a
+# transformation between the recording and the thing under test.
+HWFIX="${MODULES_ROOT}/Hardware/tests/fixtures"
+nh=$(find "${HWFIX}" -name '*.txt' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${nh}" -lt 5 ]; then
+	echo "OS/7 hook 0060: only ${nh} recorded fixtures under ${HWFIX}; expected at least 5" >&2
+	echo "OS/7 hook 0060: see powershell/Hardware/tests/fixtures/README" >&2
+	exit 1
+fi
+echo "OS/7 hook 0060:   Hardware: ${nh} recorded fixtures shipped for the self-test"
+
 NETFIX="${MODULES_ROOT}/Net/tests/fixtures"
 nn=$(find "${NETFIX}" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
 if [ "${nn}" -lt 4 ]; then

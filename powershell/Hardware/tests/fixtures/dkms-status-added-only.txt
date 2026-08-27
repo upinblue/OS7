@@ -1,0 +1,15 @@
+# RECORDED 2026-08-27. THE SAME MACHINE as dkms-status-mixed.txt, asked
+#
+#     dkms status -k 9.9.9-99-generic
+#
+# a kernel it has no builds for at all. Exit code 0.
+#
+# `-k` DID NOT FILTER AND DID NOT ANSWER ABOUT THAT KERNEL. It dropped the
+# kernel and architecture columns from every row and left three modules reading
+# `added` -- including `good`, which is installed for 7.0.0-30-generic, and
+# `bad`, whose build failed. A gate that ran `dkms status -k $newKernel` and
+# looked for something wrong would find nothing here, on a machine where
+# nothing has been built for $newKernel at all.
+bad/3.0: added
+good/1.0: added
+half/2.0: added

@@ -264,5 +264,345 @@
       </ListControl>
     </View>
 
+
+    <!--
+      THE DEVICE MANAGER.
+
+      Two views, and the split is the same one Get-OS7Version makes: the OBJECT
+      carries fields that filter, sort and pipe, and the person who typed the
+      cmdlet wants a page. Both are true at once only if the rendering is
+      separate from the value.
+
+      Get-OS7Device is a TABLE, because a list of devices is a list.
+      Get-OS7DeviceStatus is a CUSTOM CONTROL, because a report is not.
+    -->
+    <View>
+      <Name>OS7.Device</Name>
+      <ViewSelectedBy><TypeName>OS7.Device</TypeName></ViewSelectedBy>
+      <!--
+        GROUPED BY STATE, and Get-OS7Device has already sorted worst first, so
+        the group headers come out in that order: what is broken now, then what
+        has no driver at all, then what could be better. Alphabetical sorting
+        would put "A better driver is available" above "Needs a driver rebuild"
+        and bury the one that means something is about to stop working.
+      -->
+      <GroupBy>
+        <PropertyName>State</PropertyName>
+        <CustomControl>
+          <CustomEntries>
+            <CustomEntry>
+              <CustomItem>
+                <ExpressionBinding>
+                  <ScriptBlock>
+                    switch ($_.State) {
+                      'NeedsRebuild'    { 'Needs a driver rebuild' }
+                      'NotSupported'    { 'No driver available' }
+                      'DriverAvailable' { 'A better driver is available' }
+                      'Unknown'         { 'Could not be determined' }
+                      default           { 'Working' }
+                    }
+                  </ScriptBlock>
+                </ExpressionBinding>
+              </CustomItem>
+            </CustomEntry>
+          </CustomEntries>
+        </CustomControl>
+      </GroupBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Class</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Device</Label><Width>44</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Driver</Label><Width>14</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Address</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Class</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <!--
+                A DASH, NOT AN EMPTY CELL. A blank column reads as "the value is
+                missing"; "-" reads as "there is no driver", which is the fact.
+              -->
+              <TableColumnItem>
+                <ScriptBlock>if ($_.Driver) { $_.Driver } else { '-' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>Address</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!--
+      Get-OS7Device | Format-List. The Action and the Command are the whole
+      point of the object and are the first things after the name.
+    -->
+    <View>
+      <Name>OS7.Device.List</Name>
+      <ViewSelectedBy><TypeName>OS7.Device</TypeName></ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><PropertyName>Name</PropertyName></ListItem>
+              <ListItem><PropertyName>State</PropertyName></ListItem>
+              <ListItem><PropertyName>Action</PropertyName></ListItem>
+              <ListItem>
+                <Label>Command</Label>
+                <ScriptBlock>if ($_.Command) { $_.Command } else { '(nothing to run)' }</ScriptBlock>
+              </ListItem>
+              <ListItem><PropertyName>Class</PropertyName></ListItem>
+              <ListItem>
+                <Label>Driver</Label>
+                <ScriptBlock>if ($_.Driver) { $_.Driver } else { '(none bound)' }</ScriptBlock>
+              </ListItem>
+              <ListItem><PropertyName>Bus</PropertyName></ListItem>
+              <ListItem><PropertyName>Address</PropertyName></ListItem>
+              <ListItem><PropertyName>HardwareId</PropertyName></ListItem>
+              <ListItem>
+                <Label>Alternatives</Label>
+                <ScriptBlock>
+                  if (@($_.Alternatives).Count -eq 0) { '(none)' }
+                  else {
+                    (@($_.Alternatives) | ForEach-Object {
+                      $_.Package + $(if ($_.Recommended) { ' (recommended)' } else { '' })
+                    }) -join ', '
+                  }
+                </ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>SupportUrl</Label>
+                <ScriptBlock>if ($_.SupportUrl) { $_.SupportUrl } else { '' }</ScriptBlock>
+              </ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <View>
+      <Name>OS7.Driver</Name>
+      <ViewSelectedBy><TypeName>OS7.Driver</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Driver</Label><Width>18</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Version</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Kind</Label><Width>6</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Built</Label><Width>7</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Loaded</Label><Width>7</Width></TableColumnHeader>
+          <TableColumnHeader><Label>For this kernel</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Version</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Kind</PropertyName></TableColumnItem>
+              <!--
+                "yes"/"NO" rather than True/False. The capital is deliberate:
+                the whole column is scanned for the row that is wrong, and
+                "False" among "True"s is harder to find than "NO" among "yes"es.
+              -->
+              <TableColumnItem>
+                <ScriptBlock>if ($_.Healthy) { 'yes' } else { 'NO' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.Loaded) { 'yes' } else { 'no' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                  <!--
+                    THE COMBINATION THAT MATTERS IS "loaded and NOT built". It
+                    means the driver is working right now, from a kernel it was
+                    compiled for, and will be gone after the next reboot — the
+                    silent case this whole feature exists for. It is spelled out
+                    in the row rather than left for the reader to combine two
+                    columns and realise.
+                  -->
+                  if ($_.Healthy) { $_.Kernel }
+                  elseif ($_.Loaded) { 'LOADED NOW, GONE AFTER REBOOT' }
+                  elseif (@($_.InstalledFor).Count) { 'built for ' + (@($_.InstalledFor) -join ', ') }
+                  else { 'not built for any kernel' }
+                </ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!--
+      Get-OS7DeviceStatus — THE PAGE.
+
+      This is the one an operator types, and it is the reason the default view
+      of Get-OS7Device hides working devices: between them, the two say "here
+      is what is wrong, here is what to do, and here is how much I did not
+      print". The last of those three is what makes a short report trustworthy
+      rather than suspicious.
+
+      IT NEVER SAYS "healthy" WHEN A QUESTION COULD NOT BE ASKED. If
+      ubuntu-drivers is not installed the better-driver question was not
+      answered, and the page says so instead of implying the answer was no.
+    -->
+    <View>
+      <Name>OS7.DeviceStatus</Name>
+      <ViewSelectedBy><TypeName>OS7.DeviceStatus</TypeName></ViewSelectedBy>
+      <CustomControl>
+        <CustomEntries>
+          <CustomEntry>
+            <CustomItem>
+              <ExpressionBinding>
+                <ScriptBlock>
+                  $L = [System.Collections.Generic.List[string]]::new()
+                  $nl = [Environment]::NewLine
+
+                  # WRAPPED BY WORD, in a loop, because the obvious regex is
+                  # wrong in a way that looks right until it runs. A lookbehind
+                  # of `(?&lt;=.{1,64})` matches at EVERY position that has
+                  # between one and sixty-four characters before it, which is
+                  # every position — so the split happened at every space and
+                  # the first render of this page printed one word per line.
+                  function Wrap([string]$text, [int]$width, [string]$indent) {
+                    $out = @(); $line = ''
+                    foreach ($w in ($text -split '\s+' | Where-Object { $_ })) {
+                      if ($line -and ($line.Length + 1 + $w.Length) -gt $width) {
+                        $out += ($indent + $line); $line = $w
+                      }
+                      else { $line = $(if ($line) { "$line $w" } else { $w }) }
+                    }
+                    if ($line) { $out += ($indent + $line) }
+                    return $out
+                  }
+
+                  $L.Add("Hardware      $($_.TotalDevices) devices, kernel $($_.Kernel)")
+
+                  $labels = @{
+                    'NeedsRebuild'    = 'Needs a driver rebuild'
+                    'NotSupported'    = 'No driver available'
+                    'DriverAvailable' = 'A better driver is available'
+                    'Unknown'         = 'Could not be determined'
+                  }
+
+                  $shown = 0
+                  foreach ($state in @('NeedsRebuild', 'NotSupported', 'DriverAvailable', 'Unknown')) {
+                    $group = @($_.Attention | Where-Object { $_.State -eq $state })
+                    if ($group.Count -eq 0) { continue }
+                    $L.Add('')
+                    $L.Add("  ! $($labels[$state])")
+                    foreach ($d in $group) {
+                      $shown++
+                      $L.Add('')
+                      # Name, then class, then where it is — ON ONE LINE WHEN
+                      # IT FITS, because the three together are how a person
+                      # identifies a device and splitting them costs a line per
+                      # device on a page that is meant to be short.
+                      #
+                      # AND THE NAME IS NEVER TRUNCATED TO MAKE IT FIT. A real
+                      # device name runs to fifty-eight characters
+                      # ("NVIDIA Corporation GA106 [GeForce RTX 3060 Lite Hash
+                      # Rate]") and it is the string a person searches for and
+                      # pastes into a support case. When it will not fit, the
+                      # class and the address move to their own line and the
+                      # columns still line up.
+                      if ($d.Name.Length -le 46) {
+                        $L.Add("      $($d.Name.PadRight(46)) $($d.Class.PadRight(11))$($d.Address)")
+                      }
+                      else {
+                        $L.Add("      $($d.Name)")
+                        $L.Add("      $(''.PadRight(46)) $($d.Class.PadRight(11))$($d.Address)")
+                      }
+                      foreach ($line in (Wrap $d.Action 62 '      ')) { $L.Add($line) }
+                      if ($d.Command) { $L.Add("      -&gt; $($d.Command)") }
+                      if ($d.SupportUrl) { $L.Add("         $($d.SupportUrl)") }
+                    }
+                  }
+
+                  # DRIVERS WITH NO DEVICE. A tap driver or a filesystem breaks
+                  # the same way and appears in no device list at all.
+                  $orphans = @($_.OrphanedDrivers)
+                  if ($orphans.Count -gt 0) {
+                    $L.Add('')
+                    $L.Add('  ! Drivers with no visible device')
+                    foreach ($d in $orphans) {
+                      $L.Add('')
+                      $L.Add("      $($d.Name) $($d.Version)")
+                      foreach ($line in (Wrap $d.Action 62 '      ')) { $L.Add($line) }
+                      if ($d.Command) { $L.Add("      -&gt; $($d.Command)") }
+                    }
+                  }
+
+                  if ($shown -eq 0 -and $orphans.Count -eq 0) {
+                    $L.Add('')
+                    $L.Add('  Nothing needs attention.')
+                  }
+
+                  # THE LINE THAT MAKES THE SHORT REPORT TRUSTWORTHY. Without
+                  # it, a page listing two devices out of forty-seven reads as a
+                  # page that failed to find the rest.
+                  $working = $_.Counts.Working
+                  $L.Add('')
+                  $L.Add($(if ($working -eq 1) {
+                        '  1 device is working normally.   Get-OS7Device -All'
+                      } else {
+                        "  $working devices are working normally.   Get-OS7Device -All"
+                      }))
+
+                  # AND WHAT COULD NOT BE ASKED. A report that silently omits a
+                  # question reads as one that asked it and found nothing.
+                  if (-not $_.DriverOffersChecked) {
+                    $L.Add('')
+                    $L.Add('  ubuntu-drivers is not installed, so this machine could NOT be')
+                    $L.Add('  asked whether a better driver exists for any of its devices.')
+                    $L.Add('  That question is unanswered here, not answered no.')
+                  }
+
+                  ($L -join $nl)
+                </ScriptBlock>
+              </ExpressionBinding>
+              <NewLine/>
+            </CustomItem>
+          </CustomEntry>
+        </CustomEntries>
+      </CustomControl>
+    </View>
+
+    <View>
+      <Name>OS7.DriverRegression</Name>
+      <ViewSelectedBy><TypeName>OS7.DriverRegression</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Driver</Label><Width>18</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Version</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Before</Label><Width>7</Width></TableColumnHeader>
+          <TableColumnHeader><Label>After</Label><Width>7</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Verdict</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Module</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Version</PropertyName></TableColumnItem>
+              <!--
+                THREE VALUES, NOT TWO. $null is "the running system did not have
+                this module at all", which is neither yes nor no and is the
+                difference between a regression and a new driver that failed.
+              -->
+              <TableColumnItem>
+                <ScriptBlock>
+                  if ($null -eq $_.WasInstalled) { 'n/a' }
+                  elseif ($_.WasInstalled) { 'yes' } else { 'no' }
+                </ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.IsInstalled) { 'yes' } else { 'NO' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>Verdict</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
   </ViewDefinitions>
 </Configuration>

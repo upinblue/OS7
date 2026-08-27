@@ -654,7 +654,14 @@ function New-OS7BackupPool {
 		Invoke-OS7Native -Command 'sgdisk' -Arguments @(
 			'-n1:1M:0', '-t1:8309', "-c1:$($script:OS7BackupPartLabel)", $Device) | Out-Null
 		try { Invoke-OS7Native -Command 'partprobe' -Arguments @($Device) | Out-Null } catch { }
-		try { Invoke-OS7Native -Command 'udevadm' -Arguments @('settle') | Out-Null } catch { }
+		# Wait-UdevSettle, NOT `udevadm settle`. Moved to powershell/Hardware on
+		# 2026-08-27 when P2-hardware was written: waiting on the kernel's device
+		# queue is a hardware question, and this was the only site in Layer 3
+		# that asked one. The behaviour is the same — it still never throws —
+		# and it now carries a timeout rather than udevadm's own 120 seconds,
+		# which is a long time for a cmdlet to block on a busy machine.
+		Import-OS7HardwareLayer
+		$null = Wait-UdevSettle
 
 		$deadline = (Get-Date).AddSeconds(30)
 		while (-not (Test-Path -LiteralPath $part) -and (Get-Date) -lt $deadline) {

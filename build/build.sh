@@ -352,6 +352,12 @@ stage_ps_module Time
 # Its fixtures are recorded systemctl/journalctl output - including a MESSAGE
 # that is a byte array rather than a string - and travel with it.
 stage_ps_module Systemd
+# Hardware is the fifth generic layer: PCI and USB devices, the module bound to
+# each, DKMS build state and ubuntu-drivers' offers. Its fixtures are a recorded
+# real sysfs dump and recorded dkms 3.2.2 output, and they travel with it for
+# the reason the Zfs captures do: `Test-HardwareModule` then runs inside the
+# chroot at build time, where there is no dkms and no hardware to ask.
+stage_ps_module Hardware
 stage_ps_module OS7
 
 # ---------------------------------------------------------------------------

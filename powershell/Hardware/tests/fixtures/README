@@ -1,0 +1,48 @@
+Recorded output, and what was NOT recorded.
+
+Every file here says at its top where it came from. Two of them are CONSTRUCTED
+rather than recorded, and they say so in capitals, because this repository's
+whole discipline is that a claim carries its measurement — and a fixture that
+looks recorded and is not is a measurement that never happened.
+
+  RECORDED, on 2026-08-27, in a container on an Apple Silicon Mac
+  (Docker Desktop, aarch64, ubuntu:26.04, kernel 7.0.12-linuxkit):
+
+    sysfs-recorded.txt              /sys/bus/{pci,usb}/devices, every attribute
+                                    this module reads, and the driver symlink
+                                    targets verbatim
+    dkms-status-mixed.txt           dkms 3.2.2, three modules deliberately put
+                                    into three different states
+    dkms-status-added-only.txt      the same machine asked about a kernel it has
+                                    no builds for -- the trap
+    ubuntu-drivers-refusal.txt      ubuntu-drivers declining to answer, in prose,
+                                    on stdout
+    pci.ids-excerpt                 lines copied verbatim out of pci.ids
+                                    2026.02.12 as shipped by the pci.ids package
+
+  CONSTRUCTED, and here is exactly how far the construction can be trusted:
+
+    sysfs-constructed.txt           An NVIDIA card, a Bluetooth dongle with no
+                                    driver, a card whose driver is a DKMS
+                                    module. No such hardware was available to
+                                    this session. The ATTRIBUTE NAMES and the
+                                    SHAPES are the recorded ones above; the ids
+                                    are real ids from pci.ids; the states are
+                                    the four this feature exists for. What it
+                                    does NOT prove is that a real RTX 3060
+                                    presents itself this way.
+    ubuntu-drivers-devices.txt      Written against ubuntu-drivers-common
+                                    1:0.10.9's OWN SOURCE -- the print
+                                    statements in command_devices() were read
+                                    line by line and the format string
+                                    "%-9s: %s -%s" and the flag order
+                                    (distro/third-party, free/non-free, builtin,
+                                    recommended) reproduced from them. That is
+                                    stronger than guessing and weaker than a
+                                    recording, and the difference matters if
+                                    ubuntu-drivers ever changes the code.
+
+The machine this was recorded on has no discrete GPU, no DKMS-backed device and
+no unsupported hardware, which is why the interesting half had to be
+constructed. installer/testing/check-device-logic.py is where the STATE RULES
+are checked; these fixtures are where the PARSERS are.

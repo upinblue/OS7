@@ -27,6 +27,10 @@
 #       asks the machine which world it is in rather than assuming.
 #   6'. run the release's migrations, in order, keyed by the version being
 #       upgraded FROM
+#   6''. the COMPILED drivers: does every DKMS module that works on this machine
+#       today also build for the kernel the new environment will boot? A
+#       regression REFUSES; a module that was already broken warns. Added
+#       2026-08-27 with the device manager — see OS7.Device.ps1
 #   7.  update-initramfs
 #   8.  update-grub inside the clone
 #   9.  activate the pair, then prune to -Keep environments
@@ -50,6 +54,17 @@
 #     resolves its default -From from `Where-Object Active`, and two matches
 #     coerce to the string "os7_a os7_b". BUILD-NOTES #65's shape. Everything
 #     here dismounts before it touches a BE cmdlet, and says so at each site.
+#
+#   * A DRIVER CAN VANISH ACROSS AN UPDATE AND NOTHING SAYS SO. A DKMS module
+#     is compiled per kernel; a new kernel means a new build; and when that
+#     build fails `dkms status` reports the module as `added`, which is byte for
+#     byte what it reports about a module nobody has ever tried to build
+#     (measured, dkms 3.2.2 — there is no `failed` and no `broken`). The machine
+#     then keeps working perfectly until the reboot, at which point a network
+#     card or a filesystem is simply gone. Step 6'' is the refusal, and it
+#     refuses only on a REGRESSION — a driver that works right now and would
+#     not — because blocking on a module that was already broken would make a
+#     machine carrying one permanently un-updatable.
 #
 #   * apt's EXIT CODE IS NOT THE ANSWER. `apt-get update` exits 0 with every
 #     index failed; `apt-get install` exits 0 having installed a version other
@@ -1468,6 +1483,22 @@ function Update-OS7 {
 		Drift means somebody has run apt by hand (§5), so the release being
 		applied is not being applied to the system the manifest describes.
 
+	.PARAMETER IgnoreDriverRebuild
+		Activate the new environment although a DKMS driver that WORKS ON THIS
+		MACHINE NOW did not build for the kernel the new environment boots.
+
+		Without it, that is a refusal — step 8a below. It is a refusal rather
+		than a warning because the failure is silent in both directions: dkms
+		reports a failed build as `added`, exactly as it reports a module nobody
+		has tried to build, and the machine keeps working perfectly until the
+		reboot, at which point a network card or a filesystem is simply gone.
+		A warning printed during an update nobody watched is not a warning.
+
+		A driver that was ALREADY not built before the update never blocks. That
+		distinction is the whole reason the switch is usable at all: a machine
+		carrying somebody's abandoned webcam module would otherwise never be
+		updatable except by turning the check off.
+
 	.EXAMPLE
 		Update-OS7 -WhatIf
 
@@ -1487,7 +1518,8 @@ function Update-OS7 {
 		[switch]$Reboot,
 		[int]$Keep = $script:OS7KeepBootEnvironments,
 		[switch]$AllowDevelopment,
-		[switch]$Force
+		[switch]$Force,
+		[switch]$IgnoreDriverRebuild
 	)
 
 	if ($Keep -lt 1) {
@@ -1612,6 +1644,10 @@ function Update-OS7 {
 			Activated       = $false
 			Migrations      = @()
 			Removed         = @()
+			# What the compiled drivers did across this update. Step 8a fills
+			# it; an empty list on a machine with no DKMS modules is the normal
+			# case and means the same thing as "nothing to check".
+			Drivers         = @()
 			Reason          = $null
 		}
 
@@ -1620,6 +1656,24 @@ function Update-OS7 {
 				"build boot environment $beName and apply the release into it")) {
 			$plan.Reason = 'reported only; nothing was changed'
 			return $plan
+		}
+
+		# THE COMPILED DRIVERS AS THEY ARE NOW, read BEFORE anything is cloned
+		# or mounted.
+		#
+		# BEFORE, and it has to be. Once the clone is assembled two environments
+		# are in play — Get-OS7BootEnvironment's `Active` is ZFS's `mounted`,
+		# which is "mounted anywhere" — and a DKMS reading taken then is
+		# ambiguous about which system it describes. It is also the only moment
+		# the question "did this driver work BEFORE the update" can be asked at
+		# all: after step 5 the environment's dkms state has already changed.
+		#
+		# Wrapped, because a machine with no dkms is the ordinary case and must
+		# not fail an update over a comparison that has nothing to compare.
+		$driversBefore = @()
+		try { $driversBefore = @(Get-OS7Driver) }
+		catch {
+			Write-OS7Step "could not read the DKMS state before the update: $_"
 		}
 
 		Write-OS7Step "update $from -> $to into $beName"
@@ -1801,6 +1855,10 @@ function Update-OS7 {
 
 			# ---- 5. apt: install, upgrade, autoremove — in that order ------
 			#
+			# THE KERNEL PACKAGES GO IN HERE, and so, through their postinst
+			# hooks, do the DKMS rebuilds. Step 8a below is what asks whether
+			# they worked.
+			#
 			# THE TARGET VERSION IS PINNED ACROSS full-upgrade, and without this
 			# -Version can only ever name the newest release in the suite.
 			# `apt install os7-server=1.0.1.0` marks it manually installed at
@@ -1899,6 +1957,55 @@ function Update-OS7 {
 				throw [System.InvalidOperationException]::new(
 					"the new environment has no kernel in /boot. It cannot boot.")
 			}
+
+			# ---- 6''. The compiled drivers, BEFORE the initramfs -----------
+			#
+			# HERE AND NOT LATER, for two reasons. A DKMS module that is not
+			# installed is not in /lib/modules, so an initramfs built now would
+			# not carry it — and if the operator repairs the driver afterwards
+			# they would have an initramfs that predates the fix. And a refusal
+			# that comes before the expensive step is a refusal that costs less.
+			#
+			# HERE AND NOT EARLIER because $kernel is not known before this
+			# point, and the kernel is the entire question: `dkms status` says
+			# nothing about a kernel unless it is asked about the right one, and
+			# it cannot be asked with `-k` at all (it does not filter — measured).
+			$drivers = @(Get-OS7DriverRegression -Root $root -Kernel $kernel `
+					-Before $driversBefore)
+			$plan.Drivers = $drivers
+			$regressions = @($drivers | Where-Object { $_.Verdict -eq 'Regression' })
+			$stillBroken = @($drivers | Where-Object { $_.Verdict -eq 'StillBroken' })
+
+			foreach ($d in $stillBroken) {
+				# WARNED, NEVER BLOCKING. The update did not cause it, and
+				# refusing would leave the machine unable to update at all.
+				Write-OS7Step "driver: $($d.Action)"
+				Write-OS7UpdateLog "DRIVER still-broken $($d.Module)/$($d.Version)"
+			}
+			foreach ($d in $regressions) {
+				Write-OS7Step "driver REGRESSION: $($d.Action)"
+				Write-OS7UpdateLog "DRIVER REGRESSION $($d.Module)/$($d.Version) not built for $kernel"
+			}
+
+			if ($regressions.Count -gt 0 -and -not $IgnoreDriverRebuild) {
+				# THROWN FROM INSIDE THE try, SO THE finally DISMOUNTS THE CLONE.
+				# The environment is left built and INACTIVE — which is exactly
+				# what -Stage produces, so the operator's way forward is the one
+				# that already exists rather than a special case.
+				$names = ($regressions | ForEach-Object { "$($_.Module)/$($_.Version)" }) -join ', '
+				$logs = ($regressions | ForEach-Object { "  $($_.LogFile)" }) -join "`n"
+				throw [System.InvalidOperationException]::new(
+					"$($regressions.Count) driver(s) work on this machine now and did not " +
+					"build for $kernel : $names.`n`n" +
+					"Rebooting into $beName would lose them, and nothing would say so — " +
+					"dkms reports a failed build as ``added``, which is what it reports for " +
+					"a module nobody has tried to build.`n`n" +
+					"The compiler's output is the only place the reason exists:`n$logs`n`n" +
+					"$beName is built and NOT activated. Fix the driver and run the update " +
+					"again, or accept the loss with:`n`n" +
+					"    Update-OS7 -IgnoreDriverRebuild`n")
+			}
+
 			Write-OS7UpdateLog ("migrations: " + $(if ($ran.Count) { $ran -join ' ' } else { 'none' }))
 			Write-OS7Step "rebuilding the initramfs for $kernel"
 			Invoke-OS7InRoot -Root $root -Command @('update-initramfs', '-u', '-k', 'all') | Out-Null

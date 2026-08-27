@@ -2388,6 +2388,10 @@ function Restore-OS7 {
 # OS7.Update.ps1 is LAST in the list, and that is a fact about line order rather
 # than taste: it calls Get-OS7Home's neighbours in the backup files and every
 # helper above, and PowerShell defines functions as the script runs.
+# OS7.Device.ps1 sits immediately BEFORE it, and had to: since 2026-08-27 the
+# update train calls Get-OS7Driver to decide whether the environment it has
+# just built still has its DKMS drivers, and a function that is not defined yet
+# is not a function PowerShell can be asked about.
 # OS7.Network.ps1 is the SEVENTH, and it sits before OS7.Update.ps1 for the same
 # line-order reason the rest of this list is ordered: it defines
 # Import-OS7NetLayer, which the update train will want when it has to report
@@ -2396,7 +2400,7 @@ function Restore-OS7 {
 # it does not depend on" is a rule that survives the next file being added and
 # "somewhere in the middle" is not.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1', 'OS7.Update.ps1')) {
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -2457,4 +2461,20 @@ Export-ModuleMember -Function Get-OS7Version,
 	# reports the thing C8a leaves broken: brokers.d is empty on every image
 	# built so far, so Entra sign-in cannot work.
 	Get-OS7EntraStatus, Get-OS7IntuneEnrollment, Get-OS7ArcStatus,
-	Get-OS7ManagementStatus
+	Get-OS7ManagementStatus,
+	# The device manager. FOUR STATES AND A DEFAULT THAT HIDES THE BORING ONE:
+	# `Get-OS7Device` with no arguments returns only what needs attention,
+	# because a wall of forty working devices is what Linux already gives you
+	# and it is not a device manager. Repair-OS7Driver is the one-click fix for
+	# the failure this group exists for - a DKMS driver that did not rebuild
+	# after a kernel update and will be gone at the next reboot, which
+	# `dkms status` has no word for.
+	Get-OS7Device, Get-OS7Driver, Get-OS7DeviceStatus,
+	Install-OS7Driver, Repair-OS7Driver,
+	# The gate Update-OS7 calls before it activates a boot environment. Public
+	# because an operator who was blocked has to be able to look at the same
+	# comparison the update looked at.
+	Get-OS7DriverRegression,
+	# The only cmdlet in this product that sends anything to a third party.
+	# Nothing calls it.
+	Send-OS7HardwareProbe

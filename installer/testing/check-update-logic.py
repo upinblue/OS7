@@ -393,6 +393,39 @@ logcall()
 sys.exit(0)
 '''
 
+# dkms, AND THE ONLY THING THIS FAKE MODELS IS THE THING THAT MATTERS.
+#
+# `dkms status` has three words and none of them is "failed": `added`, `built`,
+# `installed` (measured against dkms 3.2.2 — powershell/Hardware/tests/fixtures).
+# A module whose build FAILED reports `added`, byte for byte what a module
+# nobody has ever tried to build reports. So this fake never emits a failure
+# word, because there is none to emit, and the gate has to conclude from an
+# ABSENT row instead.
+#
+# OS7_FAKE_DKMS is the whole status output, verbatim. Empty means dkms is
+# installed and has nothing registered, which is the ordinary machine.
+FAKE_DKMS = LOG_PREAMBLE + r"""
+logcall()
+if sys.argv[1:2] == ["status"]:
+    # TWO ANSWERS, AND WHICH ONE DEPENDS ON WHETHER WE ARE "INSIDE" THE CLONE.
+    # FAKE_CHROOT sets OS7_FAKE_ROOT, so its presence is exactly the difference
+    # between the update asking the RUNNING system -- the `Before` reading,
+    # taken before anything is mounted -- and asking the environment it has
+    # just built. Without that split every run compares a state with itself and
+    # the gate can never fire at all, which is what the first version of this
+    # fake did and what the checks below caught.
+    inside = bool(os.environ.get("OS7_FAKE_ROOT"))
+    text = os.environ.get("OS7_FAKE_DKMS" if inside else "OS7_FAKE_DKMS_BEFORE", "")
+    if text:
+        # RUNNING is substituted with this container's actual kernel: the
+        # `Before` reading is judged against /proc/sys/kernel/osrelease and a
+        # fixture cannot know that string.
+        import platform
+        print(text.replace("RUNNING", platform.uname().release).replace("|", "\n"))
+    sys.exit(0)
+sys.exit(0)
+"""
+
 FAKES = {
     "zfs": FAKE_ZFS,
     "mount": FAKE_MOUNT,
@@ -407,6 +440,9 @@ FAKES = {
     "unmkinitramfs": FAKE_TRUE,
     "dpkg-reconfigure": FAKE_TRUE,
     "systemctl": FAKE_TRUE,
+    # Step 6'' — the compiled drivers. Added 2026-08-27 with the device manager.
+    "dkms": FAKE_DKMS,
+    "modprobe": FAKE_TRUE,
     "zpool": FAKE_TRUE,
 }
 
@@ -765,6 +801,67 @@ def main():
     check(rc != 0 and "not " + NEXT_VERSION in err,
           "apt exiting 0 having installed a different version",
           (err.strip().splitlines() or [""])[-1][:110])
+
+    # -- step 6'': the compiled drivers ---------------------------------------
+    #
+    # THE GATE, AGAINST THE REAL SEQUENCE. installer/testing/check-device-logic.py
+    # owns the verdict rule case by case; what is checked here is that
+    # Update-OS7 actually stops, that it stops in the right PLACE -- the
+    # environment built and NOT activated, which is what -Stage already
+    # produces, so the operator's way forward is one that already exists -- and
+    # that the switch overriding it works.
+    print("\n  step 6\u2032\u2032 - a driver that works now and did not rebuild")
+
+    # A machine with no DKMS modules at all: the overwhelmingly common case,
+    # and it must not be slowed down or stopped by any of this.
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment")
+    check(rc == 0, "a machine with no DKMS modules updates exactly as before",
+          (err.strip().splitlines() or [""])[-1][:90])
+
+    # THE REGRESSION. r8168 is installed for the kernel the machine runs now,
+    # and inside the new environment there is no row for the new kernel at all
+    # -- which is what a FAILED build looks like, because dkms has no word for
+    # one.
+    REGRESSION = {"OS7_FAKE_DKMS_BEFORE": "r8168/8.053.00, RUNNING, x86_64: installed",
+                  "OS7_FAKE_DKMS": "r8168/8.053.00: added"}
+    rc, out, err, calls = run_update(work, bindir, "-Stage -AllowDevelopment",
+                                     env_extra=dict(REGRESSION))
+    check(rc != 0 and "r8168" in err,
+          "a driver that works NOW and did not build for the new kernel STOPS the update",
+          (err.strip().splitlines() or [""])[-1][:90])
+    # AND IT STOPS BEFORE THE EXPENSIVE STEPS. The gate is step 6'' and the
+    # initramfs and the menu are 7 and 8, so a blocked run must not have reached
+    # either. It matters beyond wasted minutes: an initramfs built now would NOT
+    # contain the missing module, so an operator who repaired the driver
+    # afterwards would be left with an initramfs that predates the fix.
+    ran = [c.get("argv", [None])[0] for c in calls if isinstance(c, dict)]
+    check("update-initramfs" not in ran,
+          "and it stops BEFORE the initramfs is rebuilt, not after")
+    check("update-grub" not in ran,
+          "and before the boot menu is regenerated")
+    check("make.log" in err,
+          "and the refusal names the compiler log, the only place the reason exists")
+    check("-IgnoreDriverRebuild" in err,
+          "and it names the switch that overrides it, rather than leaving a dead end")
+
+    # THE SAME RUN, ACCEPTED. The operator has read it and decided.
+    rc, out, err, _ = run_update(work, bindir,
+                                 "-Stage -AllowDevelopment -IgnoreDriverRebuild",
+                                 env_extra=dict(REGRESSION))
+    check(rc == 0, "-IgnoreDriverRebuild proceeds",
+          (err.strip().splitlines() or [""])[-1][:90])
+
+    # ALREADY BROKEN IS NOT A REGRESSION. Blocking here would leave a machine
+    # carrying one abandoned module unable to update ever again, and the only
+    # route out would be the switch -- which is the same as having no check.
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment",
+                                 env_extra={"OS7_FAKE_DKMS_BEFORE": "oldcam/1.2: added",
+                                            "OS7_FAKE_DKMS": "oldcam/1.2: added"})
+    check(rc == 0,
+          "a driver that was ALREADY broken warns and does NOT stop the update",
+          (err.strip().splitlines() or [""])[-1][:90])
+    check("oldcam" in err,
+          "and it is still reported, rather than passing in silence")
 
     # -- the initramfs assertion ---------------------------------------------
     print("\n  the initramfs carries the TPM2 handler forward, or it says so")

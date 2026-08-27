@@ -244,6 +244,16 @@ chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/p
 echo "EXIT=$rc" >> /tmp/systemd.txt
 emit systemd.selftest  bash -c 'tail -30 /tmp/systemd.txt'
 
+# The Hardware module, asked to check itself. Same trade as the four above and
+# one more reason: this module's fixtures include `dkms status` output in which
+# a module whose build FAILED reads `added` — the same word a module nobody has
+# ever tried to build reads. A parser that stopped honouring that distinction
+# would make the update train's driver gate pass a machine whose network card
+# is about to disappear, and it would do so silently. Better to fail the build.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Hardware/Hardware.psd1 -Force; Test-HardwareModule' >/tmp/hardware.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/hardware.txt
+emit hardware.selftest bash -c 'tail -30 /tmp/hardware.txt'
+
 # The three facts about backups that are properties of the IMAGE rather than of
 # any program: the two binaries are there, the defaults file OS/7 reads its
 # legal-key list out of is there, and no policy has been baked in.
@@ -769,6 +779,31 @@ def main() -> None:
         check("EXIT=0" in st,
               "the Systemd module parses the systemctl and journalctl output it ships with",
               sdetail)
+
+    # -- the Hardware module, asked to check itself -------------------------
+    #
+    # Read exactly like the Systemd one, three outcomes included: an image built
+    # before this module existed has no Hardware directory, and "not on the
+    # image" must not be reported as "this chroot could not answer".
+    ht = img.get("hardware.selftest", "")
+    hran = "Hardware self-test:" in ht
+    habsent = ("no valid module file" in ht) or ("was not loaded" in ht)
+    if habsent:
+        check(False, "the Hardware module is on the image",
+              "not at /usr/local/share/powershell/Modules/Hardware -- an ISO built "
+              "before the device manager, or build.sh did not stage it")
+    elif not hran:
+        print("      note  the Hardware self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine.")
+    else:
+        hsummary = next((l.strip() for l in ht.splitlines()
+                         if l.strip().startswith("Hardware self-test:")
+                         and "passed" in l), "")
+        hdetail = hsummary or next(
+            (l.strip() for l in ht.splitlines() if "FAILED:" in l), "")
+        check("EXIT=0" in ht,
+              "the Hardware module parses the sysfs and dkms output it ships with",
+              hdetail)
 
     # -- the backup layer ---------------------------------------------------
     #

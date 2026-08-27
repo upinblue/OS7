@@ -109,16 +109,22 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
-./installer/testing/check-layering.py     # Z1, P2, P2-time, P2-systemd: does OS7
-                                          #   still reach ZFS, the network, the
-                                          #   clock or systemd directly. FOUR
-                                          #   rules; the first three at 0, the
-                                          #   systemd one at 2 and named
+./installer/testing/check-layering.py     # Z1, P2, P2-time, P2-systemd,
+                                          #   P2-hardware: does OS7 still reach
+                                          #   ZFS, the network, the clock,
+                                          #   systemd or the hardware directly.
+                                          #   FIVE rules; four at 0, the systemd
+                                          #   one at 2 and named
 ./installer/testing/check-management-logic.py # Entra/Intune/Arc DECISIONS against
                                           #   a real image with systemd as PID 1.
                                           #   25 checks. Proves the thing that
                                           #   matters: brokers.d is EMPTY, so
                                           #   Entra sign-in cannot work (C8a)
+./installer/testing/check-device-logic.py # the DEVICE MANAGER's state rule and
+                                          #   the update train's driver gate: 67
+                                          #   checks over a sysfs tree it builds
+                                          #   and recorded dkms output. No
+                                          #   hardware, no dkms, seconds
 ./installer/testing/check-service-logic.py # Get-OS7Service's HEALTHY rule: ten
                                           #   unit states, the WORKING ones as
                                           #   carefully as the broken. No systemd
@@ -187,13 +193,21 @@ kernel into another environment's menu entry, which is §4.3's half-activated
 pair reached by a road nothing checks.
 [docs/SESSION-UPDATE-TRAIN.md](docs/SESSION-UPDATE-TRAIN.md).
 
-**Four PowerShell modules since 2026-08-27, and the direction between them
-matters.** `powershell/Zfs/`, `powershell/Net/` and `powershell/Time/` are the
-generic layers — none knows anything about OS/7, and all three would run on any
-Ubuntu host. `powershell/OS7/` is the product layer on top. Z1 says OS7 reaches
-ZFS only through Zfs, P2 says the same about the network and **P2-time** about
-the clock; `check-layering.py` holds **all three** at baselines that may fall and
-may not rise.
+**Six PowerShell modules since 2026-08-27, and the direction between them
+matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
+`powershell/Systemd/` and `powershell/Hardware/` are the generic layers — none
+knows anything about OS/7, and all five would run on any Ubuntu host.
+`powershell/OS7/` is the product layer on top. Z1 says OS7 reaches ZFS only
+through Zfs, P2 says the same about the network, **P2-time** about the clock,
+**P2-systemd** about units and the journal and **P2-hardware** about devices and
+DKMS; `check-layering.py` holds **all five** at baselines that may fall and may
+not rise.
+
+**P2-hardware started above zero and was fixed to zero the same hour**, which is
+the argument for writing a rule as a check: `Repair-OS7Driver` called
+`Invoke-HardwareCommand -Command 'modprobe'` — routing *through* the Hardware
+module and still deciding, in Layer 3, to run modprobe. Widening the invoker
+pattern to catch that shape is what found it.
 
 **P2-time was 1 for about ten minutes**, and that is the argument for a check
 rather than a paragraph: `Sync-OS7Time` called `chronyc makestep` itself, under a
@@ -208,6 +222,34 @@ not be asked, `$false` when it was asked and is not disciplining, `$true` when i
 is. Time is Tier 1 because Kerberos refuses a ticket more than five minutes out,
 and a drifting clock does not report a clock problem — it reports that the
 password is wrong.
+
+**The device manager exists since 2026-08-27, and the only reason it is worth
+building is a word that does not exist.** `Get-OS7Device` returns the devices
+that need attention — `-All` for the rest — in four states with a sentence and a
+command for each. Three of the four are ordinary. The fourth, `NeedsRebuild`, is
+the distinctly Linux failure a Windows admin has no model for: a DKMS driver is
+compiled per kernel, a kernel update means a new build, and **when that build
+fails `dkms status` says `added`** — byte for byte what it says about a module
+nobody has ever tried to build. `added`, `built`, `installed` is the complete
+vocabulary; there is no `failed` and no `broken` (measured, dkms 3.2.2). So
+nothing in this product looks for a bad word: it asks whether an `installed` row
+EXISTS for the kernel in question, and treats absence as the answer. And it
+never passes `-k` to dkms, because `dkms status -k <kernel>` does not filter —
+asked about a kernel with no builds at all it lists every module in the `added`
+shape and exits 0.
+
+**Update-OS7 step 6'' refuses to activate a boot environment whose drivers
+regressed.** A DKMS module that works on this machine NOW and did not build for
+the kernel the new environment boots stops the update; one that was already
+broken warns, because blocking on that would make a machine carrying one
+abandoned module permanently un-updatable. `-IgnoreDriverRebuild` overrides.
+[docs/SESSION-DEVICE-MANAGER.md](docs/SESSION-DEVICE-MANAGER.md).
+
+**Devices come from sysfs, never from lspci**, and `hw-probe` is deliberately
+NOT on an OS/7 image (C13). `lspci -mm -vkn` on a machine that cannot load
+libkmod resources drops every `Module:` line — the half that says which drivers
+COULD handle a device — and still exits 0; pciutils is also a package a minimal
+image lacks. `/sys/bus/pci` is the kernel itself.
 
 **The netplan document is generated in two languages and that is temporary.**
 `NetworkPlan.ToNetplanYaml` (C#, what `os7-setup` writes) and
@@ -504,6 +546,12 @@ powershell/Time/            the GENERIC clock layer (P2). chrony's CSV (-c, so
                             no table parsing), the /etc/localtime symlink and
                             the /etc/adjtime RTC question. NTP servers go in
                             sources.d, NOT chrony.conf - measured
+powershell/Hardware/        the GENERIC hardware layer (P2). PCI and USB from
+                            SYSFS - not lspci, which drops its Module: lines and
+                            exits 0 when libkmod fails. DKMS, modprobe,
+                            ubuntu-drivers and hw-probe, wrapped. Knows nothing
+                            about OS/7: which state a device is in is a product
+                            judgement and lives one layer up
 powershell/OS7/             the OS7 module - ONE source, staged by build.sh
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four
                             files DOT-SOURCED by OS7.psm1, so a staging that
@@ -528,6 +576,11 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
                             one piece of OS/7 policy here: FIVE MINUTES, the
                             Kerberos skew, past which a clock problem presents
                             as a failed sign-in
+  OS7.Device.ps1            the DEVICE MANAGER, and the update train's driver
+                            gate. The default view hides working devices on
+                            purpose (P8): a wall of forty devices in equal weight
+                            is what `lspci -k` already is. Get-OS7DriverRegression
+                            is what Update-OS7 asks before it activates anything
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. The EIGHTH
                             dot-sourced file, and LAST in the list because it

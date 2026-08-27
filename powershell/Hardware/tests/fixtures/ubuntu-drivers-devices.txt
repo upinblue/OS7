@@ -1,0 +1,32 @@
+# CONSTRUCTED against ubuntu-drivers-common 1:0.10.9's OWN SOURCE. The print
+# statements in command_devices() were read line by line:
+#
+#     print("== %s ==" % device)
+#     print("%-9s: %s" % (k, v))
+#     print("%-9s: %s -%s" % ("driver", pkg, info_str))
+#
+# and info_str is built in this order: " distro" or " third-party", then
+# " free" or " non-free", then " builtin" if set, then " recommended" if set.
+# The nine-character left-padding of the key is why the colons line up.
+#
+# That is stronger than guessing at a format and weaker than a recording, and
+# the difference matters if ubuntu-drivers ever changes those lines.
+#
+# THE `builtin` LINE IS THE POINT OF THIS FIXTURE. xserver-xorg-video-nouveau
+# is already in the kernel. A device manager that offered it as a fix would be
+# telling an operator to install what the machine has.
+== /sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0 ==
+modalias : pci:v000010DEd00002504sv00001458sd0000403Ebc03sc00i00
+vendor   : NVIDIA Corporation
+model    : GA106 [GeForce RTX 3060 Lite Hash Rate]
+driver   : nvidia-driver-535 - distro non-free
+driver   : nvidia-driver-570 - distro non-free recommended
+driver   : nvidia-driver-570-open - distro non-free
+driver   : xserver-xorg-video-nouveau - distro free builtin
+
+== /sys/devices/pci0000:00/0000:02:00.0 ==
+modalias : pci:v000010ECd00008168sv00001043sd000086C7bc02sc00i00
+vendor   : Realtek Semiconductor Co., Ltd.
+model    : RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller
+driver   : r8168-dkms - distro free
+

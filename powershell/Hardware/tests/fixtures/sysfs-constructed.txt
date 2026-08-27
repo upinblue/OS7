@@ -1,0 +1,69 @@
+# CONSTRUCTED, NOT RECORDED. Read the second half of README before trusting a
+# line of this.
+#
+# The machine this repository was worked on has no discrete GPU, no
+# DKMS-backed device and no unsupported hardware — every device on it is a
+# virtio device bound to virtio-pci. So the four states this feature exists to
+# surface could not be recorded and are written here instead.
+#
+# WHAT IS REAL IN THIS FILE: the attribute names, the value formats and the
+# symlink shapes are copied from sysfs-recorded.txt, which is a real dump. The
+# vendor and device ids are real ids out of pci.ids 2026.02.12. The class codes
+# are real PCI and USB class codes.
+#
+# WHAT IS NOT: that a real RTX 3060, a real r8168 or a real MT7922 present
+# themselves with exactly these attributes. Nothing here should ever be quoted
+# as evidence about a physical device.
+#
+# The five cases, and the state each must produce:
+#
+#   0000:00:00.0  a host bridge with NO DRIVER            -> Working
+#                 the case that would make every machine on earth report a
+#                 fault if "no driver" meant "broken". Recorded, actually:
+#                 this one is copied out of sysfs-recorded.txt.
+#   0000:01:00.0  NVIDIA GA106, nouveau bound             -> DriverAvailable
+#   0000:02:00.0  Realtek 8168, r8168 bound (DKMS)        -> NeedsRebuild
+#   0000:03:00.0  a NIC with NO DRIVER, alias resolvable  -> DriverAvailable
+#   3-10          MT7922 Bluetooth, interface unbound     -> NotSupported
+
+DEVICE pci 0000:00:00.0
+  ATTR vendor 0x106b
+  ATTR device 0x1a05
+  ATTR class 0x060000
+  ATTR modalias pci:v0000106Bd00001A05sv00000000sd00000000bc06sc00i00
+  ATTR subsystem_vendor 0x0000
+  ATTR subsystem_device 0x0000
+DEVICE pci 0000:01:00.0
+  ATTR vendor 0x10de
+  ATTR device 0x2504
+  ATTR class 0x030000
+  ATTR modalias pci:v000010DEd00002504sv00001458sd0000403Ebc03sc00i00
+  ATTR subsystem_vendor 0x1458
+  ATTR subsystem_device 0x403e
+  LINK driver ../../../../bus/pci/drivers/nouveau
+DEVICE pci 0000:02:00.0
+  ATTR vendor 0x10ec
+  ATTR device 0x8168
+  ATTR class 0x020000
+  ATTR modalias pci:v000010ECd00008168sv00001043sd000086C7bc02sc00i00
+  ATTR subsystem_vendor 0x1043
+  ATTR subsystem_device 0x86c7
+  LINK driver ../../../../bus/pci/drivers/r8168
+DEVICE pci 0000:03:00.0
+  ATTR vendor 0x8086
+  ATTR device 0x15f3
+  ATTR class 0x020000
+  ATTR modalias pci:v00008086d000015F3sv00008086sd00003000bc02sc00i00
+  ATTR subsystem_vendor 0x8086
+  ATTR subsystem_device 0x3000
+DEVICE usb 3-10
+  ATTR idVendor 0e8d
+  ATTR idProduct 0616
+  ATTR manufacturer MediaTek Inc.
+  ATTR product Wireless_Device
+  ATTR bDeviceClass e0
+  ATTR bDeviceSubClass 01
+  ATTR modalias usb:v0E8Dp0616d0100dcE0dsc01dp01icE0isc01ip01in00
+DEVICE usb 3-10:1.0
+  ATTR modalias usb:v0E8Dp0616d0100dcE0dsc01dp01icE0isc01ip01in00
+  ATTR bInterfaceClass e0

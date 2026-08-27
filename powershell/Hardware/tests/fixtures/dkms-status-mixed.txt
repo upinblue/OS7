@@ -1,0 +1,14 @@
+# RECORDED 2026-08-27, dkms 3.2.2, in a container, three modules deliberately
+# put into three different states:
+#
+#   good  built AND installed for 7.0.0-30-generic     -> `installed`
+#   half  built and NEVER installed                    -> `built`
+#   bad   build attempted and FAILED, dkms exited 10   -> `added`
+#
+# THE THIRD LINE IS THE WHOLE REASON THIS FEATURE EXISTS. `bad/3.0: added` is
+# byte for byte what dkms says about a module nobody has ever tried to build.
+# The failure is not in the status, and there is no word in `dkms status` that
+# would carry it -- `added`, `built` and `installed` are the complete set.
+bad/3.0: added
+good/1.0, 7.0.0-30-generic, aarch64: installed
+half/2.0, 7.0.0-30-generic, aarch64: built
