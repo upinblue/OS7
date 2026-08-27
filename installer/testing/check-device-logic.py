@@ -26,6 +26,13 @@ the ones that must not, and three of them exist only because a source can fail:
     no module index         -> must NOT read as "no driver exists"
     dkms absent             -> must read as an ordinary machine
 
+AND THE LAST PART CHECKS THE WRITE PATHS UNDER -WhatIf, which nothing else here
+touches. A cmdlet whose pipeline binding is wrong works perfectly in every test
+that calls it directly and throws the first time somebody uses it the way its own
+help says to. The fake counts every non-read invocation, because a -WhatIf that
+still ran something is the whole point of -WhatIf missed and no exit code shows
+it.
+
 WHAT THIS IS NOT. It says nothing about what dkms, ubuntu-drivers or sysfs
 emit — `Test-HardwareModule` checks the parsers against recorded real output,
 including a `dkms status` in which a module whose build FAILED reads `added`.
@@ -415,6 +422,92 @@ finally {{
 """
 
 
+# ---------------------------------------------------------------------------
+# The WRITE paths, under -WhatIf.
+#
+# Everything above reads. These four are what an operator actually invokes, and
+# nothing else in this file touches them: a cmdlet whose pipeline binding is
+# wrong is a cmdlet that works perfectly in every test and throws the first time
+# somebody uses it the way its own help says to.
+# ---------------------------------------------------------------------------
+WHATIF = r"""
+$ErrorActionPreference = 'Stop'
+Import-Module '{hardware}' -Force
+Import-Module '{os7}' -Force
+
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("os7-wi-" + [guid]::NewGuid().ToString('N'))
+& (Get-Module Hardware) {{ param($f, $r) New-HardwareSysfsTree -FixtureFile $f -Root $r }} `
+    (Join-Path '{fixtures}' 'sysfs-constructed.txt') $tmp
+$null = New-Item -ItemType Directory -Force -Path (Join-Path $tmp 'proc')
+Set-Content -LiteralPath (Join-Path $tmp 'proc/modules') -Value 'r8168 573440 0 - Live 0x0 (OE)'
+
+# THE FAKE COUNTS EVERY COMMAND. -WhatIf that still ran something would be the
+# whole point of -WhatIf missed, and an exit code cannot show it.
+$ran = @{{ n = 0 }}
+& (Get-Module Hardware) {{
+    param($fixtures, $new, $old, $ran)
+    $script:HardwareCommandOverride = {{
+        param($cmd, $a)
+        switch ($cmd) {{
+            'dkms' {{
+                if ($a[0] -ne 'status') {{ $ran.n++ }}
+                return [pscustomobject]@{{ ExitCode = 0; StdErr = ''
+                    StdOut = "r8168/8.053.00, $old, x86_64: installed" }}
+            }}
+            'ubuntu-drivers' {{
+                if ($a[0] -ne 'devices') {{ $ran.n++ }}
+                return [pscustomobject]@{{ ExitCode = 0; StdErr = ''
+                    StdOut = (Get-Content -Raw -LiteralPath (Join-Path $fixtures 'ubuntu-drivers-devices.txt')) }}
+            }}
+            'modprobe' {{
+                $alias = $a[-1]
+                # `-R` ANYWHERE IN THE ARGUMENTS, not at position 0.
+                # Resolve-KernelModule passes `-S <kernel> -R <alias>` whenever a
+                # kernel is named, which is every call Get-OS7Device makes — and
+                # the first version of this fake counted all of them as writes
+                # and reported that -WhatIf had run two commands. The fake was
+                # wrong, not the cmdlet, and it took reading the argv to see it.
+                if ('-R' -notin $a) {{ $ran.n++ }}
+                if ($alias -like 'pci:v00008086*') {{
+                    return [pscustomobject]@{{ ExitCode = 0; StdOut = "e1000e`n"; StdErr = '' }}
+                }}
+                return [pscustomobject]@{{ ExitCode = 1; StdOut = ''
+                    StdErr = "modprobe: FATAL: Module $alias not found.`n" }}
+            }}
+        }}
+        return [pscustomobject]@{{ ExitCode = 127; StdOut = ''; StdErr = '' }}
+    }}.GetNewClosure()
+}} '{fixtures}' '{running}' '{old}' $ran
+
+$out = [ordered]@{{}}
+try {{
+    # Install-OS7Driver, FROM THE PIPELINE, which is how its own help says to
+    # use it.
+    $t = @(Get-OS7Device -State DriverAvailable -Kernel '{running}' -Root $tmp |
+        Install-OS7Driver -WhatIf -Root $tmp 4>&1 3>&1) | Out-String
+    $out.install = $t
+
+    # Repair-OS7Driver, from the pipeline, and with -All.
+    $t = @(Get-OS7Driver -Unhealthy -Kernel '{running}' -Root $tmp |
+        Repair-OS7Driver -WhatIf -Kernel '{running}' -Root $tmp 4>&1 3>&1) | Out-String
+    $out.repair = $t
+    $t = @(Repair-OS7Driver -All -WhatIf -Kernel '{running}' -Root $tmp 4>&1 3>&1) | Out-String
+    $out.repairAll = $t
+
+    # The upload cmdlet, on a machine without the tool.
+    try {{ $null = Send-OS7HardwareProbe -Root $tmp -Confirm:$false; $out.probe = 'DID NOT REFUSE' }}
+    catch {{ $out.probe = $_.Exception.Message }}
+
+    $out.commandsRun = [int]$ran.n
+    [pscustomobject]$out | ConvertTo-Json -Depth 4 -Compress
+}}
+finally {{
+    & (Get-Module Hardware) {{ $script:HardwareCommandOverride = $null }}
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
+}}
+"""
+
+
 def run_powershell(script):
     r = subprocess.run(["pwsh", "-NoProfile", "-Command", script],
                        capture_output=True, text=True)
@@ -573,6 +666,39 @@ def main():
           "a blocked driver names the compiler log, which is the ONLY place the "
           "reason exists", str(gate["r8168"]["LogFile"]))
     check(gate["zfs"]["LogFile"] is None, "and a healthy one does not")
+
+    # ---- part 6: the write paths, under -WhatIf -------------------------
+    print("\n  the write paths, under -WhatIf")
+    out, err = run_powershell(WHATIF.format(
+        hardware=HARDWARE, os7=OS7, fixtures=FIXTURES, running=RUNNING, old=OLD))
+    # THE `What if:` LINES ARE NOT IN THE JSON AND CANNOT BE. They go to
+    # PowerShell's WhatIf stream, which prints to the host and cannot be
+    # redirected into a variable -- so the driver's `4>&1 3>&1` captures nothing
+    # and stdout carries them alongside the result. The JSON is the last line;
+    # everything printed is what the checks read.
+    both = out + err
+    wi = json.loads([l for l in out.splitlines() if l.startswith("{")][-1])
+
+    check("nvidia-driver-570" in both,
+          "a device piped into Install-OS7Driver picks its RECOMMENDED package")
+    # THE OTHER DriverAvailable CASE. The kernel already has a driver for it and
+    # there is nothing to install; offering to install something would be the
+    # wrong fix, and silently doing nothing would be worse.
+    check("nothing to install" in both and "Repair-OS7Driver -Address" in both,
+          "a device whose driver merely is not LOADED is not sent to apt, and "
+          "the operator is told which cmdlet does fix it")
+    check("r8168 8.053.00" in both,
+          "a driver piped into Repair-OS7Driver names the module and version")
+    check("every DKMS module" in both, "-All targets every module")
+    check("hw-probe is not installed" in wi["probe"] and
+          "Nothing has been sent" in wi["probe"],
+          "Send-OS7HardwareProbe refuses without the tool, and says nothing was sent")
+    check("-InstallTool" in wi["probe"],
+          "and names the switch that gets it, rather than leaving a dead end")
+    # -WhatIf THAT STILL RAN SOMETHING IS THE POINT OF -WhatIf MISSED, and an
+    # exit code cannot show it, so the fake counts every non-read invocation.
+    check(wi["commandsRun"] == 0,
+          "and NOT ONE write command actually ran", str(wi["commandsRun"]))
 
     print(f"\n  {PASSES} passed, {len(FAILS)} failed")
     for f in FAILS:
