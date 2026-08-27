@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "What the download page offers. Written by tools/publish-release.py from the",
+    "actual ISO files - size and sha256 are measured off the bytes, never typed.",
+    "",
+    "storage_base is the only field a human edits: it is the blob container the",
+    "ISOs are uploaded to. public_base is what visitors see; the redirect from",
+    "public_base to storage_base lives in staticwebapp.config.json and is written",
+    "by the same tool.",
+    "",
+    "A release with sha256 set to null renders as 'not published yet' rather than",
+    "as a link, which is the only honest thing a page can say about a file whose",
+    "hash nobody has taken."
+  ],
+
+  "storage_base": "https://REPLACE-ME.blob.core.windows.net/iso",
+  "public_base": "/download",
+
+  "channel": "development",
+  "version": null,
+  "released": null,
+
+  "images": [
+    {
+      "arch": "amd64",
+      "label": "x86-64",
+      "role": "Desktop or server. The architecture Intune supports.",
+      "file": null,
+      "size": null,
+      "sha256": null
+    },
+    {
+      "arch": "arm64",
+      "label": "arm64",
+      "role": "Server only. Managed through Azure Arc.",
+      "file": null,
+      "size": null,
+      "sha256": null
+    }
+  ]
+}

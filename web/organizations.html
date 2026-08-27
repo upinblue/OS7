@@ -19,8 +19,7 @@
 <header class="site-head">
 	<div class="wrap">
 		<a class="brand" href="/">
-			<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
-			<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+			<img src="/brand/os7-wordmark.svg" width="170" height="72" alt="OS/7">
 		</a>
 		<nav class="nav">
 			<a href="/">Overview</a>
@@ -129,11 +128,19 @@
 				</p>
 			</div>
 			<figure style="margin:0">
-				<div class="shot">
-					<img src="/img/desktop-edge.png" width="1920" height="1080" loading="lazy"
-					     alt="Microsoft Edge running on the OS/7 Classic desktop.">
-				</div>
-				<figcaption class="shot-caption">Microsoft Edge on OS/7, x86-64.</figcaption>
+<pre><code><span class="cmt"># /etc/os-release, on an installed machine</span>
+
+NAME="Ubuntu"           <span class="cmt"># Azure Arc reads this</span>
+ID=ubuntu               <span class="cmt"># intune-agent reads this</span>
+VERSION_ID="26.04"      <span class="cmt">#   ... and this</span>
+VERSION_CODENAME=resolute
+
+PRETTY_NAME="OS/7 1.0.0 (development)"
+IMAGE_ID=os7            <span class="cmt"># the brand lives here</span>
+IMAGE_VERSION=1.0.0.116 <span class="cmt">#   ... and here</span></code></pre>
+				<figcaption class="shot-caption">
+					The brand sits in fields no Microsoft tool reads. Nothing above it was touched.
+				</figcaption>
 			</figure>
 		</div>
 
@@ -204,7 +211,7 @@
 				</p>
 			</div>
 			<div class="btn-row">
-				<a class="btn btn-primary" href="mailto:os7@upinblue.com?subject=OS%2F7%20pilot">Get in touch</a>
+				<a class="btn btn-primary" href="mailto:info@upinblue.com?subject=OS%2F7%20pilot">Get in touch</a>
 				<a class="btn btn-ghost" href="https://www.upinblue.com">up in blue</a>
 			</div>
 		</div>
@@ -221,8 +228,7 @@
 	<div class="wrap">
 		<div class="foot-grid">
 			<div class="foot-brand">
-				<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
-				<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+				<img src="/brand/os7-wordmark.svg" width="170" height="72" alt="OS/7">
 				<p>Ubuntu 26.04 LTS, arranged for estates that run on Microsoft. MIT licensed.</p>
 			</div>
 			<div>
@@ -248,13 +254,13 @@
 				<ul>
 					<li><a href="/imprint">Imprint</a></li>
 					<li><a href="/privacy">Privacy</a></li>
-					<li><a href="mailto:os7@upinblue.com">Contact</a></li>
+					<li><a href="mailto:info@upinblue.com">Contact</a></li>
 				</ul>
 			</div>
 		</div>
 		<div class="foot-bottom">
 			<span>OS/7 is not affiliated with, or endorsed by, Microsoft or Canonical. Ubuntu is a registered trademark of Canonical Ltd.</span>
-			<span class="uib">Made by <a href="https://www.upinblue.com"><img src="/brand/uib-logo.svg" alt="up in blue GmbH"></a></span>
+			<span class="uib">Made by <a href="https://www.upinblue.com"><img src="/brand/uib-logo.webp" width="1500" height="844" alt="up in blue GmbH"></a></span>
 		</div>
 	</div>
 </footer>

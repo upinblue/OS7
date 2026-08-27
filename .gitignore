@@ -38,3 +38,8 @@ installer/**/obj/
 # Python bytecode from the spike harnesses
 __pycache__/
 *.pyc
+
+# --- website build output ----------------------------------------------------
+# tools/build-preview.py assembles every page into one file. Regenerable, 550 KB
+# of duplicated content, and it drifts the moment a page changes.
+web/preview.html

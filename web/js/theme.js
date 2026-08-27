@@ -6,10 +6,11 @@
 	var btn = document.querySelector('.theme-toggle');
 	if (!btn) return;
 
+	// Dark is the design, not a preference: with no attribute set the page IS
+	// dark, whatever the system asks for. The switch is an override, and the
+	// only thing that ever writes storage.
 	function current() {
-		var set = document.documentElement.getAttribute('data-theme');
-		if (set) return set;
-		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+		return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 	}
 
 	function label() {
