@@ -58,6 +58,7 @@ here either — this file points, they rule.
 | What the machine calls itself and to whom, the friendly `1.x.x`, `Get-OS7Version`, decisions I1–I10 | [docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) — **it supersedes the `NAME=` row of the release plan's §3.5** |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
 | ZFS from PowerShell: the two layers, decisions Z1–Z14, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
+| What OS/7 exposes as cmdlets, what it deliberately does not, how the layers are cut, decisions P1–P7 | [docs/POWERSHELL-SURFACE-PLAN.md](docs/POWERSHELL-SURFACE-PLAN.md) |
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
@@ -108,7 +109,38 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
-./installer/testing/check-layering.py     # Z1: does OS7 still reach ZFS directly
+./installer/testing/check-layering.py     # Z1, P2, P2-time, P2-systemd: does OS7
+                                          #   still reach ZFS, the network, the
+                                          #   clock or systemd directly. FOUR
+                                          #   rules; the first three at 0, the
+                                          #   systemd one at 2 and named
+./installer/testing/check-management-logic.py # Entra/Intune/Arc DECISIONS against
+                                          #   a real image with systemd as PID 1.
+                                          #   25 checks. Proves the thing that
+                                          #   matters: brokers.d is EMPTY, so
+                                          #   Entra sign-in cannot work (C8a)
+./installer/testing/check-service-logic.py # Get-OS7Service's HEALTHY rule: ten
+                                          #   unit states, the WORKING ones as
+                                          #   carefully as the broken. No systemd
+./installer/testing/check-ssh-login.py    # what an SSH login ACTUALLY lands in,
+                                          #   against a REAL sshd: interactive ->
+                                          #   PowerShell (with the drop-in moved
+                                          #   aside as a control), ssh host cmd
+                                          #   -> bash, sftp intact, and
+                                          #   Enter-PSSession before AND after
+                                          #   Enable-OS7Remoting. Needs an os7img:*
+                                          #   container image; says NOT CHECKED
+                                          #   without one
+./installer/testing/check-network-logic.py # the OS/7 network layer's DECISIONS
+                                          #   against a fake ip and a fake
+                                          #   netplan - INCLUDING the rollback:
+                                          #   34 checks, eleven machines, no
+                                          #   network, no VM, seconds
+./installer/testing/check-netplan-rule.py # the netplan DOCUMENT, in both
+                                          #   languages, BYTE FOR BYTE: 17 cases
+                                          #   plus the refusal, no VM, seconds.
+                                          #   --docker os7-build:<arch> for the
+                                          #   C# half off a Mac or Windows box
 ./installer/testing/check-version-rule.py # the version DISPLAY RULE, in both
                                           #   languages: 82 checks, no VM, ~10s.
                                           #   --docker os7-build:<arch> for the
@@ -155,11 +187,37 @@ kernel into another environment's menu entry, which is §4.3's half-activated
 pair reached by a road nothing checks.
 [docs/SESSION-UPDATE-TRAIN.md](docs/SESSION-UPDATE-TRAIN.md).
 
-**Two PowerShell modules, and the direction between them matters.**
-`powershell/Zfs/` is the generic ZFS layer — it knows nothing about OS/7 and
-would run on any OpenZFS host. `powershell/OS7/` is the product layer on top of
-it. Z1 says OS7 reaches ZFS only through Zfs; `check-layering.py` holds that
-line at a baseline that may fall and may not rise. The Zfs module checks itself
+**Four PowerShell modules since 2026-08-27, and the direction between them
+matters.** `powershell/Zfs/`, `powershell/Net/` and `powershell/Time/` are the
+generic layers — none knows anything about OS/7, and all three would run on any
+Ubuntu host. `powershell/OS7/` is the product layer on top. Z1 says OS7 reaches
+ZFS only through Zfs, P2 says the same about the network and **P2-time** about
+the clock; `check-layering.py` holds **all three** at baselines that may fall and
+may not rise.
+
+**P2-time was 1 for about ten minutes**, and that is the argument for a check
+rather than a paragraph: `Sync-OS7Time` called `chronyc makestep` itself, under a
+file header that said in capitals it did no such thing. The paragraph was already
+written; the code under it did the other thing.
+
+**The clock is chrony, not systemd-timesyncd**, and `powershell/Time/` exists
+because measuring that corrected the plan — `POWERSHELL-SURFACE-PLAN.md` P2 had
+offered the time zone as the example of a subsystem too thin to deserve a module.
+`Get-OS7TimeSynchronization` has **three** outcomes: `$null` when chronyd could
+not be asked, `$false` when it was asked and is not disciplining, `$true` when it
+is. Time is Tier 1 because Kerberos refuses a ticket more than five minutes out,
+and a drifting clock does not report a clock problem — it reports that the
+password is wrong.
+
+**The netplan document is generated in two languages and that is temporary.**
+`NetworkPlan.ToNetplanYaml` (C#, what `os7-setup` writes) and
+`New-NetplanDocument` (PowerShell, what the cmdlets will write) are one
+specification written twice — BUILD-NOTES #66's shape, and the failure it makes
+is a machine netplan configures with nothing and complains about not at all.
+`check-netplan-rule.py` owns the cases and requires the two to agree **byte for
+byte**; P3 in
+[docs/POWERSHELL-SURFACE-PLAN.md](docs/POWERSHELL-SURFACE-PLAN.md) is the
+two-step plan for deleting one of them, and step 2 needs the Mac. The Zfs module checks itself
 against **recorded real ZFS output** shipped beside it:
 
 ```bash
@@ -296,6 +354,21 @@ the ones a fresh session hits first.
   `login-shell=true` on gnome-terminal's default profile, so the *same* guarded
   hand-off runs. Hook 0050 now proves it by piping a PowerShell expression into
   `bash --login -i` and requiring the pinned version back.
+  **And since 2026-08-27 the ssh half is tested too**, which it never was:
+  `check-ssh-login.py` runs a REAL sshd and shows `PS /home/os7admin>` for an
+  interactive login and `logout` with the drop-in moved aside as a control. The
+  same run proves `ssh host 'command'` stays in **bash** — if that guard ever
+  went, the symptom would not be a PowerShell prompt, it would be every scp,
+  git and rsync to the machine breaking, with nothing to connect it to a shell
+  setting. Writing that check also walked straight into **#16**: the first
+  version grepped for a marker the pty had merely ECHOED.
+- **#93 — a container image made from an ISO is NOT the ISO.** `os7img:*` is a
+  fast way to ask an OS/7 image questions and it may carry anything anybody did
+  to it after the ISO was written. One measurement in seven this way was
+  contaminated, and it was a PAM stack that read as a serious identity defect;
+  two files that `pam-auth-update` writes in one run carried timestamps three
+  hours apart, which is what caught it. **`check-image.py` mounts the ISO's own
+  squashfs — that is the authority.**
 - **#15 — a ZFS root needs `boot=zfs` on the kernel command line**, and nothing
   generates it for you.
 - **#16 — driving a serial console:** Enter is `\r`; an unanswered terminal query
@@ -422,6 +495,15 @@ installer/
   testing/                  the VM harness: vmconsole (serial), vmscreen
                             (framebuffer, QMP, reading the screen back through
                             the console font), run-phase1.py
+powershell/Net/             the GENERIC network layer (P2). Knows netplan,
+                            iproute2, networkd, NetworkManager and resolved;
+                            knows nothing about OS/7. New-NetplanDocument is the
+                            PowerShell half of the two-language renderer P3 is
+                            collapsing
+powershell/Time/            the GENERIC clock layer (P2). chrony's CSV (-c, so
+                            no table parsing), the /etc/localtime symlink and
+                            the /etc/adjtime RTC question. NTP servers go in
+                            sources.d, NOT chrony.conf - measured
 powershell/OS7/             the OS7 module - ONE source, staged by build.sh
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four
                             files DOT-SOURCED by OS7.psm1, so a staging that
@@ -430,8 +512,24 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
   OS7.Home.ps1              where a home directory lives, and the migration for
                             machines installed before Setup passed -UserName
                             (#74). Dot-sourced too, hence "five"
+  OS7.Network.ps1           the network as an operator asks about it: Get-/Set-
+                            OS7NetworkAdapter, Get-OS7NetworkConfiguration,
+                            Test-OS7Network, Get-OS7Endpoint. Set- verifies by
+                            asking ip and ROLLS BACK when nothing came up;
+                            RollbackFailed is the outcome that must never be
+                            quiet. The endpoints are a DATA FILE beside the
+                            module (sovereign clouds have other hostnames).
+                            Contains NO call to ip/netplan/nmcli - that is P2 and
+                            check-layering.py holds it. The first code here that
+                            says L28 out loud: a netplan document matching no
+                            adapter on this machine is REPORTED, where netplan
+                            accepts it in silence
+  OS7.Time.ps1              the clock as an operator asks about it. Carries the
+                            one piece of OS/7 policy here: FIVE MINUTES, the
+                            Kerberos skew, past which a clock problem presents
+                            as a failed sign-in
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
-                            Set-OS7UpdateChannel, Test-OS7Update. The SIXTH
+                            Set-OS7UpdateChannel, Test-OS7Update. The EIGHTH
                             dot-sourced file, and LAST in the list because it
                             calls every helper above it and PowerShell defines
                             functions as the script runs
@@ -446,6 +544,15 @@ build/config/includes.chroot/
                             files copied verbatim into the image: the console
                             defaults, and the os7-backup units and their scripts
 docs/                       plans, handoff, build notes, session results
+web/                        os7.org. Plain HTML/CSS, NO build step - what is in
+                            the directory is what is served. Azure Static Web
+                            Apps (Free) for the site; a separate storage account
+                            for the ISOs, because egress is the only part that
+                            costs money. web/README.md carries the figures and
+                            the Microsoft doc each came from
+  infra/main.bicep          the whole Azure side, one deployment
+  tools/publish-release.py  measures an ISO and writes the download page from
+                            what it measured - a size or a hash is never typed
 out/, .vm/                  artefacts and VM state. Both gitignored.
 ```
 

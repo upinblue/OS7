@@ -1,9 +1,12 @@
 #!/bin/bash
 # OS/7 — verify the PowerShell modules landed and are loadable.
 #
-# TWO modules since 2026-08-25: Zfs (the generic ZFS layer,
-# docs/ZFS-POWERSHELL-PLAN.md) and OS7 (the product layer on top of it). Both
-# are placed by build.sh, which copies powershell/<name>/ into the staged
+# FIVE modules since 2026-08-27: Zfs (the generic ZFS layer,
+# docs/ZFS-POWERSHELL-PLAN.md), Net (the generic network layer,
+# docs/POWERSHELL-SURFACE-PLAN.md P2), Time (the generic clock layer, same
+# plan), Systemd (units and the journal, same plan) and OS7 (the product layer
+# on top of all four). All five are placed
+# by build.sh, which copies powershell/<name>/ into the staged
 # includes.chroot. That keeps ONE source of truth per module in the repo - the
 # June-2026 tree carried a second baked-in copy that could drift.
 #
@@ -79,6 +82,35 @@ check_module() {
 
 check_module Zfs Get-Zpool Get-ZpoolStatus Get-ZfsDataset Get-ZfsSnapshot \
 	Get-ZfsProperty Get-ZfsSpace Format-ZfsSize Clear-ZpoolLabel Test-ZfsModule
+# Net carries the netplan document generator, and it is named here for a reason
+# specific to it: the SAME document is generated in C# by
+# NetworkPlan.ToNetplanYaml, and P3 exists to collapse the two into one. Until
+# it does, an image that shipped without New-NetplanDocument would leave the
+# cmdlet half of that plan unshippable while every check that compares the two
+# went on passing on the build host.
+#
+# The readers are named too, and for a reason this hook has just been paid by:
+# Export-ModuleMember and the manifest's FunctionsToExport are TWO filters, and
+# widening one without the other leaves a function that exists, imports and is
+# invisible. Nothing in the module misbehaves; it simply is not there.
+check_module Net New-NetplanDocument Get-NetLink Get-NetRoute Get-NetRadio \
+	Get-NetplanConfiguration Test-NetModule \
+	Set-NetplanDocument Remove-NetplanDocument Invoke-NetplanApply \
+	Wait-NetLinkAddress
+# Time carries chrony's CSV parsing. Its field COUNTS are checked inside the
+# module rather than assumed, so a chrony that changed format fails loudly - but
+# that only helps if the module is on the image at all, which is what this line
+# is for.
+check_module Time Get-ChronyTracking Get-ChronySource Get-ChronySourceFile \
+	Set-ChronySource Sync-ChronyClock Get-SystemTimeZone Set-SystemTimeZone \
+	Get-SystemClock Test-TimeModule
+# Systemd's fixtures include a journal MESSAGE that is a BYTE ARRAY, which is
+# the case that turns the message column into System.Object[] if the parser
+# assumes a string. Naming the module here is what stops an image shipping
+# without the parser that handles it.
+check_module Systemd Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
+	Restart-SystemdUnit Set-SystemdUnitStartup Update-SystemdUnit Get-SystemdJournal \
+	Test-SystemdModule
 # The boot-environment cmdlets are named here rather than left to the stub that
 # used to stand in for them: they are what Restore-OS7 AND Update-OS7 are built
 # out of (docs/SESSION-BOOT-ENVIRONMENTS.md), they are staged from the same one
@@ -115,7 +147,16 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Mount-OS7BackupTarget Dismount-OS7BackupTarget \
 	Get-OS7FileVersion Restore-OS7File Test-OS7Backup \
 	Get-OS7Home Move-OS7Home \
-	Get-OS7Release Set-OS7UpdateChannel Test-OS7Update
+	Get-OS7Release Set-OS7UpdateChannel Test-OS7Update \
+	Get-OS7NetworkAdapter Get-OS7NetworkConfiguration \
+	Set-OS7NetworkAdapter Test-OS7Network Get-OS7Endpoint \
+	Set-OS7TimeZone Get-OS7Time Get-OS7TimeSynchronization \
+	Set-OS7TimeSynchronization Sync-OS7Time \
+	Get-OS7Remoting Enable-OS7Remoting Disable-OS7Remoting \
+	Get-OS7Service Start-OS7Service Stop-OS7Service Restart-OS7Service \
+	Set-OS7Service Get-OS7Log Get-OS7InstallLog \
+	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
+	Get-OS7ManagementStatus
 
 # A file that is PRESENT AND EMPTY still imports and still exports nothing, so
 # the export check above cannot see it. `cp -a` onto a full filesystem produces
@@ -126,7 +167,9 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 # and an empty one is a `Get-OS7Version` that prints a bare property bag on a
 # machine somebody is trying to identify.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
-	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Update.ps1 OS7.format.ps1xml; do
+	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.Management.ps1 \
+	OS7.Update.ps1 \
+	OS7.format.ps1xml os7-endpoints.json; do
 	if [ ! -s "${MODULES_ROOT}/OS7/${part}" ]; then
 		echo "OS/7 hook 0060: ${MODULES_ROOT}/OS7/${part} is missing or empty" >&2
 		exit 1
@@ -145,6 +188,19 @@ if [ "${n}" -lt 5 ]; then
 	exit 1
 fi
 echo "OS/7 hook 0060:   Zfs: ${n} recorded ZFS captures shipped for the self-test"
+
+# The same argument for Net, and the same failure mode: the fixtures are
+# recorded `ip -j` and `rfkill -J` output, their absence would not break an
+# import, and without them Test-NetModule silently degrades from checking the
+# readers to checking the YAML escaping alone.
+NETFIX="${MODULES_ROOT}/Net/tests/fixtures"
+nn=$(find "${NETFIX}" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${nn}" -lt 4 ]; then
+	echo "OS/7 hook 0060: only ${nn} JSON fixtures under ${NETFIX}; expected at least 4" >&2
+	echo "OS/7 hook 0060: see powershell/Net/tests/fixtures/README for how they were taken" >&2
+	exit 1
+fi
+echo "OS/7 hook 0060:   Net: ${nn} recorded ip/rfkill captures shipped for the self-test"
 
 echo "OS/7 hook 0060:   NOTE: 'Import-Module OS7' by name is not testable in a"
 echo "OS/7 hook 0060:   NOTE: chroot; verify it on a booted system."

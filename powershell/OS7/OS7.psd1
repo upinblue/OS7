@@ -57,6 +57,37 @@
 		# of #74 is in os7-setup; this is the half for machines already
 		# installed. Never run against real ZFS — docs/BACKUP-PLAN.md B-6.
 		'Get-OS7Home', 'Move-OS7Home',
+		# Implemented — the network (docs/POWERSHELL-SURFACE-PLAN.md). Read
+		# only so far. They run on the Net module rather than on ip/netplan
+		# directly, which is P2 and which check-layering.py holds the same way
+		# it holds Z1 for ZFS.
+		'Get-OS7NetworkAdapter', 'Get-OS7NetworkConfiguration',
+		# Writing, and the check that asks whether this machine can reach what
+		# OS/7 exists to reach. Set- verifies by asking the kernel and rolls
+		# back when it did not work; Get-OS7Endpoint is the data file, not code.
+		'Set-OS7NetworkAdapter', 'Test-OS7Network', 'Get-OS7Endpoint',
+		# Implemented - the clock. Runs on the Time module, not on chronyc or
+		# timedatectl directly (P2). Get-OS7TimeSynchronization carries the one
+		# piece of OS/7 policy here: five minutes, which is where a clock
+		# problem starts presenting as an authentication problem.
+		'Set-OS7TimeZone', 'Get-OS7Time', 'Get-OS7TimeSynchronization',
+		'Set-OS7TimeSynchronization', 'Sync-OS7Time',
+		# Implemented - remoting. Get-OS7Remoting answers from `sshd -T`, not
+		# from a file: sshd_config includes a whole directory and a Match block
+		# can change the answer per user, so the file says what somebody wrote
+		# and sshd says what it resolved.
+		'Get-OS7Remoting', 'Enable-OS7Remoting', 'Disable-OS7Remoting',
+		# Implemented - services and the log, on the Systemd module. Get-Service
+		# does not exist on PowerShell for Linux (measured), so this is the verb
+		# an admin reaches for and does not find. Healthy is four questions, not
+		# one: is-active says active for a unit in a restart loop.
+		'Get-OS7Service', 'Start-OS7Service', 'Stop-OS7Service',
+		'Restart-OS7Service', 'Set-OS7Service', 'Get-OS7Log', 'Get-OS7InstallLog',
+		# Implemented - the management plane, READ only. Get-OS7IntuneEnrollment's
+		# Enrolled field is deliberately $null: intune-agent exposes no status
+		# interface (measured), and a guess about compliance is worse than a gap.
+		'Get-OS7EntraStatus', 'Get-OS7IntuneEnrollment', 'Get-OS7ArcStatus',
+		'Get-OS7ManagementStatus',
 		# Implemented — the update train (docs/RELEASE-AND-UPDATE-PLAN.md §4.2 as
 		# corrected by docs/CURATION-AND-DELIVERY-PLAN.md C10). Update-OS7 applies
 		# a release into a CLONE of the boot environment, so the running system is

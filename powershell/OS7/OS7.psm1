@@ -2388,8 +2388,15 @@ function Restore-OS7 {
 # OS7.Update.ps1 is LAST in the list, and that is a fact about line order rather
 # than taste: it calls Get-OS7Home's neighbours in the backup files and every
 # helper above, and PowerShell defines functions as the script runs.
+# OS7.Network.ps1 is the SEVENTH, and it sits before OS7.Update.ps1 for the same
+# line-order reason the rest of this list is ordered: it defines
+# Import-OS7NetLayer, which the update train will want when it has to report
+# whether a machine can still reach its repository. It needs nothing from the
+# backup files, so it could sit earlier; it does not, because "after everything
+# it does not depend on" is a rule that survives the next file being added and
+# "somewhere in the middle" is not.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Update.ps1')) {
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -2424,4 +2431,30 @@ Export-ModuleMember -Function Get-OS7Version,
 	Test-OS7Backup,
 	# Home directories — BUILD-NOTES #74. Where a home lives, and the migration
 	# for machines installed before the installer passed -UserName.
-	Get-OS7Home, Move-OS7Home
+	Get-OS7Home, Move-OS7Home,
+	# The network (docs/POWERSHELL-SURFACE-PLAN.md). Both READ so far, and both
+	# keep "configured" and "effective" apart rather than merging them (P6) —
+	# the machine where the two disagree is the one worth reporting, and it is
+	# the machine L28 was measured on.
+	Get-OS7NetworkAdapter, Get-OS7NetworkConfiguration,
+	Set-OS7NetworkAdapter, Test-OS7Network, Get-OS7Endpoint,
+	# The clock. Tier 1 and not a convenience: Kerberos refuses a ticket more
+	# than five minutes out, and a machine with a drifting clock does not report
+	# a clock problem - it reports that the password is wrong.
+	Set-OS7TimeZone, Get-OS7Time, Get-OS7TimeSynchronization,
+	Set-OS7TimeSynchronization, Sync-OS7Time,
+	# Remoting. TWO mechanisms, reported separately: the /etc/profile.d hand-off
+	# that makes an interactive ssh land in PowerShell, and the sshd SUBSYSTEM
+	# that Enter-PSSession needs. A machine can have either without the other.
+	Get-OS7Remoting, Enable-OS7Remoting, Disable-OS7Remoting,
+	# Services and the log. Get-OS7Log is the clearest argument for why this
+	# product's shell is PowerShell: a journal is already structured, and
+	# `journalctl | grep` is a text pipeline over structure.
+	Get-OS7Service, Start-OS7Service, Stop-OS7Service, Restart-OS7Service,
+	Set-OS7Service, Get-OS7Log, Get-OS7InstallLog,
+	# The management plane - the reason this product exists, and therefore the
+	# group where an honest "cannot tell" matters most. Get-OS7EntraStatus
+	# reports the thing C8a leaves broken: brokers.d is empty on every image
+	# built so far, so Entra sign-in cannot work.
+	Get-OS7EntraStatus, Get-OS7IntuneEnrollment, Get-OS7ArcStatus,
+	Get-OS7ManagementStatus

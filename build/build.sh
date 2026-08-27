@@ -338,6 +338,20 @@ stage_ps_module() {
 # makes, for the same reason: a parser that stopped matching what ZFS emits
 # should fail the BUILD, not a customer's boot.
 stage_ps_module Zfs
+# Net is the second generic layer (docs/POWERSHELL-SURFACE-PLAN.md P2), cut the
+# same way Zfs is: it knows netplan, iproute2, networkd, NetworkManager and
+# resolved, and nothing about OS/7. It is staged BEFORE OS7 for the same reason
+# Zfs is — OS7 will sit on top of it and hook 0060 checks them in this order.
+stage_ps_module Net
+# Time is the third generic layer. It carries chrony's CSV parsing and the
+# zone/RTC files, and nothing about OS/7 - the Kerberos threshold lives one
+# layer up. Its fixtures are recorded chronyc output and travel with it, for
+# the same reason the Zfs captures do.
+stage_ps_module Time
+# Systemd is the fourth generic layer: units and the journal as typed objects.
+# Its fixtures are recorded systemctl/journalctl output - including a MESSAGE
+# that is a byte array rather than a string - and travel with it.
+stage_ps_module Systemd
 stage_ps_module OS7
 
 # ---------------------------------------------------------------------------

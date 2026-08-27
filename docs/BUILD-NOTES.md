@@ -4719,3 +4719,176 @@ written, in code that had just been reviewed by its author.
 The same file carries #65's rule, for the same reason: **both are defects that
 read correctly, parse correctly, and mean something else.** A note is not a
 defence against that; a parser is.
+
+---
+
+## 92. A one-element result is not a list, and `[0]` on it indexes into a STRING
+
+**Measured on 2026-08-27**, twice in one file, while writing
+`Get-NetplanConfiguration`.
+
+```powershell
+function Get-NetplanValue { … ; return @($r.StdOut -split "`n" | … ) }
+
+$renderer = ConvertFrom-NetplanScalar (Get-NetplanValue -Key 'network.renderer')[0]
+```
+
+`netplan get network.renderer` answers one line, `networkd`. The `@(…)` inside
+the function is real and does nothing that survives: **PowerShell unrolls a
+single-element array on return**, so the caller gets a `[string]`, and `[0]` on
+a string is its first **character**.
+
+```
+Renderer = [n]
+```
+
+The second instance was worse, because it produced a plausible wrong answer
+instead of an obviously broken one. `netplan get …dhcp4` answers `false`, `[0]`
+made that `f`, and
+
+```powershell
+Dhcp4 = [bool]'f'      # $true
+```
+
+A statically configured machine reported DHCP. Nothing threw, nothing logged,
+and the value is of the right type.
+
+The third instance had no `[0]` at all: a helper returning `@()` for "no
+addresses" returns **`$null`**, and `$null.Count` under `Set-StrictMode` is a
+terminating error — which is how the other two were finally found.
+
+### Two more instances, and the distinction that separates them
+
+**Measured 2026-08-27**, both while fixing the first two.
+
+`@($null)` has **Count 1**. `@(<an empty foreach>)` has **Count 0**. Those look
+like the same expression and are not:
+
+```powershell
+$a = foreach ($x in @()) { 1 }   # AutomationNull, not $null
+$null -eq $a                      # True  — it compares equal
+@($a).Count                       # 0     — and collapses to nothing
+@($null).Count                    # 1     — a real $null does not
+```
+
+So a field that a parser omits — `ip -j` drops `addr_info` for a link with no
+address, which is every unplugged port on a machine — comes back as a **real**
+`$null`, and `@(…)` around it produces a one-element array whose element is
+nothing. `foreach` then runs once with nothing in hand. The `rfkill` version of
+the same mistake would have counted a missing `rfkilldevices` key as **one
+blocked radio**, which grounds a working adapter.
+
+And a function **cannot hand back an empty array**: `return @()` unwraps to
+AutomationNull too, so a helper written to remove this trap reintroduces it at
+its own return. `powershell/Net` has `Get-NetJsonArray` for the missing-field
+case and **its callers still wrap it in `@(…)`**, because no helper can fix the
+return.
+
+That is the rule, and it is the same one as above: **the array is forced at the
+boundary, not inside the function.**
+
+### Why there is no rule for this in check-ps-traps.py
+
+Unlike #65 and #91, the AST signature is not unambiguous. Indexing a command
+result is only dangerous when the result can be a **string**: PowerShell 3+
+gives every scalar an indexer, and `$object[0]` returns the object itself. The
+repository has five `(Command …)[0]` sites and **four of them are correct**,
+because they index collections of objects — `(Get-ZpoolStatus)[0]` is fine and
+always was. A rule keying on the syntax would report four false positives out of
+five, and a check that cries wolf is a check people delete.
+
+### The defence, in the absence of a parser
+
+**Force the array at the boundary, not inside the function.** `@(…)` on the
+*return* is a decoration; `@(…)` at the *call site* is the guarantee. In
+`powershell/Net` every list result is wrapped by its caller and one helper —
+`Get-NetplanScalarValue` — owns the "first line of a possibly-scalar answer"
+question so nothing else has to index.
+
+### What actually found it
+
+Not review. The self-test's **section guard**: `Test-NetModule` wraps each
+section in a `catch` that records a FAILURE, because the first run of that
+section threw on `Get-ChildItem`'s `UnixMode` and the module reported
+`36 passed, 0 failed, PASS` — a section that contributed no checks at all read
+as a clean run. The guard turned "this silently did not happen" into a failing
+check, and the two indexing defects surfaced on the next run.
+
+That is the generalisable half of this note: **a count is not a result unless
+something guarantees the count was reached.** Same shape as #13's hooks that
+never ran and #62's package list that removed nothing.
+
+---
+
+## 93. A container image made from an ISO is not the ISO, and it took a near-miss to notice
+
+**Measured on 2026-08-27**, one command before a false product defect was
+written into this file.
+
+`os7img:116` is an OS/7 image as a docker image — a convenience this repository
+now leans on heavily, because it answers questions in seconds that would
+otherwise need a VM. Asked what its PAM stack looked like, it said:
+
+```
+     1	auth sufficient pam_unix.so
+     2	#
+     3	# /etc/pam.d/common-auth - authentication settings common to all services
+```
+
+**Line 1 sits above the file's own header comment**, which `pam-auth-update`
+writes first — so something prepended it. Its effect is not subtle: PAM
+evaluates top-down, `sufficient` plus success means STOP, and therefore for any
+account with a local password neither `pam_authd_exec.so` (Entra) nor
+`pam_intune.so` runs at all. On a product whose headline is Entra sign-in and
+Intune management, that is a serious defect.
+
+It is not a defect. It is not in the product.
+
+### What caught it
+
+Two files generated by the same tool in the same run, with different
+timestamps:
+
+```
+2026-08-26 15:04:46   /etc/pam.d/common-auth
+2026-08-26 11:23:09   /etc/pam.d/common-account
+```
+
+`pam-auth-update` writes both. A three-hour-forty gap between them is not
+something one run produces. The rest followed:
+
+```
+OS7-1.0.0.116-amd64.iso   written 13:27:46
+common-auth               modified 15:04:46
+os7img:116                created  15:21:04     (1 layer, no build commands)
+```
+
+The modification is **between the ISO and the container image**, so it belongs
+to whoever prepared the container. Asked directly — squashfs mounted out of the
+ISO — the shipped file starts at its header comment and both PAM files carry
+the same `11:23:09` build stamp.
+
+### The rule
+
+**An artefact derived from the product is not the product, and a convenience
+that answers in seconds is exactly the one nobody re-checks.** `check-image.py`
+already exists for this and mounts the ISO's squashfs; that is the authority.
+A container image is a fast approximation of it and may carry anything anybody
+did to it afterwards.
+
+Everything else this session measured against `os7img:116` was re-checked
+against `OS7-1.0.0.116-amd64.iso` and all of it held: `sshd_config` offering
+only `sftp` with zero drop-ins, `chrony` present and `systemd-timesyncd`
+absent, `/etc/localtime` a symlink with no `/etc/timezone` and no
+`/etc/adjtime`, `/etc/profile.d/95-os7-powershell.sh` present at 924 bytes,
+`/etc/netplan` empty, PowerShell 7 present. One measurement in seven was
+contaminated, and it was the one that mattered most.
+
+### And one real finding, from the same look
+
+**`/etc/authd/brokers.d` is EMPTY in the shipped ISO.** authd is installed, PAM
+is wired to it, and there is no broker for it to talk to — so Entra sign-in
+cannot work on an OS/7 image as built today. That is C8a
+([CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md)) as an open
+question already says, but it had been reasoned about rather than measured on
+the artefact. It is measured now.

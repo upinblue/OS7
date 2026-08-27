@@ -205,6 +205,45 @@ chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/p
 echo "EXIT=$rc" >> /tmp/backup.txt
 emit backup.selftest   bash -c 'tail -30 /tmp/backup.txt'
 
+# THE Net MODULE'S SELF-TEST, in the same chroot and read the same way
+# (docs/POWERSHELL-SURFACE-PLAN.md P2). Offline by construction: the netplan
+# document generator is a pure function, so this needs no interface, no netplan
+# and no root.
+#
+# It checks the module's own contract — the YAML escaping, the refusal to render
+# NetworkMethod None, the line endings and the securestring handling — and NOT
+# the netplan specification itself, which has exactly one owner in
+# installer/testing/check-netplan-rule.py. A copy of those cases here would be a
+# third place for them to drift.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Net/Net.psd1 -Force; Test-NetModule' >/tmp/net.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/net.txt
+emit net.selftest      bash -c 'tail -30 /tmp/net.txt'
+
+# THE Time MODULE'S SELF-TEST, in the same chroot and read the same way
+# (docs/POWERSHELL-SURFACE-PLAN.md P2). Offline: it replays RECORDED chronyc
+# output and builds its own zone tree, so it needs no chronyd, no network and
+# no root -- which is what lets it run here at all.
+#
+# It is the check that a chrony whose CSV changed shape would fail the BUILD
+# rather than a machine: the module asserts the field COUNTS (14 for tracking,
+# 10 for sources), and a shifted field moves a number into `LeapStatus`, after
+# which the machine reports itself synchronised on the strength of a string
+# comparison.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Time/Time.psd1 -Force; Test-TimeModule' >/tmp/time.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/time.txt
+emit time.selftest     bash -c 'tail -30 /tmp/time.txt'
+
+# THE Systemd MODULE'S SELF-TEST. Offline by construction: it replays RECORDED
+# systemctl and journalctl output, so it needs no PID 1 and no journal -- which
+# is what lets it run here at all, in a chroot that has neither.
+#
+# The case it exists for is a journal MESSAGE that arrived as a BYTE ARRAY
+# rather than a string. A parser that assumes a string puts `System.Object[]`
+# in the message column of the one line somebody is trying to read.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Systemd/Systemd.psd1 -Force; Test-SystemdModule' >/tmp/systemd.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/systemd.txt
+emit systemd.selftest  bash -c 'tail -30 /tmp/systemd.txt'
+
 # The three facts about backups that are properties of the IMAGE rather than of
 # any program: the two binaries are there, the defaults file OS/7 reads its
 # legal-key list out of is there, and no policy has been baked in.
@@ -650,6 +689,86 @@ def main() -> None:
         detail = summary or next(
             (l.strip() for l in zt.splitlines() if "FAILED:" in l), "")
         check(exit0, "the Zfs module parses the ZFS output it ships with", detail)
+
+    # -- the Net module, asked to check itself ------------------------------
+    #
+    # Read exactly like the Zfs one above, and for the same reason. What it adds
+    # to this file is the half of P3 that lives on the IMAGE: the netplan
+    # renderer that OS/7's cmdlets use is shipped inside the module, and
+    # check-netplan-rule.py can only ever check the copy in the source tree.
+    nt = img.get("net.selftest", "")
+    nran = "Net self-test:" in nt
+    # THREE OUTCOMES, NOT TWO, and the third is why this reads differently from
+    # the Zfs block above. An image built before 2026-08-27 has no Net module at
+    # all, and "the module is not on this image" must not be reported as "this
+    # chroot could not produce a verdict" — that is a diagnostic naming the
+    # wrong cause, which is the failure this repository keeps paying for.
+    absent = ("no valid module file" in nt) or ("was not loaded" in nt)
+    if absent:
+        check(False, "the Net module is on the image",
+              "not at /usr/local/share/powershell/Modules/Net — an ISO built "
+              "before P2, or build.sh did not stage it")
+    elif not nran:
+        print("      note  the Net self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine, or "
+              "./installer/testing/check-netplan-rule.py against the source tree.")
+    else:
+        nsummary = next((l.strip() for l in nt.splitlines()
+                         if l.strip().startswith("Net self-test:")
+                         and "passed" in l), "")
+        ndetail = nsummary or next(
+            (l.strip() for l in nt.splitlines() if "FAILED:" in l), "")
+        check("EXIT=0" in nt,
+              "the Net module's netplan renderer behaves as designed", ndetail)
+
+    # -- the Time module, asked to check itself -----------------------------
+    #
+    # Read like the Net one above, including the three outcomes: an image built
+    # before this module existed has no Time directory, and "the module is not
+    # here" must not be reported as "this chroot could not answer".
+    tt = img.get("time.selftest", "")
+    tran = "Time self-test:" in tt
+    tabsent = ("no valid module file" in tt) or ("was not loaded" in tt)
+    if tabsent:
+        check(False, "the Time module is on the image",
+              "not at /usr/local/share/powershell/Modules/Time -- an ISO built "
+              "before P2's clock layer, or build.sh did not stage it")
+    elif not tran:
+        print("      note  the Time self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine.")
+    else:
+        tsummary = next((l.strip() for l in tt.splitlines()
+                         if l.strip().startswith("Time self-test:")
+                         and "passed" in l), "")
+        tdetail = tsummary or next(
+            (l.strip() for l in tt.splitlines() if "FAILED:" in l), "")
+        check("EXIT=0" in tt,
+              "the Time module parses the chrony output it ships with", tdetail)
+
+    # -- the Systemd module, asked to check itself --------------------------
+    #
+    # Read like the Net and Time ones, three outcomes included: an image built
+    # before this module existed has no Systemd directory, and "not on the
+    # image" must not be reported as "this chroot could not answer".
+    st = img.get("systemd.selftest", "")
+    sran = "Systemd self-test:" in st
+    sabsent = ("no valid module file" in st) or ("was not loaded" in st)
+    if sabsent:
+        check(False, "the Systemd module is on the image",
+              "not at /usr/local/share/powershell/Modules/Systemd -- an ISO built "
+              "before P2's systemd layer, or build.sh did not stage it")
+    elif not sran:
+        print("      note  the Systemd self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine.")
+    else:
+        ssummary = next((l.strip() for l in st.splitlines()
+                         if l.strip().startswith("Systemd self-test:")
+                         and "passed" in l), "")
+        sdetail = ssummary or next(
+            (l.strip() for l in st.splitlines() if "FAILED:" in l), "")
+        check("EXIT=0" in st,
+              "the Systemd module parses the systemctl and journalctl output it ships with",
+              sdetail)
 
     # -- the backup layer ---------------------------------------------------
     #

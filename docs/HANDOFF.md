@@ -32,6 +32,8 @@ decides what, the commands that work, and the traps that cost the most.
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 | **Backup** | **Written and self-tested; NEVER RUN ON A MACHINE.** `powershell/OS7/OS7.Backup*.ps1` — 17 cmdlets over `sanoid` (snapshot policy and retention) and `syncoid` (`zfs send`/`receive` replication, local or over ssh), both GPL-3.0+ and both shelled out to rather than vendored. OS/7 owns which datasets, which targets, and the verification: `Get-OS7BackupStatus` asks ZFS on the source and, through the `Zfs` module over ssh (Z14), on the target — comparing snapshot **GUIDs**, because neither tool's exit code is evidence (BUILD-NOTES #73). `Assert-OS7DatasetSafe` keeps a snapshot policy away from `rpool/ROOT` and `bpool/BOOT`. `Test-OS7Backup` is **63 checks, green**, and `check-layering.py` still reports **0**. What has never happened: a snapshot taken, a stream sent, or a file restored by this code. [BACKUP-PLAN.md](BACKUP-PLAN.md), [SESSION-BACKUP.md](SESSION-BACKUP.md). |
+| **The PowerShell system surface** | **Four generic modules and 58 exported OS/7 cmdlets since 2026-08-27**, and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds four rules), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/` and `powershell/Systemd/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Backup 63 — all green, all against RECORDED REAL output. Five no-VM checks beside them. |
+| **What that surface found** | **Entra sign-in cannot work on an OS/7 image as built today.** `/etc/authd/brokers.d` is EMPTY in the shipped ISO — authd installed, PAM wired to it, no broker to bridge to — so a sign-in fails as though the password were wrong. That is C8a measured on the artefact rather than reasoned about, and `Get-OS7EntraStatus` is the first thing on a machine that says so. Also: `Enter-PSSession` did not work at all (`sshd -T` listed only `sftp`); an interactive `ssh` DOES land in PowerShell and had never been tested until `check-ssh-login.py`. |
 | `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. It is `qemu-system-aarch64 -machine virt,accel=hvf` like every other harness here, so it needs the Apple Silicon host. |
 
 ### Phase 0 is done — the gate is open
@@ -71,6 +73,39 @@ not `initramfs-tools`, not `grub.d/10_linux_zfs`. Without it the machine drops
 to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
+
+**THE POWERSHELL SURFACE IS WRITTEN AND HAS NEVER RUN ON A BOOTED MACHINE.**
+Everything in it was measured against a container and, for the facts that
+decide behaviour, re-checked against the shipped ISO's squashfs — but a
+container is not a machine, and BUILD-NOTES **#93** is the session where that
+distinction nearly put a false product defect into this file. What is owed:
+
+```bash
+./installer/testing/check-layering.py         # 4 rules — GREEN
+./installer/testing/check-netplan-rule.py     # both languages, byte-exact — GREEN
+./installer/testing/check-network-logic.py    # GREEN
+./installer/testing/check-service-logic.py    # GREEN
+./installer/testing/check-management-logic.py # GREEN  (needs an os7img:* image)
+./installer/testing/check-ssh-login.py        # GREEN  (real sshd, in a container)
+# and on a BOOTED machine, which nothing above replaces:
+#   Get-OS7NetworkAdapter / Set-OS7NetworkAdapter with a real netplan apply
+#   Get-OS7TimeSynchronization against a real chronyd on real hardware
+#   Get-OS7Log against a real journal that has survived a reboot
+```
+
+**P3 step 2 needs the Mac.** The netplan document is generated in two languages
+— `NetworkPlan.ToNetplanYaml` in C# and `New-NetplanDocument` in PowerShell —
+and `check-netplan-rule.py` requires them to agree byte for byte. Collapsing
+them into one means `os7-setup` calling the module, which changes the only code
+path proven to produce a machine that boots, so it is gated on
+`run-phase3.py all`.
+
+**Two things the surface reports that somebody has to decide about.**
+`/etc/authd/brokers.d` is empty, so Entra sign-in cannot work (C8a); and
+`powershell/OS7/os7-endpoints.json` carries `verified: null` because none of its
+hosts has been checked against Microsoft's live documentation, which CLAUDE.md
+says is the FIRST thing to do for anything touching identity.
+
 
 **`Update-OS7` IS WRITTEN (2026-08-27) AND HAS NEVER RUN ON A MACHINE. THAT IS
 THE FIRST THING TO DO ON THE MAC.** The update train is the §4.2 sequence as C10
