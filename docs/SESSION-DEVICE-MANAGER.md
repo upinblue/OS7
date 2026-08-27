@@ -277,6 +277,17 @@ by reading the code. Three are entries in `docs/BUILD-NOTES.md` already.
    test something else and was itself self-contradictory; fixing the fixture and
    the code produced two cases where there had been one.
 
+A sixth, found the same way after the first commit: **nothing tested the write
+paths at all.** `check-device-logic.py` read everything and invoked nothing, so
+`Install-OS7Driver`, `Repair-OS7Driver` and `Send-OS7HardwareProbe` — the three
+cmdlets an operator actually types — had no cover. Seven checks now drive all
+three under `-WhatIf`, from the pipeline. The fake that counts write commands
+was itself wrong first, reporting that `-WhatIf` had run two: it counted
+`modprobe` as a write unless `argv[0]` was `-R`, and `Resolve-KernelModule`
+passes `-S <kernel> -R <alias>` whenever a kernel is named, which is every call
+`Get-OS7Device` makes for an unbound device. Third time in this feature that a
+check found a defect in itself before it found one in the code.
+
 And one design change forced by a check: **`Get-HwProbe` used to run
 `hw-probe --version`** to find out whether the tool was present, which meant
 `Get-OS7DeviceStatus` — a read-only report an operator might run on a schedule —
