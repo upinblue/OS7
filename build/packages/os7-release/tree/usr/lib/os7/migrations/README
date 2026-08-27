@@ -37,7 +37,13 @@ THE LAYOUT
                          the real boot — TPM2 re-enrolment after a policy move,
                          UL1 — is recorded for the target's first boot and is
                          NOT run by Update-OS7. The cmdlet says so on the way
-                         out rather than passing over it.
+                         out, into /var/lib/os7/migrations/pending, and
+                         `os7-migrations-firstboot.service` — shipped and
+                         enabled by this same package — runs the list at the
+                         first boot of the new environment, stamps each run
+                         under /var/lib/os7/migrations/<version>/, and FAILS
+                         the unit loudly if a migration fails, keeping the
+                         pending record so the next boot retries.
 
   NN-         a two-digit numeric prefix, and the order is numeric rather than
               lexical: `9-` sorts BEFORE `31-`. BUILD-NOTES #89 is the record of
@@ -72,8 +78,27 @@ Exit non-zero to fail the update. There is no partial success: an environment
 whose migrations did not complete is not the release it claims to be, and
 Update-OS7 leaves it inactive and names it rather than activating it anyway.
 
-THIS DIRECTORY IS EMPTY, AND THAT IS CORRECT
---------------------------------------------
+WHERE MIGRATIONS ARE AUTHORED — migrations.d/
+---------------------------------------------
+
+A migration is keyed by the release that introduced it, and a directory in the
+source tree cannot know that version: the Build field comes from git when the
+release is cut. So migrations are AUTHORED in the source tree at
+
+    build/packages/os7-release/migrations.d/<context>/NN-name
+
+and build-os7-packages.sh ships them under THE VERSION BEING BUILT. The
+consequence is deliberate: until a migration is retired into a static
+<version>/ directory here, every release re-introduces it under its own
+version and it runs again at each release's first boot. For the migration that
+exists — UL1's re-seal, which asks "does the seal open against THIS boot?" and
+is a no-op when it does — that repetition is the point rather than a cost. A
+one-shot migration whose repetition would be wrong is retired by moving it
+from migrations.d/ into the static directory named for the release that first
+shipped it, in the commit after that release is cut.
+
+THE VERSION-NAMED DIRECTORIES ARE MOSTLY EMPTY, AND THAT IS CORRECT
+-------------------------------------------------------------------
 
 1.0.0 is the first release. There is nothing to migrate from. The first entry
-here will be written by whoever needs the first thing dpkg cannot express.
+was UL1's TPM2 re-seal (2026-08-28), authored in migrations.d/firstboot/.

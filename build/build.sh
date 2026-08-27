@@ -286,99 +286,48 @@ chmod 0644 "${WORK}/config/includes.chroot/usr/lib/os7/build.conf"
 echo "    staged the release pin -> /usr/lib/os7/{release,build}.conf"
 
 # ---------------------------------------------------------------------------
-# Stage the OS7 PowerShell module from its ONE source of truth (powershell/OS7)
-# into the image, at a path already on PowerShell 7's default PSModulePath.
-# Hook 0060 verifies it imports. Keeping a second copy checked in under
-# includes.chroot - as the June-2026 tree did - just lets the two drift.
+# The PowerShell modules come from the os7-module PACKAGE since 2026-08-28
+# (C7's second half — the ISO installs the packages, hook 0022). What is still
+# staged here is the modules' tests/fixtures ALONE: recorded real subsystem
+# output, a few KB per module, which is what lets the self-tests run inside
+# the chroot at build time and lets check-image.py run them against the
+# finished artefact — where ZFS, chrony and systemd cannot run at all. The
+# .deb deliberately does not carry them (an installed machine runs nothing
+# that reads them — build-os7-packages.sh says so at the rm), so the ISO
+# overlays them beside the package's files: dpkg does not remove unowned
+# files, so package content and fixtures end up side by side.
+#
+# The module CODE has exactly one route into the image — the package — so the
+# staging that could drift from it is gone.
 # ---------------------------------------------------------------------------
-# Both modules are staged the same way, so the staging is written once. Zfs is
-# the generic ZFS layer (docs/ZFS-POWERSHELL-PLAN.md); OS7 is the product layer
-# above it, and Z1 says OS7 reaches ZFS only through Zfs — which is only true if
-# both are actually on the image.
-stage_ps_module() {
+stage_ps_fixtures() {
 	local name="$1"
-	local src="${HERE}/../powershell/${name}"
-	local dst="${WORK}/config/includes.chroot/usr/local/share/powershell/Modules/${name}"
-
-	if [[ ! -d "${src}" ]]; then
-		echo "!!! ${name} module source missing: ${src}" >&2
-		exit 1
-	fi
-
+	local src="${HERE}/../powershell/${name}/tests"
+	local dst="${WORK}/config/includes.chroot/usr/local/share/powershell/Modules/${name}/tests"
+	[[ -d "${src}" ]] || return 0
 	mkdir -p "${dst}"
 	cp -a "${src}/." "${dst}/"
-
-	# ModuleVersion becomes the product version (release plan §11), stamped into
-	# the STAGED copy and never into the source. The modules ship as part of the
-	# release train - they are not separately versioned - so a hand-maintained
-	# number in the .psd1 would be a second source of truth that drifts, and the
-	# only way to notice would be a support case quoting two numbers.
-	#
-	# PowerShell parses ModuleVersion as System.Version, which takes exactly the
-	# four numeric fields §3.3 defines. Asserted below rather than assumed: a
-	# .psd1 whose ModuleVersion does not parse makes the module unimportable, and
-	# BUILD-NOTES #14 means no hook can detect that by importing it BY NAME.
-	sed -i -E "s/^([[:space:]]*ModuleVersion[[:space:]]*=[[:space:]]*).*$/\1'${OS7_VERSION}'/" \
-		"${dst}/${name}.psd1"
-	if ! grep -q "ModuleVersion *= *'${OS7_VERSION}'" "${dst}/${name}.psd1"; then
-		echo "!!! could not stamp ModuleVersion = ${OS7_VERSION} into the staged ${name}.psd1" >&2
-		grep -n 'ModuleVersion' "${dst}/${name}.psd1" >&2 || true
-		exit 1
-	fi
-	echo "    staged ${name} PowerShell module -> ${dst#${WORK}/}  (ModuleVersion ${OS7_VERSION})"
+	echo "    staged ${name} test fixtures -> ${dst#${WORK}/}"
 }
-
-# Zfs first, because OS7 depends on it and hook 0060 checks them in this order.
-#
-# The Zfs module's tests/fixtures go WITH it, deliberately. They are a few KB of
-# recorded real ZFS output, and they are what lets `Test-ZfsModule` run inside
-# the chroot at build time — where ZFS itself cannot run at all, because the
-# kernel module is not loaded there (ZFS-POWERSHELL-PLAN §12, M-Z1). Shipping a
-# self-test with the artefact is the same trade `os7-setup --self-test` already
-# makes, for the same reason: a parser that stopped matching what ZFS emits
-# should fail the BUILD, not a customer's boot.
-stage_ps_module Zfs
-# Net is the second generic layer (docs/POWERSHELL-SURFACE-PLAN.md P2), cut the
-# same way Zfs is: it knows netplan, iproute2, networkd, NetworkManager and
-# resolved, and nothing about OS/7. It is staged BEFORE OS7 for the same reason
-# Zfs is — OS7 will sit on top of it and hook 0060 checks them in this order.
-stage_ps_module Net
-# Time is the third generic layer. It carries chrony's CSV parsing and the
-# zone/RTC files, and nothing about OS/7 - the Kerberos threshold lives one
-# layer up. Its fixtures are recorded chronyc output and travel with it, for
-# the same reason the Zfs captures do.
-stage_ps_module Time
-# Systemd is the fourth generic layer: units and the journal as typed objects.
-# Its fixtures are recorded systemctl/journalctl output - including a MESSAGE
-# that is a byte array rather than a string - and travel with it.
-stage_ps_module Systemd
-stage_ps_module OS7
-
-# ---------------------------------------------------------------------------
-# Console font (SETUP-PLAN §2.5, decision D9).
-#
-# Fixedsys Excelsior ships as a TTF; the Linux console reads PSF. The conversion
-# is a BUILD step so that otf2bdf and bdf2psf stay in the container and never
-# reach the image - the image gets two .psf.gz files and nothing else.
-#
-# Not a hook, deliberately. A hook runs inside the chroot, where it would have
-# to install the toolchain into the image and then remove it, and where a
-# failure is easy to miss (trap #13). Here it is an ordinary step that either
-# produces the files or stops the build.
-#
-# The fetch is cached in the container-local WORK tree, so a rebuild in the same
-# container does not re-download and an offline rebuild works.
-# ---------------------------------------------------------------------------
-CONSOLEFONT_DST="${WORK}/config/includes.chroot/usr/share/consolefonts"
-mkdir -p "${CONSOLEFONT_DST}"
-"${HERE}/lib/build-console-font.sh" "${CONSOLEFONT_DST}" "${WORK}/cache/fonts"
-
-for required in os7-fixedsys-8x16.psf.gz os7-fixedsys-16x32.psf.gz; do
-	if [[ ! -s "${CONSOLEFONT_DST}/${required}" ]]; then
-		echo "!!! console font step produced no ${required}" >&2
+for _mod in Zfs Net Time Systemd OS7; do
+	if [[ ! -d "${HERE}/../powershell/${_mod}" ]]; then
+		echo "!!! ${_mod} module source missing: ${HERE}/../powershell/${_mod}" >&2
 		exit 1
 	fi
+	stage_ps_fixtures "${_mod}"
 done
+
+# ---------------------------------------------------------------------------
+# The console fonts, the palettes and their licence come from the os7-console
+# PACKAGE (hook 0022) — build_os7_console runs the same two font builders and
+# palette.py this file used to run, with the same assertions, and the .deb is
+# what check-os7-repo.py already proves installable. What this file keeps is
+# the /etc/default/console-setup existence check below: the checked-in include
+# is BOTH the file the package's divert renames aside on install AND the
+# source build_os7_console copies to /usr/share/os7/console-setup, so an image
+# without it would select the Debian default font in the window before the
+# packages land.
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Installed console font (SETUP-PLAN §2.8, decision D15).
@@ -391,153 +340,62 @@ done
 #
 # Both fonts ship. /etc/default/console-setup selects between them, and Setup
 # calls setfont with the Fixedsys PSF itself before it paints (§2.4).
-# ---------------------------------------------------------------------------
-"${HERE}/lib/build-installed-console-font.sh" "${CONSOLEFONT_DST}" "${WORK}/cache/fonts"
-
-for required in os7-console-8x16.psf.gz os7-console-16x32.psf.gz; do
-	if [[ ! -s "${CONSOLEFONT_DST}/${required}" ]]; then
-		echo "!!! installed console font step produced no ${required}" >&2
-		exit 1
-	fi
-done
-
-# The licence is a redistribution obligation (OFL 1.1 §2, SETUP-PLAN L29), and
-# it is the kind that has no runtime symptom: an image missing it boots, looks
-# right, and is out of compliance. So the pair is checked here the same way the
-# consolefonts and /etc/default/console-setup are checked below.
-CASCADIA_LICENCE="${WORK}/config/includes.chroot/usr/share/doc/os7-console-font/LICENSE"
-if [[ ! -s "${CASCADIA_LICENCE}" ]]; then
-	echo "!!! Cascadia PSFs staged but their licence is not." >&2
-	echo "!!! OFL 1.1 requires the licence to ship with the font (L29)." >&2
-	exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# Console palette (SETUP-PLAN §2.1, decision D5).
-#
-# Generated rather than checked in, because the same sixteen values are needed
-# by the image, by the S1 harness and by anything that later wants the kernel
-# form - and four hand-maintained copies of a decision drift.
-#
-# Staged to /usr/share/os7/ and NOT to /etc/vtrgb. The difference is D6, which is
-# still open: Setup applies the palette itself when it starts (it has to, since
-# the kernel command line is dead here - BUILD-NOTES #25), and whether the
-# INSTALLED console keeps it afterwards is a separate decision. Symlinking
-# /etc/vtrgb at these files is the one-line change that makes it so.
-# ---------------------------------------------------------------------------
-echo ">>> Console palette"
-python3 "${HERE}/lib/palette.py" verify
-python3 "${HERE}/lib/palette.py" write \
-	"${WORK}/config/includes.chroot/usr/share/os7"
-
-# /etc/default/console-setup names these files. If the include is missing the
-# system still boots, with the wrong font and no sign that anything is wrong -
-# so check the pair here rather than discovering it on a screenshot.
+# /etc/default/console-setup: see the note above the fixtures staging.
 if [[ ! -f "${WORK}/config/includes.chroot/etc/default/console-setup" ]]; then
-	echo "!!! consolefonts staged but /etc/default/console-setup is not -" >&2
+	echo "!!! /etc/default/console-setup is not staged -" >&2
 	echo "!!! the installed console would silently keep the Debian default." >&2
 	exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# os7-setup (SETUP-PLAN §6.1, §7, §11).
+# THE OS/7 PACKAGES — C7's second half, 2026-08-28. The nine .debs (and the
+# desktop theme on amd64) are built here from the SAME sources the update
+# train's repository is built from, staged as FILES into the image, and
+# installed by hook 0022 with apt — the exact mechanism hook 0085 proved for
+# the theme, generalised. Everything this file used to stage into
+# includes.chroot piece by piece — PowerShell, the modules, os7-setup and its
+# unit, the fonts, the palettes, the plans — now reaches the image through
+# dpkg, which is what lets an update replace it (C7 §6.1: "Every OS/7-specific
+# file on a running OS/7 system is unowned by dpkg" was the gap).
 #
-# Published as a NativeAOT binary for the TARGET architecture, which is this
-# container's own - the build containers are architecture-matched (harvested
-# fix 1), so this is a native compile and never a cross one. Spike S2 measured
-# the result at 3.2-3.4 MB with no .NET runtime needed at run time, which is
-# what makes it viable as the first thing that runs on a machine.
+# NOT config/packages.chroot. BUILD-NOTES #71: a non-empty packages.chroot
+# makes lb_chroot_archives build a local apt repository in the chroot and sign
+# it with gnupg-1.x-era code that dies under gnupg 2.x ("signing failed: No
+# secret key"), and there is no earlier stage to intervene from. The guard
+# below still refuses anything that lands there.
 #
-# The RID is derived rather than passed: getting it wrong produces a binary that
-# builds cleanly and cannot execute, and the failure would surface as an empty
-# tty1 on a booted image.
+# THE SIGNING KEY IS SHARED with build-os7-repo.sh (os7-signing-key.sh):
+# os7-release ships the trust anchor, and an ISO whose keyring differs from
+# the key that signs the repository would refuse every update the same tree
+# built. The Makefile mounts one OS7_REPO_GNUPGHOME into both targets.
 # ---------------------------------------------------------------------------
-case "${ARCH}" in
-	amd64) RID=linux-x64   ;;
-	arm64) RID=linux-arm64 ;;
-esac
+echo ">>> The OS/7 packages"
+# shellcheck source=lib/os7-signing-key.sh
+source "${HERE}/lib/os7-signing-key.sh"
+os7_ensure_signing_key "${WORK}/gnupg" "${WORK}/os7-archive-keyring.gpg"
 
-SETUP_SRC="${HERE}/../installer/src/OS7.Setup"
-SETUP_DST="${WORK}/config/includes.chroot/usr/lib/os7-setup"
+PKG_DST="${WORK}/config/includes.chroot/usr/lib/os7/packages"
+mkdir -p "${PKG_DST}"
+OS7_REPO_PUBKEY="${WORK}/os7-archive-keyring.gpg" \
+OS7_VERSION="${OS7_VERSION}" OS7_ARCH="${ARCH}" OS7_BUILT="${OS7_BUILT}" \
+OS7_GIT_COMMIT="${OS7_GIT_COMMIT}" OS7_GIT_DIRTY="${OS7_GIT_DIRTY}" \
+	"${HERE}/lib/build-os7-packages.sh" "${RELEASE_CONF}" "${PKG_DST}"
 
-echo ">>> os7-setup: publishing for ${RID}"
-mkdir -p "${SETUP_DST}"
-DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
-	dotnet publish "${SETUP_SRC}" -c Release -r "${RID}" -p:PublishAot=true \
-	-o "${SETUP_DST}" --nologo
-
-if [[ ! -x "${SETUP_DST}/os7-setup" ]]; then
-	echo "!!! dotnet publish produced no os7-setup binary" >&2
-	exit 1
-fi
-echo "    ${SETUP_DST#${WORK}/}/os7-setup  ($(stat -c %s "${SETUP_DST}/os7-setup") bytes)"
-
-# Publish leaves debugging symbols beside the binary. They are a third of the
-# size of the thing itself and nothing on the image can read them.
-rm -f "${SETUP_DST}"/*.dbg "${SETUP_DST}"/*.pdb
-
-# The systemd unit, and the licence the Licence screen reads.
-#
-# The licence is a FILE rather than text compiled into the binary, on purpose:
-# what a user agrees to has to be what the image ships. It was written this way
-# while the licence question was still open (docs/DECISIONS.md question 5,
-# resolved 2026-08-25 - MIT), because baking one in would have settled it by
-# accident; it stays this way because a compiled-in copy can disagree with the
-# file on the medium and nothing would say so.
-install -Dm644 "${HERE}/../installer/assets/os7-setup.service" \
-	"${WORK}/config/includes.chroot/usr/lib/systemd/system/os7-setup.service"
-install -Dm644 "${HERE}/../LICENSE" \
-	"${WORK}/config/includes.chroot/usr/share/os7/LICENSE"
-install -Dm644 "${HERE}/../installer/SETUP-PLAN.md" \
-	"${WORK}/config/includes.chroot/usr/share/os7/SETUP-PLAN.md"
-# The backup design, because both os7-backup units point at it with
-# Documentation=file:///usr/share/os7/BACKUP-PLAN.md and a Documentation= that
-# names a file the image does not have is worse than none.
-install -Dm644 "${HERE}/../docs/BACKUP-PLAN.md" \
-	"${WORK}/config/includes.chroot/usr/share/os7/BACKUP-PLAN.md"
-
-# ---------------------------------------------------------------------------
-# The desktop theme, amd64 only.
-#
-# The CONDITION IS AROUND THE BUILD, NOT AROUND THE STAGING. includes.chroot is
-# in both staging loops above, exactly like package-lists and hooks, so "amd64
-# gets a desktop and arm64 does not" is still said in one place. What is
-# architecture-specific here is only whether there is anything to build: arm64
-# is server-only and has no desktop to theme.
-#
-# Built straight into the staged tree rather than into the source tree: it is a
-# build artefact, and build/config/ is checked in.
-#
-# NOT config/packages.chroot, WHICH IS WHERE THIS USED TO GO. BUILD-NOTES #71.
-# A non-empty packages.chroot makes lb_chroot_archives build a local apt
-# repository in the chroot and sign it, and its signing code is gnupg 1.x:
-# it passes --secret-keyring/--keyring, which gnupg >= 2.1 IGNORES, and its
-# `gpg --batch --gen-key` parameter file has no %no-protection, so gpg 2.x tries
-# to prompt for a passphrase, finds no tty, and fails with "Inappropriate ioctl
-# for device". The build then dies at "signing failed: No secret key".
-#
-# There is no way round it from configuration. LB_APT_SECURE=false silences it
-# but reaches much further than this repository - lb_bootstrap_debootstrap turns
-# it into debootstrap --no-check-gpg, so the pinned snapshot would stop being
-# verified, which is the opposite of why it is pinned. And there is no earlier
-# place to intervene: lb_chroot_archives is stage 52 of lb_chroot, ahead of
-# chroot_early_hooks (57), chroot_includes (77) and chroot_hooks (78).
-#
-# So the theme travels as a FILE and hook 0085 installs it with apt, which is
-# the same answer efi-remaster.sh gives to a different live-build gap: do
-# it ourselves rather than carry a patch against live-build. The theme is still
-# OS/7's own .deb with OS/7's version on it and still lands in dpkg's database -
-# only the delivery changed. packages.chroot is now used by neither
-# architecture, so the local-repository path cannot run at all.
-# ---------------------------------------------------------------------------
 if [[ "${ARCH}" == "amd64" ]]; then
-	# OS7_VERSION is passed in rather than left to the environment: it is not
-	# exported until just before `lb config`, and the theme package must carry
-	# the same four-field version as the ISO, not a defaulted one.
+	# The theme is amd64's - arm64 is server-only and has no desktop to theme.
 	OS7_VERSION="${OS7_VERSION}" "${HERE}/lib/build-desktop-theme.sh" \
-		"${RELEASE_CONF}" "${WORK}/config/includes.chroot/usr/lib/os7/packages"
+		"${RELEASE_CONF}" "${PKG_DST}"
 else
 	echo ">>> Desktop theme: skipped (${ARCH} is server-only, no GUI target)"
+fi
+
+shopt -s nullglob
+STAGED_DEBS=( "${PKG_DST}"/*.deb )
+shopt -u nullglob
+echo "    ${#STAGED_DEBS[@]} package(s) staged for hook 0022"
+if (( ${#STAGED_DEBS[@]} < 9 )); then
+	echo "!!! expected at least nine OS/7 packages, found ${#STAGED_DEBS[@]}" >&2
+	exit 1
 fi
 
 # GUARD: nothing may reach config/packages.chroot. If a later change puts a .deb
@@ -656,10 +514,17 @@ rm -rf "${MANIFEST_DIR}"
 # does/not/exist` extracts nothing and EXITS 0. So the one failure this check
 # exists to catch - hook 0075 never ran, trap #13's shape exactly - is the one
 # the exit code cannot report.
+# image.json, not release.json, since the ISO installs os7-release
+# (2026-08-28): /usr/lib/os7/release.json is now the PACKAGE's declared
+# release facts, and hook 0075's measurement — the component versions and the
+# package manifest hash read out of the finished image — moved to
+# /usr/lib/os7/image.json. The sidecar beside the ISO stays the MEASURED file
+# under its established name: it is what S7 diffs and what publish-release.py
+# reads, and both want what the image turned out to contain.
 unsquashfs -q -n -f -d "${MANIFEST_DIR}" "${SQ}" \
-	usr/lib/os7/release.json usr/lib/os7/packages.manifest >/dev/null 2>&1 || true
+	usr/lib/os7/image.json usr/lib/os7/packages.manifest >/dev/null 2>&1 || true
 
-for want in release.json packages.manifest; do
+for want in image.json packages.manifest; do
 	if [[ ! -s "${MANIFEST_DIR}/usr/lib/os7/${want}" ]]; then
 		echo "!!! the image carries no /usr/lib/os7/${want}." >&2
 		echo "!!! Hook 0075 did not run, or did not write it. The ISO exists and is" >&2
@@ -670,7 +535,7 @@ for want in release.json packages.manifest; do
 	fi
 done
 
-mv "${MANIFEST_DIR}/usr/lib/os7/release.json" \
+mv "${MANIFEST_DIR}/usr/lib/os7/image.json" \
    "${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.release.json"
 mv "${MANIFEST_DIR}/usr/lib/os7/packages.manifest" \
    "${OUT_DIR}/OS7-${OS7_VERSION}-${ARCH}.packages.manifest"

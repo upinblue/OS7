@@ -13,11 +13,19 @@
 #   /usr/lib/os7/release.conf   the pin - what was ASKED FOR
 #   /usr/lib/os7/build.conf     version, timestamp, git provenance
 #
-# OUTPUTS:
-#   /usr/lib/os-release             branded per §3.5 (/etc/os-release is a
-#                                   symlink to it on Ubuntu)
+# OUTPUTS (since 2026-08-28 the identity itself is os7-release's, installed by
+# hook 0022 — this hook VERIFIES it and writes the two files only an image
+# measurement can produce):
 #   /usr/lib/os7/packages.manifest  every package and its version, sorted
-#   /usr/lib/os7/release.json       the bill of materials - what was OBTAINED
+#   /usr/lib/os7/image.json         what this MATERIALISATION turned out to
+#                                   contain — the measured superset of the
+#                                   release facts os7-release declares at
+#                                   /usr/lib/os7/release.json. Two files, two
+#                                   authors, two names: the seam
+#                                   SESSION-OS7-REPOSITORY.md §5 recorded is
+#                                   resolved the way C9 implies — the release
+#                                   says what it IS, the image says what it
+#                                   turned out to hold.
 
 set -euo pipefail
 
@@ -113,112 +121,41 @@ osrel_get() { ( . /etc/os-release; eval "printf '%s' \"\${$1-}\"" ); }
 OSREL=/usr/lib/os-release
 [ -f "${OSREL}" ] || { echo "OS/7 hook 0075: ${OSREL} does not exist" >&2; exit 1; }
 
-# What the untouchable fields say BEFORE the rewrite. Compared again after, so
-# the check is "these did not change" rather than "these still match a literal
-# somebody typed here" - the second passes for a file the hook mangled into the
-# same wrong value it expected.
+# VERIFY-ONLY SINCE 2026-08-28. The identity is WRITTEN by os7-release (hook
+# 0022 installs it): the package dpkg-diverts /usr/lib/os-release and its
+# postinst derives the branded file from base-files' copy through
+# /usr/lib/os7/os-release-identity.py — the one implementation of the rewrite,
+# which this hook's inline python used to be the second of. What this hook
+# keeps is every READBACK: the branded values took, the untouchable fields
+# match base-files' own copy at .distrib, the literal contract holds, and
+# PRIVACY_POLICY_URL is gone. The diversion is asked of dpkg first, because
+# a branded file WITHOUT the diversion is the pre-package world where any
+# base-files upgrade reverts it (UL10).
+if ! dpkg-divert --list /usr/lib/os-release | grep -q os7-release; then
+	echo "OS/7 hook 0075: /usr/lib/os-release is not diverted by os7-release." >&2
+	echo "OS/7 hook 0075: hook 0022 should have installed the package (UL10)." >&2
+	exit 1
+fi
+if [ ! -s /usr/lib/os-release.distrib ]; then
+	echo "OS/7 hook 0075: base-files' own copy is missing at /usr/lib/os-release.distrib" >&2
+	exit 1
+fi
+
+# What the untouchable fields say in BASE-FILES' OWN COPY. Compared against the
+# branded file below, so the check is "the brand invented nothing" — the
+# generator's contract is that these fields are derived, never composed
+# (IDENTITY-PLAN I4).
 PROTECTED_BEFORE="$(mktemp)"
 for key in ID ID_LIKE VERSION_ID VERSION VERSION_CODENAME UBUNTU_CODENAME NAME; do
-	printf '%s=%s\n' "${key}" "$(osrel_get "${key}")" >> "${PROTECTED_BEFORE}"
+	printf '%s=%s\n' "${key}" \
+		"$( ( . /usr/lib/os-release.distrib; eval "printf '%s' \"\${${key}-}\"" ) )" \
+		>> "${PROTECTED_BEFORE}"
 done
 
-# VARIANT describes what this IMAGE can be, not what an installed machine chose.
-#   arm64  Server, permanently - it is a server-only product (README) and ships
-#          no desktop at all, so this can never be anything else.
-#   amd64  GUI, because the image carries GNOME. A headless install purges it,
-#          and SETUP-PLAN Phase 3 rewrites this field on the target accordingly.
-# Phase 3 owning the rewrite is the point of setting it here: it changes an
-# existing field rather than inventing one on a system it is halfway through
-# building.
-if [ "${ARCH}" = "arm64" ]; then
-	OS7_VARIANT="Server"; OS7_VARIANT_ID="server"
-else
-	OS7_VARIANT="GUI";    OS7_VARIANT_ID="gui"
-fi
-export OS7_VARIANT OS7_VARIANT_ID
-
-python3 - "${OSREL}" <<'PY'
-import os, sys
-
-path = sys.argv[1]
-env  = os.environ
-
-def quote(value):
-    """os-release(5) values are shell-quoted. ALWAYS double quotes, never the
-    single quotes shlex.quote would pick: os-release is meant to be sourced by
-    `.`, and every other line in the file Ubuntu ships is double-quoted. A file
-    mixing both styles still parses, but it invites a reader that strips only
-    one of them - which is a bug this hook's own readback check had before it
-    was written to source the file instead of scraping it."""
-    escaped = value.replace("\\", "\\\\")
-    for ch in '"$`':
-        escaped = escaped.replace(ch, "\\" + ch)
-    return f'"{escaped}"'
-
-# The branded fields, in the order they should appear if they are new.
-#
-# PRETTY_NAME is the THREE-field form with the channel — "OS/7 1.0.0
-# (development)" — because it describes rather than identifies. IMAGE_VERSION
-# right below it is all FOUR, because it identifies. Both come from build.conf;
-# neither is composed here (IDENTITY-PLAN §5).
-brand = {
-    "PRETTY_NAME":       env["OS7_PRODUCT"],
-    "IMAGE_ID":          "os7",
-    "IMAGE_VERSION":     env["OS7_VERSION"],
-    "VARIANT":           env["OS7_VARIANT"],
-    "VARIANT_ID":        env["OS7_VARIANT_ID"],
-    "HOME_URL":          "https://github.com/upinblue/OS7",
-    # Where a person goes when the product misbehaves. Leaving Ubuntu's is
-    # WORSE than leaving these unset: it sends OS/7's bugs to Canonical.
-    "SUPPORT_URL":       "https://github.com/upinblue/OS7/issues",
-    "BUG_REPORT_URL":    "https://github.com/upinblue/OS7/issues",
-    "DOCUMENTATION_URL": "https://github.com/upinblue/OS7",
-    # For the amd64 desktop's About panel, once an icon by that name exists. A
-    # LOGO naming nothing renders as nothing, which is what it renders as today.
-    "LOGO":              "os7",
-    # The brand blue, #1289ff (SETUP-PLAN D5), as a truecolor SGR parameter
-    # string. hostnamectl and the fetch tools use it; a terminal without
-    # truecolor ignores the sequence rather than mangling it.
-    "ANSI_COLOR":        "0;38;2;18;137;255",
-}
-
-# Ubuntu's privacy policy is not OS/7's, and pointing a user at a document that
-# does not describe this system is worse than pointing them at none.
-drop = {"PRIVACY_POLICY_URL"}
-
-# Untouchable. Named here so that adding a field to `brand` or `drop` above can
-# never silently capture one of them. NAME is on this list since 2026-08-26 —
-# see the block comment above and BUILD-NOTES #80.
-protected = {"ID", "ID_LIKE", "VERSION_ID", "VERSION", "VERSION_CODENAME",
-             "UBUNTU_CODENAME", "NAME"}
-assert not (protected & brand.keys()), "hook 0075 tried to brand a protected field"
-assert not (protected & drop), "hook 0075 tried to delete a protected field"
-
-lines, seen = [], set()
-with open(path, encoding="utf-8") as fh:
-    for line in fh:
-        line = line.rstrip("\n")
-        key = line.split("=", 1)[0].strip() if "=" in line else None
-        if key in drop:
-            continue
-        if key in brand:
-            lines.append(f"{key}={quote(brand[key])}")
-            seen.add(key)
-        else:
-            lines.append(line)
-
-for key, value in brand.items():
-    if key not in seen:
-        lines.append(f"{key}={quote(value)}")
-
-with open(path, "w", encoding="utf-8") as fh:
-    fh.write("\n".join(lines) + "\n")
-PY
-
-# Read it BACK, through the symlink an ordinary program would use, and check the
-# fields that matter in both directions - the branded ones changed, and the
-# untouchable ones did not. A hook that writes a file and does not re-read it is
-# the shape of every expensive bug in docs/BUILD-NOTES.md.
+# Read the BRANDED file back, through the symlink an ordinary program would
+# use, and check the fields that matter in both directions - the branded ones
+# took, and the untouchable ones equal base-files' own. A step whose work is
+# not re-read is the shape of every expensive bug in docs/BUILD-NOTES.md.
 
 for pair in "IMAGE_ID=os7" "IMAGE_VERSION=${OS7_VERSION}" "PRETTY_NAME=${OS7_PRODUCT}"; do
 	key="${pair%%=*}"; want="${pair#*=}"; got="$(osrel_get "${key}")"
@@ -483,12 +420,13 @@ MODULE_PSD1=/usr/local/share/powershell/Modules/OS7/OS7.psd1
 MODULE_VERSION="$(sed -n "s/.*ModuleVersion[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "${MODULE_PSD1}" 2>/dev/null | head -n1)"
 if [ "${MODULE_VERSION}" != "${OS7_VERSION}" ]; then
 	echo "OS/7 hook 0075: OS7 module is ${MODULE_VERSION:-<unset>}, product is ${OS7_VERSION}" >&2
-	echo "OS/7 hook 0075: build.sh stamps the staged .psd1 - it did not take." >&2
+	echo "OS/7 hook 0075: build-os7-packages.sh stamps the .psd1 - it did not take." >&2
 	exit 1
 fi
 
 # PowerShell: the pin says 7.6.5, the binary is asked what it thinks it is.
-# `pwsh --version` is not a health check (hook 0020 explains why at length) but
+# `pwsh --version` is not a health check (BUILD-NOTES: the banner is compiled
+# into the binary and succeeds while the module tree is unusable) but
 # it is a perfectly good VERSION check, which is all it is used for here.
 PWSH_MEASURED="$(/usr/bin/pwsh --version 2>/dev/null | sed 's/^PowerShell //' || true)"
 if [ -n "${PWSH_MEASURED}" ] && [ "${PWSH_MEASURED}" != "${OS7_PWSH_VERSION}" ]; then
@@ -496,7 +434,20 @@ if [ -n "${PWSH_MEASURED}" ] && [ "${PWSH_MEASURED}" != "${OS7_PWSH_VERSION}" ];
 	exit 1
 fi
 
-RELEASE_JSON=/usr/lib/os7/release.json
+# The DECLARED release facts are os7-release's file; assert it is there, owned,
+# and names this build before measuring anything beside it.
+DECLARED_JSON=/usr/lib/os7/release.json
+if ! dpkg -S "${DECLARED_JSON}" 2>/dev/null | grep -q '^os7-release:'; then
+	echo "OS/7 hook 0075: ${DECLARED_JSON} is not owned by os7-release (hook 0022)" >&2
+	exit 1
+fi
+DECLARED_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "${DECLARED_JSON}")"
+if [ "${DECLARED_VERSION}" != "${OS7_VERSION}" ]; then
+	echo "OS/7 hook 0075: os7-release declares ${DECLARED_VERSION}, this build is ${OS7_VERSION}" >&2
+	exit 1
+fi
+
+RELEASE_JSON=/usr/lib/os7/image.json
 export KERNEL_RELEASE ZFS_VERSION AUTHD_VERSION AZCMAGENT_VERSION INTUNE_VERSION SANOID_VERSION
 export PWSH_SHA SETUP_SHA MODULE_VERSION MANIFEST_SHA
 
@@ -608,11 +559,11 @@ fi
 # produce the same empty string, and the error below would confidently name the
 # wrong cause - which is the failure mode BUILD-NOTES keeps recording.
 [ -x /usr/bin/pwsh ] || {
-	echo "OS/7 hook 0075: /usr/bin/pwsh is missing - hook 0020 should have installed it." >&2
+	echo "OS/7 hook 0075: /usr/bin/pwsh is missing - hook 0022 should have installed os7-powershell." >&2
 	exit 1
 }
 [ -f "${MODULE_PSD1}" ] || {
-	echo "OS/7 hook 0075: ${MODULE_PSD1} is missing - build.sh should have staged it." >&2
+	echo "OS/7 hook 0075: ${MODULE_PSD1} is missing - hook 0022 should have installed os7-module." >&2
 	exit 1
 }
 

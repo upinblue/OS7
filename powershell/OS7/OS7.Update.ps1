@@ -427,6 +427,21 @@ function Get-OS7ReleaseIndex {
 
 	$doc = ConvertFrom-Json ([System.IO.File]::ReadAllText($json))
 
+	# The file was FETCHED by channel name and the document SAYS which channel
+	# it is, and the two must agree. A signed index served under the wrong name
+	# is not a corrupt file — the signature verifies — it is a stable channel
+	# answering with a development listing, or the reverse, and every decision
+	# downstream (Applicable, the operator's own reading) would be made against
+	# the wrong population. Channels became real on 2026-08-28; before that
+	# there was only one and this could not fire.
+	$docChannel = [string](Get-OS7ManifestField $doc 'channel')
+	if ($docChannel -ne $Channel) {
+		throw [System.InvalidOperationException]::new(
+			"the index fetched as channel '$Channel' says it is channel '$docChannel'. " +
+			'A mislabelled index is refused: its signature proves who wrote it, not ' +
+			'that it is the channel it was asked for.')
+	}
+
 	# Freshness, and it is checked HERE rather than left to the caller because a
 	# reader that returns a stale index has already answered the question.
 	$validUntil = [string](Get-OS7ManifestField $doc 'valid_until')
@@ -637,6 +652,26 @@ function Get-OS7Release {
 			$major = ([version]$version).Major
 			$newer = $mine -and (Compare-OS7Version -Left $version -Right $mine) -gt 0
 
+			# The hotfix form (§7): a release that overlays a BASE release and
+			# is applicable only to a machine ON that base. The base is read
+			# from the signed index's entry and cross-checked against the
+			# descriptor the entry's hash binds — the two are one author
+			# (build-os7-repo.sh derives the entry from the descriptor), so a
+			# difference is tampering or a builder defect, and both are
+			# refusals rather than judgement calls.
+			$entryHotfixBase = [string](Get-OS7ManifestField $entry 'hotfix_base')
+			$descHotfix      = Get-OS7ManifestField $descriptor 'hotfix'
+			$descHotfixBase  = if ($null -ne $descHotfix) {
+				[string](Get-OS7ManifestField $descHotfix 'base') } else { '' }
+			if ($entryHotfixBase -ne $descHotfixBase) {
+				throw [System.InvalidOperationException]::new(
+					"release $version names hotfix base '$entryHotfixBase' in the index and " +
+					"'$descHotfixBase' in its descriptor. The two have one author; a " +
+					'difference means one of them is not the file that was published.')
+			}
+			$onBase = (-not $entryHotfixBase) -or
+				($mine -and (Compare-OS7Version -Left $entryHotfixBase -Right $mine) -eq 0)
+
 			[pscustomobject]@{
 				PSTypeName   = 'OS7.Release'
 				Version      = $version
@@ -645,12 +680,17 @@ function Get-OS7Release {
 				Architecture = [string](Get-OS7ManifestField $entry 'architecture')
 				Suite        = [string](Get-OS7ManifestField $entry 'os7_suite')
 				Snapshot     = [string](Get-OS7ManifestField $entry 'archive_snapshot')
-				# Whether Update-OS7 would take it. Both halves are said, because
-				# "not applicable" for two different reasons is two different
-				# conversations with the operator.
-				Applicable   = ($newer -and $major -eq $myMajor)
+				# Whether Update-OS7 would take it. Every half is said
+				# separately, because "not applicable" for three different
+				# reasons is three different conversations with the operator.
+				Applicable   = ($newer -and $major -eq $myMajor -and $onBase)
 				Newer        = [bool]$newer
 				CrossesMajor = ($major -ne $myMajor)
+				# §7: a hotfix moves the Build field alone and overlays exactly
+				# the base release it names. On any other machine it is listed
+				# and not applicable — the operator updates to the base first.
+				Hotfix       = [bool]$entryHotfixBase
+				HotfixBase   = $(if ($entryHotfixBase) { $entryHotfixBase } else { $null })
 				# C7a is open, so this is load-bearing rather than informational:
 				# Update-OS7 refuses a development release without
 				# -AllowDevelopment, and this is where an operator sees why.
@@ -1579,6 +1619,20 @@ function Update-OS7 {
 				'use Restore-OS7.')
 		}
 
+		# §7: a hotfix overlays exactly the base release it names. Applying it
+		# to any other machine produces a system no descriptor describes — the
+		# overlay packages assume the base's package set, and the version
+		# number x.y.z.N+1 would claim a state the machine never held. An
+		# explicit -Version reaches here past Applicable, which is why this is
+		# its own refusal and not a filter.
+		if ($target.Hotfix -and
+				(Compare-OS7Version -Left $target.HotfixBase -Right $from) -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"$to is a hotfix of $($target.HotfixBase) and this machine runs $from. " +
+				"A hotfix overlays exactly the release it names (§7); update to " +
+				"$($target.HotfixBase) first, then apply the hotfix.")
+		}
+
 		# C7a is open. Every key that exists today is a development key, so this
 		# refusal fires on every real run — which is the honest state and not an
 		# inconvenience to be smoothed away.
@@ -2295,6 +2349,22 @@ function Test-OS7Update {
 		}
 		catch { }
 		check 'a current index is accepted' ($null -ne $index)
+
+		# The document says which channel it is, and the fetch said which
+		# channel was wanted. Serving one channel's signed index under
+		# another's name must be a refusal — the signature proves authorship,
+		# not that this is the channel it was asked for.
+		$stablePath = [System.IO.Path]::Combine($repo, 'index', 'stable.json')
+		[System.IO.File]::Copy(
+			[System.IO.Path]::Combine($repo, 'index', 'development.json'), $stablePath, $true)
+		$threw = $false
+		try {
+			Get-OS7ReleaseIndex -BaseUri $repoUri -Channel 'stable' -WorkDir $tmp -SkipSignature | Out-Null
+		}
+		catch { $threw = $true }
+		check 'an index mislabelled as another channel is refused' $threw `
+			'a development listing served as stable would answer with the wrong population'
+		[System.IO.File]::Delete($stablePath)
 
 		# -------------------------------------------------------------------
 		# 6. A DESCRIPTOR IS BOUND TO THE INDEX THAT NAMED IT.

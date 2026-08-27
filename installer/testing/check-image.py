@@ -71,9 +71,23 @@ mount -t proc proc /mnt/root/proc
 emit() { printf '<<<%s>>>\n' "$1"; shift; "$@" 2>&1 || true; }
 
 emit release.json      cat /mnt/sq/usr/lib/os7/release.json
+# What the image MEASURED itself to contain (hook 0075). release.json above is
+# what os7-release DECLARES; since the ISO installs the packages (2026-08-28)
+# the two are different files with different authors, on purpose.
+emit image.json        cat /mnt/sq/usr/lib/os7/image.json
 emit release.conf      cat /mnt/sq/usr/lib/os7/release.conf
 emit build.conf        cat /mnt/sq/usr/lib/os7/build.conf
 emit os-release        cat /mnt/sq/etc/os-release
+# WHO OWNS THE OS/7 HALF. Until 2026-08-28 every one of these files was staged
+# into the chroot unowned, and the update train could reach none of them (C7
+# §6.1). dpkg is asked, file by file, because "the hook ran" is not the fact —
+# the ownership is.
+emit dpkg.os7          bash -c 'chroot /mnt/root dpkg-query -W -f="\${db:Status-Abbrev} \${Package} \${Version}\n" "os7-*" 2>/dev/null || true'
+emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
+emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
+emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
+emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
+emit os7.staged.debs   bash -c 'ls /mnt/sq/usr/lib/os7/packages/ 2>/dev/null || echo "(gone)"'
 # The identity as a PERSON meets it (docs/IDENTITY-PLAN.md §6). None of these is
 # derivable from os-release: the product line is OS/7's own file precisely so
 # that no user-facing surface depends on a field Microsoft's agents also read
@@ -390,12 +404,29 @@ def main() -> None:
             bad += 1
 
     # -- the manifest -------------------------------------------------------
+    # TWO FILES SINCE THE ISO INSTALLS THE PACKAGES (2026-08-28), and the split
+    # is C9's: /usr/lib/os7/release.json is what os7-release DECLARES the
+    # release to be; /usr/lib/os7/image.json is what hook 0075 MEASURED this
+    # materialisation to contain. The declared file answers identity questions,
+    # the measured one answers content questions, and the two must agree where
+    # they overlap.
     try:
         rel = json.loads(img.get("release.json", ""))
     except Exception as exc:
         check(False, "release.json parses", str(exc))
         print(f"\n{bad} problem(s). The image carries no usable manifest.")
         sys.exit(1)
+    try:
+        imgj = json.loads(img.get("image.json", ""))
+    except Exception as exc:
+        check(False, "image.json parses", str(exc))
+        print(f"\n{bad} problem(s). The image carries no usable measurement.")
+        sys.exit(1)
+    check(imgj.get("version") == rel.get("version")
+          and (imgj.get("base") or {}).get("archive_snapshot")
+              == (rel.get("base") or {}).get("archive_snapshot"),
+          "the declared release and the measured image agree",
+          f"declared {rel.get('version')}, measured {imgj.get('version')}")
 
     version = rel.get("version", "")
     check(bool(version) and version != "0.0.0.0", "the image knows its version", version)
@@ -441,7 +472,7 @@ def main() -> None:
         print(f"      note  NOT built from a clean source tree (commit={src}). Expected "
               f"on a {rel.get('channel')} build; would be fatal on a stable one.")
 
-    comp = rel.get("components") or {}
+    comp = imgj.get("components") or {}
     check(bool(comp.get("kernel")), "kernel recorded", str(comp.get("kernel")))
     check(comp.get("zfs") not in (None, ""), "zfs recorded", str(comp.get("zfs")))
     check(comp.get("os7_module") == version, "the OS7 module carries the product version",
@@ -450,6 +481,47 @@ def main() -> None:
 
     lines = int(img.get("packages.count") or 0)
     check(lines > 200, "the package manifest is populated", f"{lines} packages")
+
+    # -- the OS/7 half belongs to dpkg (C7, the 2026-08-28 switch) ------------
+    #
+    # Asked of dpkg's records in the image, never of the build log: an ISO on
+    # which `dpkg -S` cannot name an owner for pwsh, the module, os7-setup, the
+    # console font and the release facts is the pre-C7 image, whatever the
+    # hooks printed. The staged .debs themselves must be GONE — they are build
+    # inputs, and a squashfs still carrying them shipped ~150 MB for nothing.
+    dpkg_os7 = img.get("dpkg.os7", "")
+    meta = "os7-desktop" if arch == "amd64" else "os7-server"
+    for pkg in ("os7-release", "os7-console", "os7-powershell", "os7-module",
+                "os7-backup", "os7-setup", "os7-base", meta):
+        check(f"ii  {pkg} {version}" in dpkg_os7,
+              f"{pkg} is installed at {version}",
+              next((l for l in dpkg_os7.splitlines() if f" {pkg} " in l), "(absent)"))
+    owners = dict(
+        line.split(" -> ", 1) for line in img.get("dpkg.owners", "").splitlines()
+        if " -> " in line)
+    for path_, owner in (
+            ("/opt/microsoft/powershell/7/pwsh", "os7-powershell"),
+            ("/usr/local/share/powershell/Modules/OS7/OS7.psd1", "os7-module"),
+            ("/usr/lib/os7-setup/os7-setup", "os7-setup"),
+            ("/usr/share/consolefonts/os7-console-16x32.psf.gz", "os7-console"),
+            ("/usr/lib/os7/release.json", "os7-release"),
+            ("/etc/apt/sources.list.d/os7.sources", "os7-release"),
+            ("/etc/profile.d/95-os7-powershell.sh", "os7-powershell"),
+            ("/usr/libexec/os7-migrate-firstboot", "os7-release")):
+        check(owners.get(path_, "").strip() == owner,
+              f"dpkg -S: {path_} belongs to {owner}",
+              owners.get(path_, "(not asked)").strip())
+    check("os7-release" in img.get("dpkg.divert", ""),
+          "/usr/lib/os-release is diverted by os7-release (UL10)",
+          img.get("dpkg.divert", "")[:90])
+    check("Enabled: no" in img.get("os7.sources", ""),
+          "the shipped apt source is declared and OFF — nothing is published",
+          " ".join(img.get("os7.sources", "").split())[-60:])
+    check(int(img.get("os7.keyring") or 0) > 100,
+          "the trust anchor ships", f"{img.get('os7.keyring')} bytes")
+    check(img.get("os7.staged.debs", "").strip() in ("(gone)", ""),
+          "the staged .debs were consumed, not shipped",
+          img.get("os7.staged.debs", "")[:80])
 
     # -- what the image is CURATED to contain, and not to ---------------------
     #

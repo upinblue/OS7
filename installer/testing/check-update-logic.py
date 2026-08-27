@@ -473,18 +473,26 @@ def build_world(work):
 
 
 def build_repo(work, *, version=NEXT_VERSION, development=True, sign_with="os7",
-               valid_days=30, extra=()):
-    """A real, really-signed repository. gpg and gpgv are not faked."""
+               valid_days=30, extra=(), channel="development", channel_in_doc=None,
+               hotfix_base=None):
+    """A real, really-signed repository. gpg and gpgv are not faked.
+
+    `channel` names the index file AND the channel the documents claim;
+    `channel_in_doc` overrides the claim alone, which is the mislabelled-index
+    negative case. `hotfix_base` makes `version` a hotfix of that base — the
+    §7 form — declared in the descriptor's hotfix block and restated in the
+    index entry, exactly as build-os7-repo.sh authors both."""
     repo = os.path.join(work, "repo")
     for d in ("index", os.path.join("releases", version)):
         os.makedirs(os.path.join(repo, d), exist_ok=True)
 
+    doc_channel = channel_in_doc if channel_in_doc is not None else channel
     entries = []
     for v, dev in [(version, development)] + list(extra):
         rdir = os.path.join(repo, "releases", v)
         os.makedirs(rdir, exist_ok=True)
         descriptor = {
-            "version": v, "channel": "development",
+            "version": v, "channel": doc_channel,
             "released": "2026-08-27T00:00:00Z", "architecture": "amd64",
             "base": {"release": "26.04", "distribution": "resolute",
                      "archive_snapshot": "20260901T000000Z",
@@ -494,6 +502,11 @@ def build_repo(work, *, version=NEXT_VERSION, development=True, sign_with="os7",
             "components": [], "migrations": [],
             "signing": {"key": "DEADBEEF", "user_id": "test", "development": dev},
         }
+        if hotfix_base and v == version:
+            descriptor["hotfix"] = {"base": hotfix_base, "packages": [
+                {"package": "hello", "version": "2.10-99", "arch": "amd64",
+                 "filename": "pool/main/h/hello/hello_2.10-99_amd64.deb",
+                 "sha256": "0" * 64}]}
         path = os.path.join(rdir, "release.json")
         with open(path, "w", newline="\n") as fh:
             json.dump(descriptor, fh)
@@ -504,13 +517,15 @@ def build_repo(work, *, version=NEXT_VERSION, development=True, sign_with="os7",
             "os7_suite": SUITE,
             "metapackage": {"os7-server": v, "os7-desktop": v},
             "manifest": "releases/%s/release.json" % v,
-            "manifest_sha256": digest, "migrations": [], "supersedes": None,
+            "manifest_sha256": digest, "migrations": [],
+            "hotfix_base": hotfix_base if v == version else None,
+            "supersedes": None,
         })
 
     entries.sort(key=lambda e: [int(x) for x in e["version"].split(".")], reverse=True)
     valid_until = sh(["date", "-u", "-d", "+%d days" % valid_days, "+%a, %d %b %Y %H:%M:%S UTC"]).stdout.strip()
-    index = {"channel": "development", "releases": entries, "valid_until": valid_until}
-    ipath = os.path.join(repo, "index", "development.json")
+    index = {"channel": doc_channel, "releases": entries, "valid_until": valid_until}
+    ipath = os.path.join(repo, "index", "%s.json" % channel)
     with open(ipath, "w", newline="\n") as fh:
         json.dump(index, fh)
 
@@ -765,6 +780,62 @@ def main():
     check(rc != 0 and "not " + NEXT_VERSION in err,
           "apt exiting 0 having installed a different version",
           (err.strip().splitlines() or [""])[-1][:110])
+
+    # -- channels ------------------------------------------------------------
+    # Two channels are two index files (§6.4), and the train must read the one
+    # it was asked for AND refuse one that merely sits at the right filename.
+    print("\n  channels")
+    build_repo(work, channel="stable")
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment -Channel stable")
+    last = (out.strip().splitlines() or [""])[-1]
+    check(rc == 0 and NEXT_VERSION in last,
+          "a release offered on the stable channel is found there",
+          (err.strip().splitlines() or [""])[-1][:100])
+
+    # STILL DEVELOPMENT-SIGNED. A channel that CALLS itself stable does not
+    # make a release published: the signing block is a fact about the key, and
+    # while C7a is open every key is a development key — including under a
+    # stable label.
+    rc, out, err, _ = run_update(work, bindir, "-Stage -Channel stable")
+    check(rc != 0 and "DEVELOPMENT" in err,
+          "a stable-named channel signed by the development key still needs -AllowDevelopment",
+          (err.strip().splitlines() or [""])[-1][:100])
+
+    build_repo(work, channel="stable", channel_in_doc="development")
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment -Channel stable")
+    check(rc != 0 and "channel" in err,
+          "an index mislabelled as another channel is refused",
+          (err.strip().splitlines() or [""])[-1][:100])
+    build_repo(work)
+
+    # -- the hotfix form (§7) --------------------------------------------------
+    # A hotfix moves the Build field alone and overlays exactly the base it
+    # names. On that base it applies; on any other machine it is listed, not
+    # applicable, and refused even when asked for by name.
+    print("\n  the hotfix form")
+    hotfix = "1.0.0.101"
+    build_repo(work, version=hotfix, hotfix_base=MACHINE_VERSION)
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment",
+                                 env_extra={"OS7_FAKE_CANDIDATE": hotfix})
+    last = (out.strip().splitlines() or [""])[-1]
+    check(rc == 0 and hotfix in last,
+          "a hotfix whose base this machine runs is applicable and applies",
+          (err.strip().splitlines() or [""])[-1][:100])
+
+    build_repo(work, version=hotfix, hotfix_base="1.0.0.99")
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment",
+                                 env_extra={"OS7_FAKE_CANDIDATE": hotfix})
+    last = (out.strip().splitlines() or [""])[-1]
+    check(rc == 0 and '"Applied":false' in last.replace(" ", ""),
+          "a hotfix of another base is not chosen by itself",
+          last[:110])
+    rc, out, err, _ = run_update(work, bindir,
+                                 "-Version %s -Stage -AllowDevelopment" % hotfix,
+                                 env_extra={"OS7_FAKE_CANDIDATE": hotfix})
+    check(rc != 0 and "hotfix" in err,
+          "and refused by name: it overlays a base this machine does not run",
+          (err.strip().splitlines() or [""])[-1][:110])
+    build_repo(work)
 
     # -- the initramfs assertion ---------------------------------------------
     print("\n  the initramfs carries the TPM2 handler forward, or it says so")
