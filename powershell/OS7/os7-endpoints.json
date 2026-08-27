@@ -1,0 +1,73 @@
+{
+  "_comment": [
+    "The services OS/7 exists to reach, as DATA rather than as literals in a cmdlet.",
+    "",
+    "WHY A FILE. Microsoft's endpoints depend on which cloud a tenant is in.",
+    "Azure Government and 21Vianet do not use login.microsoftonline.com, so a",
+    "hostname compiled into Test-OS7Network is simply wrong for those customers,",
+    "and wrong in a way that reports THEIR network as broken. A named set with a",
+    "default is the smallest thing that is not wrong.",
+    "",
+    "NOT VERIFIED AGAINST MICROSOFT'S LIVE DOCUMENTATION. Every host below is",
+    "written from general knowledge and NONE of it was checked against Microsoft",
+    "Learn while this file was created. `verified` is null for exactly that",
+    "reason and Test-OS7Network reports it, because CLAUDE.md's rule is that",
+    "anything touching identity gets checked against Microsoft's live docs first",
+    "and that check is OWED here, not done. Treat a failure against one of these",
+    "as a question about this file before treating it as a question about the",
+    "network.",
+    "",
+    "The port is always 443 and that is deliberate: a TCP connect to the service",
+    "is the test, not ICMP to the gateway. An enterprise network that blocks ping",
+    "and permits HTTPS is ordinary, and reporting it as unreachable would be a",
+    "false alarm on the commonest configuration there is."
+  ],
+  "verified": null,
+  "verifiedNote": "owed: check every host against Microsoft Learn, per cloud",
+  "defaultCloud": "public",
+  "clouds": {
+    "public": {
+      "Entra": [
+        { "host": "login.microsoftonline.com", "port": 443,
+          "why": "the token endpoint authd-msentraid signs in against" }
+      ],
+      "Graph": [
+        { "host": "graph.microsoft.com", "port": 443,
+          "why": "directory data, read by the broker after sign-in" }
+      ],
+      "Intune": [
+        { "host": "manage.microsoft.com", "port": 443,
+          "why": "enrolment and policy" }
+      ],
+      "Arc": [
+        { "host": "management.azure.com", "port": 443,
+          "why": "the control plane azcmagent onboards through" }
+      ]
+    },
+    "usgov": {
+      "Entra": [
+        { "host": "login.microsoftonline.us", "port": 443, "why": "Azure Government" }
+      ],
+      "Graph": [
+        { "host": "graph.microsoft.us", "port": 443, "why": "Azure Government" }
+      ],
+      "Intune": [
+        { "host": "manage.microsoft.us", "port": 443, "why": "Azure Government" }
+      ],
+      "Arc": [
+        { "host": "management.usgovcloudapi.net", "port": 443, "why": "Azure Government" }
+      ]
+    },
+    "china": {
+      "Entra": [
+        { "host": "login.partner.microsoftonline.cn", "port": 443, "why": "21Vianet" }
+      ],
+      "Graph": [
+        { "host": "microsoftgraph.chinacloudapi.cn", "port": 443, "why": "21Vianet" }
+      ],
+      "Arc": [
+        { "host": "management.chinacloudapi.cn", "port": 443, "why": "21Vianet" }
+      ]
+    }
+  }
+}

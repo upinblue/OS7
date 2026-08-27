@@ -109,6 +109,103 @@ internal static class Program
             return 0;
         }
 
+        // The netplan generator, applied to a plan handed in rather than to one
+        // an operator built on the screens. Same argument as --version-rule
+        // above and the same single caller: installer/testing/check-netplan-rule.py.
+        //
+        // `NetworkPlan.ToNetplanYaml` and `New-NetplanDocument` in
+        // powershell/Net are two implementations of one specification in two
+        // languages, which is BUILD-NOTES #66 waiting to happen — the paraphrase
+        // that takes a different route and that nobody diffs. The failure it
+        // produces is a machine with no address that reports no error.
+        // docs/POWERSHELL-SURFACE-PLAN.md P3 says why both exist and when one
+        // will be deleted.
+        //
+        // KEY=VALUE ON argv, NOT JSON, and that is not a style choice: NativeAOT
+        // trims the reflection serialiser away (spike S2), so a JSON input here
+        // would mean a second source-generated context for a diagnostic. It is
+        // also why the plan cannot simply be `--unattend`'s JSON — WifiPlan's
+        // secrets are [JsonIgnore] by L25, so a passphrase could not be handed
+        // in that way even if the serialiser were free.
+        //
+        // Before the log ring, like --version and --version-rule: a diagnostic
+        // that changes nothing must not create a file.
+        if (options.NetplanRender is { } pairs)
+        {
+            var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string pair in pairs)
+            {
+                int eq = pair.IndexOf('=');
+                if (eq <= 0)
+                {
+                    Console.Error.WriteLine(
+                        $"os7-setup: --netplan-render takes <key>=<value>, got '{pair}'");
+                    return 2;
+                }
+                kv[pair[..eq]] = pair[(eq + 1)..];
+            }
+
+            string Get(string k, string fallback = "") =>
+                kv.TryGetValue(k, out string? v) ? v : fallback;
+
+            bool wireless = Get("kind", "wired").Equals("wireless", StringComparison.OrdinalIgnoreCase);
+            var plan = new NetworkPlan
+            {
+                Interface = Get("iface"),
+                MacAddress = Get("mac"),
+                Kind = wireless ? LinkKind.Wireless : LinkKind.Wired,
+                Method = Get("method", "dhcp").ToLowerInvariant() switch
+                {
+                    "static" => NetworkMethod.Static,
+                    "none" => NetworkMethod.None,
+                    _ => NetworkMethod.Dhcp,
+                },
+                Address = Get("address"),
+                Gateway = Get("gateway"),
+                Nameservers = NetworkPlan.SplitList(Get("dns")),
+                Search = NetworkPlan.SplitList(Get("search")),
+            };
+            if (wireless && kv.ContainsKey("ssid"))
+            {
+                plan.Wifi = new WifiPlan
+                {
+                    Ssid = Get("ssid"),
+                    Hidden = Get("hidden") == "true",
+                    Security = Get("security", "psk").Equals("enterprise",
+                                   StringComparison.OrdinalIgnoreCase)
+                               ? WifiSecurity.Enterprise : WifiSecurity.Psk,
+                    Psk = Get("psk"),
+                    Identity = Get("identity"),
+                    AnonymousIdentity = Get("anonymous"),
+                    Password = Get("password"),
+                    CaCertificate = Get("cacert"),
+                };
+            }
+
+            string doc;
+            try
+            {
+                doc = plan.ToNetplanYaml(Get("renderer", "networkd"), Get("version", "selftest"));
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Method.None reaches here, and the checker asserts that it
+                // does. A refusal is a result, so it goes to stderr with a
+                // distinct exit code rather than looking like a crash.
+                Console.Error.WriteLine($"os7-setup: {ex.Message}");
+                return 3;
+            }
+
+            // RAW BYTES, not Console.Out.Write. The whole point of this mode is
+            // a byte-exact comparison against another language's renderer, and
+            // a TextWriter is a place where a newline translation or a BOM can
+            // enter without anybody choosing it.
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(doc);
+            using (Stream stdout = Console.OpenStandardOutput())
+                stdout.Write(bytes, 0, bytes.Length);
+            return 0;
+        }
+
         // A DIAGNOSTIC THAT CHANGES NOTHING. `--self-test` runs in the chroot
         // during the ISO build, so a log file opened here is a file baked into
         // the squashfs and shipped to every installed machine. Before the ring,
@@ -1403,6 +1500,9 @@ internal static class Program
           --version-rule <v>:<ch> …  apply the display rule to versions given
                                      here and print them; for the cross-language
                                      check, not for humans
+          --netplan-render k=v …     render one netplan document from the pairs
+                                     given here; for the cross-language check,
+                                     not for humans
           --help                     this message
 
         Phase 3: from screen 10 onwards this WRITES TO A DISK, and the result
@@ -1421,6 +1521,22 @@ internal static class Program
         /// collapsed into a bool plus a list.
         /// </summary>
         public string[]? VersionRule { get; init; }
+
+        /// <summary>
+        /// `--netplan-render <key>=<value> …` — ONE plan, rendered to stdout,
+        /// for installer/testing/check-netplan-rule.py. Null when the flag was
+        /// not given; an empty array renders the default plan, which is a
+        /// legitimate case rather than an error.
+        ///
+        /// One document per invocation, and deliberately NOT the many-cases-in-
+        /// one-run shape `--version-rule` uses: that rule emits a single line
+        /// per case, so the cases separate themselves. A netplan document is
+        /// multi-line, so batching would need a framing convention, and a
+        /// framing convention in a tool whose whole job is byte-exact
+        /// comparison is a second thing that can be wrong. The checker runs
+        /// this nine times instead.
+        /// </summary>
+        public string[]? NetplanRender { get; init; }
         public bool PrintPlan { get; init; }
         public bool SelfTest { get; init; }
         public bool DryRun { get; init; }
@@ -1438,6 +1554,7 @@ internal static class Program
             bool help = false, print = false, self = false, dryRun = false;
             bool version = false;
             string[]? versionRule = null;
+            string[]? netplanRender = null;
             string? geometry = null, unattend = null, passphraseFile = null;
             string? passwordFile = null, wifiSecretFile = null, testNetwork = null;
             bool storageOnly = false;
@@ -1452,6 +1569,13 @@ internal static class Program
                     // half-consumed by a later flag.
                     case "--version-rule":
                         versionRule = args[(i + 1)..];
+                        i = args.Length;
+                        break;
+                    // Everything after it, for the same reason: the pairs are a
+                    // LIST, and a list terminated by the end of the command line
+                    // cannot be half-consumed by a later flag.
+                    case "--netplan-render":
+                        netplanRender = args[(i + 1)..];
                         i = args.Length;
                         break;
                     case "--print-plan": print = true; break;
@@ -1501,6 +1625,7 @@ internal static class Program
             return new Options
             {
                 Help = help, Version = version, VersionRule = versionRule,
+                NetplanRender = netplanRender,
                 PrintPlan = print,
                 SelfTest = self, Geometry = geometry,
                 DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,

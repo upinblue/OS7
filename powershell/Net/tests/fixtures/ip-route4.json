@@ -1,0 +1,1 @@
+[{"dst":"default","gateway":"172.17.0.1","dev":"eth0","flags":[]},{"dst":"172.17.0.0/16","dev":"eth0","protocol":"kernel","scope":"link","prefsrc":"172.17.0.2","flags":[]}]

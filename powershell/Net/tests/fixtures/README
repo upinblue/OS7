@@ -1,0 +1,50 @@
+Recorded output from the programs the Net module reads.
+
+WHERE THESE CAME FROM, exactly, because a fixture whose provenance is unknown is
+a fixture that tests whoever wrote it:
+
+    2026-08-27, from `os7img:116` — the shipped amd64 image, IMAGE_VERSION
+    1.0.0.116 — run in a container on an x64 Windows host through Docker
+    Desktop. Each file is the verbatim stdout of the command named below.
+
+    ip-addr.json             ip -j addr show
+    ip-route4.json           ip -j route show
+    ip-route6-empty.json     ip -j -6 route show
+    rfkill-unavailable.json  rfkill -J        (EXIT CODE 1 — see below)
+
+WHAT THEY COVER, AND WHAT THEY DO NOT.
+
+A container's network namespace is Docker's, so these carry a loopback and one
+veth. That is enough for the shapes the parsers actually branch on, and the
+self-test says which branch each case exercises:
+
+  * a link with two addresses in one `addr_info` (lo: 127.0.0.1 and ::1)
+  * a link with one (eth0)
+  * a default route, which HAS a `gateway` and has NO `prefsrc`
+  * a kernel route, which has `prefsrc` and NO `gateway` — the case that
+    catches a cmdlet written on a machine that happened to have both, because
+    `ip -j` OMITS keys rather than emitting nulls and Set-StrictMode turns
+    reaching for a missing one into a terminating error
+  * an empty table (`[]`), which must read as "no routes" and not as an error
+
+WHAT IS STILL OWED, and must come from real hardware rather than being written
+by hand here:
+
+  * A WIRELESS link. `ip -j` cannot be used to recognise one — a Wi-Fi adapter
+    reports `link_type: "ether"` exactly like a wired one (measured) — so the
+    module asks sysfs for `phy80211`. Only the NEGATIVE case is recorded; the
+    self-test builds a sysfs tree of its own for the positive one and labels it
+    as constructed rather than measured.
+  * `rfkill -J` WITH A RADIO IN IT. This repository has never seen that output,
+    which is why `Get-NetRadio` passes its `Devices` through raw instead of
+    typing fields nobody has measured.
+  * A link with NO carrier, and one that is administratively down.
+  * A machine with more than one default route.
+
+`rfkill-unavailable.json` IS THE INTERESTING ONE. `rfkill -J` exits **1** when
+/dev/rfkill is absent and still prints a syntactically valid, EMPTY device list.
+A caller reading the JSON alone concludes "no radio is blocked" about a machine
+that cannot be asked at all — so the self-test replays this file twice, once
+with exit 1 and once with exit 0, and requires `Get-NetRadio` to answer
+differently. The file records the output; the exit code lives in the test beside
+it, because a `.json` file cannot carry one.
