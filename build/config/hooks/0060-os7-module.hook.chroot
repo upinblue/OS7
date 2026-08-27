@@ -79,10 +79,16 @@ check_module() {
 
 check_module Zfs Get-Zpool Get-ZpoolStatus Get-ZfsDataset Get-ZfsSnapshot \
 	Get-ZfsProperty Get-ZfsSpace Format-ZfsSize Clear-ZpoolLabel Test-ZfsModule
-# The boot-environment cmdlets are named here rather than left to the two stubs:
-# they are what Restore-OS7 is built out of (docs/SESSION-BOOT-ENVIRONMENTS.md),
-# they are staged from the same one source, and a check that only ever asked
-# about the stubs would have gone on passing if they vanished.
+# The boot-environment cmdlets are named here rather than left to the stub that
+# used to stand in for them: they are what Restore-OS7 AND Update-OS7 are built
+# out of (docs/SESSION-BOOT-ENVIRONMENTS.md), they are staged from the same one
+# source, and a check that only ever asked about a stub would have gone on
+# passing if they vanished.
+#
+# The update train is named for the same reason since 2026-08-27. It lives in
+# OS7.Update.ps1 — the sixth dot-sourced file — and Get-OS7Release is the half
+# of it an image without a repository can still be asked about, which makes it
+# the one that would fail quietly if the file were missing.
 #
 # The backup surface is named for the same reason and for one more: it lives in
 # files that OS7.psm1 DOT-SOURCES, so a staging that copied the .psm1 and missed

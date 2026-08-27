@@ -14,6 +14,12 @@ So this session did C7 — [CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY
 §6 — and stopped there. `Update-OS7` is still a stub, and it now has somewhere
 to point.
 
+> **Written the next day.** The stub is gone: the update train was implemented on
+> 2026-08-27 against exactly this repository, and the first thing it did was find
+> that an index whose `valid_until` used the spelling `build-os7-repo.sh` could
+> produce was accepted while expired (BUILD-NOTES #90).
+> [SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md).
+
 ---
 
 ## 1. What was unowned, and now is not

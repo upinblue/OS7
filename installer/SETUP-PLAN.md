@@ -1186,8 +1186,10 @@ environment. Writing it twice guarantees drift.
 
 **Written, 2026-08-25** (`powershell/OS7/OS7.psm1`): `Restore-OS7` is real and
 `New-`/`Set-`/`Remove-OS7BootEnvironment` are what it is built out of.
-`Update-OS7` is still a stub, waiting on there being an OS/7 release to apply
-rather than on any of this.
+`Update-OS7` was written on 2026-08-27 and is the other side of the same
+surface: it calls those three rather than reimplementing them, which is what
+this section exists to require. It has not been run on a machine
+([../docs/SESSION-UPDATE-TRAIN.md](../docs/SESSION-UPDATE-TRAIN.md)).
 
 The other side of that shared surface is now specified:
 [../docs/RELEASE-AND-UPDATE-PLAN.md](../docs/RELEASE-AND-UPDATE-PLAN.md) §4.2
@@ -2086,9 +2088,12 @@ What it changes for this phase: **activation is not a ZFS operation**, so
 `R=Repair` cannot simply create datasets and expect a machine to boot them. What
 decides is a file on the **ESP** naming the environment, plus `saved_entry` in
 that environment's `grubenv`; `Set-OS7BootEnvironment` owns both and is the one
-thing Setup should call. `Update-OS7` is still a stub, and now for a different
-reason: there is no OS/7 release to apply
-([../docs/CURATION-AND-DELIVERY-PLAN.md](../docs/CURATION-AND-DELIVERY-PLAN.md) C7). `R=Repair`: import an existing `rpool` and
+thing Setup should call. `Update-OS7` exists since 2026-08-27 and C11(a) says
+`R=Repair` must BE its mechanism rather than a second implementation of it — so
+what this phase owes is the invocation contract between a NativeAOT C# binary
+and a PowerShell cmdlet, which no document has written down
+([../docs/SESSION-UPDATE-TRAIN.md](../docs/SESSION-UPDATE-TRAIN.md)).
+`R=Repair`: import an existing `rpool` and
 install a new BE beside the current one. Entra/Intune/Arc onboarding hand-off
 (collect intent at install, execute on first boot — tenant credentials do not
 belong in an installer log). `espeakup` accessibility. CI installs in QEMU.

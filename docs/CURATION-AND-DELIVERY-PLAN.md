@@ -399,6 +399,14 @@ admin who will ever look at it.
 
 ### 6.1 The gap this closes
 
+> **This section is the argument for C7, in the state the tree was in on
+> 2026-08-25.** The packages exist since 2026-08-26 and `Update-OS7` since
+> 2026-08-27, so every "no" below is now historical — except in one respect that
+> is not: **the ISO does not install the packages yet**, so a machine built from
+> any current image is still in exactly the state this table describes.
+> [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md),
+> [SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md).
+
 Checked in the hooks, not assumed:
 
 | Component | Where it lands | Owned by a package? |

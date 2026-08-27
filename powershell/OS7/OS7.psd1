@@ -1,8 +1,9 @@
 # =============================================================================
 # OS/7 PowerShell module manifest
 #
-# Storage, boot environments and the desktop theme are implemented; Set-OS7Mode
-# and Update-OS7 are still stubs, and say in their own help what they wait on.
+# Storage, boot environments, backup, the desktop theme and — since 2026-08-27 —
+# the update train are implemented. Set-OS7Mode is the one remaining stub, and
+# says in its own help what it waits on.
 # =============================================================================
 @{
 	RootModule        = 'OS7.psm1'
@@ -11,7 +12,7 @@
 	Author            = 'up in blue GmbH'
 	CompanyName       = 'up in blue GmbH'
 	Copyright         = '(c) 2026 up in blue GmbH. MIT licensed.'
-	Description       = 'OS/7 system management: curated release train over ZFS boot environments. Storage (New-OS7Storage) and the boot environments themselves (New-/Set-/Remove-OS7BootEnvironment, Restore-OS7) are implemented and run on the Zfs module rather than on zfs/zpool directly; Set-OS7Mode and Update-OS7 are still stubs.'
+	Description       = 'OS/7 system management: a curated release train over ZFS boot environments. Update-OS7 applies a release into a CLONE of the running boot environment, so the machine keeps running the old one until it is rebooted and Restore-OS7 goes back. Storage (New-OS7Storage), the boot environments (New-/Set-/Remove-OS7BootEnvironment, Restore-OS7), backup and the desktop theme are implemented and reach ZFS only through the Zfs module. Set-OS7Mode is the one remaining stub.'
 
 	PowerShellVersion = '7.0'
 
@@ -31,8 +32,9 @@
 		# Implemented — the ZFS layer os7-setup and Update-OS7 share (SETUP-PLAN §6.3)
 		'New-OS7Storage', 'New-OS7BootEnvironmentName',
 		# Implemented — boot environments (RELEASE-AND-UPDATE-PLAN §4.2, §4.3, §6).
-		# Restore-OS7 is here rather than below because it is real since
-		# 2026-08-25; Update-OS7 is the one still waiting on a release to apply.
+		# Steps 1, 2 and 9 of the update sequence: the pair cloned together, the
+		# pair activated together, and the way back. Real since 2026-08-25 and
+		# walked end to end in a VM by spike S5.
 		'Get-OS7BootEnvironment', 'New-OS7BootEnvironment',
 		'Set-OS7BootEnvironment', 'Remove-OS7BootEnvironment', 'Restore-OS7',
 		# Implemented — the classic desktop, amd64 GUI mode

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started with OS/7</title>
+<meta name="description" content="From the ISO to a booted machine: verify the image, write it, run os7-setup screen by screen, and find your way around the first PowerShell prompt.">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<meta property="og:title" content="Getting started with OS/7">
+<meta property="og:description" content="From the ISO to a booted machine, screen by screen.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://os7.org/getting-started">
+<script>try{var t=localStorage.getItem('os7-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+	<div class="wrap">
+		<a class="brand" href="/">
+			<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
+			<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+		</a>
+		<nav class="nav">
+			<a href="/">Overview</a>
+			<a href="/download">Download</a>
+			<a href="/organizations">For organizations</a>
+			<a href="/getting-started" aria-current="page">Getting started</a>
+			<a href="https://github.com/upinblue/OS7">Source</a>
+		</nav>
+		<button class="theme-toggle" type="button" aria-label="Switch theme">
+			<svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+			<svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+		</button>
+	</div>
+</header>
+
+<main id="main">
+
+<section class="section section-tight">
+	<div class="wrap">
+		<div class="section-head">
+			<p class="kicker">Getting started</p>
+			<h2>From the ISO to a machine that boots.</h2>
+			<p>
+				About twenty minutes on a virtual machine, most of it spent unpacking. Setup takes the
+				whole disk it is given and asks once, on screen&nbsp;6, before it writes anything at
+				all.
+			</p>
+		</div>
+
+		<div class="narrow">
+			<ol class="steps">
+
+				<li>
+					<h3>Download and verify the image</h3>
+					<p>
+						Take the ISO for your architecture from the <a href="/download">download
+						page</a> and compare its SHA-256 sum with the one published beside it. A
+						truncated download produces an installer that fails in the middle, and that
+						failure looks like a bug in OS/7 rather than a bad copy.
+					</p>
+<pre><code>Get-FileHash .\OS7-&lt;version&gt;-amd64.iso -Algorithm SHA256</code></pre>
+				</li>
+
+				<li>
+					<h3>Write it, or attach it</h3>
+					<p>
+						In a VM, attach the ISO and give the machine <strong>UEFI firmware</strong>,
+						4&nbsp;vCPUs and at least 6&nbsp;GB of RAM for x86-64. On hardware, write the
+						ISO to a USB stick byte for byte &mdash; on Windows that means Rufus in
+						<strong>DD Image mode</strong>, not the default.
+					</p>
+				</li>
+
+				<li>
+					<h3>Turn Secure Boot off, and boot the medium</h3>
+					<p>
+						The setup medium&rsquo;s bootloader is unsigned, so firmware with Secure Boot
+						on will not start it. The installed system does boot with Secure Boot on, so
+						switch it back afterwards. There is no BIOS or CSM path &mdash; UEFI is
+						required, not preferred.
+					</p>
+					<p>
+						The boot menu offers <strong>Install OS/7</strong> and a live session. Pick
+						the first.
+					</p>
+				</li>
+
+				<li>
+					<h3>Walk Setup</h3>
+					<p>
+						Twelve screens, driven entirely from the keyboard: <kbd>&uarr;</kbd>
+						<kbd>&darr;</kbd> to choose, <kbd>Enter</kbd> to continue, <kbd>Esc</kbd> to go
+						back, <kbd>F3</kbd> to quit. Language and keyboard come first, then the disk,
+						then the layout and the disk passphrase.
+					</p>
+					<div class="shot-strip mt-1">
+						<div class="shot"><img src="/img/setup-disk.png" width="1280" height="800" loading="lazy" alt="Setup: choosing the disk to install to."></div>
+						<div class="shot"><img src="/img/setup-account.png" width="1280" height="800" loading="lazy" alt="Setup: creating the first account."></div>
+						<div class="shot"><img src="/img/setup-mode.png" width="1280" height="800" loading="lazy" alt="Setup: choosing between the desktop and a headless server."></div>
+					</div>
+					<p class="mt-1">
+						<strong>Screen&nbsp;6 is the gate.</strong> It lists everything that is about to
+						be written &mdash; the disk, the partitions, the pools, the datasets &mdash; and
+						nothing has touched the disk before you confirm it. After that, Setup creates
+						the first account, asks whether this machine is a desktop or a headless server,
+						and configures the network.
+					</p>
+				</li>
+
+				<li>
+					<h3>Let it install, then reboot</h3>
+					<p>
+						The execute screen names each step as it runs and stops on the first one that
+						fails, with the log path on screen. When it finishes, remove the medium and
+						reboot: the disk boots on its own, and asks for the disk passphrase unless the
+						machine has a TPM&nbsp;2.0 that OS/7 could enrol.
+					</p>
+					<div class="shot mt-1"><img src="/img/setup-execute.png" width="1280" height="800" loading="lazy" alt="Setup: the execute screen, listing each installation step with a progress bar."></div>
+				</li>
+
+				<li>
+					<h3>The first prompt</h3>
+					<p>
+						Log in and you are in PowerShell &mdash; on the console, over ssh, and in the
+						desktop&rsquo;s terminal window. Start here:
+					</p>
+<pre><code>Get-OS7Version                 # what this machine is, exactly
+Get-Command -Module OS7        # everything OS/7 adds
+Get-OS7BootEnvironment         # what it can boot, and what it booted</code></pre>
+					<div class="shot mt-1"><img src="/img/console-motd.png" width="1280" height="800" loading="lazy" alt="The OS/7 console after login, showing the message of the day and a PowerShell prompt."></div>
+				</li>
+
+				<li>
+					<h3>Know how to go back before you need to</h3>
+					<p>
+						OS/7 keeps the previous boot environment. If an update leaves the machine wrong,
+						roll back &mdash; and if it will not boot at all, the previous environment is an
+						entry in the boot menu.
+					</p>
+<pre><code>Get-OS7BootEnvironment              # list them
+Restore-OS7 -WhatIf                 # what a rollback would do
+Restore-OS7                         # activate the previous one, then reboot</code></pre>
+				</li>
+
+			</ol>
+		</div>
+	</div>
+</section>
+
+<section class="section section-soft">
+	<div class="wrap narrow prose">
+		<h2 style="margin-top:0">Where the rest of it is</h2>
+		<p class="muted">
+			OS/7 is developed in the open, and the documents that decide things are in the repository
+			rather than paraphrased here. If a page on this site and a document there ever disagree,
+			the document is right.
+		</p>
+		<ul>
+			<li><a href="https://github.com/upinblue/OS7">The repository</a> &mdash; source, build, and the full status table</li>
+			<li><a href="https://github.com/upinblue/OS7/blob/main/installer/SETUP-PLAN.md">SETUP-PLAN.md</a> &mdash; the installer: every screen, every decision, every known limitation</li>
+			<li><a href="https://github.com/upinblue/OS7/blob/main/docs/DECISIONS.md">DECISIONS.md</a> &mdash; what is locked, and what is still open</li>
+			<li><a href="https://github.com/upinblue/OS7/blob/main/docs/BUILD-NOTES.md">BUILD-NOTES.md</a> &mdash; every trap found so far, numbered, with the evidence</li>
+			<li><a href="https://github.com/upinblue/OS7/issues">Issues</a> &mdash; where a preview build that misbehaves should be reported</li>
+		</ul>
+		<div class="callout mt-2">
+			A bug report that names the version from <code>Get-OS7Version</code> and the architecture
+			is worth several that do not. The version identifies the exact package set the machine
+			holds, which is the point of pinning the archive in the first place.
+		</div>
+	</div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+	<div class="wrap">
+		<div class="foot-grid">
+			<div class="foot-brand">
+				<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
+				<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+				<p>Ubuntu 26.04 LTS, arranged for estates that run on Microsoft. MIT licensed.</p>
+			</div>
+			<div>
+				<h4>Product</h4>
+				<ul>
+					<li><a href="/">Overview</a></li>
+					<li><a href="/download">Download</a></li>
+					<li><a href="/getting-started">Getting started</a></li>
+					<li><a href="/organizations">For organizations</a></li>
+				</ul>
+			</div>
+			<div>
+				<h4>Project</h4>
+				<ul>
+					<li><a href="https://github.com/upinblue/OS7">Source on GitHub</a></li>
+					<li><a href="https://github.com/upinblue/OS7/issues">Issues</a></li>
+					<li><a href="https://github.com/upinblue/OS7/blob/main/docs/DECISIONS.md">Decisions</a></li>
+					<li><a href="https://github.com/upinblue/OS7/blob/main/LICENSE">Licence</a></li>
+				</ul>
+			</div>
+			<div>
+				<h4>Legal</h4>
+				<ul>
+					<li><a href="/imprint">Imprint</a></li>
+					<li><a href="/privacy">Privacy</a></li>
+					<li><a href="mailto:os7@upinblue.com">Contact</a></li>
+				</ul>
+			</div>
+		</div>
+		<div class="foot-bottom">
+			<span>OS/7 is not affiliated with, or endorsed by, Microsoft or Canonical. Ubuntu is a registered trademark of Canonical Ltd.</span>
+			<span class="uib">Made by <a href="https://www.upinblue.com"><img src="/brand/uib-logo.svg" alt="up in blue GmbH"></a></span>
+		</div>
+	</div>
+</footer>
+
+<script src="/js/theme.js" defer></script>
+</body>
+</html>

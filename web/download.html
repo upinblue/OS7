@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download OS/7</title>
+<meta name="description" content="Download the OS/7 installation media for x86-64 and arm64, with SHA-256 checksums, system requirements, and instructions for writing the image to a USB stick.">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<meta property="og:title" content="Download OS/7">
+<meta property="og:description" content="Installation media for x86-64 and arm64, with checksums and system requirements.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://os7.org/download">
+<script>try{var t=localStorage.getItem('os7-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+	<div class="wrap">
+		<a class="brand" href="/">
+			<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
+			<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+		</a>
+		<nav class="nav">
+			<a href="/">Overview</a>
+			<a href="/download" aria-current="page">Download</a>
+			<a href="/organizations">For organizations</a>
+			<a href="/getting-started">Getting started</a>
+			<a href="https://github.com/upinblue/OS7">Source</a>
+		</nav>
+		<button class="theme-toggle" type="button" aria-label="Switch theme">
+			<svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+			<svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+		</button>
+	</div>
+</header>
+
+<main id="main">
+
+<section class="section section-tight">
+	<div class="wrap">
+		<div class="section-head">
+			<p class="kicker">Download</p>
+			<h2>Installation media</h2>
+			<p>
+				One ISO per architecture. Write it to a USB stick of 4&nbsp;GB or more, or attach it to
+				a virtual machine. The installer refuses any disk under 16&nbsp;GB and takes the whole
+				disk it is given.
+			</p>
+		</div>
+
+		<p class="notice mb-2">
+			<strong>This is a developer preview of software that has not been released.</strong>
+			It installs and boots, and it is not finished: Entra ID sign-in does not work, and on
+			x86-64 neither Secure Boot nor rollback has been tested. Use a virtual machine or a
+			spare disk.
+		</p>
+
+		<!-- BEGIN GENERATED: downloads — written by tools/publish-release.py, do not hand-edit -->
+		<div class="dl-grid">
+
+			<div class="dl-card">
+				<div class="dl-card-head">
+					<p class="dl-arch">x86-64</p>
+					<p class="dl-role">Desktop or server. The architecture Intune supports.</p>
+				</div>
+				<div class="dl-card-body">
+					<div class="dl-pending">Not published yet &mdash; the link goes live with the first preview build.</div>
+					<div class="dl-facts">
+						<div><span class="k">Architecture</span><span class="v">amd64</span></div>
+						<div><span class="k">Base</span><span class="v">Ubuntu 26.04 LTS</span></div>
+					</div>
+				</div>
+			</div>
+
+			<div class="dl-card">
+				<div class="dl-card-head">
+					<p class="dl-arch">arm64</p>
+					<p class="dl-role">Server only. Managed through Azure Arc.</p>
+				</div>
+				<div class="dl-card-body">
+					<div class="dl-pending">Not published yet &mdash; the link goes live with the first preview build.</div>
+					<div class="dl-facts">
+						<div><span class="k">Architecture</span><span class="v">arm64</span></div>
+						<div><span class="k">Base</span><span class="v">Ubuntu 26.04 LTS</span></div>
+					</div>
+				</div>
+			</div>
+
+		</div>
+		<!-- END GENERATED: downloads -->
+
+	</div>
+</section>
+
+<section class="section section-soft">
+	<div class="wrap narrow prose">
+		<h2 style="margin-top:0">Check what you downloaded</h2>
+		<p class="muted">
+			Every ISO is published with its SHA-256 sum. The sums are also collected in a
+			<code>SHA256SUMS</code> file beside the images. Comparing them costs a minute and is the
+			only way to tell a truncated download from a complete one.
+		</p>
+
+		<h3>Windows &mdash; PowerShell</h3>
+<pre><code>Get-FileHash .\OS7-&lt;version&gt;-amd64.iso -Algorithm SHA256</code></pre>
+
+		<h3>Linux or macOS</h3>
+<pre><code>sha256sum OS7-&lt;version&gt;-amd64.iso
+# or, against the published list:
+sha256sum -c SHA256SUMS --ignore-missing</code></pre>
+
+		<h2>Write it to a USB stick</h2>
+		<p class="muted">
+			The image is a hybrid ISO: it is written to the stick as-is, byte for byte. Do not
+			unpack it, and do not let a tool &ldquo;convert&rdquo; it.
+		</p>
+
+		<h3>Windows</h3>
+		<p class="muted">
+			Use <a href="https://rufus.ie/">Rufus</a>, pick the ISO, and when it asks, choose
+			<strong>DD Image mode</strong>. The default ISO mode rewrites the boot layout and produces
+			a stick that UEFI will not start.
+		</p>
+
+		<h3>Linux or macOS</h3>
+<pre><code>sudo dd if=OS7-&lt;version&gt;-amd64.iso of=/dev/sdX bs=4M status=progress oflag=direct
+sync</code></pre>
+		<p class="muted small">
+			<code>/dev/sdX</code> is the whole device, not a partition, and everything on it is lost.
+			On macOS the device is <code>/dev/rdiskN</code> and the flag is <code>conv=sync</code>.
+		</p>
+
+		<div class="callout mt-2">
+			<strong>Turn Secure Boot off to install.</strong> The setup medium&rsquo;s bootloader is
+			unsigned, so firmware with Secure Boot enabled will refuse to start it. The
+			<em>installed</em> system boots with Secure Boot on, against the Microsoft UEFI CA &mdash;
+			switch it back on after the install.
+		</div>
+	</div>
+</section>
+
+<section class="section">
+	<div class="wrap">
+		<div class="section-head">
+			<p class="kicker">Before you start</p>
+			<h2>System requirements</h2>
+			<p>
+				OS/7 inherits Ubuntu 26.04&rsquo;s requirements and adds its own: a UEFI-only boot
+				path, a ZFS root that likes memory, and a LUKS2 header whose unlock is pinned at
+				512&nbsp;MiB so that install time and boot time agree.
+			</p>
+		</div>
+
+		<div class="table-scroll mb-2">
+			<table>
+				<thead>
+					<tr><th></th><th>Minimum</th><th>Recommended</th></tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><strong>x86-64 (amd64)</strong><br><span class="small muted">desktop or server</span></td>
+						<td>64-bit x86 CPU, 2&nbsp;GHz dual-core<br><strong>6&nbsp;GB</strong> RAM<br><strong>32&nbsp;GB</strong> disk<br>UEFI firmware</td>
+						<td>4 cores at 2&nbsp;GHz or better<br><strong>16&nbsp;GB</strong> RAM<br><strong>128&nbsp;GB</strong> SSD or NVMe<br>UEFI + TPM&nbsp;2.0 + Secure Boot</td>
+					</tr>
+					<tr>
+						<td><strong>arm64 (AArch64)</strong><br><span class="small muted">server only</span></td>
+						<td>ARMv8-A, 2 cores<br><strong>4&nbsp;GB</strong> RAM<br><strong>24&nbsp;GB</strong> disk<br>UEFI firmware</td>
+						<td>4 cores<br><strong>8&nbsp;GB</strong> RAM<br><strong>64&nbsp;GB</strong> SSD or NVMe<br>UEFI + TPM&nbsp;2.0 + Secure Boot</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+
+		<div class="table-scroll">
+			<table>
+				<thead><tr><th>Required on both</th><th></th></tr></thead>
+				<tbody>
+					<tr><td><strong>UEFI</strong></td><td>Mandatory. OS/7 boots via shim and a Canonical-signed GRUB, and ships no BIOS or CSM path at all.</td></tr>
+					<tr><td><strong>Secure Boot</strong></td><td>Supported on the installed system. Switch it off to install &mdash; the setup medium&rsquo;s bootloader is unsigned.</td></tr>
+					<tr><td><strong>TPM 2.0</strong></td><td>Optional, but wanted. Without one, OS/7 asks for the disk passphrase on every boot instead of unlocking itself.</td></tr>
+					<tr><td><strong>Setup medium</strong></td><td>A USB stick of 4&nbsp;GB or more; 8&nbsp;GB is comfortable.</td></tr>
+					<tr><td><strong>Disk</strong></td><td>One whole disk. The installer refuses anything under 16&nbsp;GB &mdash; that is where the layout stops fitting, not a recommended size.</td></tr>
+					<tr><td><strong>Intune enrolment</strong></td><td>Microsoft supports Ubuntu Desktop 26.04 LTS on x86-64 only, physical or Hyper-V. The desktop and Edge are required for enrolment, not optional extras.</td></tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</section>
+
+<section class="section section-soft">
+	<div class="wrap narrow prose">
+		<h2 style="margin-top:0">Or build it yourself</h2>
+		<p class="muted">
+			The ISO is built in a privileged Docker container, so the prerequisites are Docker and
+			GNU&nbsp;make. Always build through the Makefile: it asks git on the host for the three
+			facts the version number is made of, which a container inside a git worktree cannot work
+			out for itself.
+		</p>
+<pre><code>git clone https://github.com/upinblue/OS7.git
+cd OS7
+make build-amd64        # on an x86-64 host, about 20 minutes
+make build-arm64        # on an Apple Silicon Mac, about 5 minutes</code></pre>
+		<p class="muted">
+			amd64 cannot be built on Apple Silicon: <code>debootstrap</code> cannot unpack a Debian
+			root filesystem under Docker&rsquo;s x86 emulation. On Windows, build inside WSL&nbsp;2 and
+			clone into the Linux filesystem rather than <code>/mnt/c</code>. Full instructions are in
+			the <a href="https://github.com/upinblue/OS7#building-an-iso">repository README</a>.
+		</p>
+	</div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+	<div class="wrap">
+		<div class="foot-grid">
+			<div class="foot-brand">
+				<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
+				<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+				<p>Ubuntu 26.04 LTS, arranged for estates that run on Microsoft. MIT licensed.</p>
+			</div>
+			<div>
+				<h4>Product</h4>
+				<ul>
+					<li><a href="/">Overview</a></li>
+					<li><a href="/download">Download</a></li>
+					<li><a href="/getting-started">Getting started</a></li>
+					<li><a href="/organizations">For organizations</a></li>
+				</ul>
+			</div>
+			<div>
+				<h4>Project</h4>
+				<ul>
+					<li><a href="https://github.com/upinblue/OS7">Source on GitHub</a></li>
+					<li><a href="https://github.com/upinblue/OS7/issues">Issues</a></li>
+					<li><a href="https://github.com/upinblue/OS7/blob/main/docs/DECISIONS.md">Decisions</a></li>
+					<li><a href="https://github.com/upinblue/OS7/blob/main/LICENSE">Licence</a></li>
+				</ul>
+			</div>
+			<div>
+				<h4>Legal</h4>
+				<ul>
+					<li><a href="/imprint">Imprint</a></li>
+					<li><a href="/privacy">Privacy</a></li>
+					<li><a href="mailto:os7@upinblue.com">Contact</a></li>
+				</ul>
+			</div>
+		</div>
+		<div class="foot-bottom">
+			<span>OS/7 is not affiliated with, or endorsed by, Microsoft or Canonical. Ubuntu is a registered trademark of Canonical Ltd.</span>
+			<span class="uib">Made by <a href="https://www.upinblue.com"><img src="/brand/uib-logo.svg" alt="up in blue GmbH"></a></span>
+		</div>
+	</div>
+</footer>
+
+<script src="/js/theme.js" defer></script>
+</body>
+</html>

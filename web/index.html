@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OS/7 — a Linux that speaks Microsoft</title>
+<meta name="description" content="Ubuntu 26.04 LTS with PowerShell as the interactive shell, Entra ID sign-in, Intune and Azure Arc management, and a ZFS root that lets a bad update be undone by rebooting.">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<meta property="og:title" content="OS/7 — a Linux that speaks Microsoft">
+<meta property="og:description" content="PowerShell as the shell. Entra ID, Intune and Azure Arc for management. A ZFS root, so an update that goes wrong is one reboot away from being undone.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://os7.org/">
+<meta property="og:image" content="https://os7.org/img/setup-welcome.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>try{var t=localStorage.getItem('os7-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+	<div class="wrap">
+		<a class="brand" href="/">
+			<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
+			<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+		</a>
+		<nav class="nav">
+			<a href="/" aria-current="page">Overview</a>
+			<a href="/download">Download</a>
+			<a href="/organizations">For organizations</a>
+			<a href="/getting-started">Getting started</a>
+			<a href="https://github.com/upinblue/OS7">Source</a>
+		</nav>
+		<button class="theme-toggle" type="button" aria-label="Switch theme">
+			<svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+			<svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+		</button>
+	</div>
+</header>
+
+<main id="main">
+
+<!-- ---------------------------------------------------------------- hero -->
+<section class="hero">
+	<div class="wrap hero-grid">
+		<div>
+			<span class="eyebrow"><span class="dot"></span> Developer preview</span>
+			<h1>A Linux that speaks Microsoft.</h1>
+			<p class="hero-lead">
+				PowerShell is the shell you type in. Entra ID signs people in, Intune and Azure Arc
+				manage the machine, and a ZFS root means an update that goes wrong is one reboot away
+				from being undone. Ubuntu 26.04 LTS underneath, left alone where it matters.
+			</p>
+			<div class="btn-row">
+				<a class="btn btn-primary" href="/download">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 18v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
+					Download OS/7
+				</a>
+				<a class="btn btn-ghost" href="/organizations">For organizations</a>
+			</div>
+			<p class="hero-meta">MIT licensed &middot; x86-64 and arm64 &middot; every release built from one pinned Ubuntu archive</p>
+		</div>
+		<figure style="margin:0">
+			<div class="shot shot-tilt">
+				<img src="/img/setup-welcome.png" width="1280" height="800"
+				     alt="The OS/7 Setup welcome screen: a blue text-mode screen with a title bar reading OS/7 Setup, and options to install, repair, or quit.">
+			</div>
+			<figcaption class="shot-caption">
+				<code>os7-setup</code>, the installer OS/7 ships. Photographed off a running machine, not drawn.
+			</figcaption>
+		</figure>
+	</div>
+</section>
+
+<div class="wrap" style="padding-top:56px">
+	<p class="notice">
+		<strong>OS/7 has not been released.</strong> Both architectures install and boot today, and the
+		x86-64 desktop runs Edge, the Intune portal and VS&nbsp;Code &mdash; but Entra ID sign-in does not
+		work yet, and rollback is untested on x86-64. Please do not put this on hardware you care about.
+		<a href="#status">What works, in detail</a>.
+	</p>
+</div>
+
+<!-- ------------------------------------------------------------- premise -->
+<section class="section section-tight">
+	<div class="wrap">
+		<div class="narrow" style="margin-bottom:44px">
+			<p class="kicker">Why it exists</p>
+			<h2 style="font-size:clamp(1.6rem,2.8vw,2.1rem)">Linux is usually the exception in an otherwise Microsoft-shaped estate.</h2>
+			<p class="muted">
+				Entra ID for identity, Intune for devices, Azure Arc for servers, PowerShell for
+				administration &mdash; and then a workload needs Linux, and it arrives with its own
+				tooling, its own way of proving compliance, and its own row in the audit. OS/7 is
+				Ubuntu, set up so that it fits that tooling instead of sitting beside it.
+			</p>
+		</div>
+		<div class="stats">
+			<div class="stat">
+				<div class="n">1</div>
+				<div class="l">archive snapshot per release, so two machines on the same version hold the same packages</div>
+			</div>
+			<div class="stat">
+				<div class="n">4.4&nbsp;MB</div>
+				<div class="l">the whole installer &mdash; one native binary, no runtime behind it</div>
+			</div>
+			<div class="stat">
+				<div class="n">2</div>
+				<div class="l">boot environments kept, so yesterday&rsquo;s system stays in the boot menu</div>
+			</div>
+			<div class="stat">
+				<div class="n">0</div>
+				<div class="l">telemetry agents &mdash; removed, and pinned so an upgrade cannot bring them back</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- ------------------------------------------------------------ features -->
+<section class="section section-soft">
+	<div class="wrap">
+
+		<div class="feature">
+			<div class="feature-text">
+				<p class="kicker">The shell</p>
+				<h3>You log in and get a PowerShell prompt.</h3>
+				<p>
+					On the console, over ssh, and in the desktop&rsquo;s terminal window &mdash;
+					<code>PS /home/you&gt;</code>, PowerShell 7.6, with the OS/7 cmdlets already loaded.
+					Scripts an admin already owns keep working.
+				</p>
+				<p>
+					bash stays the system shell. cron, systemd units, dpkg hooks and Intune&rsquo;s own
+					bash compliance scripts are untouched by this, which is the point: the interactive
+					shell changed, not the plumbing.
+				</p>
+			</div>
+			<figure style="margin:0">
+				<div class="shot">
+					<img src="/img/desktop-powershell.png" width="1920" height="1080" loading="lazy"
+					     alt="A terminal window on the OS/7 desktop showing Get-OS7Version piped to Format-List, listing ProductName OS/7, Version 1.0.0, Build 116, Channel development, Architecture amd64 and BaseRelease 26.04.">
+				</div>
+				<figcaption class="shot-caption"><code>Get-OS7Version</code> on an installed machine.</figcaption>
+			</figure>
+		</div>
+
+		<div class="feature">
+			<div class="feature-text">
+				<p class="kicker">Management</p>
+				<h3>It enrols in Intune. Servers report to Azure Arc.</h3>
+				<p>
+					The x86-64 desktop carries Microsoft Edge, the Intune portal and the identity broker,
+					because Microsoft requires all three for enrolment. arm64 is a server product and is
+					managed through the Azure Connected Machine agent instead.
+				</p>
+				<p>
+					Microsoft&rsquo;s requirements shaped the design rather than being worked around
+					afterwards: disk encryption is LUKS2 because Intune only recognises
+					<code>dm-crypt</code>, and <code>/etc/os-release</code> stays Ubuntu-identifiable so
+					the <em>Allowed distributions</em> rule keeps matching.
+				</p>
+			</div>
+			<figure style="margin:0">
+				<div class="shot">
+					<img src="/img/desktop-intune.png" width="1920" height="1080" loading="lazy"
+					     alt="The Microsoft Intune agent window open on the OS/7 desktop, offering to sign in to get access to work or school resources.">
+				</div>
+				<figcaption class="shot-caption">The Intune agent on OS/7, x86-64.</figcaption>
+			</figure>
+		</div>
+
+		<div class="feature">
+			<div class="feature-text">
+				<p class="kicker">Updates</p>
+				<h3>An update you can take back.</h3>
+				<p>
+					The root filesystem is ZFS on LUKS2. An update is not applied to the running system:
+					it is applied to a clone of it. The machine reboots into the new environment, and the
+					old one is still there, still bootable, listed in the boot menu.
+				</p>
+				<p>
+					If something is wrong, you pick yesterday&rsquo;s entry at boot, or run
+					<code>Restore-OS7</code>. Snapshots, clones, boot environments and off-machine
+					replication are all driven from PowerShell.
+				</p>
+			</div>
+			<figure style="margin:0">
+				<div class="shot">
+					<img src="/img/console-zfs.png" width="1280" height="800" loading="lazy"
+					     alt="A console listing of the OS/7 ZFS cmdlets, including Get-ZfsDataset, New-ZfsSnapshot and the boot-environment cmdlets.">
+				</div>
+				<figcaption class="shot-caption">The storage and boot-environment cmdlets, on the console.</figcaption>
+			</figure>
+		</div>
+
+		<div class="feature">
+			<div class="feature-text">
+				<p class="kicker">Setup</p>
+				<h3>An installer that suits a headless server and a desktop equally.</h3>
+				<p>
+					<code>os7-setup</code> is keyboard-driven and text-mode, styled after MS-DOS 6.22
+					Setup and the Windows 2000 text phase. That is not only nostalgia: a 4.4&nbsp;MB
+					binary with no graphics stack behind it runs the same over a serial console as it
+					does on a monitor, and installs the desktop-less arm64 image that a Qt installer
+					never could.
+				</p>
+				<p>
+					Twelve screens: language and keyboard, disk, partition layout and passphrase, a
+					confirmation gate before anything is written, account, GUI or headless, network.
+				</p>
+			</div>
+			<div class="shot-strip">
+				<div class="shot"><img src="/img/setup-disk.png" width="1280" height="800" loading="lazy" alt="The Setup disk selection screen listing the available disks."></div>
+				<div class="shot"><img src="/img/setup-layout.png" width="1280" height="800" loading="lazy" alt="The Setup partition layout screen showing the planned ESP, boot pool and root pool."></div>
+				<div class="shot"><img src="/img/setup-confirm.png" width="1280" height="800" loading="lazy" alt="The Setup confirmation screen listing everything that will be written to the disk."></div>
+				<div class="shot"><img src="/img/setup-network.png" width="1280" height="800" loading="lazy" alt="The Setup network screen offering DHCP or a static address."></div>
+			</div>
+		</div>
+
+		<div class="feature">
+			<div class="feature-text">
+				<p class="kicker">The desktop</p>
+				<h3>OS/7 Classic, for people who came from Windows.</h3>
+				<p>
+					The x86-64 desktop is GNOME with a Windows 2000 surface: a task list, a start
+					menu, square window frames, a system tray. It is built from GNOME&rsquo;s own
+					Classic extensions rather than third-party shell hacks, so an Ubuntu release
+					upgrade leaves it intact instead of breaking it.
+				</p>
+				<p>
+					Nothing phones home. The first-login wizard, <code>ubuntu-report</code>,
+					<code>ubuntu-insights</code>, <code>whoopsie</code>, <code>apport</code> and Firefox
+					are removed and pinned at <code>Pin-Priority: -1</code>, so a later
+					<code>apt full-upgrade</code> cannot quietly restore them.
+				</p>
+			</div>
+			<figure style="margin:0">
+				<div class="shot">
+					<img src="/img/desktop-files.png" width="1920" height="1080" loading="lazy"
+					     alt="The OS/7 Classic desktop with a file manager window open, showing square window frames and a task list along the bottom.">
+				</div>
+				<figcaption class="shot-caption">OS/7 Classic on x86-64.</figcaption>
+			</figure>
+		</div>
+
+	</div>
+</section>
+
+<!-- -------------------------------------------------------------- status -->
+<section class="section" id="status">
+	<div class="wrap">
+		<div class="section-head">
+			<p class="kicker">Status</p>
+			<h2>What actually works.</h2>
+			<p>
+				Everything marked <span class="t-ok">yes</span> has been done on a real (virtual)
+				machine. The two columns are checked differently: arm64 by scripted harnesses that
+				assert their own results and can be re-run by anyone, x86-64 by hand, because those
+				harnesses are <code>qemu-system-aarch64</code> and no x86_64 equivalent exists yet.
+			</p>
+		</div>
+
+		<div class="table-scroll">
+			<table>
+				<thead>
+					<tr>
+						<th></th>
+						<th>arm64 &mdash; server only</th>
+						<th>x86-64 &mdash; desktop or server</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr><td>ISO builds</td><td class="t-ok">yes</td><td class="t-ok">yes</td></tr>
+					<tr><td>Setup runs to the end</td><td class="t-ok">yes, by keypress, scripted</td><td class="t-ok">yes, by hand</td></tr>
+					<tr><td>Installs ESP + LUKS2 + ZFS pools + account + bootloader</td><td class="t-ok">yes</td><td class="t-ok">yes, same code</td></tr>
+					<tr><td>The installed disk boots on its own</td><td class="t-ok">yes, with no setup medium attached</td><td class="t-ok">yes, to a graphical login</td></tr>
+					<tr><td>Wired and Wi-Fi networking</td><td class="t-ok">yes</td><td class="t-ok">wired</td></tr>
+					<tr><td>Desktop, Edge, Intune portal, VS&nbsp;Code</td><td class="t-no">not applicable &mdash; arm64 is server-only</td><td class="t-ok">yes</td></tr>
+					<tr><td>Secure Boot with TPM2 auto-unlock</td><td class="t-ok">yes</td><td class="t-part">not tested</td></tr>
+					<tr><td>Roll back a bad update</td><td class="t-ok">yes, end to end</td><td class="t-part">not tested</td></tr>
+					<tr><td>Entra ID sign-in</td><td class="t-no">no &mdash; the broker is a snap that cannot yet go in the image</td><td class="t-no">no</td></tr>
+					<tr><td>Backup: snapshots, replication, file restore</td><td class="t-part">written and self-tested offline, never run on a machine</td><td class="t-part">same</td></tr>
+				</tbody>
+			</table>
+		</div>
+
+		<p class="small muted mt-2">
+			The two architectures are deliberately different products. Microsoft ships no arm64 build of
+			Edge, the Intune portal or the identity broker, so arm64 is a server and is managed through
+			Azure Arc. The full table, and the evidence behind each row, is
+			<a href="https://github.com/upinblue/OS7">in the repository</a>.
+		</p>
+	</div>
+</section>
+
+<!-- ----------------------------------------------------------------- CTA -->
+<section class="section section-tight">
+	<div class="wrap">
+		<div class="cta">
+			<div>
+				<h2>Try it in a VM first.</h2>
+				<p>
+					Two ISOs, a checksum to verify them against, and an installer that tells you exactly
+					what it is about to write before it writes anything.
+				</p>
+			</div>
+			<div class="btn-row">
+				<a class="btn btn-primary" href="/download">Download</a>
+				<a class="btn btn-ghost" href="/getting-started">Getting started</a>
+			</div>
+		</div>
+	</div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+	<div class="wrap">
+		<div class="foot-grid">
+			<div class="foot-brand">
+				<img class="logo-light" src="/brand/os7-wordmark-light.svg" alt="OS/7">
+				<img class="logo-dark" src="/brand/os7-wordmark-dark.svg" alt="OS/7">
+				<p>Ubuntu 26.04 LTS, arranged for estates that run on Microsoft. MIT licensed.</p>
+			</div>
+			<div>
+				<h4>Product</h4>
+				<ul>
+					<li><a href="/">Overview</a></li>
+					<li><a href="/download">Download</a></li>
+					<li><a href="/getting-started">Getting started</a></li>
+					<li><a href="/organizations">For organizations</a></li>
+				</ul>
+			</div>
+			<div>
+				<h4>Project</h4>
+				<ul>
+					<li><a href="https://github.com/upinblue/OS7">Source on GitHub</a></li>
+					<li><a href="https://github.com/upinblue/OS7/issues">Issues</a></li>
+					<li><a href="https://github.com/upinblue/OS7/blob/main/docs/DECISIONS.md">Decisions</a></li>
+					<li><a href="https://github.com/upinblue/OS7/blob/main/LICENSE">Licence</a></li>
+				</ul>
+			</div>
+			<div>
+				<h4>Legal</h4>
+				<ul>
+					<li><a href="/imprint">Imprint</a></li>
+					<li><a href="/privacy">Privacy</a></li>
+					<li><a href="mailto:os7@upinblue.com">Contact</a></li>
+				</ul>
+			</div>
+		</div>
+		<div class="foot-bottom">
+			<span>OS/7 is not affiliated with, or endorsed by, Microsoft or Canonical. Ubuntu is a registered trademark of Canonical Ltd.</span>
+			<span class="uib">Made by <a href="https://www.upinblue.com"><img src="/brand/uib-logo.svg" alt="up in blue GmbH"></a></span>
+		</div>
+	</div>
+</footer>
+
+<script src="/js/theme.js" defer></script>
+</body>
+</html>

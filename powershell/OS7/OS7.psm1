@@ -16,11 +16,18 @@
 #                 VM by spike S5 (docs/SESSION-BOOT-ENVIRONMENTS.md). This is
 #                 the half of docs/RELEASE-AND-UPDATE-PLAN.md §4.2 that has no
 #                 equivalent in the S3 install script — steps 1, 2 and 9.
-#   STUB          Set-OS7Mode, Update-OS7 — signatures only, each throwing
-#                 NotImplementedException, pinning the command surface
-#                 docs/DECISIONS.md documents. Update-OS7 is no longer waiting
-#                 on boot environments; it is waiting on there being an OS/7
-#                 release to apply (CURATION-AND-DELIVERY-PLAN.md C7).
+#                 Update-OS7, Get-OS7Release, Set-OS7UpdateChannel and
+#                 Test-OS7Update — the update train, added 2026-08-27 and living
+#                 in OS7.Update.ps1. Steps 3 to 8 of §4.2, as C10 corrects them,
+#                 which spike S5 had performed by hand because the cmdlet did
+#                 not exist. NOT YET RUN ON A MACHINE: run-s5.py is the gate.
+#                 docs/SESSION-UPDATE-TRAIN.md.
+#   STUB          Set-OS7Mode — a signature throwing NotImplementedException,
+#                 pinning the command surface docs/DECISIONS.md documents. It is
+#                 the last one: GUI-or-headless is now expressible as a swap of
+#                 the os7-desktop / os7-server metapackages (C6), which makes it
+#                 a sequence of its own with its own risk rather than an
+#                 undefined idea.
 #
 # WHY THE ZFS LAYER IS HERE AND NOT IN THE INSTALLER, which is the interesting
 # design decision (installer/SETUP-PLAN.md §6.3):

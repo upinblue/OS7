@@ -82,7 +82,8 @@ Writing one is the main gap in the project's testing.
 | Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❔ not tested |
 | `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back | ❔ not tested |
 | Entra ID sign-in | ❌ the `authd-msentraid` broker is a Canonical snap and cannot yet be put into the image | ❌ |
-| `Update-OS7` — apply the next release | 🚧 designed; waiting on there being a release to apply | 🚧 |
+| `Update-OS7` — apply the next release | 🚧 written 2026-08-27 and checked without a VM; never run on a machine | 🚧 |
+| OS/7's own signed package repository | 🚧 nine `.deb`s, a signed suite and a signed release index; the ISO does not install them yet | 🚧 built and installed-from in a container |
 | Backup — snapshots, replication, file restore | 🚧 written and self-tested offline, never run on a machine | 🚧 |
 
 The two architectures are deliberately different products. Microsoft ships no arm64

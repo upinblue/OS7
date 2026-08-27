@@ -454,6 +454,13 @@ six are green, and `run-s5.py boot` asks a booted machine the same questions.
 for the same reason as every other result in this repository: there is no
 harness that can drive an x86_64 machine here (HANDOFF §2, §3).
 
+> **Superseded 2026-08-27.** `Update-OS7` is written. What it was waiting on —
+> an OS/7 release to apply — arrived with C7 on 2026-08-26. The paragraph below
+> is kept as this session recorded it. Two of the facts it established turned out
+> to matter more than they looked: `Active` is ZFS's `mounted`, which is "mounted
+> ANYWHERE", and an update mounts a clone — so boot environments now carry
+> `Running` beside it. [SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md).
+
 **`Update-OS7` is still a stub, and now for a different reason.** It is no longer
 waiting on boot environments; it is waiting on there being an OS/7 release to
 apply. There is no package repository, no signing key and no release index

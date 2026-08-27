@@ -54,6 +54,7 @@ here either — this file points, they rule.
 | What is locked, what is still open | [docs/DECISIONS.md](docs/DECISIONS.md) — "Locked decisions" and "Open questions". Moved out of README.md on 2026-08-25; the README is now the public front page and decides nothing |
 | The installer: design, screens, decisions D1–D10, limitations L1–L22, phases | [installer/SETUP-PLAN.md](installer/SETUP-PLAN.md) — **authoritative** |
 | Versioning, the update train, rollback, `/var` | [docs/RELEASE-AND-UPDATE-PLAN.md](docs/RELEASE-AND-UPDATE-PLAN.md) |
+| What the product CONTAINS, how a release is delivered, decisions C1–C12 | [docs/CURATION-AND-DELIVERY-PLAN.md](docs/CURATION-AND-DELIVERY-PLAN.md) — **§9 (C10) CORRECTS three steps of the release plan's §4.2**, so read them together and let C10 win. C7a — where a release signing key lives — is open |
 | What the machine calls itself and to whom, the friendly `1.x.x`, `Get-OS7Version`, decisions I1–I10 | [docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) — **it supersedes the `NAME=` row of the release plan's §3.5** |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
 | ZFS from PowerShell: the two layers, decisions Z1–Z14, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
@@ -134,6 +135,25 @@ file on the **ESP** names which environment's menu is read
 (`set prefix=($root)'/BOOT/<be>@/grub'`); and `saved_entry` in that
 environment's `grubenv` names the entry. No ZFS property takes part.
 [docs/SESSION-BOOT-ENVIRONMENTS.md](docs/SESSION-BOOT-ENVIRONMENTS.md).
+
+**The update train is code since 2026-08-27 and has NEVER RUN ON A MACHINE.**
+`Update-OS7` in `powershell/OS7/OS7.Update.ps1` is §4.2's sequence as C10
+corrects it: clone the pair, assemble it, point apt at both repositories,
+`apt install os7-<mode>=<version>` → `full-upgrade` → `autoremove`, run the
+release's migrations, rebuild the initramfs, regenerate the menu, activate and
+prune. `Get-OS7Release` verifies the signed index and each descriptor's hash
+before it lists anything; `Set-OS7UpdateChannel` switches on the apt source
+`os7-release` deliberately ships disabled. **`run-s5.py` is the gate and needs
+the Mac** — until it runs, this is a claim about code, and
+`check-update-logic.py` is as far as it can be taken without one.
+
+**`Active` on a boot environment is ZFS's `mounted` — "mounted ANYWHERE" — and
+an update mounts a clone.** So there is a `Running` beside it, computed from the
+dataset the kernel says serves `/`, and everything that means "the system that is
+running" reads that. Reading `Active` as "running" put the running machine's
+kernel into another environment's menu entry, which is §4.3's half-activated
+pair reached by a road nothing checks.
+[docs/SESSION-UPDATE-TRAIN.md](docs/SESSION-UPDATE-TRAIN.md).
 
 **Two PowerShell modules, and the direction between them matters.**
 `powershell/Zfs/` is the generic ZFS layer — it knows nothing about OS/7 and
@@ -410,6 +430,18 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
   OS7.Home.ps1              where a home directory lives, and the migration for
                             machines installed before Setup passed -UserName
                             (#74). Dot-sourced too, hence "five"
+  OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
+                            Set-OS7UpdateChannel, Test-OS7Update. The SIXTH
+                            dot-sourced file, and LAST in the list because it
+                            calls every helper above it and PowerShell defines
+                            functions as the script runs
+build/packages/             OS/7's own .debs (C7). Each is a control.in plus an
+                            optional tree/; build/lib/build-os7-packages.sh
+                            builds them from the SAME sources build.sh stages
+                            from, and build-os7-repo.sh signs a suite over them
+  os7-release/tree/usr/lib/os7/migrations/README
+                            the migration contract C10 asked for and no document
+                            had written down: <version>/<chroot|firstboot>/NN-name
 build/config/includes.chroot/
                             files copied verbatim into the image: the console
                             defaults, and the os7-backup units and their scripts
