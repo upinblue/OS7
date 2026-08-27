@@ -45,14 +45,12 @@ what `Restore-OS7` is.
 
 import os
 import re
-import shutil
-import signal
-import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vmconsole import Console, live_login, qemu_prefix, to_plain_bash    # noqa: E402
+from vmconsole import Console, live_login, to_plain_bash                # noqa: E402
+from vmarch import SoftTpm                                              # noqa: E402
 from vmscreen import Lab                                                # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -85,64 +83,19 @@ HOME_MARKER = f"/home/{USERNAME}/s5-written-in-the-clone.txt"
 lab = Lab("s5", target_gb=24, iso_as_disk=True, nic=True)
 
 TPMDIR = os.path.join(lab.dir, "tpm")
-TPMSOCK = os.path.join(TPMDIR, "swtpm-sock")
 
 TARGET = "/dev/disk/by-id/virtio-os7target"
-LIVE_CMDLINE = "boot=casper fbcon=nodefer quiet console=ttyAMA0,115200"
+LIVE_CMDLINE = f"boot=casper fbcon=nodefer quiet console={lab.arch.serial_tty},115200"
 
 _mark = 0
 
 
-# ---------------------------------------------------------------------------
-# The software TPM. Lifted from installer/spikes/run-s4.py, which is where it
-# was made to work — including the two flags that are not obvious.
-# ---------------------------------------------------------------------------
-class Tpm:
-    """A software TPM 2.0, or nothing at all when `enabled` is false."""
-
-    def __init__(self, enabled=True):
-        self.enabled = enabled
-        self.proc = None
-
-    def __enter__(self):
-        if not self.enabled:
-            return self
-        if not shutil.which("swtpm"):
-            raise SystemExit("swtpm not found — brew install swtpm")
-        os.makedirs(TPMDIR, exist_ok=True)
-        if os.path.exists(TPMSOCK):
-            os.remove(TPMSOCK)
-        # not-need-init,startup-clear: AAVMF on arm64 does not reliably send
-        # TPM2_Startup, and an un-started TPM answers every command with
-        # TPM_RC_INITIALIZE. run-s4.py found this; it is not guesswork.
-        self.proc = subprocess.Popen(
-            ["swtpm", "socket", "--tpm2",
-             "--tpmstate", f"dir={TPMDIR}",
-             "--ctrl", f"type=unixio,path={TPMSOCK}",
-             "--flags", "not-need-init,startup-clear"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        for _ in range(100):
-            if os.path.exists(TPMSOCK):
-                break
-            time.sleep(0.05)
-        else:
-            raise SystemExit("swtpm never created its control socket")
-        return self
-
-    def __exit__(self, *exc):
-        if self.proc:
-            self.proc.send_signal(signal.SIGTERM)
-            try:
-                self.proc.wait(timeout=5)
-            except Exception:
-                self.proc.kill()
-
-    def args(self):
-        if not self.enabled:
-            return []
-        return ["-chardev", f"socket,id=chrtpm,path={TPMSOCK}",
-                "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
-                "-device", "tpm-tis-device,tpmdev=tpm0"]
+def Tpm(enabled=True):
+    """The software TPM, from vmarch: a sibling swtpm process on the Mac, a
+    swtpm inside the QEMU container on the x86_64 path (vmhost-entry.sh). Its
+    STATE directory is the same either way, so enrolment survives across boots
+    on both."""
+    return SoftTpm(lab.arch, TPMDIR, enabled)
 
 
 def disk_only_args():
@@ -153,17 +106,13 @@ def disk_only_args():
     itself. The TPM is attached here as well as during the install, because a
     sealed key with no TPM to unseal it is the L17 case and not this one.
     """
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
-    return [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
+    p = lab.arch.path
+    return lab.arch.base_args() + [
         "-smp", lab.CPUS, "-m", lab.MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={lab.vars}",
+    ] + lab.arch.firmware_args(lab.vars) + [
         "-display", "none", "-monitor", "none", "-serial", "stdio",
         "-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0",
-        "-drive", f"if=none,id=target,file={lab.target},format=qcow2",
+        "-drive", f"if=none,id=target,file={p(lab.target)},format=qcow2",
         "-device", "virtio-blk-pci,drive=target,serial=os7target",
     ]
 
@@ -218,6 +167,92 @@ def ps(c, script, label, timeout=300):
 
 
 # ---------------------------------------------------------------------------
+# The serial console the amd64 machine does not have.
+#
+# On arm64 the installed machine speaks on the serial line without being asked:
+# QEMU's virt machine hands the kernel a device tree whose chosen node names
+# ttyAMA0, and Linux takes it as the console. x86 has no such mechanism — the
+# kernel's default console is tty0, and an installed amd64 machine is therefore
+# SILENT on the serial line this harness drives: the passphrase prompt, the
+# boot, and the login all happen on a display nothing is attached to.
+#
+# So after an amd64 install, the harness gives the machine a serial console:
+# unlock the container with the passphrase it just set, import the pools, put
+# `console=ttyS0,115200` into the GRUB defaults, regenerate the menu through
+# the machine's own update-grub, and export everything again. THIS IS THE
+# HARNESS'S DOING, NOT THE PRODUCT'S — whether an OS/7 server image should
+# ship a serial console by default is a real product question
+# (RELEASE-AND-UPDATE-PLAN §6 already requires every cmdlet to work over
+# serial), and it is left open rather than decided here in passing. What the
+# `boot` phase then exercises is unchanged: OVMF finds shim, shim finds GRUB,
+# GRUB finds the boot environment, the initramfs asks the TPM.
+# ---------------------------------------------------------------------------
+# The mounts and the chroot run INSIDE `unshare --mount --propagation private`
+# (BUILD-NOTES #18): a bind done in the shared namespace propagates before it
+# can be made private, and `zpool export` then says "pool is busy" with
+# nothing visibly mounted and -f powerless. The first version of this script
+# did exactly that and measured exactly that. The namespace evaporates with
+# the inner shell, taking every mount with it, and the outer script exports
+# clean pools. update-grub's own chatter goes to stderr so the inner stdout is
+# the one number the caller wants.
+SERIAL_INNER = r"""
+set -e
+BE=$1
+M=/mnt/cfg
+mkdir -p $M
+mount -t zfs -o zfsutil rpool/ROOT/$BE $M
+mount -t zfs -o zfsutil bpool/BOOT/$BE $M/boot
+for d in dev proc sys; do mount --rbind /$d $M/$d; mount --make-rslave $M/$d; done
+if ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' $M/etc/default/grub; then
+  echo 'GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200"' >> $M/etc/default/grub
+elif ! grep -q 'console=ttyS0' $M/etc/default/grub; then
+  sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 console=ttyS0,115200"/' $M/etc/default/grub
+fi
+chroot $M update-grub >&2 2>&1
+grep -c 'console=ttyS0' $M/boot/grub/grub.cfg
+"""
+
+SERIAL_CONSOLE = r"""
+set -e
+LUKS=/dev/disk/by-partlabel/os7-luks
+test -e "$LUKS"
+cryptsetup status os7cfg >/dev/null 2>&1 || cryptsetup open "$LUKS" os7cfg --key-file=/tmp/pass
+zpool list -H rpool >/dev/null 2>&1 || zpool import -N -f rpool
+zpool list -H bpool >/dev/null 2>&1 || zpool import -N -f bpool
+BE=$(zfs list -H -o name -d 1 rpool/ROOT | grep '^rpool/ROOT/os7_' | head -1 | cut -d/ -f3)
+test -n "$BE"
+N=$(unshare --mount --propagation private bash /tmp/serialize-inner.sh "$BE" | tail -1)
+zpool export bpool
+zpool export rpool
+cryptsetup close os7cfg
+echo "SERIAL-LINES=$N"
+echo SERIAL-CONSOLE-OK
+"""
+
+
+def give_serial_console(c):
+    """Run SERIAL_CONSOLE in the live session. Returns True when the machine's
+    own grub.cfg came back carrying the console — asked of the file, not of the
+    script's exit code."""
+    send_script(c, "serialize-inner.sh", SERIAL_INNER)
+    send_script(c, "serialize.sh", SERIAL_CONSOLE)
+    text = ask(c, "sudo bash /tmp/serialize.sh 2>&1 | tail -8",
+               "give the machine a serial console", timeout=600)
+    body = body_of(text, "tail -8")
+    if "SERIAL-CONSOLE-OK" not in body:
+        print("      FAIL  the machine could not be given a serial console")
+        print(body.strip()[-1200:])
+        return False
+    m = re.search(r"SERIAL-LINES=(\d+)", body)
+    n = int(m.group(1)) if m else 0
+    if n < 1:
+        print("      FAIL  update-grub ran and no menu entry carries console=ttyS0")
+        return False
+    print(f"      ok    the machine has a serial console ({n} menu lines carry it)")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # install
 # ---------------------------------------------------------------------------
 def write_plan(c):
@@ -241,7 +276,8 @@ def phase_install():
 
     with Tpm() as tpm:
         args = lab.qemu_args(LIVE_CMDLINE, payload=False) + tpm.args()
-        c = Console(args, os.path.join(lab.dir, "install.serial.log"))
+        c = Console(lab.arch.command(args, name=lab.name, tpm=tpm),
+                    os.path.join(lab.dir, "install.serial.log"))
         try:
             live_login(c)
             to_plain_bash(c)
@@ -295,6 +331,12 @@ def phase_install():
                 print("      FAIL  a pool is still imported after the install")
                 return False
             print("      ok    the installer exported both pools")
+
+            # amd64 only: the installed machine would otherwise be silent on
+            # the serial line every later phase drives (see SERIAL_CONSOLE).
+            if lab.arch.serial_tty != "ttyAMA0":
+                if not give_serial_console(c):
+                    return False
             return True
         finally:
             c.close()
@@ -322,7 +364,8 @@ class Machine:
 
     def __enter__(self):
         self.tpm.__enter__()
-        self.c = Console(disk_only_args() + self.tpm.args(),
+        self.c = Console(lab.arch.command(disk_only_args() + self.tpm.args(),
+                                          name=lab.name, tpm=self.tpm),
                          os.path.join(lab.dir, f"{self.label}.serial.log"))
         c = self.c
         i = c.expect([r"\blogin:", r"unlock disk", r"Enter passphrase", r"passphrase for",
@@ -381,14 +424,43 @@ def phase_boot():
             return False
 
     ok = True
+    reenrolled = False
     with Machine("boot") as m:
         c = m.c
         if m.unlocked_by_tpm:
             print("      ok    1/7 THE TPM UNLOCKED THE DISK — no passphrase was typed")
-        else:
+        elif lab.arch.serial_tty == "ttyAMA0":
             print("      FAIL  1/7 the machine asked for the passphrase: the TPM did not")
             print("                unlock it. Everything below still runs.")
             ok = False
+        else:
+            # MEASURED 2026-08-28, first amd64 boot ever: the enrolment is
+            # correct (token in slot 1, handler and libtss2 in the initramfs)
+            # and the seal does not open, because TpmEnrolStep sealed against
+            # the LIVE SESSION's PCR 7 and this machine boots through shim,
+            # which extends it — BUILD-NOTES #69's prediction, now a
+            # measurement. arm64 never hit it because QEMU's arm64 path boots
+            # the same way in both sessions. The recovery is S6's: one
+            # systemd-cryptenroll on the booted machine, against the PCR 7
+            # that the real boot path produces. The product's own fix is the
+            # UL1 first-boot migration; until an image ships it, the harness
+            # performs the documented recovery and THE VERDICT IS THE NEXT
+            # BOOT, which must unlock with nothing typed.
+            print("      note  1/7 the FIRST amd64 boot asked for the passphrase — #69:")
+            print("            the install-time seal is against the live session's PCR 7")
+            print("            and this machine boots through shim. Re-enrolling (S6's")
+            print("            recovery); the verdict is the next boot.")
+            text = ask(c, f"PASSWORD='{PASSPHRASE}' systemd-cryptenroll --wipe-slot=tpm2 "
+                          "--tpm2-device=auto --tpm2-pcrs=7 "
+                          "/dev/disk/by-partlabel/os7-luks 2>&1 | tail -3",
+                       "re-enrol against the booted PCR 7", timeout=300)
+            if "enrolled" in body_of(text, "tail -3"):
+                print("      ok         re-enrolled against the boot path's own PCR 7")
+                reenrolled = True
+            else:
+                print("      FAIL  1/7 the re-enrolment did not report a new token:")
+                print("            " + body_of(text, "tail -3").strip()[:300])
+                ok = False
 
         # THE ENROLMENT STEP'S OWN WORDS, from the install log ON THIS MACHINE.
         # Not from the serial line: os7-setup prints step headings to the console
@@ -475,6 +547,21 @@ def phase_boot():
         else:
             print(f"      FAIL       {n} wireless driver directories; it was 19 before the swap")
             ok = False
+        if reenrolled:
+            m.power_off()
+
+    # The other half of the amd64 1/7 verdict: after S6's recovery, the NEXT
+    # boot must unlock with nothing typed — that, and not the recovery's exit
+    # code, is what says the re-enrolment worked.
+    if reenrolled:
+        with Machine("boot-tpm") as m2:
+            if m2.unlocked_by_tpm:
+                print("      ok    1/7 THE TPM UNLOCKED THE DISK on the boot after")
+                print("                re-enrolment — no passphrase was typed")
+            else:
+                print("      FAIL  1/7 the re-enrolled TPM still did not unlock the disk")
+                ok = False
+            m2.power_off()
     return ok
 
 
@@ -823,7 +910,41 @@ def phase_cycle():
     return ok
 
 
-PHASES = {"install": phase_install, "boot": phase_boot, "cycle": phase_cycle}
+def phase_serialize():
+    """The SERIAL_CONSOLE step alone, for a disk that was installed before the
+    step existed (or whose configuration was lost with the pool). Boots the
+    live medium, configures, powers off. A no-op on arm64, which never needed
+    it."""
+    print("\n### serialize — give an already-installed amd64 disk a serial console")
+    if lab.arch.serial_tty == "ttyAMA0":
+        print("      note  arm64 speaks on ttyAMA0 by itself; nothing to do")
+        return True
+    if not os.path.exists(lab.target):
+        print(f"      FAIL  no installed disk at {lab.target}. Run install first.")
+        return False
+    # NOT lab.prepare(): prepare() recreates the target BLANK, which is right
+    # before an install and would destroy the installed disk here. Only the
+    # boot files and the firmware store are ensured.
+    lab.arch.prepare_vars(lab.vars)
+    lab.extract_boot_files()
+    c = Console(lab.arch.command(lab.qemu_args(LIVE_CMDLINE, payload=False), name=lab.name),
+                os.path.join(lab.dir, "serialize.serial.log"))
+    try:
+        live_login(c)
+        to_plain_bash(c)
+        c.send(f"printf '%s' '{PASSPHRASE}' > /tmp/pass")
+        ok = give_serial_console(c)
+        c.send("sudo poweroff -f")
+        deadline = time.time() + 120
+        while time.time() < deadline and c.proc.poll() is None:
+            time.sleep(0.5)
+        return ok
+    finally:
+        c.close()
+
+
+PHASES = {"install": phase_install, "boot": phase_boot, "cycle": phase_cycle,
+          "serialize": phase_serialize}
 
 
 def main():

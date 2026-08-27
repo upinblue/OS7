@@ -43,16 +43,20 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vmconsole import Console, live_login, qemu_prefix, run, to_plain_bash
+from vmconsole import Console, live_login, run, to_plain_bash
+from vmarch import VmArch
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TESTING = os.path.join(REPO, "installer", "testing")
 OS7_MODULE = os.path.join(REPO, "powershell", "OS7")
 ZFS_MODULE = os.path.join(REPO, "powershell", "Zfs")
 VM = os.path.join(REPO, ".vm", "backup")
-ISO = os.path.join(REPO, "out", "os7-arm64.iso")
+ARCH = VmArch()
+ISO = ARCH.iso_default()
 VARS = os.path.join(VM, "edk2-vars.fd")
 PAYLOAD = os.path.join(VM, "payload.iso")
+ARCH.mount(VM, "/vm")
+ARCH.mount(os.path.dirname(ISO), "/iso", ro=True)
 
 MEM = "4096"
 CPUS = "4"
@@ -60,19 +64,15 @@ LABEL = "OS7BACKUP"
 
 
 def qemu_args():
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
-    return [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
+    p = ARCH.path
+    return ARCH.base_args() + [
         "-smp", CPUS, "-m", MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={VARS}",
+    ] + ARCH.firmware_args(VARS) + [
         "-display", "none", "-monitor", "none", "-serial", "stdio",
         "-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0",
-        "-drive", f"if=none,id=payload,file={PAYLOAD},format=raw,readonly=on",
+        "-drive", f"if=none,id=payload,file={p(PAYLOAD)},format=raw,readonly=on",
         "-device", "virtio-blk-pci,drive=payload",
-        "-cdrom", ISO, "-boot", "d",
+        "-cdrom", p(ISO), "-boot", "d",
     ]
 
 
@@ -284,27 +284,15 @@ def build_payload():
     with open(os.path.join(stage, "b.sh"), "w", newline="\n") as f:
         f.write(GUEST)
 
-    if os.path.exists(PAYLOAD):
-        os.remove(PAYLOAD)
-    run("hdiutil", "makehybrid", "-iso", "-joliet",
-        "-default-volume-name", LABEL, "-o", PAYLOAD, stage,
-        stdout=subprocess.DEVNULL)
+    ARCH.make_payload_iso(stage, PAYLOAD, LABEL)
     print(f"    payload  {PAYLOAD}")
 
 
 def prepare():
     os.makedirs(VM, exist_ok=True)
     if not os.path.exists(ISO):
-        raise SystemExit(f"ISO not found: {ISO}\nBuild it with: make build-arm64")
-    if not os.path.exists(VARS):
-        pre = qemu_prefix()
-        for c in ("edk2-arm-vars.fd", "edk2-aarch64-vars.fd"):
-            src = os.path.join(pre, "share", "qemu", c)
-            if os.path.exists(src):
-                shutil.copy(src, VARS)
-                break
-        else:
-            raise SystemExit("no EDK2 vars template found")
+        raise SystemExit(f"ISO not found: {ISO}\nBuild it with: {ARCH.build_hint}")
+    ARCH.prepare_vars(VARS)
 
 
 def boot_and_run(what, timeout=1800):
@@ -312,7 +300,7 @@ def boot_and_run(what, timeout=1800):
     build_payload()
     log = os.path.join(VM, f"{what}.serial.log")
     print(f"    serial   {log}")
-    c = Console(qemu_args(), log)
+    c = Console(ARCH.command(qemu_args(), name="backup"), log)
     try:
         live_login(c)
         print("    live session up")

@@ -99,8 +99,8 @@ DHCP_ADDRESS = "10.0.2.15"
 
 CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
-           "console=ttyAMA0,115200")
-LIVE_CMDLINE = "boot=casper fbcon=nodefer quiet console=ttyAMA0,115200"
+           f"console={lab.arch.serial_tty},115200")
+LIVE_CMDLINE = f"boot=casper fbcon=nodefer quiet console={lab.arch.serial_tty},115200"
 
 # The target is the SECOND disk. The first is the live medium, attached as a
 # block device rather than a CD so that it is a `disk` to lsblk - BUILD-NOTES
@@ -142,18 +142,13 @@ def disk_only_args():
     Spike S3 made exactly this split and it is the only reason S3 counts as
     evidence rather than as a log.
     """
-    from vmconsole import qemu_prefix
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
-    return [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
+    p = lab.arch.path
+    return lab.arch.base_args() + [
         "-smp", lab.CPUS, "-m", lab.MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={lab.vars}",
+    ] + lab.arch.firmware_args(lab.vars) + [
         "-display", "none", "-monitor", "none", "-serial", "stdio",
         "-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0",
-        "-drive", f"if=none,id=target,file={lab.target},format=qcow2",
+        "-drive", f"if=none,id=target,file={p(lab.target)},format=qcow2",
         "-device", "virtio-blk-pci,drive=target,serial=os7target",
     ]
 
@@ -186,9 +181,9 @@ def medium_release():
     os.makedirs(lab.dir, exist_ok=True)
     if os.path.exists(out):
         os.remove(out)
-    run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
+    run("docker", "run", "--rm", "--privileged", "--platform", lab.arch.docker_platform,
         "-v", f"{os.path.dirname(lab.iso)}:/iso:ro", "-v", f"{lab.dir}:/out",
-        "os7-build:arm64", "bash", "-c",
+        lab.arch.build_image, "bash", "-c",
         f"set -e; mkdir -p /mnt/iso /mnt/sq; "
         f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
         "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
@@ -208,9 +203,9 @@ def fetch_font():
     if os.path.exists(FONT):
         return
     os.makedirs(lab.dir, exist_ok=True)
-    run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
+    run("docker", "run", "--rm", "--privileged", "--platform", lab.arch.docker_platform,
         "-v", f"{os.path.dirname(lab.iso)}:/iso:ro", "-v", f"{lab.dir}:/out",
-        "os7-build:arm64", "bash", "-c",
+        lab.arch.build_image, "bash", "-c",
         f"set -e; mkdir -p /mnt/iso /mnt/sq; "
         f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
         "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
@@ -313,7 +308,7 @@ def phase_boot():
 
     log = os.path.join(lab.dir, "boot.serial.log")
     print(f"    serial   {log}")
-    c = Console(disk_only_args(), log)
+    c = Console(lab.arch.command(disk_only_args(), name=lab.name), log)
     ok = True
     try:
         # The failure signatures are watched for BESIDE the success one. Dropping

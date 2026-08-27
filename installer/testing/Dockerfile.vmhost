@@ -1,0 +1,26 @@
+# The x86_64 VM host — QEMU, its firmware and its TPM, in a container.
+#
+# On the x64 Windows host there is no QEMU on the host and no KVM in the host
+# kernel; both live inside Docker Desktop's WSL2 VM, which has nested
+# virtualisation on and a /dev/kvm that `docker run --device /dev/kvm` passes
+# through (measured 2026-08-26, re-measured 2026-08-27 — see CLAUDE.md and
+# docs/SESSION-VM-HARNESS-PORT.md). So where the Apple Silicon host runs
+# `qemu-system-aarch64` as a host process, the x86_64 path runs
+# `qemu-system-x86_64` INSIDE this image and the harness drives it over the
+# docker client's stdio — the same pipe the Console class already speaks.
+#
+# vmarch.py builds this image on demand and owns every invocation of it.
+# ubuntu:26.04 rather than os7-build:amd64 on purpose: the build image carries
+# a cross-compiler and live-build and none of QEMU, and this image wants to be
+# rebuildable in a minute when resolute moves.
+FROM ubuntu:26.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        qemu-system-x86 \
+        qemu-utils \
+        ovmf \
+        swtpm \
+        xorriso \
+    && rm -rf /var/lib/apt/lists/*
+COPY vmhost-entry.sh /usr/local/bin/vmhost-entry
+RUN chmod +x /usr/local/bin/vmhost-entry
+ENTRYPOINT ["/usr/local/bin/vmhost-entry"]
