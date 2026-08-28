@@ -35,7 +35,8 @@ decides what, the commands that work, and the traps that cost the most.
 | **The PowerShell system surface** | **Four generic modules and 58 exported OS/7 cmdlets since 2026-08-27**, and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds four rules), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/` and `powershell/Systemd/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Backup 63 — all green, all against RECORDED REAL output. Five no-VM checks beside them. |
 | **What that surface found** | **Entra sign-in cannot work on an OS/7 image as built today.** `/etc/authd/brokers.d` is EMPTY in the shipped ISO — authd installed, PAM wired to it, no broker to bridge to — so a sign-in fails as though the password were wrong. That is C8a measured on the artefact rather than reasoned about, and `Get-OS7EntraStatus` is the first thing on a machine that says so. Also: `Enter-PSSession` did not work at all (`sshd -T` listed only `sftp`); an interactive `ssh` DOES land in PowerShell and had never been tested until `check-ssh-login.py`. |
 | `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. Ported to `vmarch.py` on 2026-08-28 and still unrun — on either host. |
-| **The VM harness on x86_64** | **Works since 2026-08-28, measured on the x64 Windows host.** `installer/testing/vmarch.py` is the one place machine/accelerator/firmware/vehicle come from: arm64 stays a host process on HVF (byte-identical to the pre-port construction, held by `check-vm-arch.py` — 41 checks, no QEMU, both hosts); amd64 is `q35,accel=kvm` with OVMF inside the `os7-vm:amd64` container, serial over the docker client's stdio, QMP on TCP, swtpm in-container. `run-s5.py install/boot/cycle` all PASS on amd64 — the first amd64 install, boot and rollback cycle this repository has made — and `boot` measured #69 for the first time (#100): the install-time TPM seal does not open through shim, and S6's one-command recovery restores it. The arm64 branch was NOT executed (no Mac in the session). [SESSION-VM-HARNESS-PORT.md](SESSION-VM-HARNESS-PORT.md) |
+| **The VM harness on x86_64** | **Works since 2026-08-28, measured on the x64 Windows host.** `installer/testing/vmarch.py` is the one place machine/accelerator/firmware/vehicle come from: arm64 stays a host process on HVF (byte-identical to the pre-port construction, held by `check-vm-arch.py` — 41 checks, no QEMU, both hosts); amd64 is `q35,accel=kvm` with OVMF inside the `os7-vm:amd64` container, serial over the docker client's stdio, QMP on TCP, swtpm in-container. `boot` measured #69 for the first time (#100): the install-time TPM seal does not open through shim, and S6's one-command recovery restores it. The arm64 branch was NOT executed (no Mac in the session). [SESSION-VM-HARNESS-PORT.md](SESSION-VM-HARNESS-PORT.md) |
+| **The update train, delivered end to end** | **The full `run-s5.py all` gate — install, TPM boot, cycle, `Update-OS7` against a served repository, and the unattended timer — has RUN ON THIS HOST (amd64/KVM), repeatedly, on fully packaged ISOs.** The ISO installs the nine OS/7 .debs through hook 0022 (`check-image.py`: 105 checks, `dpkg -S` attributes pwsh, the modules, os7-setup, the console font, release.json and the apt source to packages); releases have channels and a hotfix form (`check-os7-repo.py` 123, `check-update-logic.py` 32); firstboot migrations have a runner shipped in os7-release, and UL1's TPM2 re-seal plus #104's fstab-ordering retrofit are its first two real migrations; §6's unattended check ships as `os7-update-check.timer` with a measured exit-code contract (0 nothing/no channel, 2 staged, 1 failed). Four gate runs each converted a FAIL into a numbered defect — #104 (the ESP buried under the ZFS /boot by a boot-ordering race), #105 (saved_entry written before activation's point of no return), #106 (update.conf's missing trailing newline), #107 (Restore-OS7's "previous" — age, then promote-rotated origins, now the `org.os7:previous` property) — and the final verdict table is in [SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md). |
 
 ### Phase 0 is done — the gate is open
 
@@ -108,30 +109,43 @@ hosts has been checked against Microsoft's live documentation, which CLAUDE.md
 says is the FIRST thing to do for anything touching identity.
 
 
-**`Update-OS7` IS WRITTEN (2026-08-27) AND HAS NEVER RUN ON A MACHINE. THAT IS
-THE FIRST THING TO DO ON THE MAC.** The update train is the §4.2 sequence as C10
-corrects it, in `powershell/OS7/OS7.Update.ps1`, with `Get-OS7Release`,
-`Set-OS7UpdateChannel` and `Test-OS7Update` beside it. It is checked without a
-VM and the gate has not been run:
+**`Update-OS7` HAS RUN ON A MACHINE — the full gate runs on THIS host since
+2026-08-28** ([SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md)): the
+packaged ISO installs, boots by TPM alone, cycles, applies a served release
+end to end (N → N+1, firstboot migrations, conffile-kept channel, prune) and
+honours the unattended exit-code contract. What the update train still OWES,
+by host:
+
+**The Mac owes:**
 
 ```bash
-./installer/testing/check-update-logic.py    # ~3 min, no VM — GREEN
-./installer/testing/check-ps-traps.py        # seconds — GREEN
-./installer/testing/run-s5.py all            # THE GATE. Needs the Mac. NOT RUN
+./installer/testing/run-s5.py all      # the SAME gate on arm64/HVF — the ported
+                                       #   branch is byte-identical (check-vm-arch)
+                                       #   and has never been EXECUTED
+./installer/testing/run-phase3.py all  # still the #74 gate, still unrun since
+                                       #   the fix; also ported, also unexecuted
+make build-arm64                       # no arm64 ISO has been built with hook
+                                       #   0022 (the packaged install) — then
+./installer/testing/check-image.py     #   over it
+./installer/testing/run-backup.py all  # B-5's gate, never run on ANY host
 ```
 
-`run-s5.py` already installs a machine, clones its boot environment, changes the
-clone, boots it and rolls back — steps 3 to 8 **by hand**, because the cmdlet did
-not exist. Pointing it at `Update-OS7` instead is what turns "a machine updated
-by this cmdlet boots" from a claim about code into a measurement.
-[SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md) is what was decided, what was
-found and — at greater length — what was not checked.
+**Either host owes:** a hotfix applied through `Update-OS7` on a booted
+machine (the form is container-proven, `check-os7-repo.py` walks a real one;
+the machine gate applies full releases only — wired, not run); and P3 step 2
+(collapsing the two netplan renderers) stays gated on `run-phase3.py all`.
 
-**Writing it found four defects, three of them already in the tree**, which is
-the argument for the two no-VM checks above: BUILD-NOTES **#89** (the kernel
-picker chose the older kernel, and only an update could ever reveal it), **#90**
-(a freshness check that could not read its date, and warned), **#91**
-(`@('a', $b, $c + $d)` is four elements) and **#65 twice**.
+**The merge with the Directory/identity branch (main moved to 6aeea12):**
+resolve `build-os7-packages.sh`'s module list toward theirs (adds Directory)
+but take the UNION of pkg_finish's required paths (mine adds the migrations
+tree and two shipped units) — then re-run the .deb content check rather than
+trusting the union, because a list that agrees with the loop instead of
+checking it is how the five-module bug lived (#82's family). After the merge,
+run their `installer/testing/check-installer-cmdlets.py` (two seconds, needs
+pwsh): it holds os7-setup's generated PowerShell against what actually binds
+— four cmdlets at eleven call sites today — and would catch a parameter
+rename on either side. Its known blind spot: a cmdlet name built at run time
+is invisible to it; spell them literally.
 
 ---
 
@@ -149,27 +163,29 @@ make repo-amd64                           # nine .debs + a SIGNED suite os7-1.0
                                           #   require apt to REFUSE. ~4 min
 ```
 
-What that leaves, in order:
+What that left has been done:
 
-1. ~~**`Update-OS7`**~~ and ~~**`Get-OS7Release -Available`**~~ — **both written
-   2026-08-27**, above. What they leave is the gate.
-2. **Switch the ISO over.** `build.sh` still stages the same files through
-   `includes.chroot`, so the packages are correct and the image does not use
-   them. That change resolves the one seam this left, which
-   [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) §5 names: two
-   `release.json` files, one authored by the release and one measured from the
-   image.
+1. ~~**`Update-OS7`**~~ and ~~**`Get-OS7Release -Available`**~~ — written
+   2026-08-27, and the gate has now run (above).
+2. ~~**Switch the ISO over.**~~ — **Done 2026-08-28** (hook 0022 installs the
+   nine .debs, os7-release first; hooks 0020/0085 deleted; 0050/0075 verify
+   the packages' work). The two-release.json seam resolved as C9 implies:
+   `/usr/lib/os7/release.json` is what os7-release DECLARES, the build's
+   measurement moved to `/usr/lib/os7/image.json`, and `check-image.py`
+   requires the two to agree where they overlap.
 
 **C7a is still open and was kept open on purpose.** The repository is signed by
 a development key whose user ID reads `NOT FOR RELEASE` and which the descriptor
 declares as such. Where a release key lives and who holds it is a decision to
 make deliberately, not on the day the first repository is published.
 
-**And this box can run KVM after all.** `docker run --device /dev/kvm` on the
-x64 Windows host gives `query-kvm → {"enabled": true}` — no elevation, no
-Hyper-V by hand. Every harness here is still `qemu-system-aarch64` and would
-need an x86_64 arm, so §3's blocker is now a **port** rather than an
-impossibility. See [../CLAUDE.md](../CLAUDE.md).
+**And this box can run KVM after all — and since 2026-08-28 the harnesses
+USE it.** `docker run --device /dev/kvm` on the x64 Windows host gives
+`query-kvm → {"enabled": true}` — no elevation, no Hyper-V by hand. The port
+(`installer/testing/vmarch.py`) is done for every harness; `run-s5.py` has
+run its full gate here repeatedly; the other harnesses are ported and UNRUN
+on this host. See [../CLAUDE.md](../CLAUDE.md) and
+[SESSION-VM-HARNESS-PORT.md](SESSION-VM-HARNESS-PORT.md).
 
 
 **THE amd64 DESKTOP WAS LOOKED AT ON A SCREEN FOR THE FIRST TIME ON
@@ -194,9 +210,9 @@ ok  an interactive login lands in PowerShell 7.6.5 — PS /> … 7.6.5
 So **boot it and look at the panel.** It is `#d4d0c8` or the session default is
 still not taking, and that is a two-second answer nothing here can give.
 [SESSION-DESKTOP-DEBRAND.md](SESSION-DESKTOP-DEBRAND.md) says what was measured
-and — at greater length — what was not. Note that this box cannot run
-`run-phase3.py`: the harnesses are `qemu-system-aarch64 -machine virt,accel=hvf`
-and need the Mac, so the amd64 VM work is Hyper-V by hand.
+and — at greater length — what was not. Since 2026-08-28 this box CAN run the
+harnesses (`vmarch.py`, amd64/KVM in Docker) — `run-phase3.py` is ported and
+merely unrun here — so the amd64 VM work is no longer Hyper-V by hand.
 
 **THE BACKUP FEATURE LANDED ON 2026-08-26 AND HAS NEVER TOUCHED A MACHINE.**
 That is the first thing to do next, and it is one command on the Mac:
