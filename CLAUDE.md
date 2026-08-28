@@ -610,17 +610,23 @@ build/config/includes.chroot/
                             files copied verbatim into the image: the console
                             defaults, and the os7-backup units and their scripts
 docs/                       plans, handoff, build notes, session results
-web/                        os7.org. Plain HTML/CSS, NO build step - what is in
-                            the directory is what is served. Azure Static Web
-                            Apps (Free) for the site; a separate storage account
-                            for the ISOs, because egress is the only part that
-                            costs money. web/README.md carries the figures and
-                            the Microsoft doc each came from
-  infra/main.bicep          the whole Azure side, one deployment
-  tools/publish-release.py  measures an ISO and writes the download page from
-                            what it measured - a size or a hash is never typed
 out/, .vm/                  artefacts and VM state. Both gitignored.
 ```
+
+**The website is NOT in this repository.** `web/` was here from 2026-08-27 to
+2026-08-28 and now lives in **`upinblue/os7-web`**, which is PRIVATE while this
+one is public. The pages' history went with it. Nothing here depends on it, and
+the reverse dependency is one way and worth knowing about: `tools/prepare-
+images.py` over there reads **this** repository's gitignored
+`out/screenshots`, and `tools/publish-release.py` is pointed at ISOs in
+`out/`, both assuming the two checkouts are siblings.
+
+Two things over there that this repository will eventually meet. Its
+`infra/main.bicep` creates a second blob container, `repo`, on the same storage
+account as the ISOs, for the signed suite `build/lib/build-os7-repo.sh`
+produces — so when `OS7_REPO_URI` in the pin finally points somewhere, that is
+where. And the storage account name is unchosen: it lands in every published
+download URL and in the apt source of every installed machine.
 
 **arm64 and amd64 are different products** (DECISIONS): arm64 is server-only — no
 GNOME, no Edge, no Intune — because Microsoft ships no arm64 desktop stack.
