@@ -148,7 +148,8 @@ check_module Directory Connect-DirectoryServer Disconnect-DirectoryServer \
 # passing if they vanished.
 #
 # The update train is named for the same reason since 2026-08-27. It lives in
-# OS7.Update.ps1 — the sixth dot-sourced file — and Get-OS7Release is the half
+# OS7.Update.ps1 — the FOURTEENTH and last dot-sourced file, and last
+# because it calls every helper above it — and Get-OS7Release is the half
 # of it an image without a repository can still be asked about, which makes it
 # the one that would fail quietly if the file were missing.
 #

@@ -196,16 +196,21 @@ file on the **ESP** names which environment's menu is read
 environment's `grubenv` names the entry. No ZFS property takes part.
 [docs/SESSION-BOOT-ENVIRONMENTS.md](docs/SESSION-BOOT-ENVIRONMENTS.md).
 
-**The update train is code since 2026-08-27 and has NEVER RUN ON A MACHINE.**
+**The update train HAS RUN ON A MACHINE since 2026-08-28, on this Windows box.**
 `Update-OS7` in `powershell/OS7/OS7.Update.ps1` is §4.2's sequence as C10
 corrects it: clone the pair, assemble it, point apt at both repositories,
 `apt install os7-<mode>=<version>` → `full-upgrade` → `autoremove`, run the
 release's migrations, rebuild the initramfs, regenerate the menu, activate and
 prune. `Get-OS7Release` verifies the signed index and each descriptor's hash
 before it lists anything; `Set-OS7UpdateChannel` switches on the apt source
-`os7-release` deliberately ships disabled. **`run-s5.py` is the gate and needs
-the Mac** — until it runs, this is a claim about code, and
-`check-update-logic.py` is as far as it can be taken without one.
+`os7-release` deliberately ships disabled. **`run-s5.py all` is the gate and it
+PASSES on x64 Windows** — install, TPM boot, cycle, a served 1.0.0.137 -> .138
+update and the unattended timer, all five, on fully packaged ISOs
+([docs/SESSION-UPDATE-DELIVERY.md](docs/SESSION-UPDATE-DELIVERY.md)). Four runs,
+four numbered defects (#104-#107), zero flakes. This paragraph said "NEVER RUN"
+and "needs the Mac" until the 2026-08-28 merge, because the branch that ran it
+and the branch carrying this sentence could not see each other. What arm64 owes
+is the same gate on HVF: ported, byte-identical, never executed.
 
 **`Active` on a boot environment is ZFS's `mounted` — "mounted ANYWHERE" — and
 an update mounts a clone.** So there is a `Running` beside it, computed from the
@@ -457,7 +462,10 @@ the ones a fresh session hits first.
   `Restore-OS7` rolls it back and no snapshot policy may follow. **Fixed in code
   2026-08-26 and NOT YET VERIFIED**: the fix changes the storage step and the
   account step of the only path that produces a machine that boots, so it needs
-  `run-phase3.py all`, which needs the Mac. Nothing in `installer/testing/`
+  `run-phase3.py all`, which is STILL UNRUN. It went through the vmarch.py port
+  with the rest (it reaches QEMU through `vmscreen`), so it is no longer
+  Mac-only - it has simply never been executed on either host since the fix.
+  Nothing in `installer/testing/`
   looked at `/home` — which is why an installer that passed `run-phase3.py all`
   still had it — and checks 9 and 10 are now what stop that recurring.
 - **#78 — `useradd -m` does NOTHING when the home directory already exists.**
@@ -566,14 +574,20 @@ powershell/Time/            the GENERIC clock layer (P2). chrony's CSV (-c, so
                             no table parsing), the /etc/localtime symlink and
                             the /etc/adjtime RTC question. NTP servers go in
                             sources.d, NOT chrony.conf - measured
-powershell/OS7/             the OS7 module - ONE source, staged by build.sh
-  OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four
-                            files DOT-SOURCED by OS7.psm1, so a staging that
-                            copied the .psm1 alone is a real failure mode -
-                            hook 0060 checks all five
+powershell/OS7/             the OS7 module - ONE source. It reaches an image as
+                            the os7-module .deb (hook 0022) and NOT by staging;
+                            build.sh stages the tests/ fixtures alone
+  OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four of
+                            the FOURTEEN files DOT-SOURCED by OS7.psm1, so a copy
+                            that took the .psm1 alone is a real failure mode -
+                            hook 0060 names all fourteen, and so does the .deb
+                            content check since the 2026-08-28 merge. This line
+                            said "four ... all five" while the file said FOURTEEN
+                            sixty lines below it
   OS7.Home.ps1              where a home directory lives, and the migration for
                             machines installed before Setup passed -UserName
-                            (#74). Dot-sourced too, hence "five"
+                            (#74). Dot-sourced too - it was the fifth of five
+                            when this table was written, and is one of fourteen
   OS7.Network.ps1           the network as an operator asks about it: Get-/Set-
                             OS7NetworkAdapter, Get-OS7NetworkConfiguration,
                             Test-OS7Network, Get-OS7Endpoint. Set- verifies by
@@ -639,4 +653,10 @@ download URL and in the apt source of every installed machine.
 
 **arm64 and amd64 are different products** (DECISIONS): arm64 is server-only — no
 GNOME, no Edge, no Intune — because Microsoft ships no arm64 desktop stack.
-Everything proven so far is **arm64 only**; no amd64 ISO has ever been built.
+That split is still true. **"Everything proven is arm64 only; no amd64 ISO has
+ever been built" was this line until 2026-08-28 and had been wrong for days** -
+amd64 ISOs are built routinely on the x64 Windows host, four of them carried the
+update train through its gate, and `out/` holds several
+([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md),
+[SESSION-UPDATE-DELIVERY.md](docs/SESSION-UPDATE-DELIVERY.md)). What is arm64-only
+is the DESKTOP evidence and every `run-*.py` harness except `run-s5.py`.

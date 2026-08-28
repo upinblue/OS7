@@ -34,7 +34,7 @@ decides what, the commands that work, and the traps that cost the most.
 | **Backup** | **Written and self-tested; NEVER RUN ON A MACHINE.** `powershell/OS7/OS7.Backup*.ps1` — 17 cmdlets over `sanoid` (snapshot policy and retention) and `syncoid` (`zfs send`/`receive` replication, local or over ssh), both GPL-3.0+ and both shelled out to rather than vendored. OS/7 owns which datasets, which targets, and the verification: `Get-OS7BackupStatus` asks ZFS on the source and, through the `Zfs` module over ssh (Z14), on the target — comparing snapshot **GUIDs**, because neither tool's exit code is evidence (BUILD-NOTES #73). `Assert-OS7DatasetSafe` keeps a snapshot policy away from `rpool/ROOT` and `bpool/BOOT`. `Test-OS7Backup` is **63 checks, green**, and `check-layering.py` still reports **0**. What has never happened: a snapshot taken, a stream sent, or a file restored by this code. [BACKUP-PLAN.md](BACKUP-PLAN.md), [SESSION-BACKUP.md](SESSION-BACKUP.md). |
 | **The PowerShell system surface** | **Five generic modules and 95 exported OS/7 functions as of 2026-08-28** (it was four and 58 on 2026-08-27), and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds **five** rules since the directory one landed), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/`, `powershell/Systemd/` and `powershell/Directory/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management/Directory/DirectoryObject/Domain.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Directory 40, Backup 63 — all green, all against RECORDED REAL output. The no-VM checks that go with them are listed in §2; `check-directory-logic.py` is the newest. |
 | **What that surface found** | **Entra sign-in cannot work on an OS/7 image as built today.** `/etc/authd/brokers.d` is EMPTY in the shipped ISO — authd installed, PAM wired to it, no broker to bridge to — so a sign-in fails as though the password were wrong. That is C8a measured on the artefact rather than reasoned about, and `Get-OS7EntraStatus` is the first thing on a machine that says so. Also: `Enter-PSSession` did not work at all (`sshd -T` listed only `sftp`); an interactive `ssh` DOES land in PowerShell and had never been tested until `check-ssh-login.py`. |
-| **Active Directory** | **Stage 1 is proven against a directory that answers; stage 2 has never run on a machine.** An administrator signs in to AD **from** an OS/7 machine with their own AD admin account and works as themselves — the machine is **not** a member of the domain and does not need to be. `powershell/Directory/` is the fifth generic layer (25 functions, `Test-DirectoryModule` **40/40**) over `System.DirectoryServices.Protocols`, which ships *inside* pwsh 7.6.5 on Linux and needs **no new package on either architecture**; `OS7.Directory.ps1`, `OS7.DirectoryObject.ps1` and `OS7.Domain.ps1` are the product on top. `check-ad.py` drives all of it against a real **Samba 4.23.6** AD DC in a container (realm `OS7.TEST`) and reads every write back with `ldbsearch` **inside the DC** — a tool that shares no code with the client under test — and it is **all green**; `check-directory-logic.py` is the no-DC, no-VM half, **15/15**. What that leaves: **no OS/7 machine has ever joined a domain**, `adcli` is on no ISO built so far (so screen 9D is skipped on every medium that exists), **a real Windows Server DC is owed**, and **arm64 is unmeasured for all of it**. [AD-PLAN.md](AD-PLAN.md) is the authority. |
+| **Active Directory** | **Stage 1 is proven against a directory that answers; stage 2 has never run on a machine.** An administrator signs in to AD **from** an OS/7 machine with their own AD admin account and works as themselves — the machine is **not** a member of the domain and does not need to be. `powershell/Directory/` is the fifth generic layer (**36** functions, `Test-DirectoryModule` **51/51**—both numbers were 25 and 40 here and were already stale before the merge;—the module was asked) over `System.DirectoryServices.Protocols`, which ships *inside* pwsh 7.6.5 on Linux and needs **no new package on either architecture**; `OS7.Directory.ps1`, `OS7.DirectoryObject.ps1` and `OS7.Domain.ps1` are the product on top. `check-ad.py` drives all of it against a real **Samba 4.23.6** AD DC in a container (realm `OS7.TEST`) and reads every write back with `ldbsearch` **inside the DC** — a tool that shares no code with the client under test — and it is **all green**; `check-directory-logic.py` is the no-DC, no-VM half, **15/15**. What that leaves: **no OS/7 machine has ever joined a domain**, `adcli` is on no ISO built so far (so screen 9D is skipped on every medium that exists), **a real Windows Server DC is owed**, and **arm64 is unmeasured for all of it**. [AD-PLAN.md](AD-PLAN.md) is the authority. |
 | `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. Ported to `vmarch.py` on 2026-08-28 and still unrun — on either host. |
 | **The VM harness on x86_64** | **Works since 2026-08-28, measured on the x64 Windows host.** `installer/testing/vmarch.py` is the one place machine/accelerator/firmware/vehicle come from: arm64 stays a host process on HVF (byte-identical to the pre-port construction, held by `check-vm-arch.py` — 41 checks, no QEMU, both hosts); amd64 is `q35,accel=kvm` with OVMF inside the `os7-vm:amd64` container, serial over the docker client's stdio, QMP on TCP, swtpm in-container. `boot` measured #69 for the first time (#100): the install-time TPM seal does not open through shim, and S6's one-command recovery restores it. The arm64 branch was NOT executed (no Mac in the session). [SESSION-VM-HARNESS-PORT.md](SESSION-VM-HARNESS-PORT.md) |
 | **The update train, delivered end to end** | **The full `run-s5.py all` gate — install, TPM boot, cycle, `Update-OS7` against a served repository, and the unattended timer — has RUN ON THIS HOST (amd64/KVM), repeatedly, on fully packaged ISOs.** The ISO installs the nine OS/7 .debs through hook 0022 (`check-image.py`: 105 checks, `dpkg -S` attributes pwsh, the modules, os7-setup, the console font, release.json and the apt source to packages); releases have channels and a hotfix form (`check-os7-repo.py` 123, `check-update-logic.py` 32); firstboot migrations have a runner shipped in os7-release, and UL1's TPM2 re-seal plus #104's fstab-ordering retrofit are its first two real migrations; §6's unattended check ships as `os7-update-check.timer` with a measured exit-code contract (0 nothing/no channel, 2 staged, 1 failed). Four gate runs each converted a FAIL into a numbered defect — #104 (the ESP buried under the ZFS /boot by a boot-ordering race), #105 (saved_entry written before activation's point of no return), #106 (update.conf's missing trailing newline), #107 (Restore-OS7's "previous" — age, then promote-rotated origins, now the `org.os7:previous` property) — and the final verdict table is in [SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md). |
@@ -93,7 +93,7 @@ apart; the whole feature's honesty is in the gap between them.
 ```bash
 ./installer/testing/check-directory-logic.py   # the DECISIONS, no DC, no VM — 15/15 GREEN
 ./installer/testing/check-ad.py                # a REAL Samba 4.23.6 DC in a container — ALL GREEN
-pwsh -c 'Import-Module ./powershell/Directory/Directory.psd1 -Force; Test-DirectoryModule'  # 40/40
+pwsh -c 'Import-Module ./powershell/Directory/Directory.psd1 -Force; Test-DirectoryModule'  # 51/51
 ./installer/testing/check-layering.py          # FIVE rules now: P2-directory, baseline 1
 ```
 
@@ -228,17 +228,32 @@ machine (the form is container-proven, `check-os7-repo.py` walks a real one;
 the machine gate applies full releases only — wired, not run); and P3 step 2
 (collapsing the two netplan renderers) stays gated on `run-phase3.py all`.
 
-**The merge with the Directory/identity branch (main moved to 6aeea12):**
-resolve `build-os7-packages.sh`'s module list toward theirs (adds Directory)
-but take the UNION of pkg_finish's required paths (mine adds the migrations
-tree and two shipped units) — then re-run the .deb content check rather than
-trusting the union, because a list that agrees with the loop instead of
-checking it is how the five-module bug lived (#82's family). After the merge,
-run their `installer/testing/check-installer-cmdlets.py` (two seconds, needs
-pwsh): it holds os7-setup's generated PowerShell against what actually binds
-— four cmdlets at eleven call sites today — and would catch a parameter
-rename on either side. Its known blind spot: a cmdlet name built at run time
-is invisible to it; spell them literally.
+**The merge with the Directory/identity branch is DONE (2026-08-28, `fdb00f9`).**
+The checklist that stood here was followed and it was right about all three
+things. The module list resolved toward main's (six modules), pkg_finish took
+the union, and the .deb content check was re-run rather than trusted:
+`make repo-amd64` reports `os7-module — 26 required paths present`, read back out
+of the built package by `dpkg-deb -c`, and `check-os7-repo.py` is **123/123**.
+`check-installer-cmdlets.py` was the first thing run on the merged tree and
+passes across 157 cmdlets.
+
+What the checklist did NOT anticipate, and what a second pass found:
+
+* **`build.sh` carried the same module list a second time**, and it was the
+  half nobody was looking at. update-train had replaced `stage_ps_module`
+  with `stage_ps_fixtures` over a `for _mod in Zfs Net Time Systemd OS7` loop;
+  main's entire `build.sh` diff was adding Directory to the function
+  update-train deleted. Two lists, one entry apart, no conflict between them.
+* **pkg_finish named three of the fourteen files `OS7.psm1` dot-sources.**
+  Each branch had added files the other could not see. All fourteen are named
+  now and the set is diffed against the `.psm1`'s own `foreach`, not `ls`.
+* **BUILD-NOTES #108 was claimed twice** by two already-committed branches.
+  main had it; the missing-journal note became **#109** and its references
+  moved with it. The file's reservation convention only works between
+  sessions that share a branch.
+
+See [SESSION-MERGE-CONSOLIDATION.md](SESSION-MERGE-CONSOLIDATION.md) for what
+was measured on the merged tree and what was not.
 
 ---
 
