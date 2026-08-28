@@ -215,13 +215,26 @@ by host:
 ./installer/testing/run-s5.py all      # the SAME gate on arm64/HVF — the ported
                                        #   branch is byte-identical (check-vm-arch)
                                        #   and has never been EXECUTED
-./installer/testing/run-phase3.py all  # still the #74 gate, still unrun since
-                                       #   the fix; also ported, also unexecuted
+./installer/testing/run-phase3.py all  # still the #74 gate. `walk` PASSES on
+                                       #   amd64 since 2026-08-28 (the FIRST
+                                       #   amd64 interactive install ever), but
+                                       #   `boot` cannot see an amd64 machine at
+                                       #   all (#99), and #74 checks 9 and 10 are
+                                       #   IN `boot`. So walk green != #74 shown.
+                                       #   arm64 owes the whole of `all`
 make build-arm64                       # no arm64 ISO has been built with hook
                                        #   0022 (the packaged install) — then
 ./installer/testing/check-image.py     #   over it
 ./installer/testing/run-backup.py all  # B-5's gate, never run on ANY host
 ```
+
+**Either host owes: a serial console for `run-phase3.py boot` on amd64.**
+`run-s5.py` grew a `serialize` phase for BUILD-NOTES #99 — x86 has no
+device-tree console, os7-setup correctly writes no `console=`, and the
+installed machine talks to tty0. run-phase3 has no equivalent, so its `boot`
+phase times out for 599 seconds on a machine that boots perfectly. Until it
+does, #74 cannot be discharged on this host either, because its two /home
+checks live in that phase.
 
 **Either host owes:** a hotfix applied through `Update-OS7` on a booted
 machine (the form is container-proven, `check-os7-repo.py` walks a real one;
