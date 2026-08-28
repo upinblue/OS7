@@ -65,9 +65,29 @@ $script:OS7AdComputerAttributes = @(
 # membership with the USER attributes alone is how a nested group came back as an
 # OS7.AD.User with Enabled $null, which is indistinguishable from a user account
 # whose flags were not among the attributes asked for.
-$script:OS7AdMemberAttributes = @(
-	$script:OS7AdUserAttributes + $script:OS7AdGroupAttributes +
-	$script:OS7AdComputerAttributes + 'objectClass' | Sort-Object -Unique)
+#
+# NOT `| Sort-Object -Unique`, and that is BUILD-NOTES #82 rather than a style
+# preference. This statement runs at IMPORT. Hook 0060 imports the module inside
+# the build chroot, and `Sort-Object` is Microsoft.PowerShell.Utility — autoloaded
+# BY NAME, which is exactly what does not work there. It cost an ISO build on
+# 2026-08-28, with the same sentence #82 records for `Join-Path`:
+#
+#     OS/7 hook 0060:   OS7: FAILED: The term 'Sort-Object' is not recognized
+#
+# and it was invisible because no ISO had been built since these files landed.
+# .NET types are always present and are never looked up by name. The value is
+# unchanged: 29 attributes, the same set in the same order.
+$script:OS7AdMemberAttributes = $(
+	$seen  = [System.Collections.Generic.HashSet[string]]::new(
+		[System.StringComparer]::InvariantCultureIgnoreCase)
+	$union = [System.Collections.Generic.List[string]]::new()
+	foreach ($a in ($script:OS7AdUserAttributes + $script:OS7AdGroupAttributes +
+			$script:OS7AdComputerAttributes + 'objectClass')) {
+		if ($seen.Add($a)) { $union.Add($a) }
+	}
+	$union.Sort([System.StringComparer]::InvariantCultureIgnoreCase)
+	, $union.ToArray()
+)
 
 function Get-OS7AdIdentityFilter {
 	<#

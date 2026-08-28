@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Two PowerShell traps this repository has paid for, as a mechanism rather than a note.
+Three PowerShell traps this repository has paid for, as a mechanism rather than a note.
 
-    ./check-ps-traps.py            report, and fail if either got worse
+    ./check-ps-traps.py            report, and fail if any of them got worse
 
-Both are the same kind of defect: code that reads correctly, parses correctly,
-and means something else. Neither produces a warning; both were found by a
-machine doing the wrong thing.
+All three are the same kind of defect: code that reads correctly, parses
+correctly, and means something else. None produces a warning; each was found by
+a machine doing the wrong thing.
 
 #65 — A LOCAL NAMED AFTER A PARAMETER IS THAT PARAMETER.
 PowerShell variable names are case-insensitive, so inside a function declaring
@@ -28,7 +28,23 @@ with operator Plus whose left side is an ArrayLiteral. It produced
 which mount rejected, loudly, by luck. One argument earlier and it would have
 produced a VALID command against the wrong path. Parenthesise the concatenation.
 
-BOTH BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
+#82 — A CMDLET CALLED AT IMPORT SCOPE IS NOT THERE IN THE CHROOT.
+A command call outside every function definition runs when the module is
+IMPORTED. Hook 0060 imports the module inside the build chroot, where a cmdlet
+resolved BY NAME cannot be autoloaded — only Microsoft.PowerShell.Core is
+already loaded. The note was written for `Join-Path` and `Test-Path`;
+on 2026-08-28 it happened again, with `Sort-Object` one statement outside a
+function in OS7.DirectoryObject.ps1, and it killed a 25-minute ISO build:
+
+    OS/7 hook 0060:   OS7: FAILED: The term 'Sort-Object' is not recognized
+
+It had been true on main since the Active Directory commit and was invisible
+because no ISO was built in between — word for word what #82 already says
+about itself. This scan finds it in seconds. Which module a name belongs to is
+ASKED of Get-Command rather than kept in a list here, and names the tree itself
+DEFINES are collected by the parser first, so neither can go stale.
+
+ALL THREE BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
 word for word: "a rule that is only written down erodes."
 
 It needs `pwsh` and nothing else — no container, no ZFS, no VM. The scan is
@@ -44,12 +60,27 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 # Measured by running this, not counted by eye. #65 was 2 and #91 was 4 before
 # 2026-08-27.
-BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0}
+BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0}
 
 SCAN = r'''
 $root = $env:OS7_SCAN_ROOT
 $files = Get-ChildItem -LiteralPath $root -Recurse -Include *.psm1,*.ps1 |
     Where-Object { $_.FullName -notmatch '[\\/]tests[\\/]' }
+
+# A PRE-PASS for #82: every function name the tree DEFINES. A call at import
+# scope to one of these is ordinary - it is in the module being loaded, not
+# looked up in the archive. Collected by the parser, so a rename cannot make
+# this list stale the way a hand-written one would.
+$defined = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::InvariantCultureIgnoreCase)
+foreach ($file in $files) {
+    $pre = [System.Management.Automation.Language.Parser]::ParseFile(
+        $file.FullName, [ref]$null, [ref]$null)
+    foreach ($f in $pre.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+        [void]$defined.Add($f.Name)
+    }
+}
 
 foreach ($file in $files) {
     $errors = $null
@@ -100,6 +131,44 @@ foreach ($file in $files) {
         if ($text.Length -gt 70) { $text = $text.Substring(0, 70) + '...' }
         Write-Output ("ARRAYPLUS`t{0}`t{1}`t{2}" -f $file.Name, $b.Extent.StartLineNumber, $text)
     }
+
+    # ---- #82 ----------------------------------------------------------
+    #
+    # A command call OUTSIDE every function definition runs at IMPORT, and hook
+    # 0060 imports the module inside the build chroot, where a cmdlet resolved
+    # BY NAME cannot be autoloaded. Only Microsoft.PowerShell.Core is already
+    # there; anything else fails the BUILD with "The term '<name>' is not
+    # recognized" and takes the whole ISO with it.
+    #
+    # The module a name belongs to is ASKED of Get-Command rather than kept in a
+    # list here, because a list of "safe" cmdlets is exactly the kind of thing
+    # that agrees with the code instead of checking it.
+    $commands = $ast.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+    foreach ($c in $commands) {
+        $p = $c.Parent
+        $inFunction = $false
+        while ($p) {
+            if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                $inFunction = $true
+                break
+            }
+            $p = $p.Parent
+        }
+        if ($inFunction) { continue }
+
+        $name = $c.GetCommandName()
+        if (-not $name) { continue }
+        if ($defined.Contains($name)) { continue }
+
+        $resolved = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        $module = if ($resolved) { $resolved.ModuleName } else { '' }
+        if ($module -eq 'Microsoft.PowerShell.Core') { continue }
+        if (-not $resolved) { $module = '(unresolved)' }
+
+        Write-Output ("IMPORTSCOPE`t{0}`t{1}`t{2}`t{3}" -f `
+            $file.Name, $c.Extent.StartLineNumber, $name, $module)
+    }
 }
 Write-Output ("FILES`t{0}" -f $files.Count)
 '''
@@ -114,7 +183,7 @@ def find_pwsh():
 
 
 def main():
-    print("\n### two PowerShell traps, asked of the parser rather than of a regex")
+    print("\n### three PowerShell traps, asked of the parser rather than of a regex")
 
     pwsh = find_pwsh()
     if not pwsh:
@@ -129,7 +198,7 @@ def main():
         print(got.stderr[-2000:], file=sys.stderr)
         sys.exit(1)
 
-    found = {"SHADOW": [], "ARRAYPLUS": [], "PARSE": []}
+    found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "PARSE": []}
     files = 0
     for line in got.stdout.splitlines():
         parts = line.strip().split("\t")
@@ -155,9 +224,16 @@ def main():
     else:
         print("      (none)")
 
+    print("\n  #82 - a cmdlet called at IMPORT scope, which the build chroot cannot autoload")
+    if found["IMPORTSCOPE"]:
+        for name, line, cmd, module in found["IMPORTSCOPE"]:
+            print("      %s:%s  %s  (%s)" % (name, line, cmd, module))
+    else:
+        print("      (none)")
+
     bad = False
     print()
-    for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91")):
+    for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82")):
         n = len(found[key])
         base = BASELINE[key]
         if n > base:
@@ -176,8 +252,9 @@ def main():
         sys.exit(1)
     if bad:
         sys.exit(1)
-    print("\nBoth traps held: no local shadows a parameter, and no array literal "
-          "hides an append.")
+    print("\nAll three held: no local shadows a parameter, no array literal hides "
+          "an append, and nothing outside a function calls a cmdlet the build "
+          "chroot cannot autoload.")
 
 
 if __name__ == "__main__":

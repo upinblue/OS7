@@ -86,9 +86,12 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   ORDER of them, against fake zfs,
                                           #   apt and chroot - with REAL mounts
                                           #   and REAL signatures. ~3 min, no VM
-./installer/testing/check-ps-traps.py     # two PowerShell traps this repo has
-                                          #   paid for (#65, #91), asked of the
-                                          #   parser. Seconds; needs only pwsh
+./installer/testing/check-ps-traps.py     # THREE PowerShell traps this repo has
+                                          #   paid for (#65, #91, #82), asked of
+                                          #   the parser. Seconds; needs only pwsh.
+                                          #   #82 is the import-scope one: it went
+                                          #   red on the tree whose ISO build had
+                                          #   just died of it, in one second
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
                                           #   install again BY KEYPRESS (walk)

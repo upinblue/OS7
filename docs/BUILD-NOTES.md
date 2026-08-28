@@ -4125,6 +4125,68 @@ top level. A rule about a caller is not a rule about everything the caller
 reaches. When the rule is "do not need an autoloaded cmdlet", the import path of
 every module in the image is inside the rule.
 
+### It happened again on 2026-08-28, and this time it became a check
+
+The merge that brought Active Directory and the update train onto one `main`
+produced a tree whose ISO build died in the same place, with the same sentence
+and a different cmdlet:
+
+```
+OS/7 hook 0060:   OS7: FAILED: The term 'Sort-Object' is not recognized as a name
+of a cmdlet, function, script file, or executable program.
+```
+
+`OS7.DirectoryObject.ps1` builds the attribute set a group membership is read
+with as the union of three lists, and did it with `| Sort-Object -Unique` in a
+statement at module scope. `Sort-Object` is `Microsoft.PowerShell.Utility`,
+autoloaded by name, and this note is about exactly that.
+
+**It was not the merge's doing.** The line is byte-identical on
+`pre-consolidation-main`, so `main` had been unable to build an ISO since the
+Active Directory commit — and nobody knew, because no ISO was built in
+between. That is this note's own first paragraph happening a second time, to a
+reader who had the note.
+
+### The reproduction, which is where the check came from
+
+The chroot condition is one variable:
+
+```powershell
+$PSModuleAutoLoadingPreference = 'None'
+Import-Module ./powershell/OS7/OS7.psd1 -Force -ErrorAction Stop
+```
+
+On the broken tree that returns the build's error **word for word**, in under a
+second, with no container and no ISO. On the fixed tree all six modules import.
+
+### The fix, and the guard
+
+The union is built with a `HashSet[string]` and a `List[string].Sort(comparer)`
+instead — .NET types are always present and are never looked up by name, which
+is the same move #82 already made for `[System.IO.Path]`. The value is unchanged
+and was diffed against the old one: 29 attributes, same order.
+
+`check-ps-traps.py` now holds this as its **third** trap, at baseline 0. It asks
+the parser for every `CommandAst` outside every `FunctionDefinitionAst`, then
+asks `Get-Command` which module the name belongs to and passes anything from
+`Microsoft.PowerShell.Core`. Two things are deliberately not lists in the file:
+the safe modules (asked of `Get-Command`) and the names the tree itself defines
+(collected by the parser in a pre-pass). A hand-written list of either would
+agree with the code instead of checking it.
+
+It was run against `pre-consolidation-main` before being trusted, and goes red:
+
+```
+  #82 - a cmdlet called at IMPORT scope, which the build chroot cannot autoload
+      OS7.DirectoryObject.ps1:70  Sort-Object  (Microsoft.PowerShell.Utility)
+      #82: WORSE — 1, baseline 0
+```
+
+**Three ISO builds have now been lost to this one rule.** The lesson the first
+two did not produce is that a rule which only lives in a note gets re-broken by
+somebody who has read the note; the scan costs a second and the note costs a
+build.
+
 ## 83. `ldconfig -p | grep -q` under `pipefail` is a race, and it failed a build over a library that was there
 
 **Measured on 2026-08-26.** Hook 0080 stopped an amd64 build with
