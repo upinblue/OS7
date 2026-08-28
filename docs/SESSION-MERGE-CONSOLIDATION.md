@@ -2,12 +2,15 @@
 
 **2026-08-28, on the x64 Windows + Docker Desktop host.** The repository had
 drifted into five local branches and two extra worktrees. This session put
-everything on `main`, and the merge itself found two defects and one collision
-that neither branch could have seen alone.
+everything on `main`. The merge found two defects and one number claimed twice
+that neither branch could have seen alone; building an ISO from the result found
+a third that neither the merge nor either branch had caused, and that had been
+quietly stopping `main` from building for a day.
 
 Nothing here is a new feature. What is new is a tree in which the two lines of
-work are true at the same time, and a set of measurements taken on that tree
-rather than on either half of it.
+work are true at the same time, a set of measurements taken on that tree rather
+than on either half of it, and one rule that stopped being a note and became a
+scan.
 
 ---
 
@@ -159,7 +162,7 @@ Not asserted. Every line below was run on `fdb00f9` / `f6d45a4` on this host.
 | `Test-DirectoryModule` | 51 PASS |
 | `check-layering.py` | 5 rules held, every baseline unchanged |
 | `check-ps-traps.py` | #65 and #91 both at 0 |
-| `check-be-logic.py` | green in Linux (see section 7) |
+| `check-be-logic.py` | green in Linux (see section 8) |
 | `check-home-logic.py` | green |
 | `check-update-logic.py` | green |
 | `check-directory-logic.py` | green |
@@ -168,6 +171,8 @@ Not asserted. Every line below was run on `fdb00f9` / `f6d45a4` on this host.
 | `check-vm-arch.py` | 41 ok |
 | `make repo-amd64` | ten .debs, suite signed and verified. **os7-module: 26 required paths present** |
 | `check-os7-repo.py` | **123/123, exit 0** — installs into a plain `ubuntu:26.04`, applies a hotfix, and REFUSES a foreign signing key |
+| `make build-amd64` | **OS7-1.0.0.148-amd64.iso**, hook 0060 green for all six modules — but only on the second attempt, see section 6 |
+| `check-image.py amd64` | **107 ok, 0 FAIL, exit 0** over the shipped squashfs |
 
 `26 required paths` is the number that matters for section 4: 2 manifests + 14
 dot-sourced files + 5 generic modules at 2 each. Read back out of the built
@@ -191,7 +196,69 @@ six modules together export **185** functions (26/11/9/8/36/95), which is what
 `POWERSHELL-REFERENCE.md` says — asked of the modules rather than read off the
 page.
 
-## 6. What was NOT measured
+## 6. The ISO build, which failed — and the exit code that said it had not
+
+The first `make build-amd64` from the consolidated tree died at hook 0060:
+
+```
+OS/7 hook 0060:   OS7: FAILED: The term 'Sort-Object' is not recognized as a
+name of a cmdlet, function, script file, or executable program.
+make: *** [Makefile:145: build-amd64] Error 1
+```
+
+**BUILD-NOTES #82, for the third time.** `OS7.DirectoryObject.ps1` built the
+attribute set a group membership is read with as the union of three lists, in a
+statement at module scope — so it runs at IMPORT — and did it with
+`| Sort-Object -Unique`. `Sort-Object` is `Microsoft.PowerShell.Utility`,
+autoloaded by name, and the build chroot has only `Microsoft.PowerShell.Core`.
+
+**It was not the merge's doing, which is the worse finding.** The line is
+byte-identical on `pre-consolidation-main`: `main` had been unable to build an
+ISO since the Active Directory commit, and nothing said so because no ISO was
+built in between. That is #82's own opening paragraph, happening again to
+readers who had the note.
+
+### And the exit code lied about it
+
+The build ran as `make … > log 2>&1; echo "BUILD_EXIT=$?" >> log; tail -3 log`.
+The shell's status was `tail`'s, so the task reported **exit code 0** over a
+build that had exited 2 — and this session came within one command of reporting
+a green build. It is the first rule in CLAUDE.md, met from the harness side
+rather than the product side: *an exit code is a diagnostic.* The rebuild ends
+in `exit $rc`.
+
+### The reproduction, and why it became a check
+
+The chroot condition is one variable:
+
+```powershell
+$PSModuleAutoLoadingPreference = 'None'
+Import-Module ./powershell/OS7/OS7.psd1 -Force -ErrorAction Stop
+```
+
+On the broken tree that returns the build's error **word for word**, in under a
+second, with no container and no ISO. On the fixed tree all six modules import.
+
+The fix builds the union with a `HashSet[string]` and
+`List[string].Sort(comparer)` — .NET types, always present, never looked up by
+name, the same move #82 already made for `[System.IO.Path]`. The value was
+captured before and after and diffed: 29 attributes, identical, same order.
+
+`check-ps-traps.py` now holds this as its **third trap**, baseline 0. It asks the
+parser for every `CommandAst` outside every `FunctionDefinitionAst`, then asks
+`Get-Command` which module the name belongs to. Neither the safe modules nor the
+names the tree defines are lists in the file — a hand-written list of either
+would agree with the code instead of checking it. It was run against
+`pre-consolidation-main` **before** being trusted, and goes red on exactly the
+one line, naming file, line, cmdlet and module.
+
+The second build then produced `OS7-1.0.0.148-amd64.iso` with hook 0060 green
+for all six modules, and `check-image.py amd64` reads **107 ok, 0 FAIL** out of
+the shipped squashfs.
+
+Three ISO builds have now been lost to this one rule. The scan costs a second.
+
+## 7. What was NOT measured
 
 * **`run-phase3.py all`** — still unrun, still the #74 gate. It went through the
   vmarch port with the rest (it reaches QEMU through `vmscreen`), so it is no
@@ -205,7 +272,7 @@ page.
 * **`check-ad.py`, `check-management-logic.py`, `check-ssh-login.py`** — not run
   in this session.
 
-## 7. One host finding, recorded because it cost time
+## 8. One host finding, recorded because it cost time
 
 **`check-be-logic.py` reports 20 FAILs on Windows where it should report NOT
 CHECKED.** Its fake `zfs` is a shebang script; Windows cannot exec one, so
@@ -224,7 +291,7 @@ of wrong answer after a green that should have been red.
 
 `check-home-logic.py` shows the fix: it runs **itself** in a container.
 
-## 8. Claims corrected, and why they were wrong
+## 9. Claims corrected, and why they were wrong
 
 The merge falsified sentences on both sides. None of these was edited for
 tidiness; each was measured first.
@@ -245,7 +312,7 @@ being generated rather than maintained. The two that *were* checked by
 something — the module list in the loop, and the required-path list — turned out
 to be checked against each other rather than against the product.
 
-## 9. What is on `main` now
+## 10. What is on `main` now
 
 Both lines, one history, two merge commits. The three fully-merged `claude/*`
 branches, `update-train` and `claude/magical-hermann-b93e23` were left in place
