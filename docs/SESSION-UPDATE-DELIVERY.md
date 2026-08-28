@@ -234,9 +234,37 @@ matched the old name anywhere in the output (it appears in the menu
 listing regardless of the decision) now requires the cmdlet's own step
 lines.
 
-*(The verdict of the full rerun on the ISO carrying ALL fixes — install
-through timer — follows below; if this sentence survives into a commit,
-that run did not finish and this document says so.)*
+**The fourth run, on OS7-1.0.0.137-amd64.iso (commit a545e6e, `check-image.py
+amd64` 105 ok), is GREEN across all five phases:**
+
+```
+install  PASS   unattended, with a TPM attached
+boot     PASS   1/7 THE TPM UNLOCKED THE DISK — nothing typed
+cycle    PASS   9/9 — clone os7_1.0.1.0_202608281058 built, booted, rolled back;
+                Restore-OS7's step line: "the running environment was cloned
+                from os7_1.0.0.137_202608280850" (the ORIGIN record, for a
+                hand-made clone)
+update   PASS   8/8 — Update-OS7 applied 1.0.0.137 -> 1.0.0.138 from
+                http://10.0.2.2:8907 into os7_1.0.0.138_202608281106; the
+                machine BOOTED it; Get-OS7Version says 1.0.0.138; BOTH
+                firstboot migrations ran at that boot (50-tpm2-reseal AND
+                60-fstab-esp-ordering, stamped, pending consumed); -Keep 2
+                kept the previous environment; the conffile kept the
+                operator's channel; and the rollback chose by the PROPERTY
+                record — "the update that made this environment recorded its
+                previous: os7_1.0.0.137_202608280850" — booted, and runs
+                1.0.0.137 again
+timer    PASS   4/4 — enabled by the package; exit 0 without a channel, with
+                the reason logged; exit 2 staged with one; a second run finds
+                it staged and mints nothing twice
+```
+
+Both "previous" records were exercised on the machine in one run: the ZFS
+origin picked the cycle's rollback target (an environment cloned by hand,
+never promoted), and `org.os7:previous` picked the update's (whose origins
+promote had rotated). The user's home, a USERDATA dataset, survived the
+cycle's rollback with the file written in the clone still present — §4.4
+measured, again, on the packaged machine.
 
 ## 6. What was expressly NOT measured
 

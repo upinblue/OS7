@@ -17,9 +17,12 @@ on 2026-08-25:
 | **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness, on the arm64 branch of `installer/testing/vmarch.py` — `qemu-system-aarch64 -machine virt,accel=hvf` as a HOST process, byte-identical to the pre-port construction (`check-vm-arch.py` holds it) |
 | **x64 Windows + Docker Desktop** | `make build-amd64` — through WSL's make; native, ~20 min ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py`, the container checks — **and `run-s5.py` since 2026-08-28**: vmarch.py's amd64 branch runs `qemu-system-x86_64 -machine q35,accel=kvm` with OVMF INSIDE the `os7-vm:amd64` container, serial over the docker client's stdio ([SESSION-VM-HARNESS-PORT.md](docs/SESSION-VM-HARNESS-PORT.md)). The other harnesses are ported and UNRUN on this host |
 
-**The x86_64 port exists since 2026-08-28 and `run-s5.py` has passed on it** —
-install, boot (which measured #69 for the first time, see #100) and the full
-cycle, on this box. `installer/testing/vmarch.py` is the ONE place machine,
+**The x86_64 port exists since 2026-08-28 and `run-s5.py all` has passed on
+it IN FULL** — install, boot (which measured #69 for the first time, see
+#100), the cycle, `Update-OS7` against a served repository (N → N+1,
+firstboot migrations, rollback by recorded ancestry) and the unattended
+timer's exit-code contract, on this box, on a fully packaged ISO
+(docs/SESSION-UPDATE-DELIVERY.md). `installer/testing/vmarch.py` is the ONE place machine,
 accelerator, firmware and execution vehicle come from; `check-vm-arch.py`
 rebuilds the pre-port arm64 command lines from commit 8700095's literals and
 requires the refactored harnesses to emit exactly those bytes, so the Mac's
