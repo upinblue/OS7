@@ -36,12 +36,12 @@ table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written. Numbers above 81 are free.
+Everything below is written. Numbers above 94 are free.
 
-*(That line said 61 until 2026-08-26 and had been wrong since #62 landed —
-it is the one line in this file nothing checks, and it is exactly the line a
-session reads in good faith before claiming a number. Update it in the same
-commit as the entry.)*
+*(That line said 61 until 2026-08-26 and 81 until 2026-08-27, and both times it
+had been wrong for a dozen entries — it is the one line in this file nothing
+checks, and it is exactly the line a session reads in good faith before claiming
+a number. Update it in the same commit as the entry.)*
 
 ## What was kept, and what was dropped
 
@@ -4892,3 +4892,87 @@ cannot work on an OS/7 image as built today. That is C8a
 ([CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md)) as an open
 question already says, but it had been reasoned about rather than measured on
 the artefact. It is measured now.
+
+---
+
+## 94. A build-blind check asserted an amd64 package fact on every architecture, and every arm64 build failed on it
+
+**Hit on 2026-08-27**, on the first `make build-arm64` since hook 0070 landed on
+2026-08-26. The hook that guards #79's fix stopped the build at the last line of
+its own section 2:
+
+```
+OS/7 hook 0070:   29 of 62 exist in this image
+OS/7 hook 0070: unattended-upgrades.service is not in this image.
+OS/7 hook 0070: BUILD-NOTES #79 is about that unit; re-check the note.
+E: config/hooks/0070-installer-quiesce.hook.chroot failed (exit non-zero).
+```
+
+The check is a good idea: masking 62 unit names is worth nothing if none of them
+is in the image, so something has to be **required** rather than counted. The
+unit it required is the one the OOM killer took in #79 — and #79 was measured on
+the shipped **amd64** squashfs.
+
+### The unit was never there, on this architecture
+
+Asked of the pinned snapshot rather than reasoned about
+(`os7-build:arm64`, `20260824T000000Z`, 175 752 package names in the cache):
+
+```
+unattended-upgrades:  Candidate: 2.12ubuntu9        <- it IS in the archive
+Reverse Depends: ubuntu-server, ubuntu-server-minimal, ubuntu-wsl,
+                 ubuntu-cloud-minimal, python3-software-properties, …
+```
+
+**`ubuntu-standard` does not name it at any strength, and `ubuntu-standard` is
+what OS/7 installs.** So the unit is reachable and simply never reached: arm64
+has never had it, and the amd64 image gets it through the desktop stack that
+arm64 has no target for. The build's own scan says the same thing from the other
+side — 33 of the 62 names absent, and all 33 are desktop or server-role units
+(`cups`, `packagekit`, six `snapd` units, `apport`, `whoopsie`, `sssd`).
+
+**The generator two files away already said so**, in the comment above its own
+list: *"A unit that is not installed on this architecture is harmless… arm64 is
+server-only and legitimately has no cups, no packagekit and no desktop."* The
+hook and the generator were written in the same commit, from the same finding,
+and only one of them knew the finding was per-architecture.
+
+### The first false-negative measurement, which is half the note
+
+The first attempt to measure the archive fact ran in a plain `ubuntu:26.04`
+container and answered, cleanly and in the expected shape:
+
+```
+  packages that would be installed: 0
+  -> unattended-upgrades is NOT among them
+```
+
+Both lines were artefacts. The container had no CA certificates, `apt-get
+update` had failed on TLS, and **an empty package cache answers every question
+with "no"** — including the question that was being asked, in exactly the
+direction the hypothesis wanted. The re-run asserts `apt-cache stats` reports
+more than 40 000 package names before it reads anything, and fails the
+measurement rather than reporting from an empty cache.
+
+Same family as #90: *a check that cannot read its input is not a check that
+found nothing.*
+
+### The rule
+
+**A package is an architecture fact, and a check written from one architecture's
+measurement must say which one it measured.** The fix makes the anchor per-arch:
+amd64 keeps `unattended-upgrades.service` unchanged — it is green there, and no
+amd64 image can be built on the host this was fixed on (#12/#23), so a new
+requirement nobody could test is how the first one got here. arm64 anchors on
+`networkd-dispatcher.service` (the **other** name in #79's two OOM lines),
+`apt-daily.timer` and `cron.service` — all three read out of the failing build's
+own scan of the real chroot. An anchor that is not in the generator's list now
+fails too, because an anchor nothing masks is an anchor about nothing.
+
+Five paths were run against a container holding exactly the 29 units the real
+arm64 chroot has, before the ISO was rebuilt: arm64 passes; arm64 with
+`networkd-dispatcher` or `cron` removed fails and names the unit; amd64 without
+`unattended-upgrades` still fails, and with it passes.
+
+And the absence is now **printed** on arm64 rather than fatal, so the next
+reader is told the fact instead of rediscovering it.

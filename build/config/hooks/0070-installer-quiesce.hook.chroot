@@ -70,11 +70,15 @@ echo "OS/7 hook 0070:   ${#UNITS[@]} unit(s) named in the list"
 # list of typos would pass every other check in this file. arm64 is server-only
 # and legitimately has no cups and no packagekit, so this is a floor and not an
 # equality — but a list where almost nothing resolves is a broken list.
+unit_present() {
+	[ -e "/usr/lib/systemd/system/$1" ] || [ -e "/lib/systemd/system/$1" ] \
+		|| [ -e "/etc/systemd/system/$1" ]
+}
+
 present=0
 missing=()
 for u in "${UNITS[@]}"; do
-	if [ -e "/usr/lib/systemd/system/${u}" ] || [ -e "/lib/systemd/system/${u}" ] \
-		|| [ -e "/etc/systemd/system/${u}" ]; then
+	if unit_present "${u}"; then
 		present=$((present + 1))
 	else
 		missing+=("${u}")
@@ -90,13 +94,69 @@ if [ "${present}" -lt 10 ]; then
 	exit 1
 fi
 
-# unattended-upgrades is the unit the OOM killer actually took (#79). If it is
-# not in the image, the note this hook is named after no longer describes it.
-if [ ! -e /usr/lib/systemd/system/unattended-upgrades.service ] \
-	&& [ ! -e /lib/systemd/system/unattended-upgrades.service ]; then
-	echo "OS/7 hook 0070: unattended-upgrades.service is not in this image." >&2
-	echo "OS/7 hook 0070: BUILD-NOTES #79 is about that unit; re-check the note." >&2
-	exit 1
+# THE ANCHOR: a unit this image really has, that the workload #79 describes
+# really is. Masking 62 names is worth nothing if none of them is in the image,
+# so something here has to be required rather than counted - but WHICH unit is
+# an ARCHITECTURE fact, and this check got that wrong for a day (BUILD-NOTES
+# #94).
+#
+# #79 was measured on the shipped amd64 squashfs, and the two names in its OOM
+# lines are unattended-upgrades and networkd-dispatcher. Requiring the FIRST of
+# them everywhere failed every arm64 build from the moment this hook landed:
+# measured against the pinned snapshot on 2026-08-27, unattended-upgrades is in
+# the archive (2.12ubuntu9) and is named by `ubuntu-server`,
+# `ubuntu-server-minimal`, `ubuntu-wsl` and `ubuntu-cloud-minimal` - none of
+# which OS/7 installs. OS/7 installs `ubuntu-standard`, which does not name it
+# at any strength. So it has never been in an arm64 image, and the generator's
+# own comment says as much two files away.
+#
+# amd64 is left exactly as it was, because it is green there and no amd64 image
+# can be built on the host this was fixed on (#12/#23) - a new requirement
+# nobody could test is how the first one got here.
+ARCH="$(dpkg --print-architecture)"
+case "${ARCH}" in
+amd64)
+	# #79's own OOM line, and the unit that took the medium down.
+	ANCHORS="unattended-upgrades.service"
+	;;
+arm64)
+	# The OTHER name in the same two OOM lines, plus the apt-periodic
+	# machinery and cron - all three read out of THIS image by the scan
+	# above, not out of the note.
+	ANCHORS="networkd-dispatcher.service apt-daily.timer cron.service"
+	;;
+*)
+	echo "OS/7 hook 0070: no anchor is measured for ${ARCH}; requiring cron only" >&2
+	ANCHORS="cron.service"
+	;;
+esac
+
+for a in ${ANCHORS}; do
+	# An anchor the generator does not name is an anchor about nothing.
+	found=0
+	for u in "${UNITS[@]}"; do
+		[ "${u}" = "${a}" ] && found=1 && break
+	done
+	if [ "${found}" != "1" ]; then
+		echo "OS/7 hook 0070: ${a} is not in the generator's UNITS list." >&2
+		echo "OS/7 hook 0070: this hook anchors on a unit nothing masks." >&2
+		exit 1
+	fi
+	if ! unit_present "${a}"; then
+		echo "OS/7 hook 0070: ${a} is not in this ${ARCH} image." >&2
+		echo "OS/7 hook 0070: BUILD-NOTES #79 is about that workload; re-check" >&2
+		echo "OS/7 hook 0070: the note and this anchor together." >&2
+		exit 1
+	fi
+done
+echo "OS/7 hook 0070:   anchor (${ARCH}): ${ANCHORS}"
+
+# And the arm64 absence, said out loud rather than rediscovered. #79 names this
+# unit in its title line; on this architecture it is legitimately not here.
+if [ "${ARCH}" != "amd64" ] && ! unit_present unattended-upgrades.service; then
+	echo "OS/7 hook 0070:   note: unattended-upgrades is NOT in this image -"
+	echo "OS/7 hook 0070:   ubuntu-server names it, OS/7 installs ubuntu-standard"
+	echo "OS/7 hook 0070:   (#94). The mask is harmless; the anchor is above."
 fi
 
 # ---------------------------------------------------------------------------
