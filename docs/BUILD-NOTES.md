@@ -5232,3 +5232,59 @@ environment: <old>" and "ESP stub(s) now point at <old>".
 The rule is #16's, met a fourth way: never accept a marker the output would
 carry anyway. A name in a listing is not a decision; the line where the
 program SAYS what it decided is.
+
+## #108 — the machine with no journal: the flush beats zfs-mount, and the real /var/log buries what it wrote
+
+**2026-08-28, diagnosed on a machine installed for the purpose from
+OS7-1.0.0.134-amd64.iso** ([SESSION-MISSING-JOURNAL.md](SESSION-MISSING-JOURNAL.md)).
+The installed machine had NO systemd journal at all — `journalctl` said "No
+journal files were found" while journald read active, machine-id was
+populated, and BOTH journal roots existed, empty. It cost the #104 diagnosis
+its forensics: no journal on any boot to ask.
+
+The mechanism is #104's root cause producing its third symptom. `/var/log` is
+`rpool/DATA/log` (outside the boot environment, §4.4), the image ships no
+`/etc/zfs/zfs-list.cache`, so zfs-mount-generator emits nothing and NOTHING
+in systemd's graph knows /var/log is a filesystem —
+`systemd-journal-flush.service`'s own `RequiresMountsFor=/var/log/journal`,
+upstream's guard against exactly this, orders against nothing. Measured on
+boot 1 of the fresh machine, from systemd's own monotonic clock: flush
+finished at 8.24 s, zfs-mount ran at 9.35 s. In between, journald flushed the
+runtime journal into `/var/log/journal/<machine-id>` ON THE BOOT
+ENVIRONMENT'S ROOT DATASET — creating the whole chain itself, Storage=auto
+notwithstanding — and deleted `/run/log/journal/<machine-id>`. Then
+`zfs mount -a` put the real /var/log on top (`overlay=on` is the OpenZFS
+default, so mounting over the now-non-empty directory is silent). journald's
+fd 23 pointed at the shadowed file — 8 MiB and growing under a bind mount of
+/, invisible at every path journalctl checks. Every boot, deterministically:
+the flush takes ~0.2 s, the ZFS import chain ~1.2 s.
+
+Nothing errors, because nothing is wrong at the layer each tool checks:
+journald's writes succeed, the mount table is consistent, journalctl
+truthfully reports the visible roots empty, `systemctl is-active
+systemd-journald` truthfully says active. The one line the machine ever
+prints is journald's "Failed to open user journal file, falling back to
+system journal: No such file or directory" — in dmesg, the log that still
+works precisely because it is not journald's.
+
+The control that closed the diagnosis: `systemctl restart systemd-journald`
+on the running machine (mount now present, flushed flag standing) made the
+journal appear on the DATASET and `journalctl` return entries for the first
+time in the machine's life. Ordering is the whole defect.
+
+The fix is one drop-in, shipped by os7-release
+(`/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf`):
+`After=zfs-mount.service`. Ordering only, no Wants=; no new critical-path
+work, since zfs-mount is already Before=local-fs.target and tmpfiles-setup —
+which the flush precedes — is already After=local-fs.target. The runtime
+journal holds every early message until the real /var/log is there, which is
+what it is for. Verified on the machine: with the drop-in, the next boot's
+journal is on rpool/DATA/log and journalctl answers. `check-image.py` now
+requires the drop-in in the shipped squashfs.
+
+Two rules this paid for again: a subsystem that reports success is not a
+subsystem that worked (#73's shape — journald, the flush unit and zfs-mount
+all exited 0 on every affected boot); and the structural fix — shipping
+zfs-list.cache so EVERY dataset gets a real mount unit and RequiresMountsFor
+works as upstream designed — stays open beside this, as it did beside #104's
+fstab option.

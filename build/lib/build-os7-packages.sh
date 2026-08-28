@@ -412,6 +412,12 @@ build_os7_release() {
 	ln -sfn ../os7-update-check.timer \
 		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-update-check.timer"
 
+	# The journal-flush ordering drop-in (BUILD-NOTES #108): /var/log is a ZFS
+	# dataset with no mount unit, so without this the flush writes the journal
+	# onto the boot environment's root dataset and zfs-mount then buries it.
+	# Comes in from tree/; the mode is asserted here like every tree file.
+	chmod 0644 "${stage}/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf"
+
 	# THE MIGRATIONS THE RELEASE BEING CUT INTRODUCES, staged under ITS version.
 	#
 	# The contract keys a migration by the release that introduced it

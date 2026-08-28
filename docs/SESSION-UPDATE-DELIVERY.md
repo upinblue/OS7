@@ -292,4 +292,9 @@ measured, again, on the packaged machine.
   touched boot-efi.mount", there was no journal to ask, on any boot. It
   is a supportability defect of its own and it is NOT diagnosed — a
   follow-up needs to find out what keeps journald from writing so much as
-  a volatile journal on this image.
+  a volatile journal on this image. *(The follow-up ran the same day:
+  BUILD-NOTES #108 / [SESSION-MISSING-JOURNAL.md](SESSION-MISSING-JOURNAL.md)
+  — the journal flush beats zfs-mount.service on every boot and flushes onto
+  the boot environment's root dataset, where the real /var/log then buries
+  it. Fixed with an After=zfs-mount.service drop-in shipped by os7-release,
+  verified on a booted machine.)*
