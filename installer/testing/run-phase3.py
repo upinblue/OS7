@@ -181,6 +181,23 @@ def medium_release():
     os.makedirs(lab.dir, exist_ok=True)
     if os.path.exists(out):
         os.remove(out)
+    # THE UNMOUNTS ARE NOT PART OF THE WORK, and until 2026-08-28 they could
+    # fail the whole phase after the work had succeeded. /mnt/sq is backed by a
+    # file INSIDE /mnt/iso, and the loop device holding that file is not always
+    # released by the time `umount /mnt/sq` returns — so `umount /mnt/iso` says
+    #
+    #     umount: /mnt/iso: target is busy.
+    #
+    # and `set -e` turned a tidy-up race into "walk failed", with
+    # medium-release.json already written and correct. Measured on the x64
+    # Windows host; it is why `run-phase3.py walk` could not start there at all.
+    #
+    # The container is `--rm`: it and every mount in it are discarded a moment
+    # later, so the unmounts buy nothing and are explicitly allowed to fail.
+    # `-d` still asks for the loop device back when it can. What must NOT be
+    # allowed to fail is the copy, which is why it keeps `set -e` above it and
+    # why the file is read back below — the same rule as everywhere else here:
+    # the exit code is a diagnostic, the file is the thing itself.
     run("docker", "run", "--rm", "--privileged", "--platform", lab.arch.docker_platform,
         "-v", f"{os.path.dirname(lab.iso)}:/iso:ro", "-v", f"{lab.dir}:/out",
         lab.arch.build_image, "bash", "-c",
@@ -188,7 +205,11 @@ def medium_release():
         f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
         "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
         "cp /mnt/sq/usr/lib/os7/release.json /out/medium-release.json; "
-        "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
+        "set +e; umount -d /mnt/sq; umount -d /mnt/iso; exit 0",
+        stdout=subprocess.DEVNULL)
+    if not os.path.exists(out):
+        raise SystemExit(f"medium_release: {out} was not written; the container "
+                         "could not read /usr/lib/os7/release.json off the medium")
     return json.load(open(out))
 
 
