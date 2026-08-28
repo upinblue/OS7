@@ -1032,6 +1032,42 @@ function Assert-OS7EspMounted {
 		throw [System.InvalidOperationException]::new(
 			"the ESP at $espRoot carries no EFI directory.")
 	}
+	# THE ORPHANED CASE FIRST (#104, finally measured): `zfs set canmount=on`
+	# on an INERT boot dataset — step 3's own flip — makes something rebuild
+	# the /boot mount seconds later, asynchronously. The vfat that was mounted
+	# under the old /boot stays in the mount table (so `findmnt /boot/efi`
+	# still lists it, boot-efi.mount still reads active, and `systemctl start`
+	# is a no-op that exits 0) but the PATH /boot/efi now resolves into the
+	# fresh /boot mount, where efi/ is an empty directory. The heal is to take
+	# the whole /boot stack down — the orphan goes with it — and rebuild it:
+	# the running environment's boot dataset back on /boot, and systemd, which
+	# watched the umounts happen, now agrees the ESP unit is dead and actually
+	# mounts it again.
+	if (-not [System.IO.Directory]::Exists($efiDir)) {
+		$bootMnt = try {
+			[string](Invoke-OS7Native -Command 'findmnt' -Arguments @(
+				'-no', 'SOURCE,FSTYPE', $script:OS7BootDir))
+		} catch { '' }
+		$rootMnt = try {
+			[string](Invoke-OS7Native -Command 'findmnt' -Arguments @('-no', 'SOURCE', '/'))
+		} catch { '' }
+		if ($bootMnt -match '^(\S+)\s+zfs' -and
+			$rootMnt.Trim() -match "^$([regex]::Escape($script:OS7RootParent))/(\S+)$") {
+			$expected = "$($script:OS7BootParent)/$($Matches[1])"
+			Write-OS7Step ("the ESP entry under $($script:OS7BootDir) is stale (#104) — " +
+				"taking the stack down and remounting $expected")
+			try {
+				Invoke-OS7Native -Command 'umount' -Arguments @('-R', $script:OS7BootDir) | Out-Null
+				Invoke-OS7Native -Command 'mount' -Arguments @(
+					'-t', 'zfs', '-o', 'zfsutil', $expected, $script:OS7BootDir) | Out-Null
+			}
+			catch {
+				Write-OS7Step "note: rebuilding $($script:OS7BootDir) failed: $($_.Exception.Message)"
+			}
+		}
+	}
+	if ([System.IO.Directory]::Exists($efiDir)) { return }
+
 	Write-OS7Step 'the ESP is not mounted at /boot/efi — asking systemd to mount it'
 	try {
 		Import-OS7SystemdLayer
@@ -1764,12 +1800,22 @@ function Set-OS7BootEnvironment {
 		  3. flip canmount across both pairs — target on, everything else noauto
 		  4. copy the freshly generated menu into the target's own boot dataset,
 		     because the ESP stub is about to name it and GRUB will read the
-		     grub.cfg it finds THERE
-		  5. write saved_entry into BOTH grubenvs — the running one and the
-		     target's own
-		  6. rewrite both ESP stubs
+		     grub.cfg it finds THERE (skipped when /boot is already served by
+		     that dataset — the menu was generated straight into it)
+		  5. write saved_entry into the TARGET's grubenv — inert until step 6
+		     makes that the file GRUB loads
+		  6. rewrite both ESP stubs — the point of no return — and only THEN
+		     saved_entry in the running system's grubenv, which takes effect the
+		     moment it is written and must never name an environment the catch
+		     could still walk away from
 		  7. record com.ubuntu.zsys:last-used, which is what 10_linux_zfs sorts
 		     the menu by
+
+		Steps 4 to 7 are transactional around step 6: a failure BEFORE the stub
+		rewrite takes the canmount flips back and changes nothing; a failure
+		AFTER it leaves the activation standing, because the machine will boot
+		the target and reverting the flips then would hand it the half-activated
+		pair (§4.3) the revert exists to prevent.
 
 		WHY STEPS 0 AND 5 EXIST AT ALL, which is the mistake this design made
 		first: pointing the ESP stub at another environment changes which
@@ -1949,9 +1995,22 @@ exec cat $($script:OS7MenuFile)
 		}
 	}
 
-	# Steps 4 to 7 either all complete or the flips above are taken back.
+	# Steps 4 to 7 either all complete or the flips above are taken back —
+	# up to the stub rewrite in step 6. THAT is the point of no return: once
+	# the ESP names the target, taking the flips back would manufacture the
+	# very half-activated pair the revert exists to prevent, so a failure
+	# after it leaves the activation STANDING and says so.
+	$committed = $false
 	try {
-		# 4 — the target's own copy of the menu.
+		# 4 — the target's own copy of the menu. On a machine where /boot is
+		# ALREADY served by the target's boot dataset — a rollback out of a
+		# half-activated state is exactly that machine — update-grub in step 2
+		# generated the menu into that dataset directly, and copying the file
+		# onto itself is an error, not a copy (measured: Copy-Item refuses).
+		$bootSource = try {
+			[string](Invoke-OS7Native -Command 'findmnt' -Arguments @(
+				'-no', 'SOURCE', $script:OS7BootDir))
+		} catch { '' }
 		New-Item -ItemType Directory -Force -Path $script:OS7BeScratch | Out-Null
 		try {
 			Invoke-OS7Native -Command 'mount' -Arguments @(
@@ -1961,8 +2020,14 @@ exec cat $($script:OS7MenuFile)
 				throw [System.InvalidOperationException]::new(
 					"$($target.BootDataset) has no grub directory — it is not a boot dataset")
 			}
-			Copy-Item -Force $script:OS7GrubCfg $dest
-			Write-OS7Step "menu copied into $($target.BootDataset)"
+			if ($bootSource.Trim() -eq $target.BootDataset) {
+				Write-OS7Step ("$($script:OS7BootDir) is already served by " +
+					"$($target.BootDataset); the generated menu is already its own")
+			}
+			else {
+				Copy-Item -Force $script:OS7GrubCfg $dest
+				Write-OS7Step "menu copied into $($target.BootDataset)"
+			}
 
 			# 5 — the default, named. In the target's own grubenv, because the stub
 			# about to be rewritten makes THAT the one GRUB loads.
@@ -1976,12 +2041,6 @@ exec cat $($script:OS7MenuFile)
 			try { Invoke-OS7Native -Command 'umount' -Arguments @($script:OS7BeScratch) | Out-Null }
 			catch { Write-OS7Step "note: $($script:OS7BeScratch) was not mounted" }
 		}
-
-		# …and in the running system's, so that a machine whose firmware takes the
-		# other EFI path — or which never gets as far as step 6 — still boots what
-		# was asked for rather than what it happens to list first.
-		Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
-			(Join-Path $script:OS7BootDir 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
 
 		# 6 — the ESP stub. THE LINE THAT DECIDES WHICH MENU IS READ AT ALL. The
 		# ESP itself first (#104): a glob over an unmounted /boot/efi finds
@@ -2006,6 +2065,19 @@ exec cat $($script:OS7MenuFile)
 				'never wrote one. Nothing about what this machine boots has changed.')
 		}
 		Write-OS7Step "$rewrote ESP stub(s) now point at $Name"
+		$committed = $true
+
+		# …and saved_entry in the RUNNING system's grubenv too, so a machine
+		# whose firmware takes the other EFI path still boots what was asked
+		# for. AFTER the stub, deliberately: this file decides the next boot
+		# the moment it is written, because the stub still points at the
+		# running menu until step 6 — written before it, an activation that
+		# then failed at the stub left saved_entry naming a target whose
+		# canmount the catch below had just taken back, and the machine booted
+		# §4.3's half-activated pair through a file the catch never knew about.
+		# That is how the end-to-end gate's cycle failed on 2026-08-28.
+		Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
+			(Join-Path $script:OS7BootDir 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
 
 		# 7 — when this environment was last made current. 10_linux_zfs sorts the
 		# menu by com.ubuntu.zsys:last-used and, where it is unset, by the mtime of
@@ -2031,6 +2103,16 @@ exec cat $($script:OS7MenuFile)
 
 	}
 	catch {
+		if ($committed) {
+			# The stub already names the target. Taking the flips back NOW would
+			# hand the next boot the target's root with the old environment's
+			# children — the half-activated pair — so the activation stands and
+			# the failure is reported for what it is: after the point of no
+			# return, on a machine that will boot the target.
+			Write-OS7Step ("the failure below happened AFTER the ESP was repointed; " +
+				"the activation of '$Name' STANDS and this machine will boot it")
+			throw
+		}
 		foreach ($flip in $flipped) {
 			try {
 				Set-ZfsProperty -Name $flip.Dataset -PropertyName canmount `

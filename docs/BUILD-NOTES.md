@@ -5074,11 +5074,113 @@ Three changes, one per layer:
   It asks systemd (`boot-efi.mount`, through the Systemd layer — P2-systemd's
   baseline may not rise) to mount it where possible.
 
-WHAT IS NOT PROVEN: why /boot/efi was unavailable at step 6 *within the
-failing run itself* — before any reboot could arm the shadow. The idle-
-automount theory was refuted (fstab entry, no automount, ESP survives 150 s
-idle), and a faithful reproduction of the assembler's mount shape did not
-reproduce the loss in isolation — it was itself contaminated by the leftover
-shadow, which is how the shadow was found. The three changes close the class
-either way; the in-session mechanism is recorded as open rather than
-invented.
+WHAT WAS NOT PROVEN AT FIRST WRITING — why /boot/efi was unavailable at
+step 6 *within the failing run itself* — WAS MEASURED A DAY LATER, and it
+was never an in-session loss at all. **The machine had booted broken.**
+
+/boot is a ZFS mount (bpool/BOOT/&lt;be&gt;, mounted by zfs-mount.service), and
+systemd has no unit for it — this image ships no /etc/zfs/zfs-list.cache,
+so zfs-mount-generator emits nothing and the fstab-generated boot-efi.mount
+has NOTHING to order against. Every boot is a race. When the ESP mounts
+first, the /boot dataset lands ON TOP of it: mountinfo showed
+/boot/efi with a LOWER mount id than /boot — mounted earlier, buried under
+the later ZFS mount. The vfat stays in the mount table, so every
+diagnostic that reads the TABLE lies: `findmnt /boot/efi` lists it,
+`boot-efi.mount` reads active, `systemctl start` is a no-op that exits 0 —
+while every diagnostic that resolves the PATH tells the truth: `ls
+/boot/efi/EFI` finds nothing, and activation's glob finds no stubs. The
+"mechanism that moved between runs" was this race lost at boot and then
+misread as an in-session event — four probe runs "proved" the ESP survived
+assembly and disassembly by asking findmnt, the table, and never once the
+path. A diagnostic must be checked against the thing it claims to check;
+these four were checked against the mount table.
+
+The fix is ordering, in three places:
+
+* **Setup writes the ordering into fstab** for new machines:
+  `x-systemd.requires=zfs-mount.service` on the /boot/efi line —
+  systemd.mount(5) makes that Requires= and After=, so the ESP mounts onto
+  the ZFS /boot, never under it.
+* **Migration 60-fstab-esp-ordering** appends the same option on machines
+  installed before the fix, at their first boot after an update.
+* **`Assert-OS7EspMounted` heals a lost race at runtime**: EFI directory
+  missing while /boot is ZFS-served means the orphan shape — it takes the
+  whole /boot stack down (the orphaned vfat goes with it), remounts the
+  running environment's boot dataset, and then asks systemd, which has just
+  watched the umounts and now agrees the unit is dead and actually mounts
+  the ESP again.
+
+## #105 — the revert was transactional, and a file the catch never knew about voted anyway
+
+The end-to-end gate on the first fully packaged ISO (2026-08-28,
+[SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md)). Activation of a
+cloned boot environment threw at step 6 — the ESP was unmounted again, #104's
+still-open mechanism — and the #104 fix WORKED: all eight canmount flips were
+restored, the cmdlet said so, and nothing about the datasets had changed. The
+machine then rebooted into the half-activated pair anyway.
+
+The voter was `saved_entry`. Step 5 wrote it into the RUNNING system's
+grubenv — before step 6, on the argument that a machine that "never gets as
+far as step 6" should still boot what was asked for. That argument is
+backwards, and the gate measured why: the running grubenv takes effect THE
+MOMENT it is written, because until step 6 the ESP stub still points at the
+running environment's menu. So the failed activation left `GRUB_DEFAULT=saved`
+pointing at a clone whose canmount the catch had just carefully taken back,
+and the next boot assembled §4.3's pair from the menu side: / from the clone,
+/boot and /var/lib/dpkg from the origin. `run-s5.py` then reported "THE
+MACHINE BOOTED THE CLONE — ok", because the harness's own checks accepted a
+grubenv line as proof of a stub rewrite that had never happened.
+
+Three corrections:
+
+* **The running system's grubenv is written AFTER the stub rewrite.** The
+  stub rewrite is the point of no return; everything that takes effect
+  immediately now sits behind it. The target's own grubenv (step 5) stays
+  where it was — it is inert until the stub makes it the file GRUB loads.
+* **A failure after the point of no return leaves the activation STANDING.**
+  Reverting the flips once the ESP names the target would manufacture the
+  half-activated pair; the catch now says the activation stands and rethrows.
+  `Update-OS7`'s catch asks `Get-OS7BootEnvironment` whether the stub was
+  rewritten before claiming "this machine still boots what it booted".
+* **The harness now requires the activation's own success line** ("ESP
+  stub(s) now point at") and matches the stub's `/BOOT/<name>@` prefix line,
+  not any occurrence of the name — a grubenv entry is not a stub.
+
+A second, smaller defect fell out of the same boot: on the half-activated
+machine, /boot is ALREADY served by the rollback target's boot dataset, and
+step 4's `Copy-Item` of /boot/grub/grub.cfg into that same dataset refuses
+("cannot overwrite the item with itself") — so the one activation that would
+REPAIR the state was the one that could not run. The copy is now skipped,
+with a step line, when findmnt says /boot's source IS the target's dataset.
+
+The general rule, one more time and from a new side: a transaction is only as
+transactional as the LIST of things it undoes. The flips were recorded and
+restored; the grubenv write was in the same try block and in nobody's ledger.
+When a catch promises "nothing changed", every write above it must be in the
+ledger, or the promise is a claim about the ledger, not the machine.
+
+## #106 — a KEY="value" file written without a trailing newline corrupts on the first append
+
+`Set-OS7UpdateChannel` wrote `/etc/os7/update.conf` without a final newline.
+The unattended-check harness then did what any operator will do:
+`printf 'OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes"\n' >> update.conf`.
+The append glued onto the last line, and the file's channel became
+
+    OS7_UPDATE_CHANNEL="development"OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes"
+
+The module's conf parser stripped the OUTERMOST quote pair and returned
+`development"OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes` as the channel
+name; the unattended check went looking for an index file by that name, found
+nothing, and exited 1 — a corrupted CHANNEL out of an append that meant to
+set a FLAG, with both settings lost.
+
+Fixed at both layers, because each would have contained the other: the writer
+ends the file with a newline (a KEY=value file that invites `echo >>` must),
+and the parser treats a quoted value as ending at the NEXT matching quote —
+trailing garbage after the closing quote is now a loud `FormatException`
+naming the file and line, not a silently wrong value. The harness append
+starts with `\n` regardless, for images whose module predates the fix.
+
+The rule: a file format is defined by what will be APPENDED to it, not just
+by what is written into it. If the convention is "operators add KEY=value
+lines", the writer's last byte is load-bearing.

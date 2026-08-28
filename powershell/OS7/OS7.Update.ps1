@@ -193,9 +193,18 @@ function Get-OS7ReleaseConfField {
 		if ($eq -lt 1) { continue }
 		if ($t.Substring(0, $eq).Trim() -ne $Name) { continue }
 		$v = $t.Substring($eq + 1).Trim()
-		if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or
-				($v[0] -eq "'" -and $v[-1] -eq "'"))) {
-			$v = $v.Substring(1, $v.Length - 2)
+		if ($v.Length -ge 1 -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
+			# A quoted value ends at the NEXT matching quote, and anything after
+			# it makes the line malformed — loudly. Stripping only the outermost
+			# pair turned a glued line (an append onto a file with no trailing
+			# newline) into the channel name 'development"OS7_UPDATE_…' and sent
+			# the unattended check hunting for an index that cannot exist.
+			$close = $v.IndexOf($v[0], 1)
+			if ($close -lt 0 -or $v.Substring($close + 1).Trim().Length -gt 0) {
+				throw [System.FormatException]::new(
+					"$($Path): malformed line for ${Name}: $t")
+			}
+			$v = $v.Substring(1, $close - 1)
 		}
 		return $v
 	}
@@ -811,12 +820,17 @@ function Set-OS7UpdateChannel {
 		if ($Channel) {
 			[System.IO.Directory]::CreateDirectory(
 				[System.IO.Path]::GetDirectoryName($script:OS7UpdateConf)) | Out-Null
-			[System.IO.File]::WriteAllText($script:OS7UpdateConf, @(
+			# The trailing newline is load-bearing: this is a KEY="value" file
+			# an operator appends to (OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT,
+			# per the timer's log message), and without it the first `echo >>`
+			# glues onto the channel line and corrupts BOTH settings. Measured:
+			# the timer read channel 'development"OS7_UPDATE_UNATTENDED_…'.
+			[System.IO.File]::WriteAllText($script:OS7UpdateConf, (@(
 				'# OS/7 — where this machine looks for its next release.'
 				'# Written by Set-OS7UpdateChannel. The repository URI is in'
 				"# $($script:OS7AptSource); this is the channel within it."
 				"OS7_UPDATE_CHANNEL=`"$Channel`""
-			) -join "`n")
+			) -join "`n") + "`n")
 
 			# Read it back. A file that was written is not a file that parses,
 			# and the next thing to read it is an unattended timer.
@@ -2169,11 +2183,36 @@ function Update-OS7 {
 		$half = if (Get-Variable -Name beName -Scope 0 -ErrorAction SilentlyContinue) { $beName } else { $null }
 		Write-OS7UpdateLog ("FAILED " + $_.Exception.Message.Replace("`n", ' ') +
 			$(if ($half) { "  left behind: $half" } else { '' }))
+		# FORENSICS FOR #104's open half: both end-to-end failures so far lost
+		# a RUNNING-SYSTEM mount (/boot/efi once, /boot once) somewhere around
+		# the dismount, at a point that moved between runs. Whatever the
+		# mechanism turns out to be, the next failure should carry the mount
+		# state out with it instead of leaving it to a later boot to infer.
+		foreach ($probe in @('/boot', '/boot/efi')) {
+			$state = try {
+				[string](Invoke-OS7Native -Command 'findmnt' -Arguments @('-no', 'SOURCE,FSTYPE', $probe))
+			} catch { 'NOT MOUNTED' }
+			Write-OS7UpdateLog "FAILED-state ${probe}: $state"
+		}
 		if ($half) {
-			Write-OS7Step ("the update failed. $half is built, INACTIVE and left in place " +
-				"as the evidence; this machine still boots what it booted. Clear it with " +
-				"Remove-OS7BootEnvironment -Name $half, and read " +
-				$script:OS7UpdateLog + '.')
+			# "Still boots what it booted" is a CLAIM, so ask the machine
+			# rather than assert it: an activation can fail AFTER its point of
+			# no return (the ESP stub rewrite), and then the new environment is
+			# what this machine boots, failure or not. The Menu property is
+			# read from the stub itself.
+			$switched = $false
+			try { $switched = [bool](Get-OS7BootEnvironment -Name $half).Menu } catch { }
+			if ($switched) {
+				Write-OS7Step ("the update failed AFTER activation's point of no return: " +
+					"the ESP already names $half and this machine will boot it. Read " +
+					$script:OS7UpdateLog + ' before rebooting.')
+			}
+			else {
+				Write-OS7Step ("the update failed. $half is built, INACTIVE and left in place " +
+					"as the evidence; this machine still boots what it booted. Clear it with " +
+					"Remove-OS7BootEnvironment -Name $half, and read " +
+					$script:OS7UpdateLog + '.')
+			}
 		}
 		throw
 	}

@@ -735,7 +735,20 @@ def phase_cycle():
                      f"Set-OS7BootEnvironment -Name {new_be} -Confirm:$false | "
                      "Format-List Name,Active,Menu | Out-String",
                   "activate the clone", timeout=900)
-        print("        " + body_of(text, "Out-String").replace("\r", "").strip()[:700])
+        act = body_of(text, "Out-String")
+        print("        " + act.replace("\r", "").strip()[:700])
+        # THE ACTIVATION MUST SAY IT REACHED THE POINT OF NO RETURN. The final
+        # gate's cycle threw at step 6 (the ESP was gone, #104) and this
+        # harness sailed on: the two checks below pass on a machine whose
+        # grubenv alone names the clone, and the boot then LOOKS like a
+        # successful switch while canmount was already taken back — the
+        # half-activated pair, reported as "the clone booted". An activation
+        # that did not print its stub line is a failed activation, whatever
+        # the next checks happen to match.
+        if "ESP stub(s) now point at" not in act:
+            print("      FAIL       the activation never rewrote the ESP stubs:")
+            print("        " + act.replace("\r", "").strip()[-1200:])
+            ok = False
 
         # THE WINDOW BETWEEN ACTIVATION AND THE REBOOT. Activation sets the
         # target's datasets to canmount=on while the OLD environment is still
@@ -757,14 +770,18 @@ def phase_cycle():
         else:
             print("      ok         activation mounted nothing of the target")
 
-        text = ask(c, "printf 'S5-%s\\n' ESP; cat /boot/efi/EFI/BOOT/grub.cfg; "
+        text = ask(c, "printf 'S5-%s\\n' ESP; "
+                      "cat /boot/efi/EFI/BOOT/grub.cfg /boot/efi/EFI/OS7/grub.cfg 2>&1; "
                       "grub-editenv /boot/grub/grubenv list",
                    "what the ESP now says", timeout=180)
         esp = body_of(text, "S5-ESP")
         print("\n--- the ESP stub and grubenv after activation ---")
         print(esp.strip()[:800])
         print("---")
-        if new_be in esp:
+        # The STUB line, not just any occurrence: grub-editenv's saved_entry
+        # also carries the name, and in the final gate that alone satisfied
+        # this check on a machine whose stub rewrite had never happened.
+        if f"/BOOT/{new_be}@" in esp:
             print(f"      ok    6/9 the ESP stub and grubenv name {new_be}")
         else:
             print("      FAIL  6/9 the ESP stub was not repointed — the reboot will not switch")
@@ -844,21 +861,27 @@ def phase_cycle():
         text = ps(c, "Import-Module OS7; Restore-OS7 -Confirm:$false | "
                      "Format-List Name,Active,Menu | Out-String",
                   "roll back", timeout=900)
-        print("        " + body_of(text, "Out-String").replace("\r", "").strip()[:700])
+        rbact = body_of(text, "Out-String")
+        print("        " + rbact.replace("\r", "").strip()[:700])
+        if "ESP stub(s) now point at" not in rbact:
+            print("      FAIL       the rollback's activation never rewrote the ESP stubs:")
+            print("        " + rbact.replace("\r", "").strip()[-1200:])
+            ok = False
 
         # NOT "did the cmdlet print something". Restore-OS7 takes no argument
         # here — the whole point is that it works out which environment the
         # previous one is — so the check is that it picked the right one AND
         # that the ESP now says so. Anything weaker passes on a cmdlet that
         # imported a module and gave up.
-        text = ask(c, "printf 'S5-%s\\n' RB; cat /boot/efi/EFI/BOOT/grub.cfg; "
+        text = ask(c, "printf 'S5-%s\\n' RB; "
+                      "cat /boot/efi/EFI/BOOT/grub.cfg /boot/efi/EFI/OS7/grub.cfg 2>&1; "
                       "grub-editenv /boot/grub/grubenv list",
                    "what the ESP says after the rollback", timeout=180)
         rb = body_of(text, "S5-RB")
         print("\n--- the ESP stub after the rollback ---")
         print(rb.strip()[:600])
         print("---")
-        if old_be in rb and new_be not in rb.split("saved_entry")[0]:
+        if f"/BOOT/{old_be}@" in rb and new_be not in rb.split("saved_entry")[0]:
             print(f"      ok    8/9 Restore-OS7 chose {old_be} and the ESP stub names it")
         else:
             print(f"      FAIL  8/9 the ESP stub does not name {old_be} after the rollback")
@@ -1183,7 +1206,12 @@ def phase_timer():
         # what is measured rather than found.
         ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} -Channel development "
              "| Out-Null", "re-enable the channel", timeout=600)
-        ask(c, "printf 'OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT=\"yes\"\\n' "
+        # The leading \n is deliberate: a module from before the trailing-newline
+        # fix in Set-OS7UpdateChannel left update.conf without one, and a bare
+        # append GLUED this line onto the channel line — the timer then read
+        # channel 'development"OS7_UPDATE_UNATTENDED_…' and exited 1. The blank
+        # line this adds on fixed images is harmless; the glue never is.
+        ask(c, "printf '\\nOS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT=\"yes\"\\n' "
                ">> /etc/os7/update.conf", "allow development releases unattended")
         text = ps(c, "Import-Module OS7; Get-OS7BootEnvironment | Where-Object "
                      "{ -not $_.Running } | Remove-OS7BootEnvironment -Confirm:$false; "

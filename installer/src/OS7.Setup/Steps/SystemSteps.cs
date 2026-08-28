@@ -284,9 +284,21 @@ internal sealed class TargetIdentityStep : IStep
         // ZFS datasets carry their own mountpoints, so only the ESP belongs
         // here. A generated fstab listing the datasets as well would mount them
         // twice and fight zfs-mount.service for them.
+        //
+        // x-systemd.requires=zfs-mount.service is load-bearing (BUILD-NOTES
+        // #104): /boot is a ZFS mount systemd knows nothing about, so without
+        // it boot-efi.mount races zfs-mount.service — and when the ESP mounts
+        // FIRST, the /boot dataset lands on top of it. The vfat stays in the
+        // mount table (the unit reads active, `systemctl start` is a no-op)
+        // while the PATH /boot/efi resolves into the ZFS mount's empty
+        // directory. Measured: a machine booted that way lost its cycle,
+        // update and rollback in one gate run. x-systemd.requires creates
+        // both Requires= and After=, so the ESP now always mounts onto the
+        // ZFS /boot, never under it.
         string uuid = Uuid(x, StorageSteps.EspPath);
         _t.Write(x, "etc/fstab",
-                 $"UUID={uuid}  /boot/efi  vfat  umask=0077,shortname=winnt  0  1\n");
+                 $"UUID={uuid}  /boot/efi  vfat  "
+                 + "umask=0077,shortname=winnt,x-systemd.requires=zfs-mount.service  0  1\n");
     }
 
     private void WriteLocaleAndTime(Executor x)

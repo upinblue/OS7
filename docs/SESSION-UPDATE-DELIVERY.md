@@ -36,7 +36,8 @@ What the switch surfaced, each measured:
   ISO stays the measured file under its old name. `check-image.py` now
   requires the two to agree where they overlap and asks `dpkg -S`, file by
   file, who owns pwsh, the module, os7-setup, the console font, the release
-  facts, the apt source and the migration runner.
+  facts, the apt source and the migration runner — **105 checks, green, on
+  both packaged ISOs built this session (1.0.0.133 and 1.0.0.134)**.
 * **The os7-module .deb carried two of five modules** (`for name in Zfs OS7`
   while the ISO staged five) — an apt-installed machine lost Net, Time and
   Systemd and the first network cmdlet would throw about a module nobody
@@ -81,14 +82,17 @@ Measured: `check-update-logic.py` **32 checks** (the six new ones: stable
 channel found, dev-key-under-stable-label still needs `-AllowDevelopment`,
 mislabelled index refused, matching hotfix applies, foreign-base hotfix not
 chosen and refused by name), `Test-OS7Update` **31**, and
-`check-os7-repo.py` **67** — which now builds two channels and a REAL hotfix
+`check-os7-repo.py` **123** — which now builds two channels and a REAL hotfix
 (a `less` out of the pinned snapshot, re-versioned `+os7hf1`), installs the
 stable base by exact version and applies the hotfix with one
 `apt full-upgrade`: os7-base moves on the Build field alone, the overlay
 beats the frozen snapshot, the machine's release.json names the hotfix.
 On the way: **#98** — apt satisfies a strict `Depends (= old)` from CANDIDATE
 versions only, so exact-version installs of old releases need the same
-preferences pin `Update-OS7` already carries.
+preferences pin `Update-OS7` already carries — and **#103**: turning
+os7.sources into a conffile put a dpkg prompt in the harness's path that
+`DEBIAN_FRONTEND=noninteractive` does not answer; the harness gained the
+`--force-confold` Update-OS7's own apt runs always had.
 
 ## 3. The firstboot migration runner (C10 §6')
 
@@ -135,11 +139,80 @@ could not run must never read as clean. Unattended runs never pass
 `-AllowDevelopment` silently: the operator says it once in
 `/etc/os7/update.conf`, which a rollback reverts.
 
-## 5. The gate (run-s5.py update / timer)
+## 5. The gate, and what its first two failures were worth (#104)
 
-*(This section is written before the gate has run and will be replaced by its
-measurements; if you are reading this sentence in a commit, the run below did
-not finish and this document says so.)*
+`run-s5.py` gained `update` (Update-OS7 against a repository served to the
+guest over local HTTP, signed with the same development key the ISO trusts)
+and `timer` (the unattended check's exit-code contract, read through
+systemd's own ExecMainStatus). On the first packaged ISO (1.0.0.133),
+install, boot and cycle all PASSED — the packaged machine clones, activates
+and rolls back exactly as the unpackaged one did.
+
+The first two `update` attempts then failed at activation, and the second
+failure's post-mortem found the defect that mattered most in this session:
+**an activation that fails halfway KEEPS half its work.**
+`Set-OS7BootEnvironment` had flipped canmount across the environments before
+it threw; nothing took the flips back; and the next boot's `zfs mount -a`
+mounted the target's /boot OVER the running system's, burying the ESP —
+§4.3's half-activated pair, live, reached by an update whose own catch had
+just promised "this machine still boots what it booted". Measured in
+mountinfo, repaired by hand, and fixed at three layers (transactional
+canmount flips, `--make-slave` on every assembly bind, an explicit
+self-healing ESP precondition) — BUILD-NOTES #104, which also records what
+is NOT proven: why the running system's /boot half went unavailable *within*
+each failing run, before any reboot. The failure point moved between the two
+runs, both theories tested against the machine were refuted or contaminated,
+and the file stays open rather than closed with an invented mechanism.
+
+The full gate then ran on the fixed ISO (1.0.0.134) — and its failures were
+worth more than a pass would have been. Install and boot PASSED (the TPM
+unlocked the disk untyped, #74's home check held). Cycle, update and timer
+all FAILED, and every failure taught something the plan now carries:
+
+* **#105.** The cycle's activation threw at step 6 — the ESP was gone again —
+  and the #104 revert worked: all eight canmount flips were restored, the
+  log says so. The machine still rebooted into §4.3's half-activated pair,
+  because step 5 had already written `saved_entry` into the RUNNING grubenv,
+  a file in nobody's ledger. The activation now writes that file only after
+  the stub rewrite — the point of no return — and a failure beyond it leaves
+  the activation standing instead of manufacturing the half-activated pair
+  by reverting. The harness, which had accepted a grubenv line as proof of a
+  stub rewrite, now requires the activation's own "ESP stub(s) now point at"
+  line and the stub's `/BOOT/<name>@` prefix.
+* **The rollback that would have repaired the half-activated machine was the
+  one activation that could not run**: /boot was already served by the
+  target's boot dataset, and step 4's Copy-Item refused to copy
+  /boot/grub/grub.cfg onto itself. The copy is skipped, with a step line,
+  when findmnt says /boot IS the target's dataset.
+* **#104's mechanism is measured at last, and it was never an in-session
+  loss.** The machine had BOOTED broken: /boot is a ZFS mount systemd has
+  no unit for (no /etc/zfs/zfs-list.cache, so zfs-mount-generator emits
+  nothing), and the fstab-generated boot-efi.mount races zfs-mount.service
+  at every boot. A lost race mounts the ESP first and the /boot dataset on
+  top of it — mountinfo showed /boot/efi with a LOWER mount id than /boot.
+  The vfat stays in the mount table, so table-reading diagnostics lie
+  (`findmnt` lists it, the unit reads active, `systemctl start` exits 0
+  doing nothing) while the path tells the truth (`ls /boot/efi/EFI`: no
+  such file). Four earlier probe runs "proved" the ESP survived assembly
+  and disassembly by asking findmnt — the table — and never the path,
+  which is why the loss kept reading as a moving in-session event. Fixed
+  as ordering in three places: Setup writes
+  `x-systemd.requires=zfs-mount.service` onto the fstab ESP line;
+  migration 60-fstab-esp-ordering retrofits existing machines at their
+  first boot after an update; and `Assert-OS7EspMounted` heals a lost race
+  at runtime by rebuilding the /boot stack and only then asking systemd —
+  which, having watched the umounts, now agrees the unit is dead and
+  actually mounts the ESP.
+* **#106.** The timer failed on a corrupted channel name:
+  `Set-OS7UpdateChannel` wrote update.conf without a trailing newline, and
+  the harness's `>>` append glued the allow-development flag onto the
+  channel line. Writer, parser and harness are all fixed — the parser now
+  refuses trailing garbage after a closing quote loudly instead of
+  returning a silently wrong value.
+
+*(The verdict of the full rerun on the ISO carrying these fixes — install
+through timer — follows below; if this sentence survives into a commit, that
+run did not finish and this document says so.)*
 
 ## 6. What was expressly NOT measured
 
@@ -157,3 +230,14 @@ not finish and this document says so.)*
 * **`run-backup.py`** stays never-run (B-5's words), now on both hosts.
 * **C7a, deliberately.** Everything remains signed by the NOT FOR RELEASE
   key; `out/os7-gnupg` is gitignored and nothing from it may be published.
+* **The installed machine has NO journal, and why is open.** Not merely
+  non-persistent: `journalctl` says "No journal files were found" on a
+  running machine whose systemd-journald reads active, whose
+  /etc/machine-id is populated, and where /run/log/journal AND
+  /var/log/journal both exist and are both EMPTY — no machine-id
+  subdirectory was ever created. Storage= is at its commented default.
+  This session paid for it directly: when the #104 diagnosis needed "who
+  touched boot-efi.mount", there was no journal to ask, on any boot. It
+  is a supportability defect of its own and it is NOT diagnosed — a
+  follow-up needs to find out what keeps journald from writing so much as
+  a volatile journal on this image.
