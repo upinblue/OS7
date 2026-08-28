@@ -92,6 +92,9 @@ distinction nearly put a false product defect into this file. What is owed:
 #   Get-OS7NetworkAdapter / Set-OS7NetworkAdapter with a real netplan apply
 #   Get-OS7TimeSynchronization against a real chronyd on real hardware
 #   Get-OS7Log against a real journal that has survived a reboot
+#     (possible at all only since #108: until 2026-08-28 the installed
+#      machine had NO journal on any boot — the flush beat zfs-mount and
+#      the real /var/log buried what it wrote)
 ```
 
 **P3 step 2 needs the Mac.** The netplan document is generated in two languages

@@ -88,6 +88,11 @@ emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
 emit os7.staged.debs   bash -c 'ls /mnt/sq/usr/lib/os7/packages/ 2>/dev/null || echo "(gone)"'
+# The journal-flush ordering drop-in (BUILD-NOTES #108). Without it the flush
+# beats zfs-mount.service on every boot, journald flushes onto the boot
+# environment's root dataset, and the real /var/log then buries the journal —
+# a machine with no journalctl output at all and no error anywhere.
+emit journal.dropin    bash -c 'cat /mnt/sq/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf 2>/dev/null || echo "(absent)"'
 # The identity as a PERSON meets it (docs/IDENTITY-PLAN.md §6). None of these is
 # derivable from os-release: the product line is OS/7's own file precisely so
 # that no user-facing surface depends on a field Microsoft's agents also read
@@ -522,6 +527,13 @@ def main() -> None:
     check(img.get("os7.staged.debs", "").strip() in ("(gone)", ""),
           "the staged .debs were consumed, not shipped",
           img.get("os7.staged.debs", "")[:80])
+    # One line of config, and without it the machine has no journal AT ALL:
+    # /var/log is a ZFS dataset with no mount unit, so unordered, the journal
+    # flush lands on the boot environment's root dataset and zfs mount -a
+    # buries it (BUILD-NOTES #108, measured on a booted machine).
+    check("After=zfs-mount.service" in img.get("journal.dropin", ""),
+          "the journal flush is ordered after zfs-mount.service (#108)",
+          img.get("journal.dropin", "(absent)").strip().splitlines()[-1][:70])
 
     # -- what the image is CURATED to contain, and not to ---------------------
     #
