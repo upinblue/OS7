@@ -126,7 +126,7 @@ def fetch_font(lab):
          "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
          "gunzip -c /mnt/sq/usr/share/consolefonts/os7-console-16x32.psf.gz "
          "> /out/os7-console-16x32.psf; "
-         "umount /mnt/sq; umount /mnt/iso"],
+         "set +e; umount -d /mnt/sq; umount -d /mnt/iso; exit 0"],
         check=True, stdout=subprocess.DEVNULL)
     return out
 

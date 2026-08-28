@@ -231,7 +231,7 @@ def fetch_font():
         f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
         "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
         "cp /mnt/sq/usr/share/consolefonts/os7-fixedsys-16x32.psf.gz /out/; "
-        "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
+        "set +e; umount -d /mnt/sq; umount -d /mnt/iso; exit 0", stdout=subprocess.DEVNULL)
 
 
 def write_plan(c):
@@ -677,16 +677,46 @@ def phase_walk(font):
         ok &= on_screen(w, h, rgb, USERNAME, "and the account name")
         press("ret")
 
-        # -- screen 8 does not exist here, and that is the assertion ---------
+        # -- screen 8, and WHETHER IT EXISTS IS THE ARCHITECTURE'S ANSWER -----
         #
-        # arm64 is server-only (README), so ModeScreen.Next skips the GUI/headless
-        # question. On amd64 there would be one more ENTER here; no amd64 ISO has
-        # ever been walked.
+        # arm64 is server-only (README), so ModeScreen.Next skips the
+        # GUI/headless question and this walk asserted it was absent. That
+        # assertion was written when "no amd64 ISO has ever been walked" was
+        # true; it stopped being true on 2026-08-28, and the assertion then
+        # failed a perfectly correct amd64 install with
+        #
+        #     FAIL  screen 8 appeared on arm64, which ships no desktop
+        #
+        # on a run that was not on arm64. A harness that names the architecture
+        # in its message and does not ask for it is a harness that is right by
+        # accident.
+        #
+        # ON amd64 THE WALK CHOOSES DESKTOP, deliberately. It is the amd64
+        # product (arm64 has no desktop stack at all), it is what a person
+        # picking from this screen is most likely to pick, and it is the branch
+        # `install` never takes — that path hands over a plan with
+        # "mode":"Headless". InstallPlan.Mode defaults to Headless, so Desktop
+        # is the SECOND row and needs an explicit UP before ENTER; pressing
+        # ENTER alone would silently walk the branch already covered.
         w, h, rgb = shoot("47b-after-account", 3.0)
         page = page_of(w, h, rgb)
-        if "Choose how this computer will be used" in page:
-            print("      FAIL  screen 8 appeared on arm64, which ships no desktop")
-            return False
+        mode_screen = "Choose how this computer will be used" in page
+        if lab.arch.arch == "arm64":
+            if mode_screen:
+                print("      FAIL  screen 8 appeared on arm64, which ships no desktop")
+                return False
+            print("      ok    screen 8 is skipped, as arm64 ships no desktop")
+        else:
+            if not mode_screen:
+                print(f"      FAIL  screen 8 is missing on {lab.arch.arch}, "
+                      "which is the desktop product")
+                return False
+            print("      ok    screen 8 is the install mode")
+            press("up")             # Headless -> Desktop
+            w, h, rgb = shoot("47c-mode-desktop", 1.0)
+            press("ret")
+            w, h, rgb = shoot("47d-after-mode", 3.0)
+            page = page_of(w, h, rgb)
         if "Setup cannot continue" in page:
             print("      FAIL  the plan was refused after screen 7")
             for line in page.splitlines():
@@ -745,6 +775,38 @@ def phase_walk(font):
 
         press("ret")
 
+        # -- screen 9D: the domain, which is LEFT BLANK ----------------------
+        #
+        # #45's shape a THIRD time, and the paragraph above screen 9 called it:
+        # a screen inserted between the last one this walk knew about and the
+        # executor. 6aeea12 added the Active Directory join, this walk had never
+        # run on amd64, and so the first amd64 walk reported
+        #
+        #     FAIL  the executor did not start after screen 9
+        #
+        # with the domain form on the screen it printed underneath. The harness
+        # was right that the executor had not started and wrong about why, which
+        # is the whole cost of a check that knows only what it expects.
+        #
+        # BLANK, deliberately: the screen says "Leave the domain blank not to
+        # join", no OS/7 machine has ever joined a domain (AD-PLAN), and a walk
+        # that tried would be testing somebody else's directory. What is
+        # asserted is that the screen SAYS it will not join before ENTER is
+        # pressed — otherwise a future default of "join" would sail past here.
+        w, h, rgb = shoot("48a-domain", 2.0)
+        page = page_of(w, h, rgb)
+        if "join this computer to an Active Directory domain" in page:
+            if "will not be joined to a domain" not in page:
+                print("      FAIL  screen 9D does not say it will leave the domain alone")
+                for line in page.splitlines():
+                    if line.strip():
+                        print(f"            {line.rstrip()}")
+                return False
+            print("      ok    screen 9D is the domain form, and it will not join")
+            press("ret")
+        else:
+            print("      note  no domain screen on this medium")
+
         w, h, rgb = shoot("48b-executing", 4.0)
         page = page_of(w, h, rgb)
         if "Setup cannot continue" in page:
@@ -775,6 +837,18 @@ def phase_walk(font):
         print("      waiting for the install … (unsquashfs + initramfs; ~15-25 min)")
         deadline = time.time() + 1800
         seen = ""
+        # WHAT THE BAR READ WHILE THE COPY WAS THE STEP, and it is here because
+        # of a defect an operator reported and this harness could not have
+        # caught: UnsquashfsStep counted lines beginning "create" and
+        # `unsquashfs -i` prints bare paths, so the bar sat at the copy step's
+        # starting percentage for the whole copy and then jumped. Nothing in
+        # installer/testing/ ever looked at the NUMBER on this screen; the walk
+        # watched the step NAME, which was correct throughout.
+        #
+        # From the outside a bar that does not move cannot be told from a hang,
+        # which is exactly what was reported. So the percentages seen during the
+        # copy are collected and asserted to advance.
+        copy_percents = []
         while time.time() < deadline:
             time.sleep(20)
             w, h, rgb = lab.shoot(q, "49-complete")
@@ -789,14 +863,51 @@ def phase_walk(font):
                 return False
             # The step name, printed when it changes, so a stall is visible as a
             # step that stopped moving rather than as a silent twenty minutes.
+            copying = False
             for line in page.splitlines():
                 stripped = line.strip()
                 if stripped.endswith("…") and stripped != seen:
                     seen = stripped
                     print(f"        {stripped}")
+                if "Copying files" in stripped:
+                    copying = True
+
+            # SAMPLED CLOSE TOGETHER, because the copy is SHORT on a fast host.
+            # The outer poll is 20s and on this bench the whole extraction takes
+            # under 40 — the first version of this check caught the copy exactly
+            # once and said so, which is a check that cannot fail. Three seconds
+            # apart for as long as the copy is the step gives it something to be
+            # right or wrong about.
+            while copying and time.time() < deadline:
+                for line in page.splitlines():
+                    stripped = line.strip()
+                    if stripped.endswith("%") and stripped[:-1].strip().isdigit():
+                        copy_percents.append(int(stripped[:-1].strip()))
+                time.sleep(3)
+                w, h, rgb = lab.shoot(q, "49-copying", quiet=True)
+                page = page_of(w, h, rgb)
+                copying = any("Copying files" in l for l in page.splitlines())
         else:
             print("      FAIL  the install never reached the Complete screen")
             return False
+
+        # Two samples is the floor for "it moved": one is a reading, two that
+        # differ is movement. A copy fast enough to be caught only once is not a
+        # failure of the product, so that case is a note rather than a FAIL —
+        # what must never pass silently is several samples that never changed.
+        if len(copy_percents) >= 2:
+            if copy_percents[-1] > copy_percents[0]:
+                print(f"      ok    the copy bar advanced while copying "
+                      f"({copy_percents[0]}% → {copy_percents[-1]}%, "
+                      f"{len(copy_percents)} samples)")
+            else:
+                ok = False
+                print(f"      FAIL  the copy bar never advanced: "
+                      f"{len(copy_percents)} samples, all {copy_percents[0]}% "
+                      "— from the outside this is indistinguishable from a hang")
+        else:
+            print(f"      note  the copy was caught {len(copy_percents)} time(s); "
+                  "too few samples to say the bar advanced")
 
         # -- screen 12: what it says is what was typed -----------------------
         print("      the Complete screen:")
@@ -807,7 +918,18 @@ def phase_walk(font):
         ok &= on_screen(w, h, rgb, "LUKS2 (passphrase set)", "encryption, with a passphrase")
         ok &= on_screen(w, h, rgb, HOSTNAME, f"the computer name that was typed ({HOSTNAME})")
         ok &= on_screen(w, h, rgb, USERNAME, f"the account that was typed ({USERNAME})")
-        ok &= on_screen(w, h, rgb, "(headless)", "headless, as arm64 must be")
+        # THE MODE ON THE COMPLETE SCREEN MUST BE THE MODE THAT WAS CHOSEN, and
+        # this line asked for "(headless)" unconditionally — right on arm64,
+        # which has no other option, and wrong on the first amd64 walk, which
+        # chose Desktop at screen 8 and was failed for the screen agreeing with
+        # it. Both directions are asserted now: a Desktop install that reported
+        # "(headless)" would be a mode silently dropped between screen 8 and the
+        # executor, which is the failure worth catching here.
+        if lab.arch.arch == "arm64":
+            ok &= on_screen(w, h, rgb, "(headless)", "headless, as arm64 must be")
+        else:
+            ok &= on_screen(w, h, rgb, "(desktop)",
+                            "desktop, which is what screen 8 was told")
         ok &= on_screen(w, h, rgb, "press ENTER to restart", "and it offers a restart")
 
         # NOT "NO OPERATING SYSTEM HAS BEEN COPIED". That sentence was Phase 2's

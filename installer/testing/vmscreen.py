@@ -66,8 +66,26 @@ class Qmp:
         """`endpoint` is a unix socket path, or ("tcp", host, port) when QEMU
         runs inside a container — a unix socket cannot cross Docker Desktop's
         file sharing, so vmarch publishes QMP on localhost TCP there."""
+        # A CONNECTION THAT SUCCEEDS IS NOT A QEMU THAT IS LISTENING, and on the
+        # container path the difference is the whole bug. `-p 127.0.0.1:P:P`
+        # makes Docker's userland proxy bind the port the moment the container
+        # starts, so connect() succeeds against the PROXY while QEMU inside is
+        # still coming up — and the proxy then closes the connection. The old
+        # loop retried only on connect errors, which never happened, so the
+        # first read returned EOF and the harness said
+        #
+        #     QMP closed
+        #
+        # naming the symptom and hiding the cause: `run-phase3.py walk` could
+        # not start on the x64 Windows host, on a QEMU that runs perfectly when
+        # the same command line is typed by hand. Measured 2026-08-28.
+        #
+        # So the GREETING is what the retry waits for, not the connect. A
+        # socket that closes before it arrives is a proxy that got there first
+        # and is retried like any other not-yet.
         deadline = time.time() + timeout
         while True:
+            self.sock = None
             try:
                 if isinstance(endpoint, str):
                     self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -75,13 +93,19 @@ class Qmp:
                 else:
                     self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     self.sock.connect((endpoint[1], endpoint[2]))
+                self.f = self.sock.makefile("rwb", buffering=0)
+                if not self.f.readline():   # the greeting, and it must arrive
+                    raise ConnectionResetError("closed before the QMP greeting")
                 break
             except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError, OSError):
+                if self.sock is not None:
+                    try:
+                        self.sock.close()
+                    except OSError:
+                        pass
                 if time.time() > deadline:
                     raise SystemExit(f"QMP endpoint never answered: {endpoint}")
                 time.sleep(0.2)
-        self.f = self.sock.makefile("rwb", buffering=0)
-        self._read()                        # the greeting
         self.cmd("qmp_capabilities")
 
     def _read(self):
@@ -485,8 +509,14 @@ class Lab:
         c.send(f"sudo mount -o ro -L {self.label} /mnt")
         c.settle()
 
-    def shoot(self, q, name, keep_ppm=False):
-        """Screendump, save a PNG, return the parsed pixels."""
+    def shoot(self, q, name, keep_ppm=False, quiet=False):
+        """Screendump, save a PNG, return the parsed pixels.
+
+        `quiet` suppresses the filename line only. It exists for callers that
+        sample the screen in a tight loop — watching a progress bar move is the
+        one thing this class can do that a serial line cannot, and a run that
+        printed a path per sample would drown the result it was gathering.
+        """
         ppm = os.path.join(self.shots, f"{name}.ppm")
         png = os.path.join(self.shots, f"{name}.png")
         q.screendump(ppm, guest_path=self.arch.path(ppm))
@@ -494,7 +524,8 @@ class Lab:
         write_png(png, w, h, rgb)
         if not keep_ppm:
             os.remove(ppm)
-        print(f"      {png}  ({w}x{h})")
+        if not quiet:
+            print(f"      {png}  ({w}x{h})")
         return w, h, rgb
 
     def reset(self):

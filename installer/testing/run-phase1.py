@@ -104,7 +104,7 @@ def fetch_release():
             f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
             "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
             "cp /mnt/sq/usr/lib/os7/release.json /out/; "
-            "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
+            "set +e; umount -d /mnt/sq; umount -d /mnt/iso; exit 0", stdout=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
         # `run` uses check=True, so a missing file surfaces as a traceback naming
         # a docker command — which says nothing about what is wrong. Say it.
@@ -151,7 +151,7 @@ def fetch_font():
         f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
         "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
         "cp /mnt/sq/usr/share/consolefonts/os7-fixedsys-16x32.psf.gz /out/; "
-        "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
+        "set +e; umount -d /mnt/sq; umount -d /mnt/iso; exit 0", stdout=subprocess.DEVNULL)
     if not os.path.exists(FONT):
         raise SystemExit(f"the ISO has no {os.path.basename(FONT)}")
 
