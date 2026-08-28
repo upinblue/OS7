@@ -210,9 +210,25 @@ all FAILED, and every failure taught something the plan now carries:
   refuses trailing garbage after a closing quote loudly instead of
   returning a silently wrong value.
 
-*(The verdict of the full rerun on the ISO carrying these fixes — install
-through timer — follows below; if this sentence survives into a commit, that
-run did not finish and this document says so.)*
+The rerun on the ISO carrying those fixes (1.0.0.135) came back **install
+PASS, boot PASS, cycle PASS, timer PASS** — the packaged machine installs,
+boots by TPM alone, clones, activates, rolls back, and its unattended check
+honours the whole exit-code contract — and `update` failed its LAST check
+with one more real defect, **#107**: `Update-OS7` applied 1.0.0.136
+end-to-end (booted it, ran the firstboot migrations — 60-fstab-esp-ordering
+among them — kept the channel through the conffile, kept -Keep's promise),
+and the closing `Restore-OS7` rolled back to the CYCLE's leftover clone
+instead of 1.0.0.135: "previous" was defined as newest-older, and with a
+third environment on the machine, age picked the experiment. "Previous" is
+now ancestry — the running environment's ZFS `origin`, a record, not a
+heuristic — with newest-older only as the fallback; and the harness check
+that had matched the old name anywhere in the output (it appears in the
+menu listing regardless of the decision) now requires the cmdlet's own
+step lines.
+
+*(The verdict of the full rerun on the ISO carrying ALL fixes — install
+through timer — follows below; if this sentence survives into a commit,
+that run did not finish and this document says so.)*
 
 ## 6. What was expressly NOT measured
 

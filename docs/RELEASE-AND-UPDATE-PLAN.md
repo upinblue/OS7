@@ -353,6 +353,18 @@ This is a direct consequence of D1 (GRUB forces `bpool`) and it does not exist
 under ZFSBootMenu. It is not a reason to reopen D1, but it is a reason for the BE
 primitives to treat the pair as one object and never expose the halves.
 
+**Built, and paid for twice (2026-08-28):** activation is transactional around
+the ESP stub rewrite, which is its point of no return. A failure BEFORE the
+rewrite takes every canmount flip back AND has never named the target in the
+running system's grubenv (that write happens after the rewrite — written
+before it, a failed activation half-activated the machine through a file the
+revert did not know about, BUILD-NOTES #105). A failure AFTER the rewrite
+leaves the activation standing, because reverting the flips under a repointed
+stub would build this section's pair deliberately. The other road to the pair
+was a boot-ordering race that buried the ESP under the ZFS /boot
+(BUILD-NOTES #104, closed) — fixed in fstab ordering, a firstboot migration,
+and a self-healing precondition in the activation.
+
 ### 4.4 `/var` — DECIDED (U6): split, not placed
 
 SETUP-PLAN §4.4 originally placed `var` and `var/log` **as children of the boot

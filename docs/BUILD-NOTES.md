@@ -5184,3 +5184,34 @@ starts with `\n` regardless, for images whose module predates the fix.
 The rule: a file format is defined by what will be APPENDED to it, not just
 by what is written into it. If the convention is "operators add KEY=value
 lines", the writer's last byte is load-bearing.
+
+## #107 — "previous" is ancestry, not age: Restore-OS7 rolled back to the experiment
+
+The second full gate run (2026-08-28): install, boot, cycle and timer all
+PASS, and update failed its LAST check — the machine rolled back from
+1.0.0.136 and came up in `os7_1.0.1.0_…`, the cycle phase's leftover clone,
+not in the 1.0.0.135 the update had been applied to. `Restore-OS7` without
+an argument picked "the newest boot environment older than the running one",
+which was the documented rule — and with a third environment on the machine
+the rule picked the experiment, because the experiment was newer than the
+environment the update actually came from. The one-word panic path landed a
+machine that meant "undo the update" on a clone with somebody's test package
+in it.
+
+The fix: "previous" is ANCESTRY first. The running environment's root
+dataset carries its `origin` — the snapshot of the dataset it was cloned
+from — and that is a record, not a heuristic. Restore-OS7 now asks ZFS for
+the origin, rolls back to that environment when it is present and complete,
+and falls back to newest-older only when there is no origin in the list (a
+promoted clone, or the original install).
+
+The harness half, same shape as #105's: the check had matched `old_be`
+ANYWHERE in Restore-OS7's output — and the name appeared in the menu-fragment
+listing even when the cmdlet chose the clone, so "Restore-OS7 chose
+1.0.0.135" printed ok one boot before 8/8 measured the truth. It now
+requires the cmdlet's own step lines: "rolling back to the previous boot
+environment: <old>" and "ESP stub(s) now point at <old>".
+
+The rule is #16's, met a fourth way: never accept a marker the output would
+carry anyway. A name in a listing is not a decision; the line where the
+program SAYS what it decided is.

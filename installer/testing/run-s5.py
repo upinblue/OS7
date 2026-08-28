@@ -1129,10 +1129,19 @@ def phase_update():
 
         text = ps(c, "Import-Module OS7; Restore-OS7 -Confirm:$false | "
                      "Format-List Name | Out-String", "roll back", timeout=900)
-        if old_be in body_of(text, "Out-String"):
+        # THE STEP LINES, not any occurrence of the name: with three
+        # environments on the machine (the cycle's leftover clone was still
+        # there), Restore-OS7 once chose the CLONE while this check matched
+        # old_be in the menu listing and said ok — and 8/8 then failed a boot
+        # later, pointing at the wrong suspect. The cmdlet must SAY it picked
+        # the old environment and that the stubs now name it.
+        rbb = body_of(text, "Out-String")
+        if (f"rolling back to the previous boot environment: {old_be}" in rbb
+                and f"ESP stub(s) now point at {old_be}" in rbb):
             print(f"      ok         Restore-OS7 chose {old_be}")
         else:
-            print("      FAIL       Restore-OS7 did not choose the previous environment")
+            print("      FAIL       Restore-OS7 did not choose the previous environment:")
+            print("        " + rbb.replace("\r", "").strip()[-800:])
             ok = False
         m.power_off()
 

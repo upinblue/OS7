@@ -2438,11 +2438,15 @@ function Restore-OS7 {
 		typing this has a machine that has just stopped working properly, and
 		asking them to name a dataset first is asking the wrong question.
 
-		WHAT "PREVIOUS" MEANS, and it is not "the one before it in the list":
-		the newest boot environment that is OLDER than the running one. On a
-		machine that has been updated three times and rolled back once, the list
-		is not in the order the machine used them — creation time is, and it is
-		what New-OS7BootEnvironmentName's stamp exists to make sortable.
+		WHAT "PREVIOUS" MEANS: the environment the running one was CLONED
+		FROM — ZFS's origin, which is a record, not a guess. Age ("the newest
+		boot environment older than the running one") is only the fallback,
+		for an environment whose origin is not in the list — a promoted clone,
+		or the original install. It used to be the rule, and the end-to-end
+		gate measured why it cannot be (2026-08-28): an experiment's leftover
+		clone sat between an update and the environment the update came from,
+		was newer than both, and the one-word panic path landed the machine on
+		the experiment.
 
 		IT DOES NOT REBOOT. Every cmdlet here has to work over serial and SSH
 		(§6), and an unannounced reboot down a serial line is how an admin loses
@@ -2473,12 +2477,38 @@ function Restore-OS7 {
 
 	if (-not $BootEnvironment) {
 		$active = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
-		$older = if ($active) {
-			$all | Where-Object { $_.Created -lt $active.Created -and $_.Complete }
-		}
-		else { $all | Where-Object Complete }
 
-		$pick = $older | Select-Object -Last 1
+		# "Previous" is ANCESTRY before it is age: the environment this one was
+		# CLONED FROM, which ZFS records as the origin. The newest-older rule
+		# below picked the wrong machine on the end-to-end gate (2026-08-28) —
+		# an experiment's leftover clone sat between the update and the
+		# environment it came from, was newer than both, and a rollback that
+		# meant "undo the update" landed on the experiment. The origin is not
+		# a heuristic; it is the recorded answer to "what did the update
+		# clone". Age remains the fallback for an environment with no origin
+		# in the list (a promoted clone, or the original install).
+		$pick = $null
+		if ($active) {
+			$originDs = try {
+				(Get-ZfsProperty -Name $active.RootDataset -Property origin |
+					Where-Object Name -eq 'origin' | Select-Object -First 1).Value
+			} catch { $null }
+			if ($originDs -and "$originDs" -match '@' ) {
+				$originName = ("$originDs" -split '@')[0].Split('/')[-1]
+				$pick = $all | Where-Object { $_.Name -eq $originName -and $_.Complete } |
+					Select-Object -First 1
+				if ($pick) {
+					Write-OS7Step "the running environment was cloned from $($pick.Name)"
+				}
+			}
+		}
+		if (-not $pick) {
+			$older = if ($active) {
+				$all | Where-Object { $_.Created -lt $active.Created -and $_.Complete }
+			}
+			else { $all | Where-Object Complete }
+			$pick = $older | Select-Object -Last 1
+		}
 		if (-not $pick) {
 			throw [System.InvalidOperationException]::new(
 				'no complete boot environment older than the running one. Name one with ' +
