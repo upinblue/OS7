@@ -5198,12 +5198,29 @@ environment the update actually came from. The one-word panic path landed a
 machine that meant "undo the update" on a clone with somebody's test package
 in it.
 
-The fix: "previous" is ANCESTRY first. The running environment's root
-dataset carries its `origin` — the snapshot of the dataset it was cloned
-from — and that is a record, not a heuristic. Restore-OS7 now asks ZFS for
-the origin, rolls back to that environment when it is present and complete,
-and falls back to newest-older only when there is no origin in the list (a
-promoted clone, or the original install).
+The first fix read the ZFS `origin` — the snapshot the running environment
+was cloned from, a record rather than a heuristic — **and the THIRD gate run
+measured why that record is not enough**: UL9's retention step `zfs
+promote`s every environment an update activates (nothing could ever be
+pruned otherwise), and promote ROTATES the ancestry. Measured on the
+machine afterwards:
+
+    os7_1.0.0.137  origin: -                                    (the update, promoted)
+    os7_1.0.0.136  origin: os7_1.0.0.137@os7_1.0.0.137_…        (the PREDECESSOR, pointing FORWARD)
+    os7_1.0.1.0    origin: os7_1.0.0.137@os7_1.0.1.0_…          (a SIBLING clone, moved too)
+
+The origin of the updated environment is `-`, its predecessor's origin
+points AT it, and even an unrelated sibling's origin was re-parented to the
+promoted dataset. After one promote, `origin` no longer answers "what did
+this come from" for anything on the machine.
+
+So "previous" is now TWO records, in order: **`org.os7:previous`**, a user
+property Update-OS7 writes on the environment it activates, before the
+promote — a fact promote cannot rotate; then the ZFS origin **guarded by
+age** (a genuine predecessor is older than the running environment; a
+promote-rotated origin points at something newer, and without the guard a
+machine rolled back once would "roll back" FORWARD), for environments
+cloned by hand. Newest-older stays as the last resort only.
 
 The harness half, same shape as #105's: the check had matched `old_be`
 ANYWHERE in Restore-OS7's output — and the name appeared in the menu-fragment

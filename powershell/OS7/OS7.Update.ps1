@@ -2078,6 +2078,21 @@ function Update-OS7 {
 		Set-OS7BootEnvironment -Name $beName -Confirm:$false | Out-Null
 		$plan.Activated = $true
 
+		# WHAT THIS UPDATE CAME FROM, recorded as a fact — because the promote
+		# below ROTATES the ZFS ancestry: after it the new environment's origin
+		# is '-', the OLD one's origin points AT the new, and even sibling
+		# clones' origins move (all measured, BUILD-NOTES #107). Restore-OS7
+		# reads this property first; without it, "previous" degraded to an age
+		# heuristic that once rolled a machine back onto an experiment's
+		# leftover clone instead of the release the update was applied to.
+		try {
+			Set-ZfsProperty -Name "$($script:OS7RootParent)/$beName" `
+				-PropertyName 'org.os7:previous' -Value $fromBe.Name -Confirm:$false | Out-Null
+		}
+		catch {
+			Write-OS7Step "note: could not record the previous environment: $($_.Exception.Message)"
+		}
+
 		# ---- UL9's retention ----------------------------------------------
 		#
 		# A boot environment per release with no prune rule is how these systems

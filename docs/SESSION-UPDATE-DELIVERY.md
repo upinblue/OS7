@@ -219,12 +219,20 @@ end-to-end (booted it, ran the firstboot migrations — 60-fstab-esp-ordering
 among them — kept the channel through the conffile, kept -Keep's promise),
 and the closing `Restore-OS7` rolled back to the CYCLE's leftover clone
 instead of 1.0.0.135: "previous" was defined as newest-older, and with a
-third environment on the machine, age picked the experiment. "Previous" is
-now ancestry — the running environment's ZFS `origin`, a record, not a
-heuristic — with newest-older only as the fallback; and the harness check
-that had matched the old name anywhere in the output (it appears in the
-menu listing regardless of the decision) now requires the cmdlet's own
-step lines.
+third environment on the machine, age picked the experiment. The first
+correction read the ZFS `origin` instead — and the THIRD gate run measured
+why that record is not enough either: UL9's `zfs promote` (without which
+nothing could ever be pruned) rotates the ancestry — the updated
+environment's origin becomes `-`, its predecessor's origin points FORWARD
+at it, and even an unrelated sibling clone's origin was re-parented, all
+read off the machine. "Previous" is therefore two records in order:
+`org.os7:previous`, a user property Update-OS7 now writes on the
+environment it activates before the promote — a fact promote cannot
+rotate — then the ZFS origin guarded by age, for environments cloned by
+hand; newest-older stays as the last resort. The harness check that had
+matched the old name anywhere in the output (it appears in the menu
+listing regardless of the decision) now requires the cmdlet's own step
+lines.
 
 *(The verdict of the full rerun on the ISO carrying ALL fixes — install
 through timer — follows below; if this sentence survives into a commit,

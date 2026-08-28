@@ -2438,15 +2438,17 @@ function Restore-OS7 {
 		typing this has a machine that has just stopped working properly, and
 		asking them to name a dataset first is asking the wrong question.
 
-		WHAT "PREVIOUS" MEANS: the environment the running one was CLONED
-		FROM — ZFS's origin, which is a record, not a guess. Age ("the newest
-		boot environment older than the running one") is only the fallback,
-		for an environment whose origin is not in the list — a promoted clone,
-		or the original install. It used to be the rule, and the end-to-end
-		gate measured why it cannot be (2026-08-28): an experiment's leftover
-		clone sat between an update and the environment the update came from,
-		was newer than both, and the one-word panic path landed the machine on
-		the experiment.
+		WHAT "PREVIOUS" MEANS: ancestry, read from two records in order — the
+		`org.os7:previous` property Update-OS7 writes on the environment it
+		activates (UL9's promote rotates ZFS origins, so a property is the
+		record that survives), then the ZFS origin guarded by age, for
+		environments cloned by hand. Age alone ("the newest boot environment
+		older than the running one") is only the last resort. It used to be
+		the rule, and the end-to-end gate measured why it cannot be
+		(2026-08-28, BUILD-NOTES #107): an experiment's leftover clone sat
+		between an update and the environment the update came from, was newer
+		than both, and the one-word panic path landed the machine on the
+		experiment.
 
 		IT DOES NOT REBOOT. Every cmdlet here has to work over serial and SSH
 		(§6), and an unannounced reboot down a serial line is how an admin loses
@@ -2478,24 +2480,50 @@ function Restore-OS7 {
 	if (-not $BootEnvironment) {
 		$active = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
 
-		# "Previous" is ANCESTRY before it is age: the environment this one was
-		# CLONED FROM, which ZFS records as the origin. The newest-older rule
-		# below picked the wrong machine on the end-to-end gate (2026-08-28) —
-		# an experiment's leftover clone sat between the update and the
-		# environment it came from, was newer than both, and a rollback that
-		# meant "undo the update" landed on the experiment. The origin is not
-		# a heuristic; it is the recorded answer to "what did the update
-		# clone". Age remains the fallback for an environment with no origin
-		# in the list (a promoted clone, or the original install).
+		# "Previous" is ANCESTRY before it is age — and ancestry is read from
+		# TWO records, in order, because ZFS's own record does not survive the
+		# update train's prune step:
+		#
+		#   1. `org.os7:previous`, the user property Update-OS7 writes on the
+		#      environment it activates. It exists because UL9's `zfs promote`
+		#      ROTATES origins: after it the new environment's origin is '-',
+		#      the old one's origin points AT the new, and even sibling
+		#      clones' origins move to the promoted dataset (all measured,
+		#      BUILD-NOTES #107). A property is a fact promote cannot rotate.
+		#   2. The ZFS origin — for environments made outside the update train
+		#      (New-OS7BootEnvironment by hand) — GUARDED BY AGE: a genuine
+		#      predecessor is older than the running environment, while a
+		#      promote-rotated origin points at something newer. Without the
+		#      guard, a machine rolled back once would "roll back" FORWARD.
+		#
+		# The newest-older rule is only the last resort. It picked the wrong
+		# machine on the end-to-end gate (2026-08-28): an experiment's
+		# leftover clone sat between the update and the environment it came
+		# from, was newer than both, and a rollback that meant "undo the
+		# update" landed on the experiment.
 		$pick = $null
 		if ($active) {
+			$recorded = try {
+				(Get-ZfsProperty -Name $active.RootDataset -Property 'org.os7:previous' |
+					Where-Object Name -eq 'org.os7:previous' | Select-Object -First 1).Value
+			} catch { $null }
+			if ($recorded -and "$recorded" -ne '-') {
+				$pick = $all | Where-Object { $_.Name -eq "$recorded" -and $_.Complete } |
+					Select-Object -First 1
+				if ($pick) {
+					Write-OS7Step "the update that made this environment recorded its previous: $($pick.Name)"
+				}
+			}
+		}
+		if (-not $pick -and $active) {
 			$originDs = try {
 				(Get-ZfsProperty -Name $active.RootDataset -Property origin |
 					Where-Object Name -eq 'origin' | Select-Object -First 1).Value
 			} catch { $null }
 			if ($originDs -and "$originDs" -match '@' ) {
 				$originName = ("$originDs" -split '@')[0].Split('/')[-1]
-				$pick = $all | Where-Object { $_.Name -eq $originName -and $_.Complete } |
+				$pick = $all | Where-Object { $_.Name -eq $originName -and $_.Complete -and
+						$_.Created -lt $active.Created } |
 					Select-Object -First 1
 				if ($pick) {
 					Write-OS7Step "the running environment was cloned from $($pick.Name)"
