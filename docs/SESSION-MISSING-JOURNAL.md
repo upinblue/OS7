@@ -199,11 +199,27 @@ are gone. The boots before the fix left ~8 MiB of shadowed journal on the BE
 root dataset; it stays there, inert and invisible, and is noted rather than
 cleaned (§6).
 
-**The shipped form's own gate** — an ISO built from this tree, check-image.py
-green on it (including the new drop-in check), and the first boot of a machine
-installed from it showing a journal with nothing done by hand — was running
-when this was committed; its result lands in the commit that follows. If no
-such commit follows, that gate did not finish and this sentence says so.
+**The shipped form's own gate, run to the end.** An amd64 ISO was built from
+this tree (OS7-1.0.0.136, this worktree's out/), `check-image.py` came back
+green on it — 105 ok, 0 FAIL, among them the new "the journal flush is
+ordered after zfs-mount.service (#108)", read out of the shipped squashfs —
+and a
+machine was installed from it and booted. Its FIRST boot, nothing done by
+hand (machine-id `afad2646…`):
+
+* `journalctl --header`: State ONLINE at the visible
+  `/var/log/journal/<id>/system.journal`; `journalctl -b` returns entries.
+* Order, monotonic µs: journald 9 643 666 → zfs-load-module 10 690 583 →
+  zfs-import-cache 10 878 656 → **zfs-mount 10 954 930 → journal-flush
+  11 098 096** → tmpfiles-setup 11 819 592. The shipped /usr/lib drop-in did
+  it — this machine never carried the /etc twin.
+* journald's descriptors: system.journal AND user-1000.journal, both on
+  `rpool/DATA/log`.
+* Under a bind mount of `/`: the boot environment's root dataset has **no
+  /var/log/journal at all** — the wrong dataset was never written, not once.
+
+The machine that proves the fix and the machine that measured the defect are
+two fresh installs of the same lab, five boots apart.
 
 ## 6. What was expressly NOT done
 
