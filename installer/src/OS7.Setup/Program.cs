@@ -1194,6 +1194,68 @@ internal static class Program
                   "log: an ordinary line is in both transcripts",
                   "redaction is by mark, not by pattern");
 
+            // THE COPY'S PROGRESS PARSER, against RECORDED unsquashfs output.
+            //
+            // Screen 10's bar read 0% for the whole copy and then jumped,
+            // because the reader counted lines beginning "create" and
+            // unsquashfs -i does not emit any. Recorded from the shipped
+            // unsquashfs 4.7.5 unpacking the 1.0.0.148 image: of 165 671 lines,
+            // 165 660 were bare destination paths and SEVEN began with "create"
+            // — the summary block at the end. A frozen bar cannot be told from
+            // a hang by the person watching it, which is what this cost.
+            //
+            // Driven here rather than in a VM because the parser is pure, and
+            // hook 0080 runs this inside the chroot: a format change fails the
+            // ISO BUILD instead of an operator's afternoon.
+            const string Unsq = """
+                Parallel unsquashfs: Using 16 processors
+                149226 inodes (163030 blocks) to write
+
+                /target
+                /target/bin
+                /target/boot/config-7.0.0-30-generic
+                /target/usr/share/doc/libbrotli1/copyright
+                /target/var/tmp
+
+                created 121341 files
+                created 16434 directories
+                created 27747 symlinks
+                created 130 hardlinks
+                """;
+
+            int unsqTotal = 0, unsqDone = 0, unsqLegacy = 0;
+            string lastSeen = "";
+            foreach (string l in Unsq.ReplaceLineEndings("\n").Split('\n'))
+            {
+                if (unsqTotal == 0 && Steps.UnsquashfsStep.TryParseTotal(l, out int t))
+                { unsqTotal = t; continue; }
+                if (l.StartsWith("create", StringComparison.Ordinal)) unsqLegacy++;
+                if (Steps.UnsquashfsStep.TryParseEntry(l, "/target", out string rel))
+                { unsqDone++; lastSeen = rel; }
+            }
+
+            Check(unsqTotal == 149226,
+                  "copy: the \"N inodes … to write\" line gives the bar a denominator",
+                  $"{unsqTotal}");
+            Check(unsqDone == 5,
+                  "copy: every destination path counts as one entry",
+                  $"{unsqDone} of 5 path lines");
+            Check(lastSeen == "/var/tmp",
+                  "copy: the filename under the bar is relative to the target root",
+                  lastSeen);
+            Check(unsqLegacy == 4 && unsqDone > unsqLegacy,
+                  "copy: the OLD \"create\" rule matched only the summary block",
+                  $"{unsqLegacy} summary lines, and they are not entries");
+            Check(!Steps.UnsquashfsStep.TryParseEntry("created 121341 files", "/target", out _)
+                  && !Steps.UnsquashfsStep.TryParseEntry(
+                        "Parallel unsquashfs: Using 16 processors", "/target", out _),
+                  "copy: neither the header nor the summary is counted as a file");
+            Check(Steps.UnsquashfsStep.TryParseEntry("/target", "/target/", out string rootRel)
+                  && rootRel == "/",
+                  "copy: the target root itself is an entry, and a trailing slash is tolerated");
+            Check(!Steps.UnsquashfsStep.TryParseEntry("/targetish/bin", "/target", out _),
+                  "copy: a path that merely STARTS with the root's letters is not under it");
+
             // The scan parser, against a captured `iw scan` rather than against
             // a radio. Strongest BSS wins, 802.1X beats PSK on a network that
             // advertises both, and a NUL-padded hidden SSID is not offered as a
