@@ -244,6 +244,27 @@ chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/p
 echo "EXIT=$rc" >> /tmp/systemd.txt
 emit systemd.selftest  bash -c 'tail -30 /tmp/systemd.txt'
 
+# THE Directory MODULE'S SELF-TEST. Offline by construction: everything it
+# checks sits ABOVE the module's one .NET seam, so no socket is opened, no bind
+# is attempted and no TLS is negotiated -- which is what lets it run in a chroot
+# with no network and no domain controller.
+#
+# This chroot is the environment the module was SHAPED for, not merely a
+# convenient one. BUILD-NOTES #38/#82: a cmdlet that has to autoload by name
+# does not resolve here, and `Add-Type -AssemblyName ...` is
+# Microsoft.PowerShell.Utility. The module therefore never calls Add-Type and
+# reaches System.DirectoryServices.Protocols as a bare type literal, because
+# the assembly ships beside pwsh. If that ever stops being true, the module
+# loads and the first LDAP type reference fails -- and this is the only check
+# in the repository that asks the question in the chroot where it bites.
+#
+# The case it exists for is BUILD-NOTES #94: SessionOptions.ProtocolVersion
+# reads back 2. A connection that binds without setting 3 speaks LDAPv2, which
+# Active Directory refuses, and the refusal presents as a bad password.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Directory/Directory.psd1 -Force; Test-DirectoryModule' >/tmp/directory.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/directory.txt
+emit directory.selftest bash -c 'tail -30 /tmp/directory.txt'
+
 # The three facts about backups that are properties of the IMAGE rather than of
 # any program: the two binaries are there, the defaults file OS/7 reads its
 # legal-key list out of is there, and no policy has been baked in.
@@ -769,6 +790,40 @@ def main() -> None:
         check("EXIT=0" in st,
               "the Systemd module parses the systemctl and journalctl output it ships with",
               sdetail)
+
+    # -- the Directory module, asked to check itself ------------------------
+    #
+    # Read like the Net, Time and Systemd ones, three outcomes included: an
+    # image built before this module existed has no Directory directory, and
+    # "not on the image" must not be reported as "this chroot could not
+    # answer". The distinction is worth more here than in the three above,
+    # because the Directory module is the newest thing build.sh stages and a
+    # staging that missed it is the likeliest of the two causes.
+    dt = img.get("directory.selftest", "")
+    dran = "Directory self-test:" in dt
+    dabsent = ("no valid module file" in dt) or ("was not loaded" in dt)
+    if dabsent:
+        check(False, "the Directory module is on the image",
+              "not at /usr/local/share/powershell/Modules/Directory -- an ISO "
+              "built before the LDAP layer, or build.sh did not stage it")
+    elif not dran:
+        print("      note  the Directory self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine, or "
+              "./installer/testing/check-directory-logic.py against the source tree.")
+    else:
+        dsummary = next((l.strip() for l in dt.splitlines()
+                         if l.strip().startswith("Directory self-test:")
+                         and "passed" in l), "")
+        # The three blocks above fall back to a 'FAILED:' line. This module
+        # does not write one -- it prints `  FAIL  <case>` per case and lists
+        # them again under the summary -- so copying that marker here would
+        # have produced a fallback that can never fire, which is the shape of
+        # defect this file exists to catch rather than to contain.
+        ddetail = dsummary or next(
+            (l.strip() for l in dt.splitlines() if l.strip().startswith("FAIL  ")), "")
+        check("EXIT=0" in dt,
+              "the Directory module escapes, decodes and pages the LDAP it ships with",
+              ddetail)
 
     # -- the backup layer ---------------------------------------------------
     #

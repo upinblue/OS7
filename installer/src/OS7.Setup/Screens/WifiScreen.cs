@@ -288,7 +288,8 @@ internal sealed class WifiScreen : Screen
                 // on a network you have not joined cannot be tested.
                 if (_plan.Network.Method == NetworkMethod.Static)
                     return Transition.To(new StaticScreen(_plan));
-                return Transition.To(ExecuteScreen.Start(_plan));
+                // 9D next, through its own Entry — the same door 9 and 9S use.
+                return Transition.To(DomainScreen.Entry(_plan));
 
             default:
                 if (_field == Field.List)

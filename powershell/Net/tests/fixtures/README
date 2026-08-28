@@ -12,6 +12,41 @@ a fixture that tests whoever wrote it:
     ip-route6-empty.json     ip -j -6 route show
     rfkill-unavailable.json  rfkill -J        (EXIT CODE 1 — see below)
 
+The two `dig-srv-*.json` files came from somewhere else, on the same day and the
+same host: a REAL Active Directory domain controller — Samba 4.23.6, realm
+`OS7.TEST`, the container `installer/testing/Dockerfile.ad-dc` builds — with
+`dig` from bind9-dnsutils inside it. The verbatim command line is in each file.
+
+    dig-srv-ldap.json        dig +nocmd +noall +comments +answer @127.0.0.1 \
+                               SRV _ldap._tcp.dc._msdcs.os7.test
+    dig-srv-none.json        dig +nocmd +noall +comments +answer @127.0.0.1 \
+                               SRV _ldap._tcp.dc._msdcs.nosuchdomain.os7.test
+
+THESE TWO ARE AN ENVELOPE, NOT RAW STDOUT, and the difference is deliberate.
+`{ command, exitcode, stdout, stderr }` — because dig's exit code and the
+emptiness of its stderr are both part of what is being recorded, and the file
+that could not carry an exit code is the paragraph at the bottom of this README.
+The `command` field is in the file so that a fixture and its provenance cannot
+drift apart while this README is edited by hand.
+
+It has a second effect worth naming, because it was not the reason and is the
+larger one. This directory is NOT in the `-text` list in `.gitattributes` — the
+Zfs and Directory fixtures are, and Net's have never been — so `* text=auto
+eol=lf` decides these files' line endings on every checkout. An envelope keeps
+the recorded bytes inside JSON strings as `\n` and `\t`, where no end-of-line
+filter can reach them. A raw dig capture in this directory would be a
+measurement an unrelated setting is allowed to edit.
+
+FOUR OF THE FIVE RECORDS IN `dig-srv-ldap.json` WERE PLANTED, and saying so is
+the point of this section. A one-DC lab answers with one SRV record, and a sort
+that has only ever seen one record has not been tested (BUILD-NOTES #89), so
+`dc2`, `dc3`, `dc5` and `branch-dc` were added to the DC's own DNS with
+`samba-tool dns add` before the capture, at priorities 0, 5, 100 and 10 and
+weights 20, 100, 0 and 50, and they were added in an order that is NOT the order
+they must come back in. The DC then answered for real: the format, the column
+padding, the TTLs and the record order on the wire are Samba's, not anybody's
+idea of what Samba would say.
+
 WHAT THEY COVER, AND WHAT THEY DO NOT.
 
 A container's network namespace is Docker's, so these carry a loopback and one
@@ -27,6 +62,39 @@ self-test says which branch each case exercises:
     reaching for a missing one into a terminating error
   * an empty table (`[]`), which must read as "no routes" and not as an error
 
+The dig pair covers a multi-record answer and the answer that means "there are
+none", which are two different facts that print almost the same:
+
+  * FIVE SRV records, arriving in the order dc1 (0/100), dc5 (100/0), dc2
+    (0/20), branch-dc (10/50), dc3 (5/100) — priority/weight — which is not the
+    order they must come back in. The numbers are chosen so that a STRING sort
+    and a NUMERIC one disagree in BOTH fields: "10" sorts before "5", and "20"
+    sorts before "100" when the heavier weight has to win. A two-record fixture
+    with priorities 0 and 1 would have caught neither.
+  * one record on port 3268 rather than 389, so a parser that hardcoded the
+    LDAP port fails here instead of passing
+  * NXDOMAIN, which is an ANSWER — the name has no records — and which dig
+    reports with EXIT CODE 0 and no output at all under `+short`
+
+Three more cases live in the self-test rather than here, and each is labelled
+where it sits:
+
+  * A SINGLE-record answer, verbatim from `SRV _ldap._tcp.pdc._msdcs.os7.test`
+    on the same DC in the same session — the PDC record, which a domain has
+    exactly one of. It is inline because it also carries the other spelling of
+    an answer line: that owner name is long enough that dig separates it from
+    the TTL with a TAB, where the shorter name in `dig-srv-ldap.json` gets
+    SPACES.
+  * NOTHING ANSWERING: `+time=1 +tries=1 @127.0.0.99`, which exits **9** and
+    writes `;; no servers could be reached` to STDOUT, not stderr — measured,
+    and the reason `Resolve-NetSrvRecord` reads stdout for its Reason.
+  * SERVFAIL WITH EXIT 0, which is the case an exit-code reader gets wrong.
+    The header text in the self-test is written out rather than captured, but
+    the claim under it is not: a twenty-line UDP responder answering one query
+    with RCODE 2 and one with RCODE 5 established that a real dig exits **0**
+    for both SERVFAIL and REFUSED and puts the status in the `+comments`
+    header and nowhere else.
+
 WHAT IS STILL OWED, and must come from real hardware rather than being written
 by hand here:
 
@@ -40,6 +108,17 @@ by hand here:
     typing fields nobody has measured.
   * A link with NO carrier, and one that is administratively down.
   * A machine with more than one default route.
+  * SRV records from a WINDOWS SERVER domain controller. Samba answers the DNS
+    protocol, so the wire format is real, but the record set a real forest
+    publishes — site-aware `_ldap._tcp.<site>._sites.dc._msdcs`, `_gc._tcp`,
+    the `DomainDnsZones` names — has never been seen here. Nothing in the
+    parser depends on which names exist; what is untested is whether a domain
+    of that shape answers in a form this parser has not met.
+  * A SERVFAIL from a REAL resolver failing for a real reason. dig's behaviour
+    on one is measured (exit 0, status in the header); what a recursive
+    resolver that has genuinely lost its upstream prints alongside it is not,
+    and if it ever prints something this parser reads as an answer, nothing
+    here would notice.
 
 `rfkill-unavailable.json` IS THE INTERESTING ONE. `rfkill -J` exits **1** when
 /dev/rfkill is absent and still prints a syntactically valid, EMPTY device list.

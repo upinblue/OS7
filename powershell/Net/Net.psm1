@@ -1053,6 +1053,210 @@ function Wait-NetLinkAddress {
 }
 
 # ---------------------------------------------------------------------------
+# Asking the RESOLVER, which is a THIRD question and is merged with neither
+#
+# What the kernel has, what netplan was told, and what a nameserver answers are
+# three different facts about one machine, and P6's rule is that they are never
+# collapsed into one field. A machine whose netplan names a resolver it cannot
+# reach reports the first two perfectly.
+#
+# THE TOOL IS NOT GUARANTEED TO BE INSTALLED, and that is why this cmdlet has a
+# `Known` flag rather than just returning a list. `dig` comes from
+# `bind9-dnsutils`, and it is on the shipped amd64 image BY ACCIDENT — measured
+# 2026-08-27 out of the packages manifest lifted from that ISO's squashfs: it
+# arrived with live-build's `--mode ubuntu` desktop task, which arm64, being
+# server-only, never installs. `os7-base.list.chroot` names it as of the same
+# day, which settles it for images built from that list and for nothing else.
+# No such image exists yet, and this module also runs on a machine that
+# apt-installed `os7-module`, inside a container, and against every ISO already
+# written. A generic layer does not get to assume a package, so "there is no
+# `dig` here" is an ordinary answer, spelled the way Get-NetRadio spells an
+# unanswerable question.
+# ---------------------------------------------------------------------------
+
+function Resolve-NetSrvRecord {
+	<#
+	.SYNOPSIS
+		The SRV records for a name — and whether the resolver could be asked at
+		all.
+
+	.DESCRIPTION
+		[System.Net.Dns] CANNOT QUERY SRV, AND `Resolve-DnsName` DOES NOT EXIST
+		ON LINUX POWERSHELL. There is no in-process route to an SRV record on
+		this platform, which is the whole reason a network module has to shell
+		out for one. `_ldap._tcp.dc._msdcs.<domain>` is how every Active
+		Directory client finds a domain controller, and DNS is this module's
+		subsystem rather than the caller's (P2).
+
+		RETURNS ONE OBJECT WITH A `Known` FLAG — the Get-NetRadio shape, for the
+		Get-NetRadio reason. An empty `Records` list means "this name has no SRV
+		records". It must never ALSO mean "dig is not installed" or "the
+		nameserver did not answer", because the layer above reads an empty list
+		as "this domain has no domain controllers" and would report a healthy
+		domain as absent.
+
+		`Known` IS DECIDED BY THE DNS STATUS IN THE ANSWER, NOT BY dig's EXIT
+		CODE. Measured 2026-08-27 against the Samba DC in
+		installer/testing/Dockerfile.ad-dc: dig exits **0** for NXDOMAIN, and it
+		exits 0 for SERVFAIL as well — under `+short` both print nothing at all.
+		An exit code therefore cannot tell "there are no records" from "the
+		resolver failed", so `+comments` is asked for and the status is read out
+		of the answer itself. A diagnostic must not depend on the subsystem it
+		is diagnosing, and an exit code is a diagnostic.
+
+		Measured in the same session, and the second reason nothing here trusts
+		the plumbing: when no nameserver replies dig writes `;; no servers could
+		be reached` to **stdout**, not stderr, and exits 9. A caller that looked
+		in StdErr for the reason would find an empty string and report nothing
+		wrong.
+
+		`Records` IS SORTED RFC 2782's WAY — lowest priority first, and heavier
+		weight first inside a priority — over PARSED integers. See the sort
+		below for why that sentence has the word "parsed" in it.
+
+	.PARAMETER Name
+		The owner name, e.g. `_ldap._tcp.dc._msdcs.corp.example.com`. Nothing
+		here knows what an SRV name means: the `_service._proto` convention
+		belongs to whoever is asking, and this module does not enforce it.
+
+	.PARAMETER Server
+		Ask this nameserver rather than the ones in /etc/resolv.conf. An AD
+		client wants the domain's own DNS, which is not necessarily the one this
+		machine was handed by DHCP.
+
+	.PARAMETER Tool
+		Only the self-test passes this. It exists so the "the tool is not
+		installed" branch can be checked by ACTUALLY NOT HAVING THE TOOL — a
+		real Get-Command against a name nothing provides — rather than by a fake
+		reporting that something is missing.
+
+	.EXAMPLE
+		$srv = Resolve-NetSrvRecord -Name '_ldap._tcp.dc._msdcs.corp.example.com'
+		if (-not $srv.Known) { "cannot tell: $($srv.Reason)" }
+		else { $srv.Records | ForEach-Object { "$($_.Target):$($_.Port)" } }
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Name,
+		[string]$Server,
+		# Only the self-test passes this — see .PARAMETER Tool above.
+		[string]$Tool = 'dig'
+	)
+
+	# THE PRESENCE CHECK IS SKIPPED WHEN THE SEAM IS INSTALLED, because then the
+	# override IS the program and there is nothing on disk to look for. Without
+	# this, every fixture case in Test-NetModule would take the "dig is absent"
+	# branch on any host that has no `dig` — which includes live-build's chroot
+	# at the point hook 0060 runs, and every developer's machine — and the
+	# parser would go silently unchecked in the one place check-image.py runs
+	# this module against the shipped copy. Measured: with /usr/bin/dig moved
+	# aside, all 68 checks still pass.
+	if (-not $script:NetCommandOverride) {
+		if (-not (Get-Command $Tool -CommandType Application -ErrorAction SilentlyContinue)) {
+			return [pscustomobject]@{
+				Name    = $Name
+				Known   = $false
+				Status  = $null
+				Reason  = "$Tool is not installed; SRV lookup needs bind9-dnsutils"
+				Records = @()
+			}
+		}
+	}
+
+	$argv = @('+nocmd', '+noall', '+comments', '+answer')
+	# PARENTHESISED. `@('x', '@' + $Server)` is ONE element, not two —
+	# BUILD-NOTES #91 — and an argument list is where that costs the most.
+	if ($Server) { $argv += ('@' + $Server) }
+	$argv += @('SRV', $Name)
+
+	# dig's own retry and timeout defaults are left alone. They are the
+	# resolver's policy, not this module's, and inventing a shorter one here
+	# would make a slow-but-working nameserver look like an absent one.
+	$r = Invoke-NetCommand -Command $Tool -Arguments $argv
+
+	# The status line, verbatim from a run against the Samba DC:
+	#
+	#   ;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 16489
+	#
+	# This is the only thing in the output that says whether the question was
+	# answered, which is why `+comments` is asked for at all.
+	$status = $null
+	$lines = $r.StdOut -split "`r?`n"
+	foreach ($line in $lines) {
+		if ($line -match ';;\s+->>HEADER<<-.*status:\s*([A-Z]+)') {
+			$status = $Matches[1]
+			break
+		}
+	}
+
+	# An ANSWER SECTION line, and the two forms it comes in — both measured on
+	# the same DC in the same session:
+	#
+	#   _ldap._tcp.dc._msdcs.os7.test. 900 IN<TAB>SRV<TAB>0 100 389 dc1.os7.test.
+	#   _ldap._tcp.pdc._msdcs.os7.test.<TAB>900 IN<TAB>SRV<TAB>0 100 389 dc1…
+	#
+	# dig pads the owner name to a column: a short name gets SPACES and a long
+	# one gets a TAB. A parser that split on tabs would work on one of those
+	# names and not the other, which is the kind of defect that shows up as
+	# "this domain has no domain controllers".
+	#
+	# `IN\s+SRV` is required rather than assumed. dig chases CNAMEs and puts
+	# them in the same section, and a line that is not an SRV record must not be
+	# read as one.
+	$rows = [System.Collections.Generic.List[object]]::new()
+	foreach ($line in $lines) {
+		if ($line -match '^\S+\s+(\d+)\s+IN\s+SRV\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*$') {
+			# The target arrives fully qualified, with the root label on it:
+			# `dc1.os7.test.`. It is dropped here because everything downstream
+			# is a host to connect to, and the alternative is every caller
+			# stripping it. Nothing else about the name is touched.
+			$target = $Matches[5] -replace '\.$', ''
+			$rows.Add([pscustomobject]@{
+					Priority = [int]$Matches[2]
+					Weight   = [int]$Matches[3]
+					Port     = [int]$Matches[4]
+					Target   = $target
+					Ttl      = [int]$Matches[1]
+				})
+		}
+	}
+
+	# RFC 2782's order, AND IT IS A NUMERIC ONE. Sorting the strings dig printed
+	# puts priority 10 ahead of priority 5 and weight 20 ahead of weight 100 —
+	# BUILD-NOTES #89 — so the fields are parsed to [int] above and the sort runs
+	# over those. The recorded fixture arrives out of order on purpose and
+	# carries a 5, a 10 and a 100 for exactly this reason: a sort that has only
+	# ever seen one record has not been tested.
+	$sorted = @($rows | Sort-Object @{ Expression = 'Priority' },
+		@{ Expression = 'Weight'; Descending = $true })
+
+	# NOERROR AND NXDOMAIN ARE BOTH ANSWERS: "here are the records" and "there
+	# is no such name". SERVFAIL and REFUSED are not, and neither is output with
+	# no status line in it at all — which is what an unreachable nameserver
+	# looks like.
+	$answered = ($status -eq 'NOERROR' -or $status -eq 'NXDOMAIN')
+	$reason = $null
+	if (-not $answered) {
+		$reason = if ($status) { "the resolver answered $status" }
+		else {
+			# STDOUT FIRST, because that is where dig writes this (measured).
+			$said = (($r.StdOut + ' ' + $r.StdErr) -replace '\s+', ' ').Trim()
+			if ($said) { $said } else { "$Tool exited $($r.ExitCode) and said nothing" }
+		}
+	}
+
+	[pscustomobject]@{
+		Name    = $Name
+		Known   = $answered
+		Status  = $status
+		Reason  = $reason
+		# #92: forced at the boundary. A one-record answer is a LIST of one
+		# here, not a bare object whose [0] indexes into a property name.
+		Records = @($sorted)
+	}
+}
+
+# ---------------------------------------------------------------------------
 # The self-test
 # ---------------------------------------------------------------------------
 
@@ -1327,6 +1531,208 @@ function Test-NetModule {
 	}
 
 	# -----------------------------------------------------------------------
+	# The resolver, replayed against RECORDED REAL `dig` OUTPUT.
+	#
+	# FIVE CASES AND NOT ONE, because four of them are ways of being wrong that
+	# a single happy-path test cannot see:
+	#
+	#   a MULTI-record answer   a sort that has only ever seen one record has
+	#                           not been tested (#89), so the fixture carries
+	#                           priorities 0, 5, 10 and 100 and ARRIVES OUT OF
+	#                           ORDER
+	#   a SINGLE-record answer  #92 — one record must still be a LIST of one
+	#   NXDOMAIN                an ANSWER, and `Known` must stay $true for it
+	#   SERVFAIL with EXIT 0    not an answer, and the exit code says otherwise
+	#   no `dig` on the machine the ordinary case on arm64, and it must not read
+	#                           as "this domain has no domain controllers"
+	# -----------------------------------------------------------------------
+	[Console]::Error.WriteLine("  the resolver, against recorded dig output")
+
+	$digFixture = Join-Path $FixturePath 'dig-srv-ldap.json'
+	if (-not (Test-Path -LiteralPath $digFixture)) {
+		# A SKIP is not a pass, for the reason above the `ip` fixtures.
+		Check $false 'the recorded dig captures are shipped beside the module' $digFixture
+	}
+	else {
+		# THESE TWO FIXTURES ARE AN ENVELOPE, not raw stdout like the ip and
+		# rfkill ones, and the reason is written in their README: dig's exit
+		# code is part of the evidence — 9 when nothing answered — and a file
+		# of raw output cannot carry one. The rfkill capture pays for that by
+		# keeping its exit code here in the test instead.
+		$replayDig = {
+			param($file)
+			$cap = Get-Content -Raw -LiteralPath (Join-Path $FixturePath $file) | ConvertFrom-Json
+			$script:NetCommandOverride = {
+				param($cmd, $a)
+				[pscustomobject]@{
+					StdOut   = $cap.stdout
+					ExitCode = [int]$cap.exitcode
+					StdErr   = $cap.stderr
+				}
+			}.GetNewClosure()
+			return $cap
+		}
+
+		try {
+			$ldapCap = & $replayDig 'dig-srv-ldap.json'
+			$srv = Resolve-NetSrvRecord -Name '_ldap._tcp.dc._msdcs.os7.test'
+
+			Check ($srv.Known -eq $true) 'Resolve-NetSrvRecord: NOERROR is an answer'
+			Check ($srv.Status -eq 'NOERROR') `
+				'Resolve-NetSrvRecord: the status comes out of the ANSWER, not out of the exit code'
+
+			# dig's OWN COUNT is the independent witness. It says in the header
+			# how many records it put in the section, so a parser that silently
+			# dropped one cannot pass here by agreeing with itself.
+			$declared = if ($ldapCap.stdout -match 'ANSWER:\s*(\d+)') { [int]$Matches[1] } else { -1 }
+			Check ($srv.Records.Count -eq $declared) `
+				'Resolve-NetSrvRecord: every record dig declared was parsed' `
+				"$($srv.Records.Count) of $declared"
+
+			$order = ($srv.Records | ForEach-Object { $_.Target }) -join ' '
+			Check ($order -eq 'dc1.os7.test dc2.os7.test dc3.os7.test branch-dc.os7.test dc5.os7.test') `
+				'Resolve-NetSrvRecord: RFC 2782 order - priority up, weight down' $order
+
+			# The two comparisons a STRING sort gets wrong, named rather than
+			# left to be inferred from the line above. This is #89, and it is
+			# the whole reason the fixture has five records in it.
+			Check ($srv.Records[2].Priority -eq 5 -and $srv.Records[3].Priority -eq 10) `
+				'Resolve-NetSrvRecord: priority 5 before priority 10, which a string sort reverses'
+			Check ($srv.Records[0].Weight -eq 100 -and $srv.Records[1].Weight -eq 20) `
+				'Resolve-NetSrvRecord: weight 100 before weight 20, which a string sort also reverses'
+
+			Check ($srv.Records[0].Priority -is [int] -and $srv.Records[0].Weight -is [int]) `
+				'Resolve-NetSrvRecord: Priority and Weight are ints, which is what makes the sort real'
+			Check ($srv.Records[0].Port -is [int]) 'Resolve-NetSrvRecord: Port is an int too'
+			Check ($srv.Records[3].Port -eq 3268) `
+				'Resolve-NetSrvRecord: the port is read per record, not assumed to be 389'
+			Check ($srv.Records[0].Ttl -eq 900) 'Resolve-NetSrvRecord: the TTL comes back'
+			Check (-not $srv.Records[0].Target.EndsWith('.')) `
+				'Resolve-NetSrvRecord: the root label is off the target' $srv.Records[0].Target
+
+			# ONE RECORD, and not a trimmed copy of the fixture above. This is
+			# the verbatim answer to
+			#
+			#   dig +nocmd +noall +comments +answer @127.0.0.1 SRV \
+			#       _ldap._tcp.pdc._msdcs.os7.test
+			#
+			# on the same DC in the same session — the PDC record, which a
+			# domain has exactly one of. It is inline rather than a fixture
+			# because it carries the OTHER spelling of an answer line: this
+			# owner name is long enough that dig separates it from the TTL with
+			# a TAB, where the shorter name in the fixture gets SPACES. A
+			# parser that split on tabs would work on one and not the other.
+			$script:NetCommandOverride = {
+				param($cmd, $a)
+				[pscustomobject]@{
+					StdOut = ";; Got answer:`n" +
+					";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 35516`n" +
+					";; flags: qr aa rd ra ad; QUERY: 1, ANSWER: 1, AUTHORITY: 1, ADDITIONAL: 0`n`n" +
+					";; ANSWER SECTION:`n" +
+					"_ldap._tcp.pdc._msdcs.os7.test.`t900 IN`tSRV`t0 100 389 dc1.os7.test.`n`n"
+					ExitCode = 0; StdErr = ''
+				}
+			}
+			$one = Resolve-NetSrvRecord -Name '_ldap._tcp.pdc._msdcs.os7.test'
+			# `-is [array]` AND NOT JUST `.Count`. A bare PSCustomObject answers
+			# 1 to `.Count` and hands its whole self back from `[0]` on pwsh
+			# 7.6.5, so a Count check alone passes against exactly the defect
+			# #92 is about. The type is the thing that differs.
+			Check (($one.Records -is [array]) -and ($one.Records.Count -eq 1)) `
+				'Resolve-NetSrvRecord: one record is a LIST of one, not a bare object' `
+				"$($one.Records.GetType().Name), Count $($one.Records.Count)"
+			Check ($one.Records[0].Target -eq 'dc1.os7.test') `
+				'Resolve-NetSrvRecord: and [0] is the record, not a character of it'
+			Check ($one.Records[0].Port -eq 389) `
+				'Resolve-NetSrvRecord: a TAB between the owner name and the TTL parses like a space'
+
+			# NXDOMAIN IS AN ANSWER. "There is no such name" and "nobody would
+			# tell me" are different facts about a domain, and the layer above
+			# turns the first into "no domain controllers" and the second into
+			# a diagnostic.
+			& $replayDig 'dig-srv-none.json' | Out-Null
+			$none = Resolve-NetSrvRecord -Name '_ldap._tcp.dc._msdcs.nosuchdomain.os7.test'
+			Check ($none.Known -eq $true) 'Resolve-NetSrvRecord: NXDOMAIN IS an answer'
+			Check ($none.Status -eq 'NXDOMAIN') 'Resolve-NetSrvRecord: and the status says which answer'
+			Check ($none.Records.Count -eq 0) `
+				'Resolve-NetSrvRecord: an empty answer is an EMPTY list, not one null'
+			Check ($null -eq $none.Reason) 'Resolve-NetSrvRecord: an answered question carries no Reason'
+
+			# NOTHING ANSWERED AT ALL. Verbatim from the same session:
+			#
+			#   dig … +time=1 +tries=1 @127.0.0.99 SRV _ldap._tcp.dc._msdcs.os7.test
+			#
+			# EXIT 9, AND THE MESSAGE ON STDOUT — stderr came back empty, which
+			# is why Reason reads stdout first and why the fixture envelope
+			# records both streams instead of assuming which one carries what.
+			$script:NetCommandOverride = {
+				param($cmd, $a)
+				[pscustomobject]@{
+					StdOut = ";; communications error to 127.0.0.99#53: timed out`n" +
+					";; no servers could be reached`n"
+					ExitCode = 9; StdErr = ''
+				}
+			}
+			$dead = Resolve-NetSrvRecord -Name '_ldap._tcp.dc._msdcs.os7.test'
+			Check ($dead.Known -eq $false) `
+				'Resolve-NetSrvRecord: no answer at all is not a clean empty list'
+			Check ($null -eq $dead.Status) 'Resolve-NetSrvRecord: and there is no status to report'
+			Check ($dead.Reason.Contains('no servers could be reached')) `
+				'Resolve-NetSrvRecord: the reason is read from STDOUT, where dig writes it' $dead.Reason
+			Check ($dead.Records.Count -eq 0) 'Resolve-NetSrvRecord: and the record list is empty'
+
+			# SERVFAIL WITH EXIT 0, and the exit code is the measured half.
+			# 2026-08-27, with a twenty-line UDP responder that answers one
+			# query with RCODE 2 and one with RCODE 5: a real `dig` against a
+			# synthetic server exits **0** for both SERVFAIL and REFUSED, and
+			# prints the status in the `+comments` header and nowhere else.
+			# The text below is that header, with the responder's own
+			# "extra bytes" warning left out because nothing reads it.
+			#
+			# This is precisely the answer a cmdlet that trusted the exit code
+			# would report as "this domain has no domain controllers", and it
+			# is the reason the status is read out of the answer at all.
+			$script:NetCommandOverride = {
+				param($cmd, $a)
+				[pscustomobject]@{
+					StdOut = ";; Got answer:`n" +
+					";; ->>HEADER<<- opcode: QUERY, status: SERVFAIL, id: 11019`n" +
+					";; flags: qr rd ra; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 0`n`n"
+					ExitCode = 0; StdErr = ''
+				}
+			}
+			$broken = Resolve-NetSrvRecord -Name '_ldap._tcp.dc._msdcs.os7.test'
+			Check ($broken.Known -eq $false) 'Resolve-NetSrvRecord: SERVFAIL with EXIT 0 is not an answer'
+			Check ($broken.Reason -eq 'the resolver answered SERVFAIL') `
+				'Resolve-NetSrvRecord: and the reason names the status' $broken.Reason
+
+			# THE TOOL NOT BEING THERE, and this case is not faked. The seam is
+			# put away so the REAL Get-Command runs, against a name nothing on
+			# any machine provides — a fake that reported "missing" would be
+			# testing the fake. On arm64, where bind9-dnsutils is in no package
+			# list, this is the ordinary path rather than the exotic one.
+			$script:NetCommandOverride = $null
+			$noTool = Resolve-NetSrvRecord -Name '_ldap._tcp.dc._msdcs.os7.test' `
+				-Tool 'os7-no-such-dns-tool'
+			Check ($noTool.Known -eq $false) `
+				'Resolve-NetSrvRecord: an absent dig is "cannot tell", not "no records"'
+			Check ($noTool.Records.Count -eq 0) `
+				'Resolve-NetSrvRecord: and the list is empty rather than absent'
+			Check ($noTool.Reason.Contains('bind9-dnsutils')) `
+				'Resolve-NetSrvRecord: the reason names the package that supplies it' $noTool.Reason
+		}
+		catch {
+			# The same guard and the same reason as the two sections either
+			# side of this one: a section that throws must FAIL, not vanish.
+			Check $false 'the resolver ran to the end' `
+				"$($_.Exception.Message) @ line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
+		}
+		finally {
+			$script:NetCommandOverride = $null
+		}
+	}
+
+	# -----------------------------------------------------------------------
 	# The CONFIGURED side, against a tree built here and read by the real
 	# netplan through its own --root-dir.
 	#
@@ -1478,5 +1884,10 @@ Export-ModuleMember -Function @(
 	# and not one, because netplan apply's exit code is not evidence (P5)
 	'Set-NetplanDocument', 'Remove-NetplanDocument', 'Invoke-NetplanApply',
 	'Wait-NetLinkAddress',
+	# Asking the RESOLVER — a third question, merged with neither of the other
+	# two, and the only one here whose TOOL is not guaranteed to be installed.
+	# It answers Known=$false rather than an empty list, because "no records"
+	# and "cannot tell" are different facts about a domain
+	'Resolve-NetSrvRecord',
 	# The self-test
 	'Test-NetModule')

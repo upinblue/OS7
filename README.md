@@ -82,6 +82,7 @@ Writing one is the main gap in the project's testing.
 | Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❔ not tested |
 | `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back | ❔ not tested |
 | Entra ID sign-in | ❌ the `authd-msentraid` broker is a Canonical snap and cannot yet be put into the image | ❌ |
+| Active Directory — administer a domain from an OS/7 machine | 🚧 the same code, never run on arm64 | 🚧 signing in to a domain controller and administering it is green against a real Samba AD DC in a container, and needs no domain join; the join itself is written and no machine has ever run it |
 | `Update-OS7` — apply the next release | 🚧 written 2026-08-27 and checked without a VM; never run on a machine | 🚧 |
 | OS/7's own signed package repository | 🚧 nine `.deb`s, a signed suite and a signed release index; the ISO does not install them yet | 🚧 built and installed-from in a container |
 | Backup — snapshots, replication, file restore | 🚧 written and self-tested offline, never run on a machine | 🚧 |
@@ -229,9 +230,10 @@ materials at `/usr/lib/os7/release.json`.
 
 ## PowerShell on the inside
 
-Two modules ship. `Zfs` is a generic OpenZFS layer that knows nothing about OS/7 and
-would run on any ZFS host. `OS7` is the product layer on top of it, and reaches ZFS only
-through it.
+Six modules ship, 185 functions. `Zfs`, `Net`, `Time`, `Systemd` and `Directory` are
+generic layers that know their subsystem and nothing about OS/7 — they would run on any
+Ubuntu host. `OS7` is the product layer on top of them, and reaches each subsystem only
+through its own layer; a check enforces that rather than a convention.
 
 ```powershell
 Import-Module Zfs        # staged into the image's module path, so it resolves by name

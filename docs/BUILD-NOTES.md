@@ -28,18 +28,37 @@ that had not been pushed, and the other session read the state it had, which was
 correct and out of date. `git fetch` first — a commit nobody can see is the same
 as a conversation.
 
-*No number is currently claimed but unwritten.*
+**#97 through #107 are TAKEN**, written and committed on branch `update-train`
+in a separate worktree as of 2026-08-28, and invisible from `main` until that
+branch lands — which is exactly the case the rule above was written for. They
+are, in order: the gpg-agent socket on Windows bind mounts; apt's strict Depends
+resolving from candidates only; an amd64 installed machine silent on serial;
+the install-time PCR 7 seal against shim; a worktree gitdir unreadable to WSL
+git; MSYS path mangling eating `--device /dev/kvm`; noninteractive not answering
+conffile prompts; `boot-efi.mount` racing `zfs-mount.service`; `saved_entry`
+written before the point of no return; `KEY="value"` files without a trailing
+newline; and `Restore-OS7`'s "previous" being ancestry rather than age.
 
-**#79 was, for a few hours on 2026-08-26, and the mechanism worked.** Four
+**And this table cost a message to get right.** That session spells its headings
+`## #97 — <title>` while everything above spells them `## 97. <title>`, so a
+grep for `^## 97\.` found nothing and read as a gap. A claim you cannot see is
+the same as no claim — which is this rule's whole point, arriving from a
+direction it did not anticipate. **Grep for the number, not for the format.**
+
+**#79 was claimed and unwritten for a few hours on 2026-08-26, and the mechanism
+worked.** Four
 source comments cited it before the entry existed; a second session read this
 table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written. Numbers above 81 are free.
+Everything below is written, and #97–#107 are written on `update-train`.
+Numbers above 108 are free.
 
-*(That line said 61 until 2026-08-26 and had been wrong since #62 landed —
-it is the one line in this file nothing checks, and it is exactly the line a
+*(That line said 61 until 2026-08-26 and had been wrong since #62 landed. It
+then said 81 until 2026-08-28 and had been wrong since #82 — twelve entries
+during which the file's own index of itself was stale. Twice is a pattern: it
+is the one line in this file nothing checks, and it is exactly the line a
 session reads in good faith before claiming a number. Update it in the same
 commit as the entry.)*
 
@@ -4892,3 +4911,306 @@ cannot work on an OS/7 image as built today. That is C8a
 ([CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md)) as an open
 question already says, but it had been reasoned about rather than measured on
 the artefact. It is measured now.
+
+---
+
+## 94. `TryParseExact` handed a PowerShell array joins it into ONE format string, and every timestamp comes back `$null`
+
+**Measured 2026-08-27**, by `Test-DirectoryModule` on its first run, while
+teaching the AD layer to read an LDAP generalized time (`20260827190803.0Z`).
+
+```powershell
+$formats = @('yyyyMMddHHmmss.fZ', 'yyyyMMddHHmmssZ', …)
+[datetime]::TryParseExact($text, $formats, …, [ref]$parsed)     # False
+
+[string[]]$formats = @('yyyyMMddHHmmss.fZ', 'yyyyMMddHHmmssZ', …)
+[datetime]::TryParseExact($text, $formats, …, [ref]$parsed)     # True
+```
+
+Same input, same overload set, one cast between them.
+
+`TryParseExact` is overloaded on `(string, string, …)` and
+`(string, string[], …)`. A plain PowerShell `@(...)` is an **`object[]`**, which
+is not a `string[]`, so the array overload is not the exact match — but
+`object[]` *does* convert to `string`, by joining its elements with `$OFS`, a
+space. The binder therefore picks the SINGLE-format overload and the format
+becomes the literal
+
+```
+yyyyMMddHHmmss.fZ yyyyMMddHHmmss.ffZ yyyyMMddHHmmss.fffZ yyyyMMddHHmmssZ yyyyMMddHHmmss.f\Z
+```
+
+which nothing on earth matches. There is no type error, no exception and no
+warning: `TryParseExact` returns `False` exactly as it would for a malformed
+date, the converter returns `$null`, and that reads as *this DC does not send
+`whenCreated`*.
+
+### Why the self-test nearly agreed with it
+
+The converter has two cases, and a permanently-failing parser **passes one of
+them**:
+
+```
+generalized time: rubbish is $null                        ← passes while broken
+generalized time: 20260827190803.0Z parses to 2026-08-27  ← the only one that fails
+```
+
+A negative case cannot fail when the answer is always `$null`. Write the
+positive case, or the suite agrees with the bug and reports a pass count. Same
+lesson as #92's section guard: **a count of passes is not a result unless
+something makes the passes mean something.**
+
+### What it would have cost, which is not a `$null` in a listing
+
+`Test-OS7Directory` measures the Kerberos skew against the domain controller's
+own `currentTime` out of the rootDSE — deliberately, because asking chrony would
+be asking the subsystem under suspicion whether it is well. It is written to
+skip what it could not ask:
+
+```powershell
+if ($rootDse -and $rootDse.CurrentTime) { $skewSeconds = … ; $clockOk = … }
+…
+$ready = ($reachable -eq $true) -and ($clockOk -ne $false) -and ($trusted -ne $false)
+```
+
+With `CurrentTime` permanently `$null` the block never runs, `$clockOk` stays
+`$null`, and `$null -ne $false` is **true** — so the only check that exists for
+the five-minute Kerberos limit is silently skipped and the machine reports
+`Ready`. The symptom of the skew it did not measure is a sign-in that says the
+password is wrong.
+
+### The guard
+
+`[string[]]` on the declaration, with the measurement in a comment beside it, in
+`powershell/Directory/Directory.psm1`. The cast belongs on the **variable**, not
+at the call site: the next caller of `$formats` gets the same guarantee, and a
+cast written inline is a cast the next line does not have.
+
+Family: #25 and #62. `setvtrgb.service` chose the palette, `--mode ubuntu` chose
+the kernel, the overload binder chose the signature — and in all three the code
+that was written is still there, still valid, and no longer the thing that
+decides. **Where a resolution would otherwise pick for you, write the type
+down.**
+
+---
+
+## 95. `catch [LdapException]` matches the inner exception, and `$_.Exception` inside the handler is still the wrapper
+
+**Measured 2026-08-27** against a real Samba AD DC, by the one check that types a
+deliberately wrong password. The handler written to explain the failure threw
+its own:
+
+```
+The property 'ErrorCode' cannot be found on this object.
+```
+
+When a .NET method call throws, PowerShell wraps the exception in a
+`MethodInvocationException` whose `InnerException` is the real one. `catch [T]`
+looks **through** the wrapper to decide whether to match — so the block is
+entered, which is the entire reason this is a trap and not a compile error. What
+it does not do is unwrap `$_.Exception`. Under `Set-StrictMode` a property that
+is not there is a terminating error rather than `$null`, so the first line of the
+handler dies.
+
+### Why this one is worse than an ordinary bug
+
+It is in the error path, and the error path only runs when something else is
+already wrong. AD returns LDAP result **49 for nine different conditions**, and
+the only thing separating "wrong password" from "locked out" is a
+three-hex-digit sub-code buried in the server's message:
+
+```
+80090308: LdapErr=DSID-0C0903A9, comment: AcceptSecurityContext error, data 775, v4563
+```
+
+`775` is locked out. So the code that exists specifically so an administrator
+does not reset a password that was never wrong is exactly the code that cannot
+run, and what the administrator gets instead is a PowerShell property error that
+names neither the account nor the cause.
+
+### How it was found, and how it nearly was not
+
+`installer/testing/check-ad.py`, in
+`'a wrong password is reported as a WRONG PASSWORD'` — which asserts on the
+**message**, not on the fact that something was thrown:
+
+```powershell
+if ($_.Exception.Message -notlike '*password is wrong*') {
+    throw "the refusal did not name the cause: …"
+}
+```
+
+A test that only required a refusal would have passed. Both a correct bind
+refusal and a crashed handler throw, and from outside they are the same shape.
+
+### The guard
+
+`Get-DirectoryLdapException` walks `InnerException` up to eight levels and hands
+back the `LdapException` or the original object, and **every** catch in the AD
+surface goes through it. It is exported from the generic module for the same
+reason the escaping helpers are: the OS/7 layer above catches the same
+exceptions and must not write a second unwrapper (#66 is one rule written twice
+taking two routes). It also asks
+`$current.PSObject.Properties['InnerException']` rather than reading the
+property, because under `Set-StrictMode` the absence of it is the error it is
+trying to survive.
+
+Family: the diagnostic that lies — #73's sanoid reporting a success it cannot
+have, #90's freshness check that could not read the date, #64's initramfs script
+that gave up without saying so. This is the sharpest version of it, because the
+subsystem the diagnostic depends on is **itself**: the only thing that can
+report a broken error handler is the error handler.
+
+---
+
+## 96. `.GetNewClosure()` BREAKS a test seam that has to reach module state, and this file already told you to use it
+
+**Measured 2026-08-27**, both ways in one run, after eleven cases of a brand-new
+check failed identically with:
+
+```
+You cannot call a method on a null-valued expression.
+```
+
+```
+with    .GetNewClosure()  ->  the fake's $script:__sent is $null
+without .GetNewClosure()  ->  the fake records, and the module sees it
+```
+
+The advice that produced the bug is in this file, is correct, and was followed
+on purpose. #76 and `powershell/Zfs` both say `.GetNewClosure()` is not
+optional: without it the scriptblock resolves its captured variables when it
+RUNS, by which time the defining scope is gone, and under `Set-StrictMode` that
+is an error rather than a silent `$null`. Four other checks in
+`installer/testing/` use it and are right to.
+
+### The two seams are not the same seam
+
+`check-network-logic.py`, `check-service-logic.py` and the `Time` and `Systemd`
+self-tests replace a **command runner**, and their fakes must carry LOCAL values
+— a fixture table written in the driver — into a block that runs later. Carrying
+values in is precisely what `GetNewClosure` is for.
+
+The Directory fake cannot do that. `SearchResultEntry`,
+`SearchResultEntryCollection` and `SearchResponse` have **zero public
+constructors**, so the seam sits above the .NET boundary rather than below it,
+and the requests the fake records have to live somewhere the fake and the module
+can both see — `$script:__sent`, in the Directory module's own session state,
+installed with `& (Get-Module Directory) { … }`. `.GetNewClosure()` rebinds the
+block to a fresh closure scope, `$script:` stops resolving to the module's
+session state, and every recorded call lands somewhere nobody reads. The fake
+then holds `$null`, and `.Add()` on it is the message above.
+
+**Carry values IN: closure. Reach state OUT: no closure.** That is the whole
+discriminator, and neither half is a property of the API.
+
+### Why the guard is a paragraph and not a check
+
+There is nothing here a parser can key on. #65 and #91 are in
+`check-ps-traps.py` because their AST signatures are unambiguous; this one is
+the same call with opposite verdicts, and which verdict applies depends on what
+the block must reach — which the syntax does not say. A rule for "always" and a
+rule for "never" would both be wrong, and a check that cries wolf is a check
+people delete (#92).
+
+What *is* checkable is the consequence, and it was: the fake records into a
+`[List[object]]` and the cases assert on **what was sent**, not only on what
+came back. A seam wired to nothing therefore fails every case loudly instead of
+quietly agreeing. It failed eleven at once, which is what made it look like a
+seam and not eleven bugs.
+
+Family: right advice, wrong context — the first entry of it here. #76 is its
+sibling and its opposite: same method, same file of advice, and the reason to
+call it in one place is the reason not to call it in the other. **When a rule in
+this file was learned in one seam, check which seam you are in before applying
+it.**
+
+---
+
+## 108. The installer and the cmdlet it calls disagreed about the spelling of a parameter, and six green checks had nothing to say about it
+
+**Measured 2026-08-28**, by a review of an uncommitted change, on the branch it
+was about to be pushed from.
+
+`os7-setup` shells out to PowerShell for the work the modules own. That is
+deliberate and it is #66's remedy: `New-OS7Storage` and `Join-OS7Domain` are
+written once, and the installer and the operator take the same road rather than
+two roads built from the same notes. `Steps/StorageSteps.cs` has done it since
+Phase 2 and `run-phase3.py` has passed over it many times.
+
+What nobody had ever checked is that the two halves agree on the **spelling**.
+
+`Steps/DomainSteps.cs` built:
+
+```
+Join-OS7Domain -Root '<target>' ... -PasswordFile '/run/os7-setup-domain.key'
+```
+
+and `powershell/OS7/OS7.Domain.ps1` declares `-TargetRoot` and
+`-Password [securestring]`. There is no `-Root`. There is no `-PasswordFile`.
+Neither is a prefix of anything. PowerShell fails **parameter binding**, before
+the cmdlet body runs and long before `adcli` is started:
+
+```
+A parameter cannot be found that matches parameter name 'Root'.
+```
+
+The step catches a non-zero exit as best-effort, by design, so that a bad
+password or an unreachable domain controller cannot destroy an install that is
+otherwise complete. The consequence is that **every domain join from the
+installer would have failed, on every machine, and left one line in a log.**
+
+### What was green while this was true
+
+* `dotnet publish` — clean. The command line is a string; C# has no opinion
+  about it.
+* `os7-setup --self-test` — clean, all ten known failures, which are absent
+  image files.
+* Five module self-tests — `Test-DirectoryModule` 42/42 among them.
+* `check-directory-logic.py` — 15/15 against a fake connection.
+* `check-ad.py` — **every case green against a real Samba domain controller**,
+  including a join.
+* `check-layering.py`, `check-ps-traps.py` — held.
+
+Every one of them exercises one side of the seam. None of them looks at the
+other side, and no check in this repository had ever read the installer's
+generated command lines at all. This is the family of #62 and #85: every
+declaration satisfied, and the thing they were about decided somewhere none of
+them looks.
+
+### The guard
+
+`installer/testing/check-installer-cmdlets.py`. It reads the C# for what will be
+typed and asks PowerShell what will bind, and requires them to agree — two
+independent sources of truth, compared, which is the shape `check-netplan-rule.py`
+already uses for the two netplan renderers. Seconds, no VM.
+
+### And the guard needed a guard
+
+**Its own first version reported the broken call as `ok`.** It took the string
+literal the cmdlet name appears in — and `DomainSteps.cs` builds the command by
+concatenating **one literal per parameter**:
+
+```csharp
+"Join-OS7Domain " +
+$"-Root '{_t.Root}' " +
+$"-Domain '{d.Realm}' " + ...
+```
+
+so the cmdlet's own literal contained no parameters at all. It printed
+`Join-OS7Domain (0 parameter(s))  ok`, three times, and would have gone on
+printing it for ever. The window had to become the C# *statement*, and then had
+to be narrowed again to the *PowerShell command*, because `try { Join-OS7Domain
+... } finally { Remove-Item -LiteralPath ... }` is one C# expression and the
+first correction attributed `Remove-Item`'s parameter to the join.
+
+It was only ever known to work because it was run against the known defect
+**before** the defect was fixed:
+
+```
+FAIL  DomainSteps.cs:349 calls Join-OS7Domain with -Root   [-Root -> -TargetRoot]
+```
+
+A diagnostic must be checked against the thing it claims to check, and the
+cheapest moment to do that is while the bug is still there. Write the check
+first, watch it go red, then fix.

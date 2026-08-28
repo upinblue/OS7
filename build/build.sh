@@ -291,10 +291,13 @@ echo "    staged the release pin -> /usr/lib/os7/{release,build}.conf"
 # Hook 0060 verifies it imports. Keeping a second copy checked in under
 # includes.chroot - as the June-2026 tree did - just lets the two drift.
 # ---------------------------------------------------------------------------
-# Both modules are staged the same way, so the staging is written once. Zfs is
-# the generic ZFS layer (docs/ZFS-POWERSHELL-PLAN.md); OS7 is the product layer
-# above it, and Z1 says OS7 reaches ZFS only through Zfs — which is only true if
-# both are actually on the image.
+# Every module is staged the same way, so the staging is written once. Zfs, Net,
+# Time, Systemd and Directory are the generic layers (docs/ZFS-POWERSHELL-PLAN.md
+# Z1, docs/POWERSHELL-SURFACE-PLAN.md P2); OS7 is the product layer above them,
+# and those rules say OS7 reaches ZFS, the network, the clock, systemd and the
+# directory ONLY through them — which is only true if all six are actually on the
+# image. check-layering.py holds the rule in the source tree; this is what makes
+# it hold on a machine.
 stage_ps_module() {
 	local name="$1"
 	local src="${HERE}/../powershell/${name}"
@@ -352,6 +355,23 @@ stage_ps_module Time
 # Its fixtures are recorded systemctl/journalctl output - including a MESSAGE
 # that is a byte array rather than a string - and travel with it.
 stage_ps_module Systemd
+# Directory is the fifth generic layer: LDAP, X.500 and the Active Directory
+# schema as objects, and nothing about OS/7 - which server to reach and the
+# five-minute Kerberos threshold are one layer up. Staged BEFORE OS7 for the
+# same reason the four above it are: OS7 sits on top of it and hook 0060 checks
+# them in this order.
+#
+# Its tests/ tree travels with it as the other four do, and ONE THING ABOUT IT
+# IS DIFFERENT enough to be worth saying here: Test-DirectoryModule does not
+# read those files. The other four fake their subsystem by replacing the command
+# runner and replaying recorded output; LDAP cannot be faked that deep, because
+# System.DirectoryServices.Protocols' SearchResultEntry has no public
+# constructor (measured 2026-08-27) and no fake can produce the object
+# SendRequest returns. So the self-test's evidence is transcribed INTO the
+# module and the .ldif/.json pairs beside it are the provenance for it. An image
+# that shipped without them would still self-test green - which is why there is
+# no fixture-count line for Directory in hook 0060 beside the Zfs and Net ones.
+stage_ps_module Directory
 stage_ps_module OS7
 
 # ---------------------------------------------------------------------------

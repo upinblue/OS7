@@ -1,0 +1,176 @@
+Recorded real output from an Active Directory domain controller, and the
+row-shaped transcription of it that the Directory module's tests replay.
+
+WHERE THESE CAME FROM, exactly, because a fixture whose provenance is unknown is
+a fixture that tests whoever wrote it:
+
+    2026-08-27, from the container `os7-ad-dc` — realm OS7.TEST, NetBIOS
+    domain OS7, provisioned by installer/testing/ad-dc-entrypoint.sh — running
+    samba 4.23.6 (2:4.23.6+dfsg-1ubuntu2.2) on Ubuntu 26.04, on an x64 Windows
+    host through Docker Desktop. The client was that same container's
+    ldap-utils 2.6.10+dfsg-1ubuntu5.
+
+    Each .ldif is the verbatim stdout of the command named below. Each .json
+    beside it is that .ldif transcribed into the row shape
+    Invoke-DirectoryRequest returns — @{ Dn; Attributes }, where Attributes
+    maps a name to an ARRAY, in the order the server sent it, and objectGUID
+    and objectSid stay the base64 the LDIF carries because those are the two
+    attributes on these objects that $script:DirectoryBinaryAttributes calls
+    binary. Nothing in a .json is interpreted: a userAccountControl is the
+    string "514" here, never a decoded flag set.
+
+    Six of the seven were taken over LDAPS, and that is not a preference. A
+    simple bind on port 389 is refused by this DC with "Strong authentication
+    is required" (measured) — the same finding that makes 636 the module's
+    default and 389 opt-in. The rootDSE is readable anonymously, so that one
+    was taken on 389.
+
+        export LDAPTLS_CACERT=/var/lib/samba/private/tls/ca.pem
+        AD='-x -H ldaps://dc01.os7.test:636
+            -D CN=Administrator,CN=Users,DC=os7,DC=test -w Passw0rd-OS7-test
+            -b DC=os7,DC=test -LLL -o ldif-wrap=no'
+
+    rootdse.ldif             ldapsearch -x -H ldap://localhost -s base -b "" \
+                                        -LLL -o ldif-wrap=no
+    user-enabled.ldif        ldapsearch $AD "(sAMAccountName=os7fixture1)"
+    user-disabled.ldif       ldapsearch $AD "(sAMAccountName=os7fixture2)"
+    group-one-member.ldif    ldapsearch $AD "(sAMAccountName=OS7FixtureGroup)"
+    group-empty.ldif         ldapsearch $AD "(sAMAccountName=OS7FixtureEmpty)"
+    computer.ldif            ldapsearch $AD "(sAMAccountName=OS7FIXTUREPC\$)"
+    ou.ldif                  ldapsearch $AD "(ou=OS7Fixtures)"
+
+    That password is the lab default out of ad-dc-entrypoint.sh and is already
+    in the tree; it unlocks a container and nothing else. `-LLL` is why there
+    is no `# extended LDIF` banner and no `# search result` footer, and
+    `-o ldif-wrap=no` is why no line is continued — which is the only reason
+    the .json files could be produced mechanically rather than typed.
+
+    THOSE COMMAND LINES WERE RECONSTRUCTED, NOT RECORDED. Whoever captured the
+    .ldif files left no capture script behind, so every line above was re-run
+    against the same DC on 2026-08-27 and its output compared with the file it
+    is claimed to have produced. Six are byte-for-byte identical. rootdse.ldif
+    differs in exactly two lines, currentTime and highestCommittedUSN, which
+    cannot be equal across two runs of anything. A command nobody has re-run
+    is a command somebody remembers typing.
+
+    The transcription itself was checked against a witness that shares no code
+    with the LDAP client: `ldbsearch --show-binary` reads sam.ldb directly and
+    renders user-enabled's objectSid as
+    S-1-5-21-2765228506-4257399916-1448377294-1105 and its objectGUID as
+    d42494ae-7f6f-490a-9b59-177c0844a0b8. The base64 in user-enabled.json
+    decodes to both. `net getdomainsid` agrees on the domain half.
+
+WHAT THEY COVER, AND WHAT THEY DO NOT.
+
+Seven objects, and each one is a state some piece of the module branches on:
+
+  * A one-member group and an empty one — the #92 pair. group-one-member has a
+    single `member` value, the case where a bare `return @($values)` unwraps to
+    a [string] and the caller's `[0]` indexes a character. group-empty has no
+    `member` KEY AT ALL rather than an empty one: a missing attribute is an
+    absent key, not a present key with nothing in it, and under Set-StrictMode
+    reaching for it is a terminating error rather than $null.
+  * userAccountControl in three states: 512 (enabled), 514 (512 | 0x2
+    ACCOUNTDISABLE) and 4098 (0x1000 WORKSTATION_TRUST | 0x2) on the computer.
+    Enough to prove ACCOUNTDISABLE decodes, and nothing beyond it.
+  * accountExpires 9223372036854775807 on all three accounts —
+    0x7FFFFFFFFFFFFFFF, which means "never" and NOT a date, and which a naive
+    FILETIME conversion renders as the year 30828 or overflows outright.
+  * pwdLastSet in both of its forms: a real FILETIME on each user — two
+    different ones, so a converter cannot pass by matching a constant — and 0
+    on the computer, which also means "never" and also is not 1601.
+  * A computer account whose sAMAccountName ends in `$`, the one character
+    here that has to survive an RFC 4515 filter and a shell on the way to it.
+  * An OU, which has no objectSid at all: the binary-attribute path has to
+    cope with the attribute simply not being present.
+  * A rootDSE advertising supportedLDAPVersion 2 AND 3. The server offers
+    both, and .NET's LdapConnection defaults to 2 (BUILD-NOTES #94) — so the
+    fixture that would let a connection talk LDAPv2 to a server happy to
+    answer it is sitting right here.
+  * 23 supportedControl values of which only 15 are DISTINCT:
+    1.2.840.113556.1.4.1413 appears six times and 1.2.840.113556.1.4.801
+    three. A directory attribute is a multi-valued list and not a set, and a
+    check that counts controls gets a different answer from one that dedupes
+    them.
+  * The `# ref` lines at the foot of six files are real continuation
+    references — three on every search against the domain root, which is
+    measurement 6 in Directory.psm1's header arriving as evidence rather than
+    as a claim. They are NOT part of a row: Invoke-DirectoryRequest puts them
+    on the response's Referrals, and the .json files, being rows, do not carry
+    them. A test of referral handling has to read them out of the .ldif.
+
+What they do not cover, in this directory, today:
+
+  * PAGING. The paged-results control 1.2.840.113556.1.4.319 is advertised in
+    rootdse.ldif and not one fixture exercises it — every command above
+    matched exactly one entry. There is no cookie here, no second page and no
+    union of two pages; AD truncates at MaxPageSize (1000) with no error and
+    no exception, just a short list.
+  * A CN containing a comma. Every DN here splits on commas cleanly, so
+    ConvertTo-DirectoryDnValue's "Lovelace, Ada" case is constructed in the
+    self-test and has to be labelled as constructed, not measured.
+  * Any failure at all. A bad bind is an LdapException, and an exception
+    cannot be written down in LDIF, so nothing here carries one.
+
+A .json is ONE row, not a list. A replay must build the array at the call site
+— `@(fixture)` — because handing the single [pscustomobject] back bare is
+exactly the shape #92 describes.
+
+AND A REPLAY MUST DECODE THE BASE64 BEFORE IT HANDS A ROW TO THE MODULE.
+Invoke-DirectoryRequest returns byte[] for the attributes in
+$script:DirectoryBinaryAttributes; these files hold base64, because base64 is
+what the LDIF holds and the evidence is not worth re-encoding. So a fixture
+loaded verbatim gives objectSid as a [string], the module's converters cast it
+with [byte[]], and the result is not a SID — it is a different failure from the
+one being tested. Measured 2026-08-27: after
+[Convert]::FromBase64String, user-enabled.json driven through the real seam
+comes back out of ConvertFrom-DirectorySid and ConvertFrom-DirectoryGuid as
+S-1-5-21-2765228506-4257399916-1448377294-1105 and
+d42494ae-7f6f-490a-9b59-177c0844a0b8 — the two values ldbsearch prints. That
+round trip is the reason to trust these transcriptions at all.
+
+WHAT IS STILL OWED, and must come from real hardware rather than being written
+by hand here:
+
+THESE CAME FROM SAMBA, AND SAMBA IS NOT WINDOWS SERVER. A green run against
+this DC says less than it looks like it says, and the gap does not close by
+adding fixtures — it is a different implementation of the same protocol. What
+Samba will not reproduce:
+
+  * Channel binding and LDAP signing enforcement. A Windows Server DC with
+    LdapEnforceChannelBinding=2 / LDAPServerIntegrity=2 refuses binds this DC
+    accepts, and SessionOptions.Sealing and .Signing THROW on Linux
+    (measured), so there is no way to satisfy such a DC from here at all. The
+    single Microsoft constraint most likely to decide whether this feature
+    works at a customer is the one nothing in this directory can exercise.
+  * Windows password-policy sub-codes. AD answers rc 49 for every credential
+    failure, and only the `data 52e` / `525` / `530` / `532` / `533` / `701` /
+    `775` sub-code separates a wrong password from an account that is locked
+    out, expired, or outside its logon hours. Samba's coverage and wording of
+    those are Samba's.
+  * The msDS-* constructed attributes — msDS-UserPasswordExpiryTimeComputed,
+    msDS-User-Account-Control-Computed and the rest. Not one appears in any
+    file here: they are computed by the DC on request, and Samba computes a
+    different set from a different schema.
+  * LAPS. No msLAPS-* attribute exists on this DC to be read.
+  * Cross-forest referrals. The three references recorded here all point back
+    into os7.test. A referral that crosses a trust is the thing
+    ReferralChasing=None exists to make visible, and a single-domain lab
+    cannot produce one.
+
+A REAL WINDOWS SERVER DOMAIN CONTROLLER IS OWED. Until one has answered these
+same queries, the files in this directory describe how Samba renders Active
+Directory, not how Active Directory behaves.
+
+Cheaper than that, and also missing:
+
+  * A LOCKED-OUT ACCOUNT. No fixture carries lockoutTime — user-disabled is
+    disabled and has never been locked — so the 49/775 path has no recorded
+    object behind it.
+  * A search returning MORE THAN ONE entry, and one returning more than 1000.
+    Both are the paging gap above, and both are #89: a sort that has only ever
+    seen one element has not been tested.
+  * A SECOND domain controller, for exactly the same reason.
+  * A DC whose certificate is signed by something other than itself, so the
+    LDAPS trust path is exercised against a CA an administrator would really
+    install rather than the self-signed one this container generates.

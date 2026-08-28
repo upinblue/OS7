@@ -32,8 +32,9 @@ decides what, the commands that work, and the traps that cost the most.
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 | **Backup** | **Written and self-tested; NEVER RUN ON A MACHINE.** `powershell/OS7/OS7.Backup*.ps1` — 17 cmdlets over `sanoid` (snapshot policy and retention) and `syncoid` (`zfs send`/`receive` replication, local or over ssh), both GPL-3.0+ and both shelled out to rather than vendored. OS/7 owns which datasets, which targets, and the verification: `Get-OS7BackupStatus` asks ZFS on the source and, through the `Zfs` module over ssh (Z14), on the target — comparing snapshot **GUIDs**, because neither tool's exit code is evidence (BUILD-NOTES #73). `Assert-OS7DatasetSafe` keeps a snapshot policy away from `rpool/ROOT` and `bpool/BOOT`. `Test-OS7Backup` is **63 checks, green**, and `check-layering.py` still reports **0**. What has never happened: a snapshot taken, a stream sent, or a file restored by this code. [BACKUP-PLAN.md](BACKUP-PLAN.md), [SESSION-BACKUP.md](SESSION-BACKUP.md). |
-| **The PowerShell system surface** | **Four generic modules and 58 exported OS/7 cmdlets since 2026-08-27**, and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds four rules), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/` and `powershell/Systemd/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Backup 63 — all green, all against RECORDED REAL output. Five no-VM checks beside them. |
+| **The PowerShell system surface** | **Five generic modules and 95 exported OS/7 functions as of 2026-08-28** (it was four and 58 on 2026-08-27), and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds **five** rules since the directory one landed), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/`, `powershell/Systemd/` and `powershell/Directory/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management/Directory/DirectoryObject/Domain.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Directory 40, Backup 63 — all green, all against RECORDED REAL output. The no-VM checks that go with them are listed in §2; `check-directory-logic.py` is the newest. |
 | **What that surface found** | **Entra sign-in cannot work on an OS/7 image as built today.** `/etc/authd/brokers.d` is EMPTY in the shipped ISO — authd installed, PAM wired to it, no broker to bridge to — so a sign-in fails as though the password were wrong. That is C8a measured on the artefact rather than reasoned about, and `Get-OS7EntraStatus` is the first thing on a machine that says so. Also: `Enter-PSSession` did not work at all (`sshd -T` listed only `sftp`); an interactive `ssh` DOES land in PowerShell and had never been tested until `check-ssh-login.py`. |
+| **Active Directory** | **Stage 1 is proven against a directory that answers; stage 2 has never run on a machine.** An administrator signs in to AD **from** an OS/7 machine with their own AD admin account and works as themselves — the machine is **not** a member of the domain and does not need to be. `powershell/Directory/` is the fifth generic layer (25 functions, `Test-DirectoryModule` **40/40**) over `System.DirectoryServices.Protocols`, which ships *inside* pwsh 7.6.5 on Linux and needs **no new package on either architecture**; `OS7.Directory.ps1`, `OS7.DirectoryObject.ps1` and `OS7.Domain.ps1` are the product on top. `check-ad.py` drives all of it against a real **Samba 4.23.6** AD DC in a container (realm `OS7.TEST`) and reads every write back with `ldbsearch` **inside the DC** — a tool that shares no code with the client under test — and it is **all green**; `check-directory-logic.py` is the no-DC, no-VM half, **15/15**. What that leaves: **no OS/7 machine has ever joined a domain**, `adcli` is on no ISO built so far (so screen 9D is skipped on every medium that exists), **a real Windows Server DC is owed**, and **arm64 is unmeasured for all of it**. [AD-PLAN.md](AD-PLAN.md) is the authority. |
 | `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. It is `qemu-system-aarch64 -machine virt,accel=hvf` like every other harness here, so it needs the Apple Silicon host. |
 
 ### Phase 0 is done — the gate is open
@@ -74,6 +75,95 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**ACTIVE DIRECTORY WORKS OUTBOUND SINCE 2026-08-28, AND THE MACHINE IS NOT IN
+THE DOMAIN.** An administrator signs in to AD **from** an OS/7 machine with their
+own AD admin account and works as themselves — users, groups, computers, OUs, a
+password reset, a raw search. No domain join, no machine account, and **no new
+package on either architecture**: `System.DirectoryServices.Protocols` ships
+inside pwsh 7.6.5 on Linux and reaches `libldap`, which is guaranteed because
+`libldap2` is a `Depends` of `libcurl4t64` and `curl` is in
+`os7-base.list.chroot`. That is **stage 1**, and it is proven against a
+directory that answers. **Stage 2 — the domain join, `sssd`, and the installer's
+screen 9D — is code that has never run on a machine.** Keep those two sentences
+apart; the whole feature's honesty is in the gap between them.
+[AD-PLAN.md](AD-PLAN.md) is the authority, and it is where A/AL/M-A numbers live.
+
+```bash
+./installer/testing/check-directory-logic.py   # the DECISIONS, no DC, no VM — 15/15 GREEN
+./installer/testing/check-ad.py                # a REAL Samba 4.23.6 DC in a container — ALL GREEN
+pwsh -c 'Import-Module ./powershell/Directory/Directory.psd1 -Force; Test-DirectoryModule'  # 40/40
+./installer/testing/check-layering.py          # FIVE rules now: P2-directory, baseline 1
+```
+
+`check-ad.py` builds the DC itself (`installer/testing/Dockerfile.ad-dc`, realm
+`OS7.TEST`), and two things about it are worth copying rather than repeating:
+every OS/7 write is read back with `ldbsearch` **inside the DC**, which shares no
+code with the client under test; and the stage-1 section runs a second time with
+`adcli`, `kinit`, `klist` and `sssctl` moved out of `PATH`, so "stage 1 needs
+none of stage 2's packages" is a measurement rather than an intention.
+
+**What is owed, in order, and none of it is small:**
+
+1. **A real Windows Server domain controller.** Samba exercises the protocol; it
+   does not reproduce LDAP channel binding, signing enforcement, Windows
+   password-policy sub-codes, `msDS-*` constructed attributes, LAPS or
+   cross-forest referrals. A green `check-ad.py` is the gate for the protocol. It
+   is not a fleet.
+2. **A machine that has actually joined.** `Join-OS7Domain`, `Test-OS7Domain` and
+   `Repair-OS7Domain` are code plus a container test. And `adcli` is on **no ISO
+   this repository has built** — measured against
+   `out/OS7-1.0.0.116-amd64.packages.manifest`, 1 491 packages — so screen 9D
+   skips itself on every medium that exists today and records that nobody was
+   asked. Putting the join tooling in a package list is the first step, and
+   rebuilding is the second.
+3. **arm64, for all of it.** There is no arm64 packages manifest in `out/` at all,
+   so even the package half of the join is an inference on that architecture.
+4. **Screen 12 does not print the join's outcome.** The join is best-effort by
+   design — a wrong password must not destroy an otherwise complete install — so
+   the one thing that must not happen is that it is quiet. It is logged and it is
+   in the plan; it is not yet on the screen the operator reads.
+
+**Writing it found four traps, three of them now numbered.** BUILD-NOTES **#94**
+(`[datetime]::TryParseExact` handed a plain `@(...)` binds the single-format
+overload and joins the array into one format string — every timestamp comes back
+`$null`, which reads as "this DC does not send `whenCreated`"), **#95**
+(`catch [T]` matches the *inner* exception while `$_.Exception` inside the handler
+is still the `MethodInvocationException` wrapper, so reading `.ErrorCode` off it
+throws under `Set-StrictMode` **inside the handler that was supposed to explain
+the failure** — the operator gets a PowerShell property error where a password
+message belonged), and **#96** (`.GetNewClosure()` breaks a test seam that has to
+reach *module* state: it rebinds the block to a fresh closure scope where
+`$script:` no longer resolves to the module's session state, and every recorded
+call becomes `$null` — measured both ways in one run). The fourth is not a
+PowerShell trap but a directory one, and it is in the surface rather than in the
+notes: **`userAccountControl`'s `LOCKOUT` bit (`0x10`) is not maintained by Active
+Directory**, so `Get-OS7ADUser` computes `LockedOut` from **`lockoutTime`**
+— a surface that read the flag would tell an administrator a locked-out account is
+fine, and send them to look at the password.
+
+**Two things it leaves undecided, and both are layout questions rather than code
+ones** — [DECISIONS.md](DECISIONS.md) open questions **9** and **10**. `/etc` is
+inside the boot environment, so `/etc/krb5.keytab` is: roll back across a machine
+account password rotation (30 days by default) and the keytab goes back while the
+DC does not, while sssd's cache under `/var/lib/sss` is *outside* the BE by D10
+and does not roll back — the two halves of one identity disagree by construction.
+And domain users' homes are under `/var/lib/os7/domain-homes` via sssd's
+`fallback_homedir`, deliberately outside the BE where `Restore-OS7` would roll
+them back (BUILD-NOTES #74's shape in a second place), but that is not a
+`rpool/USERDATA` dataset and the default backup policy does not reach it.
+
+**And one thing it deliberately does not do**, which belongs here so nobody
+re-opens it as a gap: no Group Policy (no GPO engine exists for Linux; sssd
+enforces logon-right GPOs only, which is consumption and not administration),
+nothing over RPC/DCOM (`repadmin`, `dcdiag`, `netdom`, DNS server, DHCP,
+certificate enrolment), nothing through `[ADSI]` (it loads on Linux and then
+throws "not supported on this platform"), and no WinRM (measured dead: "no
+supported WSMan client library was found"). A domain join also does **not** make
+a machine Intune-manageable — enrolment goes through Entra and there is no hybrid
+join for Linux.
+
+---
+
 **THE POWERSHELL SURFACE IS WRITTEN AND HAS NEVER RUN ON A BOOTED MACHINE.**
 Everything in it was measured against a container and, for the facts that
 decide behaviour, re-checked against the shipped ISO's squashfs — but a
@@ -81,7 +171,7 @@ container is not a machine, and BUILD-NOTES **#93** is the session where that
 distinction nearly put a false product defect into this file. What is owed:
 
 ```bash
-./installer/testing/check-layering.py         # 4 rules — GREEN
+./installer/testing/check-layering.py         # 5 rules — GREEN
 ./installer/testing/check-netplan-rule.py     # both languages, byte-exact — GREEN
 ./installer/testing/check-network-logic.py    # GREEN
 ./installer/testing/check-service-logic.py    # GREEN

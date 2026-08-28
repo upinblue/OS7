@@ -2395,8 +2395,17 @@ function Restore-OS7 {
 # backup files, so it could sit earlier; it does not, because "after everything
 # it does not depend on" is a rule that survives the next file being added and
 # "somewhere in the middle" is not.
+#
+# THE THREE DIRECTORY FILES sit between Management and Update, and the position
+# is the same rule again. OS7.Directory.ps1 defines Import-OS7DirectoryLayer
+# and Resolve-OS7AdminSession, which OS7.DirectoryObject.ps1 calls in every
+# function and OS7.Domain.ps1 calls in most; it also uses Import-OS7NetLayer
+# for the SRV lookup that finds a domain controller, which OS7.Network.ps1
+# defines sixth. So: after everything they depend on, and still before
+# OS7.Update.ps1, which stays last.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1', 'OS7.Update.ps1')) {
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1',
+		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -2457,4 +2466,30 @@ Export-ModuleMember -Function Get-OS7Version,
 	# reports the thing C8a leaves broken: brokers.d is empty on every image
 	# built so far, so Entra sign-in cannot work.
 	Get-OS7EntraStatus, Get-OS7IntuneEnrollment, Get-OS7ArcStatus,
-	Get-OS7ManagementStatus
+	Get-OS7ManagementStatus,
+	# Active Directory, OUTBOUND AND CREDENTIAL-BASED (docs/AD-PLAN.md). The
+	# machine is not a member of the domain and does not need to be: an
+	# administrator signs in to the directory from here, works as themselves,
+	# and signs out. No machine account, no keytab, no new package.
+	Enter-OS7AdminSession, Exit-OS7AdminSession, Get-OS7AdminSession,
+	Test-OS7Directory, Add-OS7DirectoryTrust,
+	Get-OS7ADDomain, Get-OS7ADDomainController,
+	# Active Directory objects. Search-OS7AD and Get-/Set-OS7ADObject are the
+	# deliberate way out: anything this surface does not name is one raw LDAP
+	# call away rather than a dead end.
+	Get-OS7ADUser, New-OS7ADUser, Set-OS7ADUser,
+	Get-OS7ADGroup, New-OS7ADGroup, Get-OS7ADGroupMember,
+	Add-OS7ADGroupMember, Remove-OS7ADGroupMember,
+	Get-OS7ADComputer, Get-OS7ADOrganizationalUnit,
+	Enable-OS7ADAccount, Disable-OS7ADAccount, Unlock-OS7ADAccount,
+	Reset-OS7ADAccountPassword,
+	Move-OS7ADObject, Rename-OS7ADObject,
+	Search-OS7AD, Get-OS7ADObject, Set-OS7ADObject, Remove-OS7ADObject,
+	# The domain JOIN, which is a different feature with a different cost: five
+	# packages, a machine account, and an interaction with boot environments
+	# that nothing else here has. Repair-OS7Domain exists because /etc lives
+	# inside the boot environment and an AD machine password does not roll back.
+	Join-OS7Domain, Remove-OS7Domain, Repair-OS7Domain,
+	Get-OS7Domain, Test-OS7Domain,
+	Get-OS7DomainLogonPolicy, Set-OS7DomainLogonPolicy,
+	Get-OS7KerberosTicket, New-OS7KerberosTicket, Remove-OS7KerberosTicket

@@ -144,6 +144,100 @@ sanoid
 # backup.
 procps
 
+# --- Active Directory: the client side ---------------------------------------
+# ALL THREE ARE ALREADY ON amd64 AND IN NO OS/7 LIST, which is exactly why they
+# are here. Measured 2026-08-27 out of
+# out/OS7-1.0.0.116-amd64.packages.manifest: they arrived behind live-build's
+# --mode ubuntu desktop task, which arm64 never installs because it is
+# server-only. So this block is not a restatement of what the image already has.
+# On arm64 it is what makes the Active Directory surface exist at all; on amd64
+# it is what stops it vanishing the next time the desktop task changes.
+#
+# There is no line here for the LDAP library itself, and that is measured too:
+# libldap2 is a Depends of libcurl4t64 and curl is in the Base tooling group
+# below, so libldap.so.2 is on both architectures already. libldap-common comes
+# with it, which is what puts /etc/ldap/ldap.conf on the machine - the file that
+# decides LDAPS trust, because .NET's VerifyServerCertificate callback throws on
+# Linux and OpenLDAP is the only thing left that can be told what to trust.
+#
+# What is NOT already guaranteed:
+#
+#   ldap-utils                  ldapsearch, ldapwhoami, ldapmodify. The
+#                               INDEPENDENT WITNESS: what OS/7 wrote to a
+#                               directory is confirmed by reading it back with a
+#                               tool that shares no code with the client under
+#                               test, never by the client's own success.
+#
+#   libsasl2-modules-gssapi-mit the GSSAPI mechanism plugin for Cyrus SASL.
+#                               Without it there is no mechanism for
+#                               AuthType.Negotiate to offer. Measured
+#                               2026-08-27 against a real DC: Negotiate with an
+#                               EXPLICIT credential returns LDAP rc 92, "not
+#                               supported", even with the plugin present - so
+#                               this package is what makes the AMBIENT-ticket
+#                               path possible, and nothing makes the explicit
+#                               one work.
+#
+#   bind9-dnsutils              dig. Every AD client finds a domain controller
+#                               through the SRV record
+#                               _ldap._tcp.dc._msdcs.<domain>, and nothing else
+#                               on this image can ask for one: System.Net.Dns
+#                               exposes no SRV query and Resolve-DnsName is
+#                               Windows-only.
+#
+# NOTE FOR SPIKE S7: naming these explicitly puts them in
+# /usr/lib/os7/packages.manifest on BOTH architectures, so the manifest changes
+# with this commit. That is a deliberate change of S7's comparison baseline, not
+# drift between two builds.
+#
+ldap-utils
+libsasl2-modules-gssapi-mit
+bind9-dnsutils
+
+# --- Identity: the domain JOIN (docs/AD-PLAN.md stage 2) ---------------------
+# Everything above this is outbound and credential-based and needs none of it.
+# These five are what makes THIS MACHINE a member of a domain, so that domain
+# accounts can log in to it and sudo can be granted by AD group.
+#
+#   adcli         performs the join and writes /etc/krb5.keytab, which is the
+#                 one piece that cannot be written by hand. realmd is
+#                 deliberately NOT here (AD-PLAN A7): it is a D-Bus service that
+#                 wants to configure a RUNNING system, and the installer joins
+#                 from a chroot. adcli is a one-shot program.
+#
+#   sssd          THE REASON THIS LINE EXISTS AT ALL. sssd, sssd-ad and
+#   sssd-ad       libpam-sss are already on the amd64 image and are in NO
+#                 package list - they arrived behind ubuntu-desktop-minimal.
+#                 arm64 is server-only and never installs that list, and the
+#                 amd64 headless path purges the desktop and then runs
+#                 `apt-get autoremove --purge`, which takes anything that got
+#                 there as a dependency. So on two of the three products the
+#                 login stack this repository already wires up in
+#                 /etc/nsswitch.conf and /etc/pam.d/common-auth has nothing
+#                 behind it. Naming them is what makes the feature exist there.
+#
+#   sssd-tools    sssctl: the only way to ask sssd what it thinks, rather than
+#                 asking systemd whether its unit is running. A daemon that is
+#                 active and resolving nobody is the failure this guards.
+#
+#   krb5-user     kinit, klist, kvno. Needed to obtain a ticket by hand and to
+#                 read a keytab back - which is how Join-OS7Domain proves it
+#                 worked instead of trusting adcli's exit code.
+#
+# WHAT THIS COSTS AND WHAT IT DOES NOT BUY: about 10 MB on arm64, nothing on
+# amd64-GUI where they are already present. It does NOT make a machine
+# manageable by Intune - enrolment goes through Entra ID and there is no hybrid
+# join for Linux - and it does not bring Group Policy, which does not exist for
+# Linux at all.
+#
+# NEVER RUN ON A MACHINE. Join-OS7Domain and screen 9D are proven only against a
+# Samba AD DC in a container (installer/testing/check-ad.py). AD-PLAN AL1.
+adcli
+sssd
+sssd-ad
+sssd-tools
+krb5-user
+
 # --- Base tooling ------------------------------------------------------------
 openssh-server
 curl

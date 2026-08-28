@@ -1,0 +1,20 @@
+dn: OU=OS7Fixtures,DC=os7,DC=test
+objectClass: top
+objectClass: organizationalUnit
+ou: OS7Fixtures
+instanceType: 4
+whenCreated: 20260827190804.0Z
+whenChanged: 20260827190804.0Z
+uSNCreated: 4327
+uSNChanged: 4327
+name: OS7Fixtures
+objectGUID:: ylSQQsJF3UedoS8/i5DBrA==
+objectCategory: CN=Organizational-Unit,CN=Schema,CN=Configuration,DC=os7,DC=test
+distinguishedName: OU=OS7Fixtures,DC=os7,DC=test
+
+# refldaps://os7.test/CN=Configuration,DC=os7,DC=test
+
+# refldaps://os7.test/DC=DomainDnsZones,DC=os7,DC=test
+
+# refldaps://os7.test/DC=ForestDnsZones,DC=os7,DC=test
+

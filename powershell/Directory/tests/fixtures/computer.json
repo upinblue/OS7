@@ -1,0 +1,31 @@
+{
+  "Dn": "CN=OS7FIXTUREPC,CN=Computers,DC=os7,DC=test",
+  "Attributes": {
+    "objectClass": ["top", "person", "organizationalPerson", "user", "computer"],
+    "cn": ["OS7FIXTUREPC"],
+    "instanceType": ["4"],
+    "whenCreated": ["20260827190804.0Z"],
+    "whenChanged": ["20260827190804.0Z"],
+    "uSNCreated": ["4328"],
+    "uSNChanged": ["4328"],
+    "name": ["OS7FIXTUREPC"],
+    "objectGUID": ["mp9FKJRC5kOGuSKSb2fHFQ=="],
+    "userAccountControl": ["4098"],
+    "badPwdCount": ["0"],
+    "codePage": ["0"],
+    "countryCode": ["0"],
+    "badPasswordTime": ["0"],
+    "lastLogoff": ["0"],
+    "lastLogon": ["0"],
+    "pwdLastSet": ["0"],
+    "primaryGroupID": ["515"],
+    "objectSid": ["AQUAAAAAAAUVAAAA2gnSpGzEwv3Oe1RWVQQAAA=="],
+    "accountExpires": ["9223372036854775807"],
+    "logonCount": ["0"],
+    "sAMAccountName": ["OS7FIXTUREPC$"],
+    "sAMAccountType": ["805306369"],
+    "objectCategory": ["CN=Computer,CN=Schema,CN=Configuration,DC=os7,DC=test"],
+    "isCriticalSystemObject": ["FALSE"],
+    "distinguishedName": ["CN=OS7FIXTUREPC,CN=Computers,DC=os7,DC=test"]
+  }
+}

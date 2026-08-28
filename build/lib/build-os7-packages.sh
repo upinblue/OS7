@@ -441,13 +441,42 @@ build_os7_console() {
 }
 
 # ---------------------------------------------------------------------------
-# os7-module — the two PowerShell modules, from their one source each.
+# os7-module — the six PowerShell modules, from their one source each.
 #
-# Zfs is the generic ZFS layer and OS7 is the product layer on top of it
-# (ZFS-POWERSHELL-PLAN Z1). They travel in one package because Z1 is only true
-# if both are present: an OS7 module on a machine without Zfs is a module that
-# cannot do anything, and check-layering.py holds the line between them in the
-# source tree rather than in the archive.
+# Zfs, Net, Time, Systemd and Directory are the generic layers and OS7 is the
+# product layer on top of them (ZFS-POWERSHELL-PLAN Z1, POWERSHELL-SURFACE-PLAN
+# P2 and P2-time). They travel in one package because those rules are only true
+# if all of them are present: an OS7 module on a machine without the layer
+# beneath it is a module that cannot do anything, and check-layering.py holds
+# the line between them in the source tree rather than in the archive.
+#
+# THIS LOOP SAID `Zfs OS7` UNTIL 2026-08-27, AND THAT WAS A DEFECT rather than a
+# staging that had not caught up. build.sh has staged Net, Time and Systemd into
+# the ISO since each was written, so an ISO-installed machine has all of them and
+# every check in installer/testing/ was run against one. A machine installed from
+# OS/7's own apt repository had two.
+#
+# The symptom is not a missing file, which is why nothing noticed. OS7's lazy
+# loaders — Import-OS7NetLayer, Import-OS7TimeLayer, Import-OS7SystemdLayer —
+# try the module beside them, then /usr/local/share/powershell/Modules, and then
+# fall through to `Import-Module <Name> -Force -ErrorAction Stop` BY NAME. On a
+# machine where the .deb put nothing there, all three candidates are the same
+# absent path, and the first network, clock or service cmdlet an operator runs
+# throws (measured with pwsh 7.6.5, 2026-08-27):
+#
+#     The specified module 'Net' was not loaded because no valid module file was
+#     found in any module directory.
+#
+# — a module the operator never asked for, named in an error from a cmdlet that
+# has nothing to do with modules.
+#
+# Nothing looked, in the two places that could have: check-os7-repo.py asserts
+# that os7-module is INSTALLED AT THE VERSION and never what is inside it, and
+# pkg_finish's required-path list named only OS7 and Zfs files — so the .deb was
+# checked against a list that agreed with the bug. That is trap #13's shape
+# exactly: a step reported success for something it never did, and its check was
+# written from the same wrong assumption. The list below now names one manifest
+# and one .psm1 per module, so the loop and the check cannot drift together.
 #
 # THE .psd1 IS STAMPED with the release version, exactly as build.sh does when
 # it stages into includes.chroot, so `Get-Module OS7` and the package agree.
@@ -457,13 +486,21 @@ build_os7_module() {
 	local root="${stage}/usr/local/share/powershell/Modules"
 	local name
 
-	for name in Zfs OS7; do
+	# The generic layers first and OS7 last, in the order hook 0060 checks them
+	# and for the same reason: OS7 sits on top of all five.
+	for name in Zfs Net Time Systemd Directory OS7; do
 		local src="${REPO}/powershell/${name}" dst="${root}/${name}"
 		[[ -d "${src}" ]] || { echo "!!! os7-module: ${src} is missing" >&2; exit 1; }
 		mkdir -p "${dst}"
 		cp -a "${src}/." "${dst}/"
-		# Modules ship no tests. powershell/Zfs/tests/ is the module's own
+		# Modules ship no tests. powershell/<name>/tests/ is the module's own
 		# fixture tree and belongs in the repository, not on a machine.
+		#
+		# THE ISO AND THE .deb DIFFER HERE ON PURPOSE, and the difference is not
+		# drift: build.sh keeps the fixtures because check-image.py runs the
+		# self-tests in a chroot over the finished image, where the subsystem
+		# being parsed cannot run at all. Nothing runs a self-test as part of
+		# installing this package, so here they are weight.
 		rm -rf "${dst}/tests"
 
 		local manifest="${dst}/${name}.psd1"
@@ -480,13 +517,27 @@ build_os7_module() {
 
 	pkg_copyright os7-module "${stage}"
 	pkg_control  os7-module "${stage}" all
+	# ONE MANIFEST AND ONE .psm1 PER MODULE, not a sample. This list is the only
+	# thing that reads the built .deb back, and while it named Zfs and OS7 alone
+	# it agreed with the `Zfs OS7` loop above rather than checking it - so four
+	# missing modules produced a green build for as long as both were wrong
+	# together. A required-path list that only names what the loop already
+	# copies is decoration; one file per module is what makes it an assertion.
 	pkg_finish   os7-module "${stage}" all \
 		./usr/local/share/powershell/Modules/OS7/OS7.psd1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.psm1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Backup.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Home.ps1 \
 		./usr/local/share/powershell/Modules/Zfs/Zfs.psd1 \
-		./usr/local/share/powershell/Modules/Zfs/Zfs.psm1
+		./usr/local/share/powershell/Modules/Zfs/Zfs.psm1 \
+		./usr/local/share/powershell/Modules/Net/Net.psd1 \
+		./usr/local/share/powershell/Modules/Net/Net.psm1 \
+		./usr/local/share/powershell/Modules/Time/Time.psd1 \
+		./usr/local/share/powershell/Modules/Time/Time.psm1 \
+		./usr/local/share/powershell/Modules/Systemd/Systemd.psd1 \
+		./usr/local/share/powershell/Modules/Systemd/Systemd.psm1 \
+		./usr/local/share/powershell/Modules/Directory/Directory.psd1 \
+		./usr/local/share/powershell/Modules/Directory/Directory.psm1
 }
 
 # ---------------------------------------------------------------------------

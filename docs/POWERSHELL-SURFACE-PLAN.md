@@ -89,6 +89,74 @@ Three findings out of that list matter more than the list:
   PowerShell's own half of it is present and working. The gap is one
   configuration line.
 
+### 1.3 The LDAP stack on Linux — one foundation and one trap, and they load alike
+
+Measured 2026-08-27 in pwsh 7.6.5 on the shipped amd64 image, and against a real
+Samba AD DC in a container (`installer/testing/Dockerfile.ad-dc`, realm
+`OS7.TEST`, Samba 4.23.6). §1.1 asked which nouns PowerShell already owns; this
+asks what is underneath the noun a Microsoft administrator cares about most.
+
+* **`System.DirectoryServices.Protocols` ships inside pwsh 7.6.5 and works.** It
+  resolves with no `Add-Type`, opens a socket and reaches `libldap` — which is
+  on every OS/7 image whether anybody planned it or not: `libldap2` is a
+  `Depends` of `libcurl4t64` and `curl` is in `os7-base.list.chroot`, on **both**
+  architectures. The client itself needs no new package. (Three were added to
+  the base list anyway — `ldap-utils`, `libsasl2-modules-gssapi-mit`,
+  `bind9-dnsutils` — and none of them is the client: they are the independent
+  witness, the GSSAPI mechanism plugin, and the SRV lookup that finds a domain
+  controller.)
+* **`System.DirectoryServices` — ADSI — loads, and then throws.** The assembly
+  resolves, the type resolves, and the first call says it is not supported on
+  this platform. One of these two namespaces is a foundation and the other is a
+  dead end; they are one word apart, they fail at different moments, and
+  **nothing tells them apart except running the code.** The AD scripts an
+  administrator arrives with are written against the second one.
+* **`AuthType.Negotiate` with an explicitly supplied credential returns LDAP
+  result 92, "not supported"** — with the GSSAPI plugin present. Negotiate works
+  from an **ambient** ticket, and then only with `rdns = false` in `krb5.conf`
+  *and* `SASL_NOCANON` on for OpenLDAP; otherwise the client canonicalises the
+  server through reverse DNS and asks the KDC for a principal that does not
+  exist. So a typed-in credential is a **simple bind**, which forces the next
+  finding.
+* **A simple bind on port 389 is refused by Active Directory** — "Strong
+  authentication is required" — and LDAPS on 636 is accepted. Windows answers
+  that with sign-and-seal, and **`SessionOptions.Sealing` throws on Linux**.
+  There is no third option, so TLS is the default and port 389 is opt-in.
+* **`SessionOptions.VerifyServerCertificate` throws as well.** There is no
+  certificate callback on this platform at all, so trust belongs to OpenLDAP,
+  and OpenLDAP's trust is **machine-wide** — a product decision taken by an
+  absent API rather than by anybody here (open question 8).
+* **`$env:LDAPTLS_CACERT` set from inside PowerShell does nothing**, and reads
+  back correctly while doing nothing. .NET on Unix keeps its own copy of the
+  environment block and never calls `setenv(3)`, so no native library ever sees
+  the value while `[Environment]::GetEnvironmentVariable` answers happily from
+  the copy. A real `setenv(3)` does work, and only before the first LDAP call in
+  the process. The failure presents as **"The LDAP server is unavailable"** — a
+  network message, about a server that is answering, for a trust problem.
+* **`SessionOptions.ProtocolVersion` reads back 2.** AD refuses LDAPv2 and the
+  refusal arrives as a failed bind, which reads as a wrong password. Version 3
+  has to be set explicitly on every connection.
+* **`ReferralChasing` defaults to `All`.** Every search against a domain root
+  returns three referrals, and chasing one opens a **second, unauthenticated**
+  connection to another server. Switching it off is not tuning; it is the
+  difference between asking as somebody and asking as nobody.
+* **`SearchResultEntry` has no public constructor** — none of the result types
+  do. A test cannot manufacture a directory reply, which is why the seam the
+  self-test replaces sits **above** the .NET boundary and not below it: a
+  testing decision forced by a sealed API. It is what lets
+  `Test-DirectoryModule` run 40 checks with no server while `check-ad.py` needs
+  a real one.
+* **And what a Windows administrator reaches for next is not there: WinRM.**
+  PowerShell on Linux answers "no supported WSMan client library was found".
+  §1.1's remoting row is SSH transport and only SSH transport.
+
+One measurement about the rig rather than the product, kept because the next
+person to build one would otherwise spend the same afternoon: on Ubuntu 26.04 the
+AD DC role is in **`samba-ad-dc`** and **`samba-ad-provision`**, not in `samba`;
+`samba-tool` arrives with `python3-samba`, which is only a `Suggests`; and
+provisioning inside a container needs the `posix:eadb` ACL backend, because
+writing SYSVOL's NT ACLs otherwise needs `CAP_SYS_ADMIN`.
+
 ---
 
 ## 2. Decisions
@@ -236,6 +304,64 @@ it were the only one. Any cmdlet taking a secret takes it as `[securestring]` or
 `ConvertTo-Json`, a log or a screen; and creates the file with its final mode
 before the content goes in, not after.
 
+### P8 — The directory is a subsystem; the domain is policy. Decided 2026-08-27.
+
+**`powershell/Directory/` speaks LDAP and realm membership and has never heard of
+OS/7; `powershell/OS7/` knows which domain this machine administers, whose
+credential the session is holding, which groups may sign in, and that a clock
+five minutes out is a Kerberos failure — which does not report itself as a clock
+problem, it reports that the password is wrong.**
+
+P2 applied to a fifth subsystem, and it passes P2's own test on the same grounds
+the network did: the subsystem has a vocabulary entirely its own — a DN, a search
+filter, `userAccountControl`, a keytab principal, an LDAP result code — and the
+product has a policy on top of it that cannot be said in that vocabulary at all.
+
+| module | knows | does not know |
+|---|---|---|
+| `powershell/Directory/` | `LdapConnection` and its TLS, paged search, add/modify/delete/move, `unicodePwd`, the escaping and DN rules, `adcli`, `kinit`, `klist`, `getent`, what an sssd stanza looks like | which domain, which groups, five minutes, boot environments, OS/7 at all |
+| `powershell/OS7/` | which domain this machine administers, whose credential the admin session holds, which groups may sign in, that Kerberos dies at five minutes' skew, every `OS7`-prefixed name | how to escape a filter, how to spell a DN, how to drive `adcli` |
+
+The cut falls where a socket is opened or a process is started: **both** of those
+are the generic module's, including realm membership, which is `adcli` and
+`kinit` and nothing more product-specific than that. Joining a Kerberos realm and
+configuring sssd is ordinary Ubuntu; *which* realm, and what a machine does about
+it afterwards, is not.
+
+The same line was drawn a second time in the other direction, and that one is
+worth naming: **finding a domain controller is an SRV lookup, and DNS belongs to
+the network, not to the directory.** `Resolve-NetSrvRecord` is therefore in
+`powershell/Net/`, and `dig`, `host` and `nslookup` joined **P2's** token list on
+the day this rule was written — where they measure 0. A line is cheapest to draw
+before anything has crossed it, which is the argument P2's own baseline already
+made once.
+
+**What this forbids: `powershell/OS7` may not name `adcli`, `kinit`, `klist`,
+`getent` or `ldapsearch`** — nor `realm`, `sssctl`, `kdestroy`, `ktutil` or the
+rest of the Kerberos and OpenLDAP client tools; the whole token list lives in the
+rule. `installer/testing/check-layering.py` gained a fifth rule, `P2-directory`,
+at a baseline of **1**, with that one site named in the rule itself rather than
+left to be found: `powershell/OS7/OS7.Home.ps1:122` asks `getent passwd` about a
+**local** account, which predates the directory layer and is the one question
+`getent` answers with no directory involved. Not 0 as P2 and P2-time managed by
+being written before there was any code to grandfather, and not deliberately
+above zero as P2-systemd's 2 is — just one call that was already there. A
+baseline may fall and may not rise.
+`getent` is in the token list regardless of that site, because the moment sssd is
+configured it becomes the canonical "is the join working" probe — and that call
+belongs to the Directory module.
+
+It forbids one more thing, quieter and more expensive: **`powershell/OS7` may not
+write its own filter escaping or DN handling.** The Directory module exports
+`ConvertTo-DirectoryFilterValue`, `ConvertTo-DirectoryDnValue`,
+`ConvertTo-DirectoryDomainDn` and `Split-DirectoryDn` for the layer above to
+call, which is not tidiness — a second implementation of an escaping rule is
+BUILD-NOTES #66 exactly, one specification taking two routes with nobody diffing
+them, and the failure it makes is a search that returns the wrong objects rather
+than an error. The directory's own design is
+[AD-PLAN.md](AD-PLAN.md); this decision is only where its layer boundary is
+recorded.
+
 ---
 
 ## 3. The surface
@@ -266,6 +392,32 @@ feature.
 | **Remoting** | `Enable-/Disable-/Get-OS7Remoting` |
 | **Inventory** | `Get-OS7ComputerInfo`, `Get-OS7SecureBoot`, `Get-OS7Tpm`, `Get-OS7Hardware` |
 | **Certificates** | `Get-/Import-/Remove-OS7Certificate`, `Test-OS7Certificate` |
+| **Directory** | `Enter-/Get-/Exit-OS7AdminSession`, `Get-OS7ADDomain`, `Get-OS7ADDomainController`, `Test-OS7Directory`, `Add-OS7DirectoryTrust`, `Get-OS7ADUser/Group/GroupMember/Computer/OrganizationalUnit/Object`, `Search-OS7AD`, `New-/Set-OS7ADUser`, `New-OS7ADGroup`, `Add-/Remove-OS7ADGroupMember`, `Enable-/Disable-/Unlock-OS7ADAccount`, `Reset-OS7ADAccountPassword`, `Move-/Rename-/Set-/Remove-OS7ADObject`, `Get-/Join-/Repair-/Remove-/Test-OS7Domain`, `Get-/Set-OS7DomainLogonPolicy`, `Get-/New-/Remove-OS7KerberosTicket` |
+
+**Directory is Tier 2, and the argument is written down because the row could be
+read into either neighbouring tier.**
+
+It is not Tier 1. Tier 1's test is whether §6's guarantee is *already* broken
+without the group, and on the machine OS/7 ships — whose management path is
+Entra, Intune and Arc — nothing about Active Directory arises at all. A machine
+with no directory in sight is not a broken machine.
+
+It is not Tier 3 either, and that is the sharper half. Tier 3 is completeness;
+this is what a Microsoft administrator does between nine and five. Without it the
+answer to "unlock that account" is a Windows box, and the answer *on this
+machine* is `ldapsearch` and `adcli` — Linux commands, which is exactly what §6
+promises an operator never has to type. The whole design is a workstation story:
+an administrator signs in to AD from an OS/7 machine with their own AD admin
+account and works as themselves, and **the machine is not a member of the domain
+and does not need to be.**
+
+The domain join shares the row and is the piece whose tier may move. For a joined
+machine `Test-OS7Domain` is the only thing that will say why nobody can log in,
+which is Tier 1's shape precisely. It is here instead because **no OS/7 machine
+has ever joined a domain** — the join is code plus a container test — and a tier
+is a claim about a machine that exists. If joining becomes a supported install
+mode, `Get-/Test-/Repair-OS7Domain` moves up with it, and this paragraph is what
+makes that a decision rather than a drift.
 
 `New-OS7User` is not a `useradd` wrapper. It is the only correct path on this
 product: the home has to be a USERDATA dataset (#74) and `useradd -m` will not
@@ -317,7 +469,8 @@ The network group's READ half, in both layers. Nothing writes yet.
 | **Services and logs** — OS/7 layer: `Get-OS7Service`, `Start-/Stop-/Restart-/Set-OS7Service`, `Get-OS7Log`, `Get-OS7InstallLog` | **Done.** `installer/testing/check-service-logic.py`, 15 checks over ten unit states. `check-layering.py` gained a fourth rule, `P2-systemd`, at a baseline of **2** with both remaining sites named. |
 | **Management plane** — `Get-OS7EntraStatus`, `Get-OS7IntuneEnrollment`, `Get-OS7ArcStatus`, `Get-OS7ManagementStatus` | **Done, READ only.** `installer/testing/check-management-logic.py`, 25 checks against a real image with systemd as PID 1. Registration (`Register-OS7Entra`, `Register-OS7Intune`, `Connect-OS7Arc`) is **not started**: it needs a tenant and credentials and cannot be checked here at all. |
 | The resolver, wireless scan/connect, proxy, hostname | **Not started.** `Get-NetResolver` is deliberately deferred: `resolvectl` needs dbus and could not be measured on the host that built this, and writing a parser for output nobody here has seen is the assertion this project does not make. |
-| Everything in Tiers 1–3 outside the network group | **Not started.** |
+| **Directory** — `powershell/Directory/` and the OS7 layer above it: the admin session, discovery, `Test-OS7Directory`, the user/group/computer/OU surface, the domain join, logon policy, Kerberos tickets | **Done, and checked against a REAL DC** — `installer/testing/check-ad.py` against Samba 4.23.6 in a container, all green; `check-directory-logic.py` 15/15 with no DC and no VM; `Test-DirectoryModule` 40/40. `check-layering.py` gained a fifth rule, `P2-directory`, holding at its baseline of 1 (P8). **The join is code plus a container test: no OS/7 machine has ever joined a domain**, and a real Windows Server DC is owed (open question 7). |
+| Everything else in Tiers 1–3 — users, disks and encryption, firewall, inventory, certificates, the capstone, and all of Tier 3 | **Not started.** |
 
 `Set-OS7NetworkAdapter` **rolls back by default** (decided 2026-08-27). It
 writes, applies, then asks `ip` — and when no address appears it restores the
@@ -544,3 +697,33 @@ about rfkill's device list.
    evidence that they exist and **not** evidence that they are the right or the
    complete set — Intune enrolment in particular is documented as needing more
    than one hostname.
+7. **Can an OS/7 machine reach a hardened Active Directory at all, when
+   sign-and-seal cannot be switched on from .NET on Linux?** §1.3 measured the
+   three walls in a row: `SessionOptions.Sealing` throws, a simple bind on 389 is
+   refused outright, and LDAPS on 636 is what is left. That is enough against a
+   domain controller with a certificate, and it is nothing at all against one
+   without — or against a forest whose policy requires LDAP signing and channel
+   binding, which is the configuration Microsoft has spent years pushing
+   customers towards. Channel binding has never been exercised here: Samba
+   speaks the protocol, it does not reproduce Windows' enforcement of it. The
+   answer is owed against a real Windows Server DC, and it decides whether this
+   surface works in the enterprises most likely to want it.
+8. **Should trusting one domain controller change what every program on the
+   machine trusts?** `Add-OS7DirectoryTrust` installs the DC's issuing CA into
+   the system store, because §1.3 leaves nowhere else to put it —
+   `VerifyServerCertificate` throws, and `LDAPTLS_CACERT` cannot be set from
+   inside the process. So the smallest available scope for one administrator's
+   LDAPS session is machine-wide, and `curl`, `apt` and Edge inherit it. Whether
+   an OS/7 machine should carry an enterprise root CA at all, and whether the
+   installer, Intune or this cmdlet is what puts it there, is undecided; what is
+   settled is only that the cmdlet reads the store back rather than believing
+   `update-ca-certificates`, which exits 0 for a file it skipped.
+9. **Is any of this true on arm64?** None of §1.3 was measured there, and the
+   packaging half is weaker than it looks: **there is no arm64 packages manifest
+   in `out/` at all**, so `libldap2` arriving behind `libcurl4t64` is an argument
+   from a dependency rather than a reading of an image. It matters more here than
+   elsewhere because the amd64 image had `ldap-utils` and its neighbours *by
+   accident* — they came in behind the desktop task that arm64, being
+   server-only, never installs. That is the same shape as open question 1, and
+   the same single act settles both: an arm64 image measured the way `os7img:116`
+   was.

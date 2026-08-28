@@ -102,7 +102,10 @@ internal sealed class StaticScreen : Screen
 
             case Key.Enter:
                 if (!Collect()) return Transition.Redraw;
-                return Transition.To(ExecuteScreen.Start(_plan));
+                // 9D next, through its own Entry — one door, so that the
+                // question "is there a domain to join here" is answered in one
+                // place rather than by each screen that could reach it.
+                return Transition.To(DomainScreen.Entry(_plan));
 
             // F4 and not `T`: every field here can legitimately contain a `t` —
             // `test.corp.example.com` is a search domain — so a letter would

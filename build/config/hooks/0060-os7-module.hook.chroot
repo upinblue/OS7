@@ -1,11 +1,12 @@
 #!/bin/bash
 # OS/7 — verify the PowerShell modules landed and are loadable.
 #
-# FIVE modules since 2026-08-27: Zfs (the generic ZFS layer,
+# SIX modules since 2026-08-27: Zfs (the generic ZFS layer,
 # docs/ZFS-POWERSHELL-PLAN.md), Net (the generic network layer,
 # docs/POWERSHELL-SURFACE-PLAN.md P2), Time (the generic clock layer, same
-# plan), Systemd (units and the journal, same plan) and OS7 (the product layer
-# on top of all four). All five are placed
+# plan), Systemd (units and the journal, same plan), Directory (LDAP, X.500 and
+# the Active Directory schema, same plan) and OS7 (the product layer
+# on top of all five). All six are placed
 # by build.sh, which copies powershell/<name>/ into the staged
 # includes.chroot. That keeps ONE source of truth per module in the repo - the
 # June-2026 tree carried a second baked-in copy that could drift.
@@ -111,6 +112,35 @@ check_module Time Get-ChronyTracking Get-ChronySource Get-ChronySourceFile \
 check_module Systemd Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
 	Restart-SystemdUnit Set-SystemdUnitStartup Update-SystemdUnit Get-SystemdJournal \
 	Test-SystemdModule
+# Directory is the fifth generic layer, and one name in this list is the reason
+# the line exists: Connect-DirectoryServer. Everything else the module exports is
+# a converter or an escaper - RFC 4514, RFC 4515, FILETIME, objectSid,
+# userAccountControl - and every one of them would pass a self-test on a machine
+# that can reach no directory at all. An image that shipped the converters and
+# not the connection would answer every question about LDAP correctly and be
+# unable to open a socket to a domain controller, which is the failure this line
+# is here to make impossible rather than merely unlikely.
+#
+# Test-DirectoryModule is named for the same reason Test-ZfsModule is above: it
+# is what check-image.py runs against the finished artefact, and a module that
+# shipped without it fails that check by producing no verdict rather than a bad
+# one.
+check_module Directory Connect-DirectoryServer Disconnect-DirectoryServer \
+	Get-DirectoryWhoAmI Get-DirectoryRootDse \
+	Search-Directory New-DirectoryEntry Set-DirectoryEntry \
+	Remove-DirectoryEntry Move-DirectoryEntry Set-DirectoryPassword \
+	ConvertTo-DirectoryFilterValue ConvertTo-DirectoryDnValue \
+	ConvertTo-DirectoryDomainDn Split-DirectoryDn \
+	Get-DirectoryAttributeValues Get-DirectoryAttributeScalar \
+	ConvertFrom-DirectoryFileTime ConvertFrom-DirectoryGeneralizedTime \
+	ConvertFrom-DirectorySid ConvertFrom-DirectoryGuid \
+	Get-DirectoryAccountControl Get-DirectoryErrorMeaning \
+	Get-DirectoryLdapException ConvertTo-DirectoryInt64 \
+	Join-DirectoryRealm Remove-DirectoryRealm Update-DirectoryRealm \
+	Get-DirectoryRealmConfiguration Get-DirectoryKeytabPrincipal \
+	New-DirectorySssdConfiguration Get-DirectoryIdentityResolution \
+	Get-DirectoryTicket New-DirectoryTicket Remove-DirectoryTicket \
+	Test-DirectoryTool Test-DirectoryModule
 # The boot-environment cmdlets are named here rather than left to the stub that
 # used to stand in for them: they are what Restore-OS7 AND Update-OS7 are built
 # out of (docs/SESSION-BOOT-ENVIRONMENTS.md), they are staged from the same one
@@ -166,8 +196,18 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 # what FormatsToProcess names — but it fails the same way for the same reason,
 # and an empty one is a `Get-OS7Version` that prints a bare property bag on a
 # machine somebody is trying to identify.
+#
+# The three Active Directory files join the list on 2026-08-27, and for now they
+# carry more weight than the rest of it: check_module OS7 above does NOT name the
+# AD cmdlets, so this loop is the only thing standing between a `cp -a` that
+# dropped one of them and an image whose OS7 module imports cleanly, prints a
+# version, and has no Active Directory surface at all. An empty dot-sourced file
+# is not an import error - `. empty.ps1` succeeds and defines nothing - so the
+# module comes up looking healthy. Naming those cmdlets in the export list above
+# is the second half of this guard and is still owed.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
 	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.Management.ps1 \
+	OS7.Directory.ps1 OS7.DirectoryObject.ps1 OS7.Domain.ps1 \
 	OS7.Update.ps1 \
 	OS7.format.ps1xml os7-endpoints.json; do
 	if [ ! -s "${MODULES_ROOT}/OS7/${part}" ]; then

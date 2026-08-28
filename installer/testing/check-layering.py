@@ -4,7 +4,9 @@ The layering rules: powershell/OS7 reaches a subsystem only through its module.
 
     ./check-layering.py            report, and fail if any rule got worse
 
-TWO RULES SINCE 2026-08-27, and they are the same rule twice.
+FIVE RULES SINCE 2026-08-27, and they are the same rule five times. This line
+read TWO while the list below held four: P2-time and P2-systemd went in under
+it and it was not touched. Count the RULES list, not this sentence.
 
 Z1 (docs/ZFS-POWERSHELL-PLAN.md) says Layer 3 (`powershell/OS7`) never invokes
 `zfs` or `zpool` itself — every ZFS operation goes through Layer 2
@@ -25,6 +27,16 @@ is the cheapest moment to add a rule: `powershell/OS7` had no network code at
 all, so the line is drawn before anything can be grandfathered across it. Z1 was
 added the other way round — at 3, while `New-OS7Storage` still ran `zpool`
 itself — and it took a gated `run-phase3.py all` to get it to 0.
+
+P2-directory (docs/AD-PLAN.md) is the fifth subsystem and the first to start at
+1: `getent` was already being asked about a LOCAL account in OS7.Home.ps1
+before there was a directory layer to route it through. The site is named in
+the rule itself, so the number never has to be explained a second time.
+
+THE HONEST LIMIT OF ALL FIVE: the walk root is `powershell/OS7` and nothing
+else. `powershell/Zfs`, `Net`, `Time`, `Systemd` and `Directory` are unpoliced
+by construction — nothing here stops the Directory module from shelling
+`resolvectl`, and the only defence is that file's own header.
 
 A rule that is only written down erodes. BUILD-NOTES #13, #43 and #45 are three
 records of that, so this is the mechanism.
@@ -87,8 +99,24 @@ RULES = [
     Rule(
         "P2", "does powershell/OS7 reach the network directly?", "Net",
         0,
+        # `dig`, `host` and `nslookup` joined the tuple on 2026-08-27 with the
+        # directory rule below, and they measure 0 — which is the whole reason
+        # to add them now rather than later. Finding a domain controller is an
+        # SRV lookup, DNS is P2's subsystem and not the directory's, and the
+        # line is cheapest to draw before anything has crossed it. That is P2's
+        # own argument, made once already by this rule's own baseline.
+        #
+        # `host` is the loosest token in this file and it was measured before
+        # it went in: the Invoke-OS7Native branch runs a lazy [^\n]*? across
+        # the whole line, so `Invoke-OS7Native -Command 'ssh' ... # the remote
+        # host` and `... @($t.host)` both trip it, while `$Target.Host` and
+        # `hostnamectl` do not (the match is case-sensitive and \b-anchored).
+        # Both false positives are reachable and neither exists today. No
+        # trailing comments on Invoke-OS7Native lines, and spell a property
+        # access `.Host`, is the convention that keeps it honest — the same
+        # convention `net` was left out of the directory rule to avoid needing.
         ("ip", "netplan", "nmcli", "networkctl", "resolvectl", "iw", "rfkill",
-         "wpa_supplicant", "wpa_cli"),
+         "wpa_supplicant", "wpa_cli", "dig", "host", "nslookup"),
         "powershell/OS7 reaches the network only through the Net module",
     ),
     Rule(
@@ -121,6 +149,32 @@ RULES = [
         ("systemctl", "journalctl", "systemd-analyze", "loginctl", "busctl",
          "systemd-cat", "systemd-run"),
         "powershell/OS7 reaches systemd only through the Systemd module",
+    ),
+    Rule(
+        "P2-directory", "does powershell/OS7 reach the directory directly?",
+        "Directory",
+        # 1, and the one is named rather than left to be found:
+        #
+        #   OS7.Home.ps1:122  `getent passwd <user>` — it predates this rule
+        #                     and asks about a LOCAL account, which is the one
+        #                     question `getent` answers without a directory
+        #                     being involved at all.
+        #
+        # A baseline may fall and may not rise. `getent` is in the list anyway
+        # because once sssd is configured it becomes the canonical "is the join
+        # working" probe, and that call belongs to the Directory module.
+        #
+        # `net` and `ldapsearch`'s siblings are here; `net` alone is NOT, and
+        # that is deliberate: the Invoke-OS7Native branch of direct() carries a
+        # lazy [^\n]*? across the whole line and only WHOLE-LINE comments are
+        # skipped, so the token `net` would fail on any line with the word
+        # "net" in a trailing comment. `samba` and `winbind` are absent for the
+        # same reason plus a better one: OS/7 does not take that road.
+        1,
+        ("ldapsearch", "ldapwhoami", "ldapmodify", "ldapadd", "ldapdelete",
+         "ldappasswd", "kinit", "klist", "kdestroy", "kvno", "ktutil",
+         "adcli", "realm", "sssctl", "sss_cache", "getent"),
+        "powershell/OS7 reaches the directory only through the Directory module",
     ),
 ]
 

@@ -7,16 +7,21 @@ Priority: important
 Depends: os7-powershell (= @OS7_VERSION@)
 Recommends: zfsutils-linux
 Homepage: https://github.com/upinblue/os7
-Description: The OS/7 and Zfs PowerShell modules
+Description: The OS/7 PowerShell modules and the five layers beneath them
  OS/7's own command surface: the release identity, storage, boot environments,
- rollback, backup, home directories and the classic desktop, as PowerShell
- cmdlets — and the generic ZFS layer they run on.
+ rollback, updates, backup, home directories, the network, the clock, services
+ and Active Directory, as PowerShell cmdlets — and the five generic layers they
+ run on.
  .
- TWO MODULES, and the direction between them is the point. Zfs knows nothing
- about OS/7 and would run on any OpenZFS host; OS7 is the product layer above
- it and reaches ZFS only through it. They travel in one package because that
- rule is only true if both are present — an OS7 module on a machine without Zfs
- is a module that cannot do anything.
+ SIX MODULES, and the direction between them is the point. Zfs, Net, Time,
+ Systemd and Directory know nothing about OS/7 and would each run on any Ubuntu
+ host: ZFS, netplan and iproute2, chrony and the zone files, units and the
+ journal, and LDAP with the X.500 and Active Directory schema. OS7 is the
+ product layer above all five and reaches every one of those subsystems only
+ through them. They travel in one package because that rule is only true if all
+ six are present — an OS7 module on a machine missing a layer beneath it is a
+ module whose first call to that subsystem throws, naming a module the operator
+ never asked for.
  .
  zfsutils-linux is a Recommends and not a Depends on purpose: the modules load,
  report and self-test on a machine with no pools, which is what makes them

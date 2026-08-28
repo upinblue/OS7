@@ -97,6 +97,28 @@
 		# Set-OS7UpdateChannel points the machine at a repository and switches on
 		# the apt source os7-release deliberately ships disabled.
 		'Update-OS7', 'Get-OS7Release', 'Set-OS7UpdateChannel', 'Test-OS7Update',
+		# Implemented — Active Directory, OUTBOUND AND CREDENTIAL-BASED
+		# (docs/AD-PLAN.md). NO domain join is required for any of these: the
+		# machine signs an administrator in to the directory, it does not
+		# become a member of it. Measured against a real DC 2026-08-27.
+		'Enter-OS7AdminSession', 'Exit-OS7AdminSession', 'Get-OS7AdminSession',
+		'Test-OS7Directory', 'Add-OS7DirectoryTrust',
+		'Get-OS7ADDomain', 'Get-OS7ADDomainController',
+		'Get-OS7ADUser', 'New-OS7ADUser', 'Set-OS7ADUser',
+		'Get-OS7ADGroup', 'New-OS7ADGroup', 'Get-OS7ADGroupMember',
+		'Add-OS7ADGroupMember', 'Remove-OS7ADGroupMember',
+		'Get-OS7ADComputer', 'Get-OS7ADOrganizationalUnit',
+		'Enable-OS7ADAccount', 'Disable-OS7ADAccount', 'Unlock-OS7ADAccount',
+		'Reset-OS7ADAccountPassword',
+		'Move-OS7ADObject', 'Rename-OS7ADObject',
+		'Search-OS7AD', 'Get-OS7ADObject', 'Set-OS7ADObject', 'Remove-OS7ADObject',
+		# The domain JOIN — the separate, more expensive feature. NEVER RUN ON
+		# A MACHINE; check-ad.py joins a Samba DC in a container, which is the
+		# protocol and not a fleet.
+		'Join-OS7Domain', 'Remove-OS7Domain', 'Repair-OS7Domain',
+		'Get-OS7Domain', 'Test-OS7Domain',
+		'Get-OS7DomainLogonPolicy', 'Set-OS7DomainLogonPolicy',
+		'Get-OS7KerberosTicket', 'New-OS7KerberosTicket', 'Remove-OS7KerberosTicket',
 		# Stub — the command surface docs/DECISIONS.md documents
 		'Set-OS7Mode')
 	CmdletsToExport   = @()

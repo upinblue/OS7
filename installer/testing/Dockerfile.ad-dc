@@ -1,0 +1,73 @@
+# OS/7 — a REAL Active Directory domain controller, in a container.
+#
+# WHY THIS EXISTS. Everything OS/7 says about Active Directory is otherwise a
+# statement about code: an LDAP bind that is never made, a control that is never
+# sent, a password that is never accepted. This repository's rule is that a
+# diagnostic must be checked against the thing it claims to check, and for a
+# directory client the thing is a directory server that answers.
+#
+# Samba can act as an AD DC. That gives this project a domain controller which
+# is local, free, reproducible and offline — the same constraints as every other
+# harness here (CLAUDE.md: "Everything runs locally. No cloud, no paid
+# services."). It is NOT Windows Server, and the difference is written down in
+# docs/AD-PLAN.md rather than glossed over: Samba implements the protocols, so
+# LDAP, Kerberos, the password-modify path and the join are exercised for real,
+# while anything Microsoft-specific above the protocol is not.
+#
+# WHAT IS DELIBERATELY REAL HERE, and the reason (same argument as
+# Dockerfile.check-update's gnupg): faking an LDAP server would test only the
+# fake. The interesting failures — a server that refuses a password change over
+# an unencrypted channel, a referral, a paged search that stops at 1000, a
+# GSSAPI bind against a KDC — cannot be produced by a stub, because they are
+# exactly the behaviours nobody would think to write into one.
+#
+# PROVISIONING HAPPENS AT RUN TIME, not here. `samba-tool domain provision`
+# writes the DC's own A record, and the address a container gets is not known
+# until it is started. Provisioning at build time produces a DC whose DNS
+# answers with an address that nothing is listening on — a server that is up and
+# unreachable, reporting no error. Roughly 30 seconds per start, paid once.
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# THE PACKAGE THAT RUNS AN AD DC IS NOT `samba`, AND THIS COST A BUILD.
+# Measured on resolute, 2026-08-27, after the first version of this file
+# installed `samba` and the entrypoint died with `samba-tool: not found`:
+#
+#   samba          Suggests: python3-samba          <- and samba-tool is IN it
+#   samba          Breaks:   samba-ad-dc, samba-ad-provision
+#   samba-ad-dc    Depends:  samba, python3-samba, winbind, samba-dsdb-modules
+#   samba-ad-provision                              <- the provision templates
+#
+# So `apt-get install --no-install-recommends samba` yields a file server whose
+# `samba-tool` is absent, and the AD role has been split into its own packages.
+# The failure is at run time, in a container that had already built green.
+# Names the role, not the daemon: samba-ad-dc pulls the daemon in behind it.
+#
+# samba-vfs-modules is a transitional package on this release and is dropped.
+#
+# krb5-user             kinit/klist INSIDE THE DC container only. The client side
+#                       deliberately does not get them for free — whether OS/7
+#                       needs them at all is one of the questions being measured
+# ldb-tools             ldbsearch: the second opinion. The checks confirm what
+#                       OS/7 wrote by reading the database with a tool that
+#                       shares no code with the client under test
+# ldap-utils            ldapsearch, for the same reason at the protocol level
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+      samba-ad-dc samba-ad-provision samba-dsdb-modules \
+      krb5-user ldb-tools ldap-utils \
+      python3 ca-certificates iproute2 dnsutils procps \
+ && rm -rf /var/lib/apt/lists/* \
+ && command -v samba-tool >/dev/null \
+ && samba-tool domain provision --help >/dev/null
+
+COPY ad-dc-entrypoint.sh /usr/local/bin/os7-ad-dc
+RUN chmod 0755 /usr/local/bin/os7-ad-dc
+
+# 53   the AD SRV records every client discovery path starts from
+# 88   Kerberos, 464 kpasswd
+# 389  LDAP, 636 LDAPS — the password-modify path needs the second one
+EXPOSE 53/tcp 53/udp 88/tcp 88/udp 389/tcp 464/tcp 636/tcp
+
+ENTRYPOINT ["/usr/local/bin/os7-ad-dc"]

@@ -1,0 +1,6 @@
+{
+    "command": "dig +nocmd +noall +comments +answer @127.0.0.1 SRV _ldap._tcp.dc._msdcs.os7.test",
+    "exitcode": 0,
+    "stdout": ";; Got answer:\n;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 16489\n;; flags: qr aa rd ra ad; QUERY: 1, ANSWER: 5, AUTHORITY: 1, ADDITIONAL: 0\n\n;; ANSWER SECTION:\n_ldap._tcp.dc._msdcs.os7.test. 900 IN\tSRV\t0 100 389 dc1.os7.test.\n_ldap._tcp.dc._msdcs.os7.test. 900 IN\tSRV\t100 0 389 dc5.os7.test.\n_ldap._tcp.dc._msdcs.os7.test. 900 IN\tSRV\t0 20 389 dc2.os7.test.\n_ldap._tcp.dc._msdcs.os7.test. 900 IN\tSRV\t10 50 3268 branch-dc.os7.test.\n_ldap._tcp.dc._msdcs.os7.test. 900 IN\tSRV\t5 100 389 dc3.os7.test.\n\n",
+    "stderr": ""
+}

@@ -42,6 +42,17 @@ internal static class SystemSteps
         new InitramfsStep(plan, target),
         new TpmEnrolStep(plan, target),
         new BootloaderStep(plan, target),
+        // AFTER EVERYTHING THAT CAN STILL FAIL, and that is an argument rather
+        // than a leftover. A join creates an object in somebody else's
+        // directory — the one thing this list does that `Executor`'s rollback
+        // cannot undo, because the rollback destroys pools and has no
+        // credential with which to delete a computer account. Putting it here
+        // means the machine is finished before the directory is touched, so a
+        // rolled-back install leaves no orphan behind. It must equally be after
+        // NetworkStep, which is what gives it a network, and before
+        // InstallLogStep, so its proof is in the record. All three bounds are
+        // asserted in --self-test; a reorder has no other symptom.
+        new DomainStep(plan, target),
         // LAST BEFORE TEARDOWN, and that position is the whole of what it can
         // promise. Everything after it is the disk being taken away, so its own
         // proof and TeardownStep's export check cannot be in the file it writes

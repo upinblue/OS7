@@ -14,6 +14,7 @@ namespace OS7.Setup;
 ///     os7-setup --unattend plan.json     run it from a file, no UI (§6.6)
 ///     os7-setup --passphrase-file f      where the disk passphrase comes from
 ///     os7-setup --password-file f        where the account password comes from
+///     os7-setup --domain-password-file f where the domain credential comes from
 ///     os7-setup --storage-only           prepare the disk and stop
 ///     os7-setup --dry-run                print every command instead of running it
 ///     os7-setup --print-plan             write the default plan as JSON and exit
@@ -22,11 +23,11 @@ namespace OS7.Setup;
 ///     os7-setup --geometry 80x25         force the canvas size (§2.4)
 ///
 /// PHASE 3b. The flow is Welcome -> Licence -> Regional -> Disk -> Layout ->
-/// Confirm -> Account -> Mode -> Network -> (install) -> Complete, with two
-/// lettered screens hanging off Network: 9W for a wireless network and 9S for
-/// static addresses. Screen 6 is the gate and screen 10 is where the writing
-/// starts, so the disk is still untouched while the account and the network are
-/// typed.
+/// Confirm -> Account -> Mode -> Network -> (install) -> Complete, with three
+/// lettered screens hanging off Network: 9W for a wireless network, 9S for
+/// static addresses and 9D for an Active Directory domain. Screen 6 is the gate
+/// and screen 10 is where the writing starts, so the disk is still untouched
+/// while the account, the network and the domain are typed.
 ///
 /// THE RESULT BOOTS. The system is copied, an account exists, the initramfs can
 /// unlock and import, and the bootloader menu resolves a boot environment - each
@@ -336,6 +337,25 @@ internal static class Program
                 // exception in it is a rule nobody applies correctly later.
                 Log.LiveOnly($"wireless secret read from {o.WifiSecretFile} "
                              + $"({secret.Length} characters, {w.Security})");
+            }
+            if (o.DomainPasswordFile is not null)
+            {
+                // A FOURTH FILE, and the one that is not this machine's secret
+                // at all: it belongs to a directory, and the machine keeps
+                // nothing derived from it but a keytab. Read here rather than
+                // left to `DomainStep` for the reason the three above are read
+                // here — `plan.Validate` below refuses a join with no password,
+                // so a plan whose secret arrived in a file and was never
+                // collected does not fail the join, it refuses the whole
+                // install before the disk is touched.
+                plan.Domain.Password =
+                    File.ReadAllText(o.DomainPasswordFile).TrimEnd('\r', '\n');
+                // LiveOnly like the rest. This one never reaches the target in
+                // any form, so the length in the live log is the only trace of
+                // it there is, and the trap it is the diagnostic for is the
+                // same one: a file one byte longer than the secret in it.
+                Log.LiveOnly($"domain password read from {o.DomainPasswordFile} "
+                             + $"({plan.Domain.Password.Length} characters)");
             }
 
             // `--storage-only` stops before the account exists, so demanding one
@@ -1068,15 +1088,23 @@ internal static class Program
                         Password = "EAP-SECRET-CANARY",
                     },
                 },
+                // THE FIFTH SECRET, and the one whose leak reaches furthest: it
+                // is not this machine's password but a directory's, so a plan
+                // file carrying it is a credential for every other machine in
+                // the domain. A canary per secret, because "it covers all of
+                // them" is a claim that only stays true if the list grows with
+                // the plan.
+                Domain = { Password = "DOMAIN-SECRET-CANARY" },
             };
             string serialised = secretive.ToJson();
             string[] canaries =
                 { "LUKS-SECRET-CANARY", "ACCOUNT-SECRET-CANARY",
-                  "PSK-SECRET-CANARY", "EAP-SECRET-CANARY" };
+                  "PSK-SECRET-CANARY", "EAP-SECRET-CANARY",
+                  "DOMAIN-SECRET-CANARY" };
             string[] leaked = canaries.Where(serialised.Contains).ToArray();
             Check(leaked.Length == 0,
                   "no secret reaches the plan file (L25 and §6.6)",
-                  leaked.Length == 0 ? "4 canaries, none serialised"
+                  leaked.Length == 0 ? $"{canaries.Length} canaries, none serialised"
                                      : "LEAKED: " + string.Join(", ", leaked));
 
             Check(NetworkPlan.IsValidCidr("10.0.2.99/24")
@@ -1111,6 +1139,20 @@ internal static class Program
             Check(boot >= 0 && keep > boot && down > keep,
                   "step order: the log is saved after the bootloader, before the export",
                   $"bootloader at {boot}, log at {keep}, teardown at {down}");
+
+            // D16, AND THE THREE BOUNDS `DomainStep` AND `SystemSteps` BOTH SAY
+            // ARE ASSERTED HERE. A join creates an object in somebody else's
+            // directory, which is the one thing this list does that the
+            // executor's rollback cannot undo — so it runs after everything
+            // that can still fail, and a rolled-back install leaves no orphaned
+            // computer account behind. After NetworkStep because that is what
+            // gives it a network at all, and before InstallLogStep so its proof
+            // is in the record. A reorder has no other symptom.
+            int domain = order.FindIndex(s => s is DomainStep);
+            Check(domain > net && domain > boot && keep > domain,
+                  "step order: the domain is joined last, and before the log is saved",
+                  $"network at {net}, bootloader at {boot}, domain at {domain}, "
+                  + $"log at {keep}");
 
             // THE REDACTION, CHECKED AGAINST THE THING IT CLAIMS TO CHECK.
             // `Log.LiveOnly` is a promise about a file on somebody's disk, and
@@ -1369,6 +1411,14 @@ internal static class Program
                 // throws on an empty list is a screen that throws on an
                 // air-gapped appliance.
                 new NetworkScreen(p2), new StaticScreen(p2), new WifiScreen(p2),
+                // Screen 9D, and it is here for the same reason as the three
+                // above rather than as a formality. It draws on a machine that
+                // is not joined to anything, in a chroot where `adcli` may not
+                // be installed, with a plan whose Domain half nobody has filled
+                // in — and a screen absent from this array is a screen nothing
+                // checks draws at all, which was true of this one until
+                // 2026-08-28.
+                new DomainScreen(p2),
                 new CompleteScreen(p2), ErrorScreen.ForCommand(
                     "Setup could not import the pool.",
                     "zpool import -f -N -R /target rpool",
@@ -1490,6 +1540,7 @@ internal static class Program
           --passphrase-file <path>   the disk passphrase (never in the plan file)
           --password-file <path>     the account password (never in the plan file)
           --wifi-secret-file <path>  the Wi-Fi PSK or 802.1X password (ditto)
+          --domain-password-file <p> the domain join password (ditto)
           --test-network <plan.json> apply the network here and report; install nothing
           --storage-only             prepare the disk and stop; do not install a system
           --dry-run                  print every command instead of running it
@@ -1545,6 +1596,16 @@ internal static class Program
         public string? PassphraseFile { get; init; }
         public string? PasswordFile { get; init; }
         public string? WifiSecretFile { get; init; }
+
+        /// <summary>
+        /// `--domain-password-file <path>` — the fourth secret file, and a
+        /// fourth file rather than a fourth field in one of the others for the
+        /// reason `--password-file` gives: these are different secrets with
+        /// different consequences and different rotation. This one is the least
+        /// like the rest — it is not this machine's secret at all, it belongs to
+        /// a domain, and the machine keeps nothing derived from it but a keytab.
+        /// </summary>
+        public string? DomainPasswordFile { get; init; }
         public string? TestNetwork { get; init; }
         public bool StorageOnly { get; init; }
         public string? Error { get; init; }
@@ -1557,6 +1618,7 @@ internal static class Program
             string[]? netplanRender = null;
             string? geometry = null, unattend = null, passphraseFile = null;
             string? passwordFile = null, wifiSecretFile = null, testNetwork = null;
+            string? domainPasswordFile = null;
             bool storageOnly = false;
             for (int i = 0; i < args.Length; i++)
             {
@@ -1597,6 +1659,11 @@ internal static class Program
                             return new Options { Error = "--wifi-secret-file needs a path" };
                         wifiSecretFile = args[i];
                         break;
+                    case "--domain-password-file":
+                        if (++i >= args.Length)
+                            return new Options { Error = "--domain-password-file needs a path" };
+                        domainPasswordFile = args[i];
+                        break;
                     case "--unattend":
                         if (++i >= args.Length)
                             return new Options { Error = "--unattend needs a plan file" };
@@ -1622,6 +1689,9 @@ internal static class Program
                 return new Options { Error = "--password-file only means something with --unattend" };
             if (wifiSecretFile is not null && unattend is null && testNetwork is null)
                 return new Options { Error = "--wifi-secret-file needs --unattend or --test-network" };
+            if (domainPasswordFile is not null && unattend is null)
+                return new Options
+                    { Error = "--domain-password-file only means something with --unattend" };
             return new Options
             {
                 Help = help, Version = version, VersionRule = versionRule,
@@ -1630,6 +1700,7 @@ internal static class Program
                 SelfTest = self, Geometry = geometry,
                 DryRun = dryRun, Unattend = unattend, PassphraseFile = passphraseFile,
                 PasswordFile = passwordFile, WifiSecretFile = wifiSecretFile,
+                DomainPasswordFile = domainPasswordFile,
                 TestNetwork = testNetwork,
                 StorageOnly = storageOnly,
             };

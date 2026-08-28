@@ -1,0 +1,27 @@
+{
+  "Dn": "",
+  "Attributes": {
+    "configurationNamingContext": ["CN=Configuration,DC=os7,DC=test"],
+    "defaultNamingContext": ["DC=os7,DC=test"],
+    "rootDomainNamingContext": ["DC=os7,DC=test"],
+    "schemaNamingContext": ["CN=Schema,CN=Configuration,DC=os7,DC=test"],
+    "subschemaSubentry": ["CN=Aggregate,CN=Schema,CN=Configuration,DC=os7,DC=test"],
+    "supportedCapabilities": ["1.2.840.113556.1.4.800", "1.2.840.113556.1.4.1670", "1.2.840.113556.1.4.1791", "1.2.840.113556.1.4.1935", "1.2.840.113556.1.4.2080"],
+    "supportedLDAPVersion": ["2", "3"],
+    "vendorName": ["Samba Team (https://www.samba.org)"],
+    "isSynchronized": ["TRUE"],
+    "dsServiceName": ["CN=NTDS Settings,CN=DC01,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=os7,DC=test"],
+    "serverName": ["CN=DC01,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=os7,DC=test"],
+    "dnsHostName": ["dc01.os7.test"],
+    "ldapServiceName": ["os7.test:dc01$@OS7.TEST"],
+    "currentTime": ["20260827190804.0Z"],
+    "supportedControl": ["1.2.840.113556.1.4.1413", "1.2.840.113556.1.4.1413", "1.2.840.113556.1.4.1413", "1.2.840.113556.1.4.1413", "1.2.840.113556.1.4.1413", "1.2.840.113556.1.4.528", "1.2.840.113556.1.4.841", "1.2.840.113556.1.4.319", "2.16.840.1.113730.3.4.9", "1.2.840.113556.1.4.473", "1.2.840.113556.1.4.1504", "1.2.840.113556.1.4.801", "1.2.840.113556.1.4.801", "1.2.840.113556.1.4.801", "1.2.840.113556.1.4.805", "1.2.840.113556.1.4.1338", "1.2.840.113556.1.4.529", "1.2.840.113556.1.4.417", "1.2.840.113556.1.4.2064", "1.2.840.113556.1.4.1339", "1.2.840.113556.1.4.1340", "1.2.840.113556.1.4.1413", "1.2.840.113556.1.4.1341"],
+    "namingContexts": ["DC=os7,DC=test", "CN=Configuration,DC=os7,DC=test", "CN=Schema,CN=Configuration,DC=os7,DC=test", "DC=DomainDnsZones,DC=os7,DC=test", "DC=ForestDnsZones,DC=os7,DC=test"],
+    "supportedSASLMechanisms": ["GSS-SPNEGO", "GSSAPI", "NTLM"],
+    "highestCommittedUSN": ["4328"],
+    "domainFunctionality": ["4"],
+    "forestFunctionality": ["4"],
+    "domainControllerFunctionality": ["4"],
+    "isGlobalCatalogReady": ["TRUE"]
+  }
+}

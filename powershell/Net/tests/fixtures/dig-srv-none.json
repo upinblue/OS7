@@ -1,0 +1,6 @@
+{
+    "command": "dig +nocmd +noall +comments +answer @127.0.0.1 SRV _ldap._tcp.dc._msdcs.nosuchdomain.os7.test",
+    "exitcode": 0,
+    "stdout": ";; Got answer:\n;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 11019\n;; flags: qr aa rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 0\n\n",
+    "stderr": ""
+}

@@ -1,0 +1,40 @@
+dn: CN=Grace Hopper,CN=Users,DC=os7,DC=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Grace Hopper
+sn: Hopper
+givenName: Grace
+instanceType: 4
+whenCreated: 20260827190803.0Z
+whenChanged: 20260827190803.0Z
+displayName: Grace Hopper
+uSNCreated: 4320
+name: Grace Hopper
+objectGUID:: 0wBxzTQHA0OjgX8edy+15A==
+badPwdCount: 0
+codePage: 0
+countryCode: 0
+badPasswordTime: 0
+lastLogoff: 0
+lastLogon: 0
+primaryGroupID: 513
+objectSid:: AQUAAAAAAAUVAAAA2gnSpGzEwv3Oe1RWUgQAAA==
+accountExpires: 9223372036854775807
+logonCount: 0
+sAMAccountName: os7fixture2
+sAMAccountType: 805306368
+userPrincipalName: os7fixture2@os7.test
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=os7,DC=test
+pwdLastSet: 134323312833186209
+userAccountControl: 514
+uSNChanged: 4323
+distinguishedName: CN=Grace Hopper,CN=Users,DC=os7,DC=test
+
+# refldaps://os7.test/CN=Configuration,DC=os7,DC=test
+
+# refldaps://os7.test/DC=DomainDnsZones,DC=os7,DC=test
+
+# refldaps://os7.test/DC=ForestDnsZones,DC=os7,DC=test
+

@@ -46,6 +46,14 @@
 		# means (P5).
 		'Set-NetplanDocument', 'Remove-NetplanDocument', 'Invoke-NetplanApply',
 		'Wait-NetLinkAddress',
+		# Asking the RESOLVER, which is a THIRD question and is merged with
+		# neither of the two above (P6). [System.Net.Dns] cannot query SRV and
+		# `Resolve-DnsName` does not exist on Linux PowerShell, so this shells
+		# out to `dig` — and says Known=$false when dig is not installed rather
+		# than handing back an empty list that reads as "this domain has no
+		# domain controllers". `_ldap._tcp.dc._msdcs.<domain>` is how every
+		# Active Directory client finds one, and DNS is this module's subsystem.
+		'Resolve-NetSrvRecord',
 		# The self-test. Checks THIS MODULE's contract — escaping, refusals,
 		# line endings, secret handling, and the readers against recorded real
 		# `ip` output — and deliberately not the netplan specification, which
