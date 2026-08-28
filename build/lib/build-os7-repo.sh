@@ -51,9 +51,17 @@ fi
 # The same hazard build-os7-packages.sh documents: a plain assignment in a
 # sourced file wins over an exported variable, so sourcing the pin discards a
 # caller's override without saying so.
+#
+# OS7_CHANNEL is in this list since 2026-08-28: one repository can carry MORE
+# THAN ONE channel index (§6.4 — one signed static file per channel), and the
+# pin can only ever name the channel of THIS source tree. Cutting a release
+# into another channel is the caller saying so, and until this line the pin
+# silently overrode the caller — which is why index/development.json was the
+# only index this script had ever produced.
 _env_repo_uri="${OS7_REPO_URI:-}"
 _env_repo_enabled="${OS7_REPO_ENABLED:-}"
 _env_suite="${OS7_SUITE:-}"
+_env_channel="${OS7_CHANNEL:-}"
 
 # shellcheck disable=SC1090
 source "${RELEASE_CONF}"
@@ -61,7 +69,8 @@ source "${RELEASE_CONF}"
 [[ -n "${_env_repo_uri}"     ]] && OS7_REPO_URI="${_env_repo_uri}"
 [[ -n "${_env_repo_enabled}" ]] && OS7_REPO_ENABLED="${_env_repo_enabled}"
 [[ -n "${_env_suite}"        ]] && OS7_SUITE="${_env_suite}"
-export OS7_REPO_URI OS7_REPO_ENABLED OS7_SUITE
+[[ -n "${_env_channel}"      ]] && OS7_CHANNEL="${_env_channel}"
+export OS7_REPO_URI OS7_REPO_ENABLED OS7_SUITE OS7_CHANNEL
 
 # shellcheck source=version-rule.sh
 . "${HERE}/version-rule.sh"
@@ -99,6 +108,53 @@ fi
 OS7_ARCH="${OS7_ARCH:-$(dpkg --print-architecture)}"
 OS7_BUILT="${OS7_BUILT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
+# ---------------------------------------------------------------------------
+# The hotfix form — §7 of the release plan, and UL3's mitigation.
+#
+# A hotfix is a release that moves ONLY the Build field and overlays a small
+# number of packages — normally one — on the base release's FROZEN archive
+# snapshot. Without this path, pinning delays security fixes relative to plain
+# Ubuntu, and that is a regression a procurement review will find (UL3: "Non-
+# optional"). With it, a CVE fix is applied to a KNOWN state and is one
+# command from being rolled back.
+#
+#   OS7_HOTFIX_BASE=<x.y.z.N>   declares this build a hotfix of that release
+#   OS7_HOTFIX_DEBS="<path>…"   the overlay .debs (whitespace-separated), each
+#                               recorded in the descriptor with its hash
+#
+# Three refusals, each of which would otherwise surface as a wrong machine
+# rather than a failed build:
+#   * the version may differ from the base in Build ALONE — anything else is
+#     a release, not a hotfix, and must roll the snapshot;
+#   * the base release must already be IN this repository, because a hotfix
+#     "overlays the current snapshot" and the current snapshot is the base
+#     descriptor's, not whatever the pin says today;
+#   * overlay packages without a declared base have no meaning.
+# ---------------------------------------------------------------------------
+OS7_HOTFIX_BASE="${OS7_HOTFIX_BASE:-}"
+OS7_HOTFIX_DEBS="${OS7_HOTFIX_DEBS:-}"
+if [[ -n "${OS7_HOTFIX_DEBS}" && -z "${OS7_HOTFIX_BASE}" ]]; then
+	echo "!!! OS7_HOTFIX_DEBS is set and OS7_HOTFIX_BASE is not: an overlay" >&2
+	echo "!!! without a base is not a hotfix, it is an unlabelled change." >&2
+	exit 1
+fi
+if [[ -n "${OS7_HOTFIX_BASE}" ]]; then
+	if [[ ! "${OS7_HOTFIX_BASE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		echo "!!! OS7_HOTFIX_BASE='${OS7_HOTFIX_BASE}' is not four dotted numbers" >&2
+		exit 1
+	fi
+	if [[ "${OS7_HOTFIX_BASE%.*}" != "${OS7_VERSION%.*}" ]]; then
+		echo "!!! a hotfix moves the Build field alone (§7): ${OS7_HOTFIX_BASE} -> ${OS7_VERSION}" >&2
+		echo "!!! changes more than Build. Cut a release instead." >&2
+		exit 1
+	fi
+	if (( ${OS7_VERSION##*.} <= ${OS7_HOTFIX_BASE##*.} )); then
+		echo "!!! the hotfix Build (${OS7_VERSION##*.}) must be greater than the" >&2
+		echo "!!! base Build (${OS7_HOTFIX_BASE##*.})" >&2
+		exit 1
+	fi
+fi
+
 for tool in apt-ftparchive gpg dpkg-deb sha256sum python3; do
 	command -v "${tool}" >/dev/null || { echo "!!! ${tool} is not installed" >&2; exit 1; }
 done
@@ -113,45 +169,46 @@ mkdir -p "${POOL}" "${DISTS}/main/binary-${OS7_ARCH}" "${KEYRING_DIR}" \
 
 echo ">>> OS/7 repository ${OS7_SUITE} — ${OS7_VERSION} (${OS7_CHANNEL}) / ${OS7_ARCH}"
 
-# ---------------------------------------------------------------------------
-# 1. The key.
-# ---------------------------------------------------------------------------
-export GNUPGHOME="${OS7_REPO_GNUPGHOME:-${OUT_DIR}/.gnupg}"
-mkdir -p "${GNUPGHOME}"
-chmod 0700 "${GNUPGHOME}"
-
-DEV_UID="OS/7 DEVELOPMENT signing key — NOT FOR RELEASE <os7-dev@localhost>"
-KEY_ID="${OS7_REPO_KEY:-}"
-
-if [[ -z "${KEY_ID}" ]]; then
-	if ! gpg --batch --list-secret-keys --with-colons 2>/dev/null | grep -q '^sec'; then
-		echo "    no signing key in ${GNUPGHOME} — generating a DEVELOPMENT key"
-		echo "    (CURATION-AND-DELIVERY-PLAN C7a is open; this is not a release key)"
-		# --quick-generate-key with an empty passphrase: this is deliberately a
-		# throwaway. A release key must not be reachable unattended by a build
-		# script, which is the whole of C7a.
-		gpg --batch --pinentry-mode loopback --passphrase '' \
-			--quick-generate-key "${DEV_UID}" ed25519 sign never >/dev/null 2>&1
+# A hotfix overlays the BASE release's snapshot, so the base must be in this
+# repository and its snapshot must be the one the pin hands this build. A
+# mismatch here means somebody moved the pin between the base and the hotfix —
+# which is a release's job, not a hotfix's — and the failure would otherwise
+# appear as a machine whose packages come from a snapshot its version number
+# does not name.
+if [[ -n "${OS7_HOTFIX_BASE}" ]]; then
+	BASE_DESCRIPTOR="${OUT_DIR}/releases/${OS7_HOTFIX_BASE}/release.json"
+	if [[ ! -r "${BASE_DESCRIPTOR}" ]]; then
+		echo "!!! hotfix base ${OS7_HOTFIX_BASE} is not in this repository:" >&2
+		echo "!!! ${BASE_DESCRIPTOR} does not exist" >&2
+		exit 1
 	fi
-	KEY_ID="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+	base_snapshot="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["archive_snapshot"])' "${BASE_DESCRIPTOR}")"
+	base_suite="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["os7_suite"])' "${BASE_DESCRIPTOR}")"
+	if [[ "${base_snapshot}" != "${OS7_ARCHIVE_SNAPSHOT}" ]]; then
+		echo "!!! the hotfix would be built against snapshot ${OS7_ARCHIVE_SNAPSHOT}," >&2
+		echo "!!! but its base ${OS7_HOTFIX_BASE} was built against ${base_snapshot}." >&2
+		echo "!!! A hotfix overlays the base's snapshot (§7); a new snapshot is a release." >&2
+		exit 1
+	fi
+	if [[ "${base_suite}" != "${OS7_SUITE}" ]]; then
+		echo "!!! the hotfix base is in suite ${base_suite}, this build is ${OS7_SUITE}" >&2
+		exit 1
+	fi
+	echo "    HOTFIX of ${OS7_HOTFIX_BASE} — snapshot ${base_snapshot} unchanged"
 fi
-[[ -n "${KEY_ID}" ]] || { echo "!!! no signing key available" >&2; exit 1; }
 
-KEY_UID="$(gpg --batch --list-keys --with-colons "${KEY_ID}" | awk -F: '/^uid:/ {print $10; exit}')"
-echo "    signing key ${KEY_ID}"
-echo "    user id     ${KEY_UID}"
-case "${KEY_UID}" in
-	*"NOT FOR RELEASE"*)
-		echo "    *** DEVELOPMENT KEY. Nothing signed here may be published. ***" ;;
-esac
-
-# The trust anchor in the form `Signed-By:` wants: a binary keyring holding the
-# public key alone. Never the secret key, and never armoured — apt reads either,
-# but a directory holding an armoured file called .gpg is how a keyring ends up
-# unreadable with an error that names neither.
+# ---------------------------------------------------------------------------
+# 1. The key. Shared logic (os7-signing-key.sh), because build.sh needs the
+# SAME key's public half for the os7-release package the ISO installs — an ISO
+# keyring and a repository signature that disagree would make every
+# Set-OS7UpdateChannel against a locally built repository fail verification.
+# ---------------------------------------------------------------------------
+# shellcheck source=os7-signing-key.sh
+source "${HERE}/os7-signing-key.sh"
 PUBKEY="${KEYRING_DIR}/os7-archive-keyring.gpg"
-gpg --batch --yes --export --output "${PUBKEY}" "${KEY_ID}"
-[[ -s "${PUBKEY}" ]] || { echo "!!! exporting the public key produced nothing" >&2; exit 1; }
+os7_ensure_signing_key "${OUT_DIR}/.gnupg" "${PUBKEY}"
+KEY_ID="${OS7_SIGNING_KEY_ID}"
+KEY_UID="${OS7_SIGNING_KEY_UID}"
 
 # ---------------------------------------------------------------------------
 # 2. The packages.
@@ -187,6 +244,26 @@ for deb in "${DEBS[@]}"; do
 	BUILT_NAMES+=( "$(basename "${deb}")" )
 done
 rmdir "${STAGE}" 2>/dev/null || true
+
+# The hotfix overlay packages join the pool under their own first letter —
+# they are somebody else's packages served from OS/7's repository (C1's
+# re-host degree), and pool/main/o/ is os7-*'s letter, not theirs. Recorded
+# relative to the repository root so the descriptor can name them.
+OS7_HOTFIX_POOL_FILES=""
+if [[ -n "${OS7_HOTFIX_DEBS}" ]]; then
+	for deb in ${OS7_HOTFIX_DEBS}; do
+		[[ -r "${deb}" ]] || { echo "!!! hotfix overlay ${deb} is not readable" >&2; exit 1; }
+		name="$(dpkg-deb -f "${deb}" Package)"
+		letter="${name:0:1}"
+		mkdir -p "${OUT_DIR}/pool/main/${letter}/${name}"
+		cp -f "${deb}" "${OUT_DIR}/pool/main/${letter}/${name}/"
+		rel="pool/main/${letter}/${name}/$(basename "${deb}")"
+		OS7_HOTFIX_POOL_FILES+="${rel}"$'\n'
+		BUILT_NAMES+=( "$(basename "${deb}")" )
+		echo "    hotfix overlay: ${rel}"
+	done
+fi
+export OS7_HOTFIX_POOL_FILES OS7_HOTFIX_BASE
 
 # ---------------------------------------------------------------------------
 # 3. The indices apt reads.
@@ -282,8 +359,13 @@ export OS7_REPO_OUT="${OUT_DIR}"
 export OS7_REPO_KEY_ID="${KEY_ID}"
 export OS7_REPO_KEY_UID="${KEY_UID}"
 # Where the migrations os7-release ships live in the source tree. The descriptor
-# is generated from this directory so that declared and shipped cannot diverge.
+# is generated from these directories so that declared and shipped cannot
+# diverge. Two sources because the builder stages two: static version-named
+# directories under tree/, and migrations.d/ — the migrations the release being
+# cut introduces, which build-os7-packages.sh ships under THIS build's version
+# (see its comment for why a tree directory cannot know that version).
 export OS7_MIGRATION_SRC="${REPO}/build/packages/os7-release/tree/usr/lib/os7/migrations"
+export OS7_MIGRATION_NEXT_SRC="${REPO}/build/packages/os7-release/migrations.d"
 export OS7_VERSION OS7_CHANNEL OS7_ARCH OS7_BUILT OS7_SUITE
 export OS7_UBUNTU_RELEASE OS7_DISTRIBUTION OS7_ARCHIVE_SNAPSHOT OS7_ARCHIVE_BASE
 
@@ -296,7 +378,10 @@ import sys
 
 out   = os.environ["OS7_REPO_OUT"]
 arch  = os.environ["OS7_ARCH"]
-pool  = os.path.join(out, "pool", "main", "o")
+# The WHOLE pool, not pool/main/o alone: a hotfix's overlay packages live
+# under their own first letter, and a components list that missed them would
+# describe a repository other than the one apt serves.
+pool  = os.path.join(out, "pool", "main")
 
 def sha256(path):
     h = hashlib.sha256()
@@ -309,24 +394,54 @@ def field(deb, name):
     return subprocess.run(["dpkg-deb", "-f", deb, name],
                           capture_output=True, text=True, check=True).stdout.strip()
 
+def degree(package):
+    # C1: the degree of curation, per package. Everything OS/7 builds from its
+    # own sources is "rebuild"; os7-powershell repacks an upstream artefact
+    # pinned by hash, and every non-os7 package in this pool is somebody
+    # else's build served from OS/7's repository — both are "re-host".
+    if package == "os7-powershell":
+        return "re-host"
+    return "rebuild" if package.startswith("os7-") else "re-host"
+
 components = []
 for root, _dirs, files in os.walk(pool):
     for f in sorted(files):
         if not f.endswith(".deb"):
             continue
         path = os.path.join(root, f)
+        pkg = field(path, "Package")
         components.append({
-            "package":  field(path, "Package"),
+            "package":  pkg,
             "version":  field(path, "Version"),
             "arch":     field(path, "Architecture"),
-            # C1: the degree of curation, per package. Everything OS/7 builds
-            # from its own sources is "rebuild"; os7-powershell repacks an
-            # upstream artefact pinned by hash, which is "re-host".
-            "degree":   "re-host" if field(path, "Package") == "os7-powershell" else "rebuild",
+            "degree":   degree(pkg),
             "filename": os.path.relpath(path, out).replace(os.sep, "/"),
             "size":     os.path.getsize(path),
             "sha256":   sha256(path),
         })
+
+# The hotfix block — what this release SITS ON, said by the release itself.
+# Update-OS7 refuses a hotfix whose base is not the version the machine runs,
+# and it can only do that if the descriptor names the base (§7).
+hotfix = None
+if os.environ.get("OS7_HOTFIX_BASE"):
+    overlay = []
+    for rel in os.environ.get("OS7_HOTFIX_POOL_FILES", "").splitlines():
+        rel = rel.strip()
+        if not rel:
+            continue
+        path = os.path.join(out, rel.replace("/", os.sep))
+        overlay.append({
+            "package":  field(path, "Package"),
+            "version":  field(path, "Version"),
+            "arch":     field(path, "Architecture"),
+            "filename": rel,
+            "sha256":   sha256(path),
+        })
+    hotfix = {
+        "base":     os.environ["OS7_HOTFIX_BASE"],
+        "packages": overlay,
+    }
 
 descriptor = {
     "version":          os.environ["OS7_VERSION"],
@@ -356,19 +471,32 @@ descriptor = {
     #
     # The contract — <version>/<chroot|firstboot>/NN-name, and why the split
     # exists — is in build/packages/os7-release/tree/usr/lib/os7/migrations/README.
-    "migrations": sorted(
-        d for d in os.listdir(os.environ["OS7_MIGRATION_SRC"])
-        if os.path.isdir(os.path.join(os.environ["OS7_MIGRATION_SRC"], d))
-    ) if os.path.isdir(os.environ.get("OS7_MIGRATION_SRC", "")) else [],
+    "migrations": sorted(set(
+        ([d for d in os.listdir(os.environ["OS7_MIGRATION_SRC"])
+          if os.path.isdir(os.path.join(os.environ["OS7_MIGRATION_SRC"], d))]
+         if os.path.isdir(os.environ.get("OS7_MIGRATION_SRC", "")) else [])
+        # migrations.d/ ships under the version being cut — the same rule
+        # build-os7-packages.sh applies when it stages the package, restated
+        # here so the descriptor lists what the .deb actually carries.
+        + ([os.environ["OS7_VERSION"]]
+           if any(os.path.isdir(p) and os.listdir(p)
+                  for p in (os.path.join(
+                      os.environ.get("OS7_MIGRATION_NEXT_SRC", ""), c)
+                      for c in ("chroot", "firstboot")))
+           else []))),
     "signing": {
         "key":     os.environ["OS7_REPO_KEY_ID"],
         "user_id": os.environ["OS7_REPO_KEY_UID"],
         # Said in the descriptor itself so that a machine can refuse it without
         # having to recognise a fingerprint. C7a is open; this is how a
-        # development release admits to being one.
+        # development release admits to being one — INCLUDING a release cut
+        # into a channel named `stable`: the channel names an intention, the
+        # signing block names a fact, and the fact wins.
         "development": "NOT FOR RELEASE" in os.environ["OS7_REPO_KEY_UID"],
     },
 }
+if hotfix is not None:
+    descriptor["hotfix"] = hotfix
 json.dump(descriptor, sys.stdout, indent=2, sort_keys=False)
 sys.stdout.write("\n")
 PY
@@ -379,6 +507,7 @@ echo "    descriptor: releases/${OS7_VERSION}/release.json  sha256 ${DESCRIPTOR_
 INDEX="${OUT_DIR}/index/${OS7_CHANNEL}.json"
 NEW_INDEX="${INDEX}.new"
 export OS7_INDEX_PATH="${INDEX}"
+export OS7_DESCRIPTOR_PATH="${DESCRIPTOR}"
 export OS7_DESCRIPTOR_SHA="${DESCRIPTOR_SHA}"
 export OS7_VALID_UNTIL="${VALID_UNTIL}"
 
@@ -404,16 +533,29 @@ try:
 except (OSError, ValueError):
     index = {"channel": os.environ["OS7_CHANNEL"], "releases": []}
 
+# The entry restates the DESCRIPTOR, not the environment. The two used to be
+# two authors of the same facts, and the divergence was already real when this
+# changed: the descriptor derived `migrations` from the shipped tree while the
+# entry hardcoded `[]`, so the first release ever to carry a migration would
+# have declared it in the file a machine verifies and not in the file it lists.
+with open(os.environ["OS7_DESCRIPTOR_PATH"], encoding="utf-8") as fh:
+    descriptor = json.load(fh)
+
 entry = {
     "version":          version,
-    "released":         os.environ["OS7_BUILT"],
-    "architecture":     os.environ["OS7_ARCH"],
-    "archive_snapshot": os.environ["OS7_ARCHIVE_SNAPSHOT"],
-    "os7_suite":        os.environ["OS7_SUITE"],
-    "metapackage":      {"os7-server": version, "os7-desktop": version},
+    "released":         descriptor["released"],
+    "architecture":     descriptor["architecture"],
+    "archive_snapshot": descriptor["base"]["archive_snapshot"],
+    "os7_suite":        descriptor["os7_suite"],
+    "metapackage":      descriptor["metapackage"],
     "manifest":         "releases/%s/release.json" % version,
     "manifest_sha256":  os.environ["OS7_DESCRIPTOR_SHA"],
-    "migrations":       [],
+    "migrations":       descriptor["migrations"],
+    # What this release sits on, when it is a hotfix (§7). In the ENTRY as
+    # well as the descriptor because Applicable is decided from the listing —
+    # a machine must be able to see "not for my base" without fetching every
+    # descriptor in the channel.
+    "hotfix_base":      (descriptor.get("hotfix") or {}).get("base"),
     "supersedes":       None,
 }
 

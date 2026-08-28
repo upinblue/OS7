@@ -353,6 +353,18 @@ This is a direct consequence of D1 (GRUB forces `bpool`) and it does not exist
 under ZFSBootMenu. It is not a reason to reopen D1, but it is a reason for the BE
 primitives to treat the pair as one object and never expose the halves.
 
+**Built, and paid for twice (2026-08-28):** activation is transactional around
+the ESP stub rewrite, which is its point of no return. A failure BEFORE the
+rewrite takes every canmount flip back AND has never named the target in the
+running system's grubenv (that write happens after the rewrite — written
+before it, a failed activation half-activated the machine through a file the
+revert did not know about, BUILD-NOTES #105). A failure AFTER the rewrite
+leaves the activation standing, because reverting the flips under a repointed
+stub would build this section's pair deliberately. The other road to the pair
+was a boot-ordering race that buried the ESP under the ZFS /boot
+(BUILD-NOTES #104, closed) — fixed in fstab ordering, a firstboot migration,
+and a self-healing precondition in the activation.
+
 ### 4.4 `/var` — DECIDED (U6): split, not placed
 
 SETUP-PLAN §4.4 originally placed `var` and `var/log` **as children of the boot
@@ -445,6 +457,22 @@ Two properties that are easy to forget and expensive to add later:
 * **Unattended operation.** On a managed fleet nobody types `Update-OS7`. It has
   to run from a systemd timer, from Intune, and from Azure Arc — non-interactive,
   exit-code-correct, and logging somewhere both platforms can read.
+  **BUILT 2026-08-28**: `os7-update-check.timer` + `.service` +
+  `/usr/libexec/os7-update-check`, shipped and enabled by `os7-release`. Two
+  decisions were made rather than left open, each with its reason in the unit
+  file: the timer **checks and STAGES, never activates** (§4.2 step 10 is the
+  operator's reboot, and a staged environment is inert), and it runs **daily**
+  — chosen against the HOTFIX path, not the release cadence: a monthly check
+  would leave an out-of-band security fix unseen for weeks, which is the
+  regression UL3 exists to prevent. U5's monthly *release* cadence is
+  untouched. The exit-code contract is explicit and is what Intune and Arc
+  read: **0** nothing to do (including "no channel configured", the shipped
+  state), **2** staged — reboot pending (`SuccessExitStatus=0 2`), **1**
+  failed — including a configured channel that does not answer, because a
+  check that could not run must never read as clean. Unattended runs never
+  pass `-AllowDevelopment` silently: the operator says it once in
+  `/etc/os7/update.conf`, a file a rollback reverts.
+  `run-s5.py timer` is the gate that measures the contract on a machine.
 * **Every cmdlet must work over serial and SSH**, because the arm64 product is
   server-only and may never have a local console.
 
@@ -471,6 +499,27 @@ this path, pinning is not defensible; with it, OS/7 can claim something plain
 Ubuntu cannot, namely that a security patch was applied to a *known* state and is
 one command from being rolled back.
 
+**BUILT 2026-08-28, and applied in a container the same day.**
+`build-os7-repo.sh` cuts a hotfix with `OS7_HOTFIX_BASE=<x.y.z.N>` and
+`OS7_HOTFIX_DEBS=<overlay .debs>`, refusing a base the repository does not
+hold, a base on a different snapshot, and a version that moves anything but
+the Build field. The descriptor gains a `hotfix` block naming base and
+overlay with hashes (the overlay at C1's re-host degree); the signed index
+entry restates the base so `Applicable` can be decided from the listing.
+`Get-OS7Release` holds a hotfix applicable only on its exact base, and
+`Update-OS7` refuses any other machine even by explicit `-Version`. Channels
+became real in the same change: one signed `index/<channel>.json` per channel,
+the channel handed in by the caller (the pin used to clobber it), and an index
+mislabelled as another channel is refused — while a channel *named* `stable`
+that is signed by the development key still demands `-AllowDevelopment`,
+because the channel names an intention and the signing block names a fact.
+`check-update-logic.py` (32 checks) covers the refusals;
+`check-os7-repo.py` (67 checks) builds two channels plus a real hotfix — a
+re-versioned `less` out of the pinned snapshot — installs the stable base by
+exact version and applies the hotfix with one `apt full-upgrade`. What no
+container covers: a hotfix applied through `Update-OS7` on a booted machine,
+which rides the same `run-s5.py update` gate as the full release.
+
 **Ubuntu Pro / ESM / Livepatch** interact with all of this and are unexamined.
 Pro adds suites that must be snapshot-pinned too; Livepatch changes a running
 kernel underneath a version number that claims to describe it. Neither is a
@@ -484,7 +533,7 @@ blocker for v1, both need a position before an enterprise deal. Flagged as UL7.
 |---|---|---|
 | UL1 | **A Secure Boot policy update breaks TPM2 unlock fleet-wide** (L17, §2.2 #1) | **Characterised 2026-08-23 by S6.** The break is real — PCR 7 moves and the seal stops opening — but it is loud, non-fatal and one command from repaired. The mechanism for recovery is demonstrated; what is *not* built is the escrowed recovery key it needs to run unattended (U8). Until that exists, a policy change means every machine asks a human for a passphrase once. |
 | UL2 | A rollback reverts `/var`, including service state, on the server product | **RESOLVED 2026-08-23 by U6 (§4.4).** `/var` is split: package state in, everything a rollback should not un-say out to `rpool/DATA`. **Residual, and unfixable by any layout:** a rollback restores the system, not the world — an update that migrates an on-disk data format leaves the old release facing new data. The `@pre-<version>` snapshot covers `rpool/DATA` so that case is recoverable by hand, never automatically. |
-| UL3 | Pinning delays security patches relative to plain Ubuntu (§7) | Out-of-band hotfix channel on the Build field. Non-optional. |
+| UL3 | Pinning delays security patches relative to plain Ubuntu (§7) | Out-of-band hotfix on the Build field. Non-optional — and **BUILT 2026-08-28** (§7): the builder cuts one, the checks apply one, and the daily unattended check (§6) is what bounds its latency on a fleet. |
 | UL4 | Microsoft components cannot be snapshot-pinned (§5 #3) | Version + SHA256 in the manifest, hook 0020 pattern. Accept that MS moves are release events. |
 | UL5 | `apt` remains usable and can silently invalidate the version number (§5 #1) | apt pinning + drift detection in `Get-OS7Version`. |
 | UL6 | Canonical publishes no retention guarantee for `snapshot.ubuntu.com`; verified back to 2022 but not contractual | Archive the `.debs` a release actually installs — a few GB per release, not a mirror of the archive. Cheap insurance for the reproducibility claim. |
@@ -619,6 +668,14 @@ retention (UL9), and which verbs land together. See the session note.
 
 Channel selection, the hotfix overlay path (§7), systemd timer, Intune and Arc
 invocation, BE retention policy.
+
+**BUILT 2026-08-28** — §7 (channels and the hotfix form) and §6's unattended
+block carry the detail, and retention was UL9's 2026-08-27 decision. What
+Phase 4 still owes is not code: an actual Intune remediation and an Arc
+run-command invoking `/usr/libexec/os7-update-check` against a real tenant,
+which no local harness can stand in for. The script is one file for all three
+callers precisely so that when the tenant test happens it tests the same
+decisions the timer already measured.
 
 ### Phase 5 — Generation upgrade
 

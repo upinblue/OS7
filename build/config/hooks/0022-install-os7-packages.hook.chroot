@@ -1,0 +1,139 @@
+#!/bin/bash
+# OS/7 — install OS/7's own packages. C7's second half, 2026-08-28.
+#
+# Until this hook, every OS/7-specific file in the image was staged into the
+# chroot as an unowned file — PowerShell by tarball (hook 0020), the modules
+# and os7-setup by build.sh, the fonts by the font builders — and CURATION
+# §6.1 names the consequence: an update train that can reach Ubuntu's half of
+# the product and nothing that makes it OS/7. The packages have existed and
+# been proven installable since 2026-08-26 (check-os7-repo.py); this is the
+# switch that makes the ISO use them.
+#
+# THE MECHANISM IS HOOK 0085's, GENERALISED. config/packages.chroot cannot be
+# used at all (BUILD-NOTES #71: live-build signs its local repository with
+# gnupg-1.x-era code that dies under gpg 2.x), so build.sh stages the .debs as
+# FILES at /usr/lib/os7/packages and this hook installs them with `apt-get
+# install <path>` — apt, never dpkg -i, because only apt resolves Depends
+# against the pinned archive.
+#
+# ORDER: os7-release FIRST, alone. It dpkg-diverts /usr/lib/os-release and
+# derives the branded identity from base-files' copy; everything that runs
+# after this hook — 0035's debrand, 0075's identity verification, the MOTD —
+# reads the branded file. Installing it inside one big transaction would leave
+# the divert's timing to dpkg's configure order, which owes us nothing.
+#
+# Verification is dpkg's records and the diversion itself, never apt's exit
+# code — the standing rule (#13, #72): a step's success is read off the thing
+# it was meant to change.
+
+set -euo pipefail
+exec 1>&2
+
+PKG_DIR="/usr/lib/os7/packages"
+ARCH="$(dpkg --print-architecture)"
+
+echo ">>> hook 0022: installing the OS/7 packages (${ARCH})"
+
+# The chroot's /dev is minimal and later hooks run pwsh, which needs urandom.
+# Carried over from hook 0020, which this hook replaces.
+for spec in urandom,c,1,9 random,c,1,8 null,c,1,3 zero,c,1,5; do
+	IFS=, read -r name kind major minor <<<"${spec}"
+	[ -e "/dev/${name}" ] || mknod "/dev/${name}" "${kind}" "${major}" "${minor}"
+done
+if ! head -c 32 /dev/urandom >/dev/null 2>&1; then
+	echo "!!! /dev/urandom is not readable in the chroot" >&2
+	exit 1
+fi
+
+# Exactly one .deb per package name. Zero means build.sh did not stage it;
+# two means a stale build is beside a fresh one and apt would pick by name
+# sort, silently.
+pick() {
+	local globbed
+	shopt -s nullglob
+	globbed=( "${PKG_DIR}/$1"_*.deb )
+	shopt -u nullglob
+	if (( ${#globbed[@]} != 1 )); then
+		echo "!!! expected exactly one $1 .deb at ${PKG_DIR}, found ${#globbed[@]}" >&2
+		exit 1
+	fi
+	echo "${globbed[0]}"
+}
+
+export DEBIAN_FRONTEND=noninteractive
+
+RELEASE_DEB="$(pick os7-release)"
+apt-get install -y "${RELEASE_DEB}"
+
+# The diversion is the fact os7-release exists to create; ask dpkg for it.
+if ! dpkg-divert --list /usr/lib/os-release | grep -q os7-release; then
+	echo "!!! os7-release is installed and /usr/lib/os-release is not diverted" >&2
+	exit 1
+fi
+# SOURCED, not scraped: os-release(5) values are shell-quoted and the
+# generator always double-quotes them, so a grep for the bare value agrees
+# with a wrong file and disagrees with a right one — measured: the first
+# build died HERE, on an identity that was perfectly branded (#37's lesson,
+# relearned at full ISO-build price).
+IMAGE_ID_GOT="$( ( . /etc/os-release; printf '%s' "${IMAGE_ID-}" ) )"
+if [ "${IMAGE_ID_GOT}" != "os7" ]; then
+	echo "!!! os7-release's postinst did not brand the identity (IMAGE_ID='${IMAGE_ID_GOT}'):" >&2
+	grep -E '^(IMAGE_ID|PRETTY_NAME)=' /etc/os-release >&2 || true
+	exit 1
+fi
+
+# The rest, one transaction. The metapackage is the membership contract (C6):
+# os7-server on the server product, os7-desktop on the GUI one — never both,
+# they conflict. os7-setup is named because it is deliberately NOT a member of
+# os7-base (a machine that is finished installing does not need the installer,
+# but the MEDIUM does).
+SET=( os7-console os7-powershell os7-module os7-backup os7-setup os7-base )
+case "${ARCH}" in
+	amd64) SET+=( os7-desktop-theme os7-desktop ) ;;
+	*)     SET+=( os7-server ) ;;
+esac
+DEBS=()
+for p in "${SET[@]}"; do
+	DEBS+=( "$(pick "${p}")" )
+done
+apt-get install -y "${DEBS[@]}"
+
+# What dpkg holds, package by package, at the version this image claims to be.
+# shellcheck disable=SC1091
+source /usr/lib/os7/build.conf
+fail=0
+for p in os7-release "${SET[@]}"; do
+	state="$(dpkg-query -W -f='${db:Status-Abbrev}|${Version}' "${p}" 2>/dev/null || echo 'absent|')"
+	if [[ "${state}" != "ii |${OS7_VERSION}" ]]; then
+		echo "!!! ${p}: dpkg says '${state}', wanted 'ii |${OS7_VERSION}'" >&2
+		fail=1
+	else
+		echo "    ${p} ${OS7_VERSION} — installed"
+	fi
+done
+(( fail == 0 )) || exit 1
+
+# pwsh, from its package, before hooks 0050/0060/0080 depend on it. The module
+# tree is asked of the FILESYSTEM (a diagnostic must not depend on the
+# subsystem it is diagnosing), then the binary is run once.
+PWSH_MODULES=/opt/microsoft/powershell/7/Modules
+if [[ ! -f "${PWSH_MODULES}/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1" ]]; then
+	echo "!!! os7-powershell installed and the pwsh module tree is incomplete" >&2
+	ls "${PWSH_MODULES}" >&2 || true
+	exit 1
+fi
+if ! /usr/bin/pwsh -NoProfile -NonInteractive -Command '[Console]::WriteLine($PSVersionTable.PSVersion)'; then
+	echo "!!! pwsh does not run in the chroot" >&2
+	exit 1
+fi
+
+# The inputs are not image content (hook 0085's rule): a .deb left behind
+# ships in the squashfs for nothing.
+rm -f "${PKG_DIR}"/*.deb
+rmdir "${PKG_DIR}" 2>/dev/null || true
+if compgen -G "${PKG_DIR}/*.deb" > /dev/null; then
+	echo "!!! the staged .debs are still at ${PKG_DIR}" >&2
+	exit 1
+fi
+
+echo ">>> hook 0022: done — the OS/7 half of this image belongs to dpkg"

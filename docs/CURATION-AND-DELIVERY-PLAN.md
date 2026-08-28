@@ -400,12 +400,14 @@ admin who will ever look at it.
 ### 6.1 The gap this closes
 
 > **This section is the argument for C7, in the state the tree was in on
-> 2026-08-25.** The packages exist since 2026-08-26 and `Update-OS7` since
-> 2026-08-27, so every "no" below is now historical — except in one respect that
-> is not: **the ISO does not install the packages yet**, so a machine built from
-> any current image is still in exactly the state this table describes.
+> 2026-08-25.** The packages exist since 2026-08-26, `Update-OS7` since
+> 2026-08-27, and **the ISO installs the packages since 2026-08-28** (hook
+> 0022; measured on `OS7-1.0.0.133-amd64.iso` by `check-image.py`'s dpkg
+> ownership checks) — so every "no" below is historical on amd64. arm64 has
+> not been rebuilt from that state yet.
 > [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md),
-> [SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md).
+> [SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md),
+> [SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md).
 
 Checked in the hooks, not assumed:
 
@@ -595,6 +597,23 @@ and 7–10 are unchanged. Three corrections:
 `os7-release`, and must be idempotent because a rollback followed by a re-update
 runs them twice. Re-running a migration is normal operation, not an error path.
 
+**The firstboot half has its runner since 2026-08-28.** `Update-OS7` records
+what cannot run in a chroot at `/var/lib/os7/migrations/pending`;
+`os7-migrations-firstboot.service` + `/usr/libexec/os7-migrate-firstboot` —
+shipped and enabled by `os7-release`, modelled on the backup firstboot unit —
+run the list at the first boot of the new environment, validate every entry
+against the one directory os7-release owns, stamp runs, keep the pending
+record on failure and fail the unit loudly. The first real migration exists
+and is UL1's: `50-tpm2-reseal` asks whether the TPM2 seal opens against THIS
+boot and re-enrols when it does not — the exact case #69 banished from the
+chroot, and the exact failure the first amd64 boot measured (#100).
+Migrations are authored in `build/packages/os7-release/migrations.d/` and
+shipped under the version being cut, because a tree directory cannot know the
+Build number; the shipped README carries the mechanism. `check-os7-repo.py`
+drives the runner twice (idempotent), and refuses a pending entry outside the
+migrations directory. What no container shows — that the runner fires at the
+real first boot after a real `Update-OS7` — is `run-s5.py update`'s to show.
+
 ---
 
 ## 10. Upgrade from Setup, and version skew (C11)
@@ -679,7 +698,7 @@ the one place where this architecture is straightforwardly better than upstream'
 | C4 | Firmware | **DECIDED in shape, OPEN in extent** (§4.3). Network firmware always ships; graphics/audio (396.2 MiB) decided per architecture. |
 | C5 | `ubuntu-standard` and Recommends | **PROPOSED, not decided** (§4.4). The lever that moves the package count, and the one that needs a boot behind every removal. |
 | C6 | Membership | **DECIDED — OS/7 metapackages are the package contract**, `apt-mark auto` plus `autoremove` do the convergence (§5). |
-| C7 | OS/7's own components | **DECIDED 2026-08-25 — `.deb`s in an OS/7-signed repository** (§6). This is what makes "install version 1.0.1 from PowerShell" true of the whole system rather than of Ubuntu's half. **BUILT 2026-08-26**: nine packages (`build/packages/`, `build/lib/build-os7-packages.sh`), a signed suite `os7-1.0` with a release descriptor and a signed index (`build-os7-repo.sh`), and a check that installs from it into a plain `ubuntu:26.04` and then requires apt to REFUSE a foreign key (`installer/testing/check-os7-repo.py`). **The ISO does not install them yet** — that switch is separate. [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) |
+| C7 | OS/7's own components | **DECIDED 2026-08-25 — `.deb`s in an OS/7-signed repository** (§6). This is what makes "install version 1.0.1 from PowerShell" true of the whole system rather than of Ubuntu's half. **BUILT 2026-08-26**: nine packages (`build/packages/`, `build/lib/build-os7-packages.sh`), a signed suite `os7-1.0` with a release descriptor and a signed index (`build-os7-repo.sh`), and a check that installs from it into a plain `ubuntu:26.04` and then requires apt to REFUSE a foreign key (`installer/testing/check-os7-repo.py`). **AND THE ISO INSTALLS THEM SINCE 2026-08-28** (hook 0022, amd64 measured): `check-image.py` on `OS7-1.0.0.133-amd64.iso` is green on 105 checks including the new ones that ask `dpkg -S`, file by file, who owns pwsh, the module, os7-setup, the console font, the release facts and the apt source — every answer an os7-* package. Hooks 0020/0085 are gone, 0050/0075 verify the packages' work, and the two `release.json`s resolved into declared (`release.json`, the package's) and measured (`image.json`, hook 0075's). arm64 has not been built from this state. [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md), [SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md) |
 | C7a | Key custody | **OPEN** (§6.3), and deliberately still open after C7 was built. `build-os7-repo.sh` signs with a key handed to it in `OS7_REPO_GNUPGHOME`, and generates one whose user ID reads `OS/7 DEVELOPMENT signing key — NOT FOR RELEASE` when there is none — printing the fingerprint every run and recording `"development": true` in the descriptor, so a machine can refuse a development release without having to recognise a fingerprint. Nothing signed by that key may be published. |
 | C8 | The four universe packages | **DECIDED — carried in the OS/7 repo**, by degree: rebuild `tpm2-tools` and `systemd-zram-generator`; re-host `authd` and `zfs-initramfs`, because rebuilding the latter means forking `zfs-linux` in lockstep with Canonical's kernel (§7). |
 | C8a | `authd-msentraid` (snap) | **OPEN, and blocking the completeness of C9** (§7). |
@@ -697,7 +716,11 @@ the one place where this architecture is straightforwardly better than upstream'
 3. **C4's extent** — which graphics/audio firmware leaves which architecture.
 4. **U5 (still open from the release plan) — cadence.** Proposed unchanged:
    monthly `stable` plus an out-of-band hotfix on the Build field. C7 makes the
-   hotfix path cheap, because a hotfix is a repository with one package in it.
+   hotfix path cheap, because a hotfix is a repository with one package in it —
+   and since 2026-08-28 that sentence is executable: `build-os7-repo.sh` cuts
+   one (release plan §7), the checks apply one, and the unattended check runs
+   daily so a hotfix does not wait for a human to poll. The CADENCE itself —
+   how often `stable` rolls — remains the business decision it always was.
 5. **Support window per Major, and boot-environment retention.** Neither is
    defined anywhere. Both are needed before a customer asks.
 6. **Ubuntu Pro / ESM / Livepatch** (UL7). C8 reduces the exposure to four

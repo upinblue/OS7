@@ -11,7 +11,11 @@ machine behind it.
     ./run-s5.py install   install from the current ISO, WITH A TPM ATTACHED
     ./run-s5.py boot      boot the disk alone and type NO passphrase
     ./run-s5.py cycle     clone -> change -> activate -> reboot -> roll back
-    ./run-s5.py all       all three, in one sitting                  (default)
+    ./run-s5.py update    Update-OS7 against a locally served repository:
+                          N -> N+1, firstboot migrations, and back (the gate)
+    ./run-s5.py timer     the unattended check's exit-code contract, measured
+    ./run-s5.py all       all five, in one sitting                   (default)
+    ./run-s5.py serialize give an existing amd64 disk a serial console
     ./run-s5.py reset     discard the VM state
 
 THREE THINGS ARE PROVED HERE AND THEY ARE DELIBERATELY IN ONE HARNESS, because
@@ -45,14 +49,13 @@ what `Restore-OS7` is.
 
 import os
 import re
-import shutil
-import signal
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vmconsole import Console, live_login, qemu_prefix, to_plain_bash    # noqa: E402
+from vmconsole import Console, live_login, to_plain_bash                # noqa: E402
+from vmarch import SoftTpm                                              # noqa: E402
 from vmscreen import Lab                                                # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -85,64 +88,19 @@ HOME_MARKER = f"/home/{USERNAME}/s5-written-in-the-clone.txt"
 lab = Lab("s5", target_gb=24, iso_as_disk=True, nic=True)
 
 TPMDIR = os.path.join(lab.dir, "tpm")
-TPMSOCK = os.path.join(TPMDIR, "swtpm-sock")
 
 TARGET = "/dev/disk/by-id/virtio-os7target"
-LIVE_CMDLINE = "boot=casper fbcon=nodefer quiet console=ttyAMA0,115200"
+LIVE_CMDLINE = f"boot=casper fbcon=nodefer quiet console={lab.arch.serial_tty},115200"
 
 _mark = 0
 
 
-# ---------------------------------------------------------------------------
-# The software TPM. Lifted from installer/spikes/run-s4.py, which is where it
-# was made to work — including the two flags that are not obvious.
-# ---------------------------------------------------------------------------
-class Tpm:
-    """A software TPM 2.0, or nothing at all when `enabled` is false."""
-
-    def __init__(self, enabled=True):
-        self.enabled = enabled
-        self.proc = None
-
-    def __enter__(self):
-        if not self.enabled:
-            return self
-        if not shutil.which("swtpm"):
-            raise SystemExit("swtpm not found — brew install swtpm")
-        os.makedirs(TPMDIR, exist_ok=True)
-        if os.path.exists(TPMSOCK):
-            os.remove(TPMSOCK)
-        # not-need-init,startup-clear: AAVMF on arm64 does not reliably send
-        # TPM2_Startup, and an un-started TPM answers every command with
-        # TPM_RC_INITIALIZE. run-s4.py found this; it is not guesswork.
-        self.proc = subprocess.Popen(
-            ["swtpm", "socket", "--tpm2",
-             "--tpmstate", f"dir={TPMDIR}",
-             "--ctrl", f"type=unixio,path={TPMSOCK}",
-             "--flags", "not-need-init,startup-clear"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        for _ in range(100):
-            if os.path.exists(TPMSOCK):
-                break
-            time.sleep(0.05)
-        else:
-            raise SystemExit("swtpm never created its control socket")
-        return self
-
-    def __exit__(self, *exc):
-        if self.proc:
-            self.proc.send_signal(signal.SIGTERM)
-            try:
-                self.proc.wait(timeout=5)
-            except Exception:
-                self.proc.kill()
-
-    def args(self):
-        if not self.enabled:
-            return []
-        return ["-chardev", f"socket,id=chrtpm,path={TPMSOCK}",
-                "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
-                "-device", "tpm-tis-device,tpmdev=tpm0"]
+def Tpm(enabled=True):
+    """The software TPM, from vmarch: a sibling swtpm process on the Mac, a
+    swtpm inside the QEMU container on the x86_64 path (vmhost-entry.sh). Its
+    STATE directory is the same either way, so enrolment survives across boots
+    on both."""
+    return SoftTpm(lab.arch, TPMDIR, enabled)
 
 
 def disk_only_args():
@@ -153,17 +111,13 @@ def disk_only_args():
     itself. The TPM is attached here as well as during the install, because a
     sealed key with no TPM to unseal it is the L17 case and not this one.
     """
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
-    return [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
+    p = lab.arch.path
+    return lab.arch.base_args() + [
         "-smp", lab.CPUS, "-m", lab.MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={lab.vars}",
+    ] + lab.arch.firmware_args(lab.vars) + [
         "-display", "none", "-monitor", "none", "-serial", "stdio",
         "-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0",
-        "-drive", f"if=none,id=target,file={lab.target},format=qcow2",
+        "-drive", f"if=none,id=target,file={p(lab.target)},format=qcow2",
         "-device", "virtio-blk-pci,drive=target,serial=os7target",
     ]
 
@@ -194,7 +148,16 @@ def body_of(text, command_fragment):
     anchored with a dollar, was green, and the clone had three of them.
     """
     body = text.split(command_fragment, 1)[-1] if command_fragment in text else text
-    return body.replace("\r", "")
+    body = body.replace("\r", "")
+    # TERMINAL ESCAPES ARE STRIPPED HERE TOO, and the reason is the same
+    # shape as the CR one above: with `answering` on, bracketed-paste and
+    # query sequences interleave with real output, and `\x1b[?2004l` glues
+    # straight onto the next byte — `\x1b[?2004l1.0.0.133` has no word
+    # boundary before the version, so a \b-anchored match silently finds
+    # nothing, and `0\x1b[m` from systemctl is not a digit line. Measured on
+    # the first amd64 `update` run, which failed its very first assertion on
+    # a machine that had answered correctly.
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", body)
 
 
 def ps(c, script, label, timeout=300):
@@ -215,6 +178,92 @@ def ps(c, script, label, timeout=300):
     if "'" in script:
         raise SystemExit(f"ps() script contains a single quote and cannot be sent: {script}")
     return ask(c, f"pwsh -NoProfile -Command '{script}' 2>&1", label, timeout)
+
+
+# ---------------------------------------------------------------------------
+# The serial console the amd64 machine does not have.
+#
+# On arm64 the installed machine speaks on the serial line without being asked:
+# QEMU's virt machine hands the kernel a device tree whose chosen node names
+# ttyAMA0, and Linux takes it as the console. x86 has no such mechanism — the
+# kernel's default console is tty0, and an installed amd64 machine is therefore
+# SILENT on the serial line this harness drives: the passphrase prompt, the
+# boot, and the login all happen on a display nothing is attached to.
+#
+# So after an amd64 install, the harness gives the machine a serial console:
+# unlock the container with the passphrase it just set, import the pools, put
+# `console=ttyS0,115200` into the GRUB defaults, regenerate the menu through
+# the machine's own update-grub, and export everything again. THIS IS THE
+# HARNESS'S DOING, NOT THE PRODUCT'S — whether an OS/7 server image should
+# ship a serial console by default is a real product question
+# (RELEASE-AND-UPDATE-PLAN §6 already requires every cmdlet to work over
+# serial), and it is left open rather than decided here in passing. What the
+# `boot` phase then exercises is unchanged: OVMF finds shim, shim finds GRUB,
+# GRUB finds the boot environment, the initramfs asks the TPM.
+# ---------------------------------------------------------------------------
+# The mounts and the chroot run INSIDE `unshare --mount --propagation private`
+# (BUILD-NOTES #18): a bind done in the shared namespace propagates before it
+# can be made private, and `zpool export` then says "pool is busy" with
+# nothing visibly mounted and -f powerless. The first version of this script
+# did exactly that and measured exactly that. The namespace evaporates with
+# the inner shell, taking every mount with it, and the outer script exports
+# clean pools. update-grub's own chatter goes to stderr so the inner stdout is
+# the one number the caller wants.
+SERIAL_INNER = r"""
+set -e
+BE=$1
+M=/mnt/cfg
+mkdir -p $M
+mount -t zfs -o zfsutil rpool/ROOT/$BE $M
+mount -t zfs -o zfsutil bpool/BOOT/$BE $M/boot
+for d in dev proc sys; do mount --rbind /$d $M/$d; mount --make-rslave $M/$d; done
+if ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' $M/etc/default/grub; then
+  echo 'GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200"' >> $M/etc/default/grub
+elif ! grep -q 'console=ttyS0' $M/etc/default/grub; then
+  sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 console=ttyS0,115200"/' $M/etc/default/grub
+fi
+chroot $M update-grub >&2 2>&1
+grep -c 'console=ttyS0' $M/boot/grub/grub.cfg
+"""
+
+SERIAL_CONSOLE = r"""
+set -e
+LUKS=/dev/disk/by-partlabel/os7-luks
+test -e "$LUKS"
+cryptsetup status os7cfg >/dev/null 2>&1 || cryptsetup open "$LUKS" os7cfg --key-file=/tmp/pass
+zpool list -H rpool >/dev/null 2>&1 || zpool import -N -f rpool
+zpool list -H bpool >/dev/null 2>&1 || zpool import -N -f bpool
+BE=$(zfs list -H -o name -d 1 rpool/ROOT | grep '^rpool/ROOT/os7_' | head -1 | cut -d/ -f3)
+test -n "$BE"
+N=$(unshare --mount --propagation private bash /tmp/serialize-inner.sh "$BE" | tail -1)
+zpool export bpool
+zpool export rpool
+cryptsetup close os7cfg
+echo "SERIAL-LINES=$N"
+echo SERIAL-CONSOLE-OK
+"""
+
+
+def give_serial_console(c):
+    """Run SERIAL_CONSOLE in the live session. Returns True when the machine's
+    own grub.cfg came back carrying the console — asked of the file, not of the
+    script's exit code."""
+    send_script(c, "serialize-inner.sh", SERIAL_INNER)
+    send_script(c, "serialize.sh", SERIAL_CONSOLE)
+    text = ask(c, "sudo bash /tmp/serialize.sh 2>&1 | tail -8",
+               "give the machine a serial console", timeout=600)
+    body = body_of(text, "tail -8")
+    if "SERIAL-CONSOLE-OK" not in body:
+        print("      FAIL  the machine could not be given a serial console")
+        print(body.strip()[-1200:])
+        return False
+    m = re.search(r"SERIAL-LINES=(\d+)", body)
+    n = int(m.group(1)) if m else 0
+    if n < 1:
+        print("      FAIL  update-grub ran and no menu entry carries console=ttyS0")
+        return False
+    print(f"      ok    the machine has a serial console ({n} menu lines carry it)")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +290,8 @@ def phase_install():
 
     with Tpm() as tpm:
         args = lab.qemu_args(LIVE_CMDLINE, payload=False) + tpm.args()
-        c = Console(args, os.path.join(lab.dir, "install.serial.log"))
+        c = Console(lab.arch.command(args, name=lab.name, tpm=tpm),
+                    os.path.join(lab.dir, "install.serial.log"))
         try:
             live_login(c)
             to_plain_bash(c)
@@ -295,6 +345,12 @@ def phase_install():
                 print("      FAIL  a pool is still imported after the install")
                 return False
             print("      ok    the installer exported both pools")
+
+            # amd64 only: the installed machine would otherwise be silent on
+            # the serial line every later phase drives (see SERIAL_CONSOLE).
+            if lab.arch.serial_tty != "ttyAMA0":
+                if not give_serial_console(c):
+                    return False
             return True
         finally:
             c.close()
@@ -322,7 +378,8 @@ class Machine:
 
     def __enter__(self):
         self.tpm.__enter__()
-        self.c = Console(disk_only_args() + self.tpm.args(),
+        self.c = Console(lab.arch.command(disk_only_args() + self.tpm.args(),
+                                          name=lab.name, tpm=self.tpm),
                          os.path.join(lab.dir, f"{self.label}.serial.log"))
         c = self.c
         i = c.expect([r"\blogin:", r"unlock disk", r"Enter passphrase", r"passphrase for",
@@ -381,14 +438,43 @@ def phase_boot():
             return False
 
     ok = True
+    reenrolled = False
     with Machine("boot") as m:
         c = m.c
         if m.unlocked_by_tpm:
             print("      ok    1/7 THE TPM UNLOCKED THE DISK — no passphrase was typed")
-        else:
+        elif lab.arch.serial_tty == "ttyAMA0":
             print("      FAIL  1/7 the machine asked for the passphrase: the TPM did not")
             print("                unlock it. Everything below still runs.")
             ok = False
+        else:
+            # MEASURED 2026-08-28, first amd64 boot ever: the enrolment is
+            # correct (token in slot 1, handler and libtss2 in the initramfs)
+            # and the seal does not open, because TpmEnrolStep sealed against
+            # the LIVE SESSION's PCR 7 and this machine boots through shim,
+            # which extends it — BUILD-NOTES #69's prediction, now a
+            # measurement. arm64 never hit it because QEMU's arm64 path boots
+            # the same way in both sessions. The recovery is S6's: one
+            # systemd-cryptenroll on the booted machine, against the PCR 7
+            # that the real boot path produces. The product's own fix is the
+            # UL1 first-boot migration; until an image ships it, the harness
+            # performs the documented recovery and THE VERDICT IS THE NEXT
+            # BOOT, which must unlock with nothing typed.
+            print("      note  1/7 the FIRST amd64 boot asked for the passphrase — #69:")
+            print("            the install-time seal is against the live session's PCR 7")
+            print("            and this machine boots through shim. Re-enrolling (S6's")
+            print("            recovery); the verdict is the next boot.")
+            text = ask(c, f"PASSWORD='{PASSPHRASE}' systemd-cryptenroll --wipe-slot=tpm2 "
+                          "--tpm2-device=auto --tpm2-pcrs=7 "
+                          "/dev/disk/by-partlabel/os7-luks 2>&1 | tail -3",
+                       "re-enrol against the booted PCR 7", timeout=300)
+            if "enrolled" in body_of(text, "tail -3"):
+                print("      ok         re-enrolled against the boot path's own PCR 7")
+                reenrolled = True
+            else:
+                print("      FAIL  1/7 the re-enrolment did not report a new token:")
+                print("            " + body_of(text, "tail -3").strip()[:300])
+                ok = False
 
         # THE ENROLMENT STEP'S OWN WORDS, from the install log ON THIS MACHINE.
         # Not from the serial line: os7-setup prints step headings to the console
@@ -475,6 +561,21 @@ def phase_boot():
         else:
             print(f"      FAIL       {n} wireless driver directories; it was 19 before the swap")
             ok = False
+        if reenrolled:
+            m.power_off()
+
+    # The other half of the amd64 1/7 verdict: after S6's recovery, the NEXT
+    # boot must unlock with nothing typed — that, and not the recovery's exit
+    # code, is what says the re-enrolment worked.
+    if reenrolled:
+        with Machine("boot-tpm") as m2:
+            if m2.unlocked_by_tpm:
+                print("      ok    1/7 THE TPM UNLOCKED THE DISK on the boot after")
+                print("                re-enrolment — no passphrase was typed")
+            else:
+                print("      FAIL  1/7 the re-enrolled TPM still did not unlock the disk")
+                ok = False
+            m2.power_off()
     return ok
 
 
@@ -634,7 +735,20 @@ def phase_cycle():
                      f"Set-OS7BootEnvironment -Name {new_be} -Confirm:$false | "
                      "Format-List Name,Active,Menu | Out-String",
                   "activate the clone", timeout=900)
-        print("        " + body_of(text, "Out-String").replace("\r", "").strip()[:700])
+        act = body_of(text, "Out-String")
+        print("        " + act.replace("\r", "").strip()[:700])
+        # THE ACTIVATION MUST SAY IT REACHED THE POINT OF NO RETURN. The final
+        # gate's cycle threw at step 6 (the ESP was gone, #104) and this
+        # harness sailed on: the two checks below pass on a machine whose
+        # grubenv alone names the clone, and the boot then LOOKS like a
+        # successful switch while canmount was already taken back — the
+        # half-activated pair, reported as "the clone booted". An activation
+        # that did not print its stub line is a failed activation, whatever
+        # the next checks happen to match.
+        if "ESP stub(s) now point at" not in act:
+            print("      FAIL       the activation never rewrote the ESP stubs:")
+            print("        " + act.replace("\r", "").strip()[-1200:])
+            ok = False
 
         # THE WINDOW BETWEEN ACTIVATION AND THE REBOOT. Activation sets the
         # target's datasets to canmount=on while the OLD environment is still
@@ -656,14 +770,18 @@ def phase_cycle():
         else:
             print("      ok         activation mounted nothing of the target")
 
-        text = ask(c, "printf 'S5-%s\\n' ESP; cat /boot/efi/EFI/BOOT/grub.cfg; "
+        text = ask(c, "printf 'S5-%s\\n' ESP; "
+                      "cat /boot/efi/EFI/BOOT/grub.cfg /boot/efi/EFI/OS7/grub.cfg 2>&1; "
                       "grub-editenv /boot/grub/grubenv list",
                    "what the ESP now says", timeout=180)
         esp = body_of(text, "S5-ESP")
         print("\n--- the ESP stub and grubenv after activation ---")
         print(esp.strip()[:800])
         print("---")
-        if new_be in esp:
+        # The STUB line, not just any occurrence: grub-editenv's saved_entry
+        # also carries the name, and in the final gate that alone satisfied
+        # this check on a machine whose stub rewrite had never happened.
+        if f"/BOOT/{new_be}@" in esp:
             print(f"      ok    6/9 the ESP stub and grubenv name {new_be}")
         else:
             print("      FAIL  6/9 the ESP stub was not repointed — the reboot will not switch")
@@ -743,21 +861,27 @@ def phase_cycle():
         text = ps(c, "Import-Module OS7; Restore-OS7 -Confirm:$false | "
                      "Format-List Name,Active,Menu | Out-String",
                   "roll back", timeout=900)
-        print("        " + body_of(text, "Out-String").replace("\r", "").strip()[:700])
+        rbact = body_of(text, "Out-String")
+        print("        " + rbact.replace("\r", "").strip()[:700])
+        if "ESP stub(s) now point at" not in rbact:
+            print("      FAIL       the rollback's activation never rewrote the ESP stubs:")
+            print("        " + rbact.replace("\r", "").strip()[-1200:])
+            ok = False
 
         # NOT "did the cmdlet print something". Restore-OS7 takes no argument
         # here — the whole point is that it works out which environment the
         # previous one is — so the check is that it picked the right one AND
         # that the ESP now says so. Anything weaker passes on a cmdlet that
         # imported a module and gave up.
-        text = ask(c, "printf 'S5-%s\\n' RB; cat /boot/efi/EFI/BOOT/grub.cfg; "
+        text = ask(c, "printf 'S5-%s\\n' RB; "
+                      "cat /boot/efi/EFI/BOOT/grub.cfg /boot/efi/EFI/OS7/grub.cfg 2>&1; "
                       "grub-editenv /boot/grub/grubenv list",
                    "what the ESP says after the rollback", timeout=180)
         rb = body_of(text, "S5-RB")
         print("\n--- the ESP stub after the rollback ---")
         print(rb.strip()[:600])
         print("---")
-        if old_be in rb and new_be not in rb.split("saved_entry")[0]:
+        if f"/BOOT/{old_be}@" in rb and new_be not in rb.split("saved_entry")[0]:
             print(f"      ok    8/9 Restore-OS7 chose {old_be} and the ESP stub names it")
         else:
             print(f"      FAIL  8/9 the ESP stub does not name {old_be} after the rollback")
@@ -823,7 +947,349 @@ def phase_cycle():
     return ok
 
 
-PHASES = {"install": phase_install, "boot": phase_boot, "cycle": phase_cycle}
+# ---------------------------------------------------------------------------
+# update — the end-to-end proof. RELEASE-AND-UPDATE-PLAN's whole promise, asked
+# of a machine: a release N+1 is built from this tree with the SAME development
+# key the ISO's os7-release trusts, served to the guest over local HTTP (the
+# guest's 10.0.2.2 is QEMU's host side — the os7-vm container on this box, the
+# Mac itself there), the machine is pointed at it with Set-OS7UpdateChannel,
+# and Update-OS7 does what until now only the harness's own hands had done.
+# Every claim below is answered by the machine, not by an exit code.
+# ---------------------------------------------------------------------------
+UPDATE_REPO = os.path.join(lab.dir, "repo")
+HTTP_PORT = 8907
+
+
+def next_build(version):
+    head, _, build = version.rpartition(".")
+    return f"{head}.{int(build) + 1}"
+
+
+def build_release_repo(version):
+    """Release <version> into UPDATE_REPO, signed with the shared key.
+
+    The key mount is the load-bearing part: the ISO's os7-release ships the
+    public half of out/os7-gnupg's key (Makefile KEYDIR), so a repository
+    signed from the same home is one the installed machine can verify —
+    and one signed anywhere else is the negative case check-os7-repo.py
+    already owns."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "check_os7_repo", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "check-os7-repo.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    facts = mod.source_facts()
+    if facts is None:
+        raise SystemExit("git could not be asked for the source facts (BUILD-NOTES #43)")
+    env_args = []
+    for line in facts.stdout.splitlines():
+        if "=" in line:
+            env_args += ["-e", line.strip()]
+    keydir = os.path.join(REPO, "out", "os7-gnupg")
+    os.makedirs(keydir, exist_ok=True)
+    os.makedirs(UPDATE_REPO, exist_ok=True)
+    print(f"    building release {version} into {UPDATE_REPO} …")
+    got = subprocess.run(
+        ["docker", "run", "--rm", "--platform", lab.arch.docker_platform,
+         "-v", f"{REPO}:/work", "-v", f"{UPDATE_REPO}:/out",
+         "-v", f"{keydir}:/os7-gnupg", "-e", "OS7_REPO_GNUPGHOME=/os7-gnupg",
+         *env_args,
+         "-e", f"OS7_VERSION={version}", "-e", f"OS7_ARCH={lab.arch.arch}",
+         "-e", f"OS7_REPO_URI={lab.arch.guest_host_url(HTTP_PORT)}",
+         "-e", "OS7_REPO_ENABLED=yes",
+         lab.arch.build_image, "bash", "-c",
+         "/work/build/lib/build-os7-repo.sh /work/build/config/os7-release.conf /out"],
+        capture_output=True, text=True)
+    for line in got.stdout.splitlines():
+        if line.startswith((">>>", "    ")):
+            print("      " + line.strip())
+    if got.returncode != 0:
+        print(got.stdout[-2500:])
+        print(got.stderr[-1500:])
+        raise SystemExit(f"the {version} repository did not build")
+
+
+def phase_update():
+    print("\n### update — Update-OS7 against a served repository, end to end")
+    for need, what in ((lab.target, "an installed disk"), (lab.vars, "a firmware store")):
+        if not os.path.exists(need):
+            print(f"      FAIL  no {what} at {need}. Run install first.")
+            return False
+    ok = True
+    lab.arch.serve_http(UPDATE_REPO, HTTP_PORT)
+    url = lab.arch.guest_host_url(HTTP_PORT)
+
+    with Machine("update-1") as m:
+        c = m.c
+        text = ps(c, "Import-Module OS7; (Get-OS7Version).FullVersion.ToString()",
+                  "the running version")
+        got = re.search(r"\b(\d+\.\d+\.\d+\.\d+)\b", body_of(text, "ToString()"))
+        if not got:
+            print("      FAIL  the machine does not know its version")
+            return False
+        vfrom = got.group(1)
+        vnext = next_build(vfrom)
+        print(f"      ok    1/8 the machine runs {vfrom}; the update target is {vnext}")
+
+        build_release_repo(vnext)
+
+        text = ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} "
+                     "-Channel development | Format-List Channel,Uri,Enabled | Out-String",
+                  "point the machine at the repository", timeout=600)
+        body = body_of(text, "Out-String")
+        if url in body and "Enabled" in body:
+            print(f"      ok    2/8 Set-OS7UpdateChannel took {url}, and apt verified it")
+        else:
+            print("      FAIL  2/8 the channel could not be configured:")
+            print(body.strip()[-800:])
+            return False
+
+        text = ps(c, "Import-Module OS7; $r = Update-OS7 -AllowDevelopment -Confirm:$false; "
+                     "$r | ConvertTo-Json -Compress",
+                  "Update-OS7", timeout=3600)
+        body = body_of(text, "ConvertTo-Json -Compress")
+        made = re.search(r'"BootEnvironment":\s*"(os7_[0-9.]+_\d{12})"', body)
+        if f'"To":"{vnext}"' in body.replace(" ", "") and '"Applied":true' in body.replace(" ", "") and made:
+            new_be = made.group(1)
+            print(f"      ok    3/8 UPDATE-OS7 RAN THROUGH: {vfrom} -> {vnext} into {new_be}")
+        else:
+            print("      FAIL  3/8 Update-OS7 did not apply the release:")
+            print(body.strip()[-1500:])
+            return False
+        old_be_text = ask(c, "printf 'S5-%s\\n' OLD; findmnt -no SOURCE /", "the old root")
+        found = re.search(r"rpool/ROOT/(os7_[0-9.]+_\d{12})", body_of(old_be_text, "S5-OLD"))
+        if not found:
+            print("      FAIL  the running root is not a boot environment")
+            return False
+        old_be = found.group(1)
+        m.power_off()
+
+    # ---- the machine that comes back must be N+1 ----------------------------
+    with Machine("update-2") as m:
+        c = m.c
+        text = ask(c, "printf 'S5-%s\\n' NOW; findmnt -no SOURCE /; "
+                      "dpkg-query -W -f='${Version}\\n' os7-base; "
+                      "cat /usr/lib/os7/release.json | grep -o '\"version\": *\"[^\"]*\"' | head -1",
+                   "which system came back", timeout=240)
+        now = body_of(text, "S5-NOW")
+        if f"rpool/ROOT/{new_be}" in now:
+            print(f"      ok    4/8 THE MACHINE BOOTED {vnext} — / is {new_be}")
+        else:
+            print("      FAIL  4/8 the machine did not boot the new environment:")
+            print(now.strip()[:600])
+            ok = False
+        if vnext in now:
+            print(f"      ok         os7-base and release.json both say {vnext}")
+        else:
+            print(f"      FAIL       the packages do not say {vnext}: {now.strip()[:300]}")
+            ok = False
+        text = ps(c, "Import-Module OS7; (Get-OS7Version).FullVersion.ToString()",
+                  "Get-OS7Version on the updated machine")
+        if vnext in body_of(text, "ToString()"):
+            print(f"      ok    5/8 Get-OS7Version says {vnext}")
+        else:
+            print(f"      FAIL  5/8 Get-OS7Version does not say {vnext}")
+            ok = False
+
+        # The firstboot migration runner (C10 §6', package C), on the machine:
+        # the stamp is there, the pending record was consumed, and the log
+        # says what ran. UL1's script found the seal opening (PCR 7 unmoved
+        # by an update, S6) and said "nothing to do" — that IS its verdict
+        # path, and the stamp proves the runner drove it.
+        text = ask(c, f"printf 'S5-%s\\n' MIG; ls /var/lib/os7/migrations/{vnext}/ 2>&1; "
+                      "test -e /var/lib/os7/migrations/pending && echo PENDING-STILL-THERE "
+                      "|| echo PENDING-CONSUMED; "
+                      "grep firstboot /var/log/os7/update.log | tail -3",
+                   "the firstboot migrations", timeout=180)
+        mig = body_of(text, "S5-MIG")
+        print("\n--- the firstboot migration state ---")
+        print(mig.strip()[:600])
+        print("---")
+        if "50-tpm2-reseal" in mig and "PENDING-CONSUMED" in mig and "ran " in mig:
+            print(f"      ok    6/8 THE FIRSTBOOT MIGRATION RAN at the first boot of {vnext}")
+        else:
+            print("      FAIL  6/8 the firstboot migration did not run (or left pending)")
+            ok = False
+
+        be = be_table(c, "after the update")
+        if be.count("os7_") >= 2 and old_be in be:
+            print(f"      ok    7/8 both environments are there — -Keep 2 kept {old_be}")
+        else:
+            print(f"      FAIL  7/8 the previous environment {old_be} is gone")
+            ok = False
+        text = ask(c, "printf 'S5-%s\\n' SRC; cat /etc/apt/sources.list.d/os7.sources",
+                   "the channel survived the upgrade", timeout=120)
+        if url in body_of(text, "S5-SRC"):
+            print("      ok         the upgrade kept the operator's channel (conffile)")
+        else:
+            print("      FAIL       os7-release's upgrade reverted the channel — the")
+            print("                 conffile did not hold")
+            ok = False
+
+        text = ps(c, "Import-Module OS7; Restore-OS7 -Confirm:$false | "
+                     "Format-List Name | Out-String", "roll back", timeout=900)
+        # THE STEP LINES, not any occurrence of the name: with three
+        # environments on the machine (the cycle's leftover clone was still
+        # there), Restore-OS7 once chose the CLONE while this check matched
+        # old_be in the menu listing and said ok — and 8/8 then failed a boot
+        # later, pointing at the wrong suspect. The cmdlet must SAY it picked
+        # the old environment and that the stubs now name it.
+        rbb = body_of(text, "Out-String")
+        if (f"rolling back to the previous boot environment: {old_be}" in rbb
+                and f"ESP stub(s) now point at {old_be}" in rbb):
+            print(f"      ok         Restore-OS7 chose {old_be}")
+        else:
+            print("      FAIL       Restore-OS7 did not choose the previous environment:")
+            print("        " + rbb.replace("\r", "").strip()[-800:])
+            ok = False
+        m.power_off()
+
+    # ---- and the rollback must un-say the release ---------------------------
+    with Machine("update-3") as m:
+        c = m.c
+        text = ask(c, "printf 'S5-%s\\n' BACK; findmnt -no SOURCE /; "
+                      "dpkg-query -W -f='${Version}\\n' os7-base",
+                   "which system came back", timeout=240)
+        back = body_of(text, "S5-BACK")
+        if f"rpool/ROOT/{old_be}" in back and vfrom in back:
+            print(f"      ok    8/8 THE ROLLBACK TOOK — the machine runs {vfrom} again")
+        else:
+            print("      FAIL  8/8 the machine did not come back on the old release:")
+            print(back.strip()[:500])
+            ok = False
+        m.power_off()
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# timer — §6's unattended path, on the machine (package E's gate). The service
+# is asked for its REAL exit status through systemd, against the contract the
+# unit declares: 0 nothing-to-do, 2 staged, 1 failed.
+# ---------------------------------------------------------------------------
+def phase_timer():
+    print("\n### timer — the unattended check: nothing without a channel, staged with one")
+    if not os.path.isdir(UPDATE_REPO):
+        print("      FAIL  no repository at " + UPDATE_REPO + ". Run update first.")
+        return False
+    ok = True
+    lab.arch.serve_http(UPDATE_REPO, HTTP_PORT)
+    url = lab.arch.guest_host_url(HTTP_PORT)
+
+    def service_status(c, label):
+        text = ask(c, "systemctl start os7-update-check.service; "
+                      "printf 'S5-%s\\n' ST; "
+                      "systemctl show -p ExecMainStatus --value os7-update-check.service; "
+                      "tail -2 /var/log/os7/update.log",
+                   label, timeout=3600)
+        body = body_of(text, "S5-ST")
+        code = next((l.strip() for l in body.splitlines() if l.strip().isdigit()), "?")
+        return code, body
+
+    with Machine("timer-1") as m:
+        c = m.c
+        ask(c, "test -f /usr/lib/systemd/system/timers.target.wants/os7-update-check.timer "
+               "&& printf 'S5-%s\\n' TIMER-ENABLED || printf 'S5-%s\\n' TIMER-MISSING",
+            "the timer ships enabled")
+        if "TIMER-ENABLED" in c.text():
+            print("      ok    1/4 os7-update-check.timer ships enabled")
+        else:
+            print("      FAIL  1/4 the timer is not enabled on the machine")
+            ok = False
+
+        # A. No reachable channel: the machine is put back into the shipped
+        # state (the rollback brought the configured channel back with /etc).
+        ps(c, "Import-Module OS7; Set-OS7UpdateChannel -Disable | Out-Null",
+           "disable the channel", timeout=300)
+        code, body = service_status(c, "the check with no channel")
+        if code == "0" and "no update channel is configured" in body:
+            print("      ok    2/4 without a channel: exit 0, and the log says why")
+        else:
+            print(f"      FAIL  2/4 expected exit 0 + reason, got {code}:")
+            print(body.strip()[:400])
+            ok = False
+
+        # B. A reachable channel offering a release: the check STAGES it and
+        # says so with exit 2. The environment the update phase staged and the
+        # rollback left behind is removed first, so the timer's own staging is
+        # what is measured rather than found.
+        ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} -Channel development "
+             "| Out-Null", "re-enable the channel", timeout=600)
+        # The leading \n is deliberate: a module from before the trailing-newline
+        # fix in Set-OS7UpdateChannel left update.conf without one, and a bare
+        # append GLUED this line onto the channel line — the timer then read
+        # channel 'development"OS7_UPDATE_UNATTENDED_…' and exited 1. The blank
+        # line this adds on fixed images is harmless; the glue never is.
+        ask(c, "printf '\\nOS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT=\"yes\"\\n' "
+               ">> /etc/os7/update.conf", "allow development releases unattended")
+        text = ps(c, "Import-Module OS7; Get-OS7BootEnvironment | Where-Object "
+                     "{ -not $_.Running } | Remove-OS7BootEnvironment -Confirm:$false; "
+                     "@(Get-OS7BootEnvironment).Count",
+                  "clear the staged leftovers", timeout=600)
+        code, body = service_status(c, "the check with a reachable channel")
+        if code == "2":
+            print("      ok    3/4 with a channel: exit 2 — staged, reboot pending")
+        else:
+            print(f"      FAIL  3/4 expected exit 2, got {code}:")
+            print(body.strip()[:500])
+            ok = False
+        text = ps(c, "Import-Module OS7; (Get-OS7BootEnvironment | Where-Object "
+                     "{ -not $_.Running } | Select-Object -Last 1).Release",
+                  "the staged release is there")
+        staged = body_of(text, ".Release").strip().splitlines()
+        staged = next((s.strip() for s in staged if re.match(r"^\d+\.\d+\.\d+\.\d+$", s.strip())), "")
+        if staged:
+            print(f"      ok         a boot environment for {staged} exists — the release is there")
+        else:
+            print("      FAIL       the check reported staged and no environment exists")
+            ok = False
+        # And running it again stages nothing twice.
+        code, body = service_status(c, "the check, again")
+        if code == "2" and "already" in body:
+            print("      ok    4/4 a second run finds it already staged — nothing minted twice")
+        else:
+            print(f"      FAIL  4/4 expected exit 2 + already-staged, got {code}")
+            ok = False
+        m.power_off()
+    return ok
+
+
+def phase_serialize():
+    """The SERIAL_CONSOLE step alone, for a disk that was installed before the
+    step existed (or whose configuration was lost with the pool). Boots the
+    live medium, configures, powers off. A no-op on arm64, which never needed
+    it."""
+    print("\n### serialize — give an already-installed amd64 disk a serial console")
+    if lab.arch.serial_tty == "ttyAMA0":
+        print("      note  arm64 speaks on ttyAMA0 by itself; nothing to do")
+        return True
+    if not os.path.exists(lab.target):
+        print(f"      FAIL  no installed disk at {lab.target}. Run install first.")
+        return False
+    # NOT lab.prepare(): prepare() recreates the target BLANK, which is right
+    # before an install and would destroy the installed disk here. Only the
+    # boot files and the firmware store are ensured.
+    lab.arch.prepare_vars(lab.vars)
+    lab.extract_boot_files()
+    c = Console(lab.arch.command(lab.qemu_args(LIVE_CMDLINE, payload=False), name=lab.name),
+                os.path.join(lab.dir, "serialize.serial.log"))
+    try:
+        live_login(c)
+        to_plain_bash(c)
+        c.send(f"printf '%s' '{PASSPHRASE}' > /tmp/pass")
+        ok = give_serial_console(c)
+        c.send("sudo poweroff -f")
+        deadline = time.time() + 120
+        while time.time() < deadline and c.proc.poll() is None:
+            time.sleep(0.5)
+        return ok
+    finally:
+        c.close()
+
+
+PHASES = {"install": phase_install, "boot": phase_boot, "cycle": phase_cycle,
+          "update": phase_update, "timer": phase_timer,
+          "serialize": phase_serialize}
 
 
 def main():
@@ -831,7 +1297,7 @@ def main():
     if what == "reset":
         lab.reset()
         return
-    order = ["install", "boot", "cycle"] if what == "all" else [what]
+    order = ["install", "boot", "cycle", "update", "timer"] if what == "all" else [what]
     if any(p not in PHASES for p in order):
         raise SystemExit(f"usage: run-s5.py [{'|'.join(PHASES)}|all|reset]")
 

@@ -47,7 +47,7 @@ sys.path.insert(0, HERE)
 
 import vmscreen                                                    # noqa: E402
 from vmscreen import Qmp, load_font, verify_glyphs, hexc           # noqa: E402
-from vmconsole import Console, qemu_prefix                         # noqa: E402
+from vmconsole import Console                                      # noqa: E402
 
 # The same VM run-phase3.py installs, deliberately: this is a check ON that
 # machine, not a second install with its own opinions.
@@ -87,21 +87,17 @@ def disk_and_camera(lab):
     the one that applies the font. Removing either would answer a different
     question.
     """
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
+    p = lab.arch.path
     if os.path.exists(lab.qmpsock):
         os.remove(lab.qmpsock)
-    return [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
+    return lab.arch.base_args() + [
         "-smp", lab.CPUS, "-m", lab.MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={lab.vars}",
+    ] + lab.arch.firmware_args(lab.vars) + [
         "-device", f"virtio-gpu-pci,xres={FB_W},yres={FB_H}",
         "-device", "qemu-xhci", "-device", "usb-kbd",
         "-display", "none", "-monitor", "none", "-serial", "stdio",
-        "-qmp", f"unix:{lab.qmpsock},server,nowait",
-        "-drive", f"if=none,id=target,file={lab.target},format=qcow2",
+    ] + lab.arch.qmp_args(lab.qmpsock, lab.name) + [
+        "-drive", f"if=none,id=target,file={p(lab.target)},format=qcow2",
         "-device", "virtio-blk-pci,drive=target,serial=os7target",
     ]
 
@@ -122,9 +118,9 @@ def fetch_font(lab):
         return out
     os.makedirs(lab.dir, exist_ok=True)
     subprocess.run(
-        ["docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
+        ["docker", "run", "--rm", "--privileged", "--platform", lab.arch.docker_platform,
          "-v", f"{os.path.dirname(lab.iso)}:/iso:ro", "-v", f"{lab.dir}:/out",
-         "os7-build:arm64", "bash", "-c",
+         lab.arch.build_image, "bash", "-c",
          f"set -e; mkdir -p /mnt/iso /mnt/sq; "
          f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
          "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
@@ -173,7 +169,7 @@ def main():
     log = os.path.join(lab.dir, "font.serial.log")
     print("  verify-console-font — the installed disk, no ISO attached")
     print(f"    serial   {log}")
-    c = Console(disk_and_camera(lab), log)
+    c = Console(lab.arch.command(disk_and_camera(lab), name=lab.name), log)
     ok = True
     try:
         i = c.expect([r"unlock disk", r"Enter passphrase", r"passphrase for",
@@ -261,9 +257,9 @@ def main():
         ask(c, sudo("sh -c 'cat /tmp/fonttest > /dev/tty1'"), "PAINTED")
         ask(c, "sync", "PAINT-DONE")
 
-        q = Qmp(lab.qmpsock)
+        q = Qmp(lab.arch.qmp_endpoint(lab.qmpsock, lab.name))
         ppm = os.path.join(lab.shots, "installed-console.ppm")
-        q.screendump(ppm)
+        q.screendump(ppm, guest_path=lab.arch.path(ppm))
         w, h, rgb = vmscreen.read_ppm(ppm)
         png = os.path.join(lab.shots, "installed-console.png")
         vmscreen.write_png(png, w, h, rgb)

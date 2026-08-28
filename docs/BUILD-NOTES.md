@@ -52,8 +52,16 @@ table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written, and #97–#107 are written on `update-train`.
-Numbers above 108 are free.
+Everything below is written. Numbers above 109 are free.
+
+*(#108 was claimed TWICE on 2026-08-28, and both claimants had already been
+committed — the Active Directory line took it for the installer/cmdlet
+parameter disagreement, and the update train's line took it for the missing
+journal, neither able to see the other. The reservation above works only
+between sessions that read this table; these two never shared a branch. `main`
+had it first, so the journal note is #109 here and every reference to it was
+rewritten with it. The earlier collisions cost a renumbering commit each; this
+one cost a merge resolution, which is the cheaper end of the same bill.)*
 
 *(That line said 61 until 2026-08-26 and had been wrong since #62 landed. It
 then said 81 until 2026-08-28 and had been wrong since #82 — twelve entries
@@ -5127,6 +5135,349 @@ it.**
 
 ---
 
+
+---
+
+## #97 — gpg cannot put its agent socket on a Windows bind mount, and the failure was invisible
+
+**2026-08-28.** The first ISO build that had to generate the signing key inside
+the container died at `make build-amd64` with no line naming gpg at all: the
+keygen sat inside `>/dev/null 2>&1`, and `set -e` took the build down on its
+exit code alone.
+
+The cause is the same one that moved the harness's QMP endpoint to TCP:
+**a unix socket cannot be created on Docker Desktop's Windows file sharing.**
+`GNUPGHOME` was a bind mount of `out/os7-gnupg` (it has to be — the ISO and
+the repository must share one key, so the key lives outside both containers),
+and gpg-agent's first act is to bind `S.gpg-agent` inside it. On a 9p/drvfs
+mount, bind(2) is refused and every gpg operation dies before it starts.
+
+GnuPG's own answer is the socket directory under `/run/user/<uid>`, which it
+uses automatically **when it exists** — and a build container has no logind to
+create it. `build/lib/os7-signing-key.sh` creates it and runs
+`gpgconf --create-socketdir` before touching the keyring, and the keygen's
+output is no longer discarded, because a silenced failure cost the whole build
+to learn one line.
+
+### The rule
+
+A directory that must be SHARED across containers cannot also be where a
+program wants a SOCKET. Give the program its socket on a container-local
+filesystem and keep only the STATE on the mount — the same split
+`vmhost-entry.sh` makes for swtpm.
+
+## #98 — apt satisfies a strict `Depends (= old)` from CANDIDATE versions only
+
+**2026-08-28, measured by check-os7-repo.py.** With three releases of the OS/7
+suite in one pool, `apt-get install os7-server=1.0.0.130` fails:
+
+    os7-server:amd64=1.0.0.130 Depends os7-base (= 1.0.0.130)
+      but none of the choices are installable:
+      - os7-base:amd64=1.0.0.130 is not selected for install
+
+The version is IN the index — `apt-cache policy` lists it — but apt's resolver
+only considers each package's **candidate** (the newest, unless pinned) when
+satisfying dependencies. An exact-version metapackage whose members' candidates
+have moved on is therefore uninstallable by name alone, however complete the
+repository.
+
+The fix is a `preferences.d` pin (`Package: os7-* / Pin: version <v> /
+Pin-Priority: 1001`) for the duration of the operation — which is exactly the
+pin `Update-OS7` already writes for its own run, found independently by its
+review (SESSION-UPDATE-TRAIN §2a, "full-upgrade undid the pinned version").
+One apt fact, paid for twice, now written down once.
+
+## #99 — an installed amd64 machine says NOTHING on the serial line
+
+**2026-08-28.** The first amd64 `run-s5.py boot` hung for fifteen minutes on a
+machine that was booting perfectly: OVMF found shim, GRUB drew its menu into
+the serial console (via the firmware's ConOut), and then — silence. The kernel
+had put its console on tty0, and the passphrase prompt, the boot messages and
+the login all went to a display nothing was attached to.
+
+On arm64 nobody ever had to think about this: QEMU's `virt` machine hands the
+kernel a device tree whose `chosen` node names ttyAMA0, and Linux takes it as
+the console. **x86 has no such mechanism** — no `console=` on the command line
+means tty0, and the installed machine's command line is written by os7-setup,
+which (correctly) says nothing about serial consoles.
+
+The harness now gives the machine `console=ttyS0,115200` through its own
+`update-grub` after the install (`run-s5.py serialize`), inside
+`unshare --mount --propagation private` — the first attempt did the mounts in
+the shared namespace and re-measured #18: `zpool export` said "pool is busy"
+with nothing visibly mounted. Whether the PRODUCT should ship a serial console
+on the server image is a real question (§6 wants every cmdlet usable over
+serial) and is left open rather than decided by a test harness.
+
+## #100 — the install-time TPM seal does not open through shim: #69, now measured
+
+**2026-08-28, the first amd64 boot of a machine this repository installed.**
+The enrolment was perfect — token in slot 1, sealed to PCR 7, handler and
+libtss2 in the initramfs, ordered before cryptroot — and the machine asked for
+the passphrase anyway. `TpmEnrolStep` seals from the LIVE session, which QEMU
+boots via `-kernel`; the installed machine boots through `shimx64.efi`, which
+extends PCR 7. Same TPM, different measurement: exactly the road #69 named
+when it moved enrolment "to first boot", predicted and never before seen on a
+machine.
+
+arm64 never hit it because its live and installed boot paths measure alike on
+QEMU — which is why `run-s5.py boot` passed there with install-time sealing
+and would have kept passing forever.
+
+Two consequences, both built the same day: the harness performs S6's recovery
+(one `systemd-cryptenroll` on the booted machine; the NEXT boot must unlock
+with nothing typed, and did), and the UL1 firstboot migration
+(`50-tpm2-reseal`, shipped by os7-release, run by `os7-migrations-firstboot`)
+is the product's own version of the same move — it asks whether the seal opens
+against THIS boot and re-enrols when it does not. Unattended re-enrolment
+still needs a secret nobody escrows: U8 is open and the migration says so out
+loud instead of failing the boot.
+
+## #101 — a worktree made by Windows git is unreadable to WSL git
+
+**2026-08-28.** `make` on this box lives in WSL, and `make build-amd64` from a
+worktree died in `scripts/os7-source-facts.sh`: the worktree's `.git` is a
+FILE holding `gitdir: C:/Users/…/OS7/.git/worktrees/<name>` — an absolute
+WINDOWS path, which WSL's git resolves relative to the worktree and reports
+"not a git repository". #43's family, one layer up: not the container this
+time, but the OTHER operating system on the same machine.
+
+git accepts a RELATIVE gitdir pointer, and `gitdir: ../OS7/.git/worktrees/…`
+resolves under both roots. One line, and both worlds read the same repository.
+(The back-pointer in `.git/worktrees/<name>/gitdir` stays absolute and only
+matters to `git worktree` management commands run from the main checkout.)
+
+## #102 — Git Bash rewrites `--device /dev/kvm` into `--device C:/…`
+
+**2026-08-28.** `docker run --device /dev/kvm` from Git Bash (MSYS) fails with
+`error gathering device information while adding custom device "C"`: MSYS
+path conversion sees a leading `/` and helpfully turns `/dev/kvm` into a
+Windows path before docker ever sees it. The same command from PowerShell, or
+from Python's `subprocess` (no shell), passes the literal string and works —
+which is why the harness never hits this and an interactive probe does.
+`MSYS_NO_PATHCONV=1` or a doubled slash (`//dev/kvm`) are the escapes.
+
+## #103 — DEBIAN_FRONTEND=noninteractive does not answer dpkg's conffile prompt
+
+**2026-08-28, one check-os7-repo iteration.** The harness writes its own
+`/etc/apt/sources.list.d/os7.sources` before installing os7-release — which
+ships the same path as a CONFFILE since the same day — and the install died
+with
+
+    *** os7.sources (Y/I/N/O/D/Z) [default=N] ? dpkg: error processing
+    package os7-release (--configure):
+     end of file on stdin at conffile prompt
+
+`DEBIAN_FRONTEND=noninteractive` silences DEBCONF; dpkg's conffile prompt is
+dpkg's own, and with stdin at EOF it is an ERROR, not a default. The nine
+failures it produced downstream all described a machine that was never
+branded — none of them named the prompt. The answer is
+`Dpkg::Options { "--force-confdef"; "--force-confold"; }` (apt.conf, or
+`-o Dpkg::Options::=` per call), which is exactly what `Update-OS7`'s own apt
+runs have carried since their review — the production path never had the bug,
+only the harness that judges it did.
+
+## #104 — an activation that fails halfway keeps half its work, and the next boot is the half-activated pair
+
+**2026-08-28, the first end-to-end `Update-OS7` run.** The update built the
+new environment, upgraded it, and threw at activation step 6: "no ESP stub
+was rewritten — /boot/efi is not mounted". The catch said, as designed,
+*"os7_1.0.0.134… is built, INACTIVE and left in place; this machine still
+boots what it booted."* Both halves of that sentence were false.
+
+`Set-OS7BootEnvironment` had already run step 3 — canmount flipped across
+every environment, the target's datasets to `on` — before it threw. Nothing
+took the flips back. The environment was therefore not inactive but ARMED:
+on the next boot, `zfs mount -a` mounted the target's `bpool/BOOT` dataset
+**over the running system's /boot**, burying the ESP's vfat mount under it —
+`findmnt /boot/efi` still showed vfat (the shadowed mount entry survives in
+mountinfo) while the PATH resolved to an empty directory on the target's
+dataset. Measured directly:
+
+    556 … /efi /run/os7-update/boot/efi … zfs bpool/BOOT/os7_1.0.0.134_…
+
+— a `mount --bind /boot/efi` that carried the CLONE's empty efi directory,
+because /boot/efi no longer meant the ESP. That is §4.3's half-activated
+pair, reached by an activation that failed halfway and kept half its work,
+and it is the road "nothing checks" that the plan warned about.
+
+Three changes, one per layer:
+
+* **The flips are transactional now.** Every canmount change records the
+  value it replaced, and any throw between the flips and the end of
+  activation restores them before rethrowing — "left in place, INACTIVE" is
+  a promise the catch can keep.
+* **Every plain bind the update assembler makes is `--make-slave`d** the
+  moment it exists: on a systemd system every mount is shared, so a bind
+  JOINS ITS SOURCE'S PEER GROUP, and a scaffold must receive events, not
+  send them — the reasoning the rbinds carried all along.
+* **`Assert-OS7EspMounted`** runs before anything globs the ESP: an
+  unmounted /boot/efi reads as "grub-install never wrote one", and a
+  precondition that can be stated should not be inferred from an empty glob.
+  It asks systemd (`boot-efi.mount`, through the Systemd layer — P2-systemd's
+  baseline may not rise) to mount it where possible.
+
+WHAT WAS NOT PROVEN AT FIRST WRITING — why /boot/efi was unavailable at
+step 6 *within the failing run itself* — WAS MEASURED A DAY LATER, and it
+was never an in-session loss at all. **The machine had booted broken.**
+
+/boot is a ZFS mount (bpool/BOOT/&lt;be&gt;, mounted by zfs-mount.service), and
+systemd has no unit for it — this image ships no /etc/zfs/zfs-list.cache,
+so zfs-mount-generator emits nothing and the fstab-generated boot-efi.mount
+has NOTHING to order against. Every boot is a race. When the ESP mounts
+first, the /boot dataset lands ON TOP of it: mountinfo showed
+/boot/efi with a LOWER mount id than /boot — mounted earlier, buried under
+the later ZFS mount. The vfat stays in the mount table, so every
+diagnostic that reads the TABLE lies: `findmnt /boot/efi` lists it,
+`boot-efi.mount` reads active, `systemctl start` is a no-op that exits 0 —
+while every diagnostic that resolves the PATH tells the truth: `ls
+/boot/efi/EFI` finds nothing, and activation's glob finds no stubs. The
+"mechanism that moved between runs" was this race lost at boot and then
+misread as an in-session event — four probe runs "proved" the ESP survived
+assembly and disassembly by asking findmnt, the table, and never once the
+path. A diagnostic must be checked against the thing it claims to check;
+these four were checked against the mount table.
+
+The fix is ordering, in three places:
+
+* **Setup writes the ordering into fstab** for new machines:
+  `x-systemd.requires=zfs-mount.service` on the /boot/efi line —
+  systemd.mount(5) makes that Requires= and After=, so the ESP mounts onto
+  the ZFS /boot, never under it.
+* **Migration 60-fstab-esp-ordering** appends the same option on machines
+  installed before the fix, at their first boot after an update.
+* **`Assert-OS7EspMounted` heals a lost race at runtime**: EFI directory
+  missing while /boot is ZFS-served means the orphan shape — it takes the
+  whole /boot stack down (the orphaned vfat goes with it), remounts the
+  running environment's boot dataset, and then asks systemd, which has just
+  watched the umounts and now agrees the unit is dead and actually mounts
+  the ESP again.
+
+## #105 — the revert was transactional, and a file the catch never knew about voted anyway
+
+The end-to-end gate on the first fully packaged ISO (2026-08-28,
+[SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md)). Activation of a
+cloned boot environment threw at step 6 — the ESP was unmounted again, #104's
+still-open mechanism — and the #104 fix WORKED: all eight canmount flips were
+restored, the cmdlet said so, and nothing about the datasets had changed. The
+machine then rebooted into the half-activated pair anyway.
+
+The voter was `saved_entry`. Step 5 wrote it into the RUNNING system's
+grubenv — before step 6, on the argument that a machine that "never gets as
+far as step 6" should still boot what was asked for. That argument is
+backwards, and the gate measured why: the running grubenv takes effect THE
+MOMENT it is written, because until step 6 the ESP stub still points at the
+running environment's menu. So the failed activation left `GRUB_DEFAULT=saved`
+pointing at a clone whose canmount the catch had just carefully taken back,
+and the next boot assembled §4.3's pair from the menu side: / from the clone,
+/boot and /var/lib/dpkg from the origin. `run-s5.py` then reported "THE
+MACHINE BOOTED THE CLONE — ok", because the harness's own checks accepted a
+grubenv line as proof of a stub rewrite that had never happened.
+
+Three corrections:
+
+* **The running system's grubenv is written AFTER the stub rewrite.** The
+  stub rewrite is the point of no return; everything that takes effect
+  immediately now sits behind it. The target's own grubenv (step 5) stays
+  where it was — it is inert until the stub makes it the file GRUB loads.
+* **A failure after the point of no return leaves the activation STANDING.**
+  Reverting the flips once the ESP names the target would manufacture the
+  half-activated pair; the catch now says the activation stands and rethrows.
+  `Update-OS7`'s catch asks `Get-OS7BootEnvironment` whether the stub was
+  rewritten before claiming "this machine still boots what it booted".
+* **The harness now requires the activation's own success line** ("ESP
+  stub(s) now point at") and matches the stub's `/BOOT/<name>@` prefix line,
+  not any occurrence of the name — a grubenv entry is not a stub.
+
+A second, smaller defect fell out of the same boot: on the half-activated
+machine, /boot is ALREADY served by the rollback target's boot dataset, and
+step 4's `Copy-Item` of /boot/grub/grub.cfg into that same dataset refuses
+("cannot overwrite the item with itself") — so the one activation that would
+REPAIR the state was the one that could not run. The copy is now skipped,
+with a step line, when findmnt says /boot's source IS the target's dataset.
+
+The general rule, one more time and from a new side: a transaction is only as
+transactional as the LIST of things it undoes. The flips were recorded and
+restored; the grubenv write was in the same try block and in nobody's ledger.
+When a catch promises "nothing changed", every write above it must be in the
+ledger, or the promise is a claim about the ledger, not the machine.
+
+## #106 — a KEY="value" file written without a trailing newline corrupts on the first append
+
+`Set-OS7UpdateChannel` wrote `/etc/os7/update.conf` without a final newline.
+The unattended-check harness then did what any operator will do:
+`printf 'OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes"\n' >> update.conf`.
+The append glued onto the last line, and the file's channel became
+
+    OS7_UPDATE_CHANNEL="development"OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes"
+
+The module's conf parser stripped the OUTERMOST quote pair and returned
+`development"OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes` as the channel
+name; the unattended check went looking for an index file by that name, found
+nothing, and exited 1 — a corrupted CHANNEL out of an append that meant to
+set a FLAG, with both settings lost.
+
+Fixed at both layers, because each would have contained the other: the writer
+ends the file with a newline (a KEY=value file that invites `echo >>` must),
+and the parser treats a quoted value as ending at the NEXT matching quote —
+trailing garbage after the closing quote is now a loud `FormatException`
+naming the file and line, not a silently wrong value. The harness append
+starts with `\n` regardless, for images whose module predates the fix.
+
+The rule: a file format is defined by what will be APPENDED to it, not just
+by what is written into it. If the convention is "operators add KEY=value
+lines", the writer's last byte is load-bearing.
+
+## #107 — "previous" is ancestry, not age: Restore-OS7 rolled back to the experiment
+
+The second full gate run (2026-08-28): install, boot, cycle and timer all
+PASS, and update failed its LAST check — the machine rolled back from
+1.0.0.136 and came up in `os7_1.0.1.0_…`, the cycle phase's leftover clone,
+not in the 1.0.0.135 the update had been applied to. `Restore-OS7` without
+an argument picked "the newest boot environment older than the running one",
+which was the documented rule — and with a third environment on the machine
+the rule picked the experiment, because the experiment was newer than the
+environment the update actually came from. The one-word panic path landed a
+machine that meant "undo the update" on a clone with somebody's test package
+in it.
+
+The first fix read the ZFS `origin` — the snapshot the running environment
+was cloned from, a record rather than a heuristic — **and the THIRD gate run
+measured why that record is not enough**: UL9's retention step `zfs
+promote`s every environment an update activates (nothing could ever be
+pruned otherwise), and promote ROTATES the ancestry. Measured on the
+machine afterwards:
+
+    os7_1.0.0.137  origin: -                                    (the update, promoted)
+    os7_1.0.0.136  origin: os7_1.0.0.137@os7_1.0.0.137_…        (the PREDECESSOR, pointing FORWARD)
+    os7_1.0.1.0    origin: os7_1.0.0.137@os7_1.0.1.0_…          (a SIBLING clone, moved too)
+
+The origin of the updated environment is `-`, its predecessor's origin
+points AT it, and even an unrelated sibling's origin was re-parented to the
+promoted dataset. After one promote, `origin` no longer answers "what did
+this come from" for anything on the machine.
+
+So "previous" is now TWO records, in order: **`org.os7:previous`**, a user
+property Update-OS7 writes on the environment it activates, before the
+promote — a fact promote cannot rotate; then the ZFS origin **guarded by
+age** (a genuine predecessor is older than the running environment; a
+promote-rotated origin points at something newer, and without the guard a
+machine rolled back once would "roll back" FORWARD), for environments
+cloned by hand. Newest-older stays as the last resort only.
+
+The harness half, same shape as #105's: the check had matched `old_be`
+ANYWHERE in Restore-OS7's output — and the name appeared in the menu-fragment
+listing even when the cmdlet chose the clone, so "Restore-OS7 chose
+1.0.0.135" printed ok one boot before 8/8 measured the truth. It now
+requires the cmdlet's own step lines: "rolling back to the previous boot
+environment: <old>" and "ESP stub(s) now point at <old>".
+
+The rule is #16's, met a fourth way: never accept a marker the output would
+carry anyway. A name in a listing is not a decision; the line where the
+program SAYS what it decided is.
+
+---
+
 ## 108. The installer and the cmdlet it calls disagreed about the spelling of a parameter, and six green checks had nothing to say about it
 
 **Measured 2026-08-28**, by a review of an uncommitted change, on the branch it
@@ -5214,3 +5565,61 @@ FAIL  DomainSteps.cs:349 calls Join-OS7Domain with -Root   [-Root -> -TargetRoot
 A diagnostic must be checked against the thing it claims to check, and the
 cheapest moment to do that is while the bug is still there. Write the check
 first, watch it go red, then fix.
+
+---
+
+## #109 — the machine with no journal: the flush beats zfs-mount, and the real /var/log buries what it wrote
+
+**2026-08-28, diagnosed on a machine installed for the purpose from
+OS7-1.0.0.134-amd64.iso** ([SESSION-MISSING-JOURNAL.md](SESSION-MISSING-JOURNAL.md)).
+The installed machine had NO systemd journal at all — `journalctl` said "No
+journal files were found" while journald read active, machine-id was
+populated, and BOTH journal roots existed, empty. It cost the #104 diagnosis
+its forensics: no journal on any boot to ask.
+
+The mechanism is #104's root cause producing its third symptom. `/var/log` is
+`rpool/DATA/log` (outside the boot environment, §4.4), the image ships no
+`/etc/zfs/zfs-list.cache`, so zfs-mount-generator emits nothing and NOTHING
+in systemd's graph knows /var/log is a filesystem —
+`systemd-journal-flush.service`'s own `RequiresMountsFor=/var/log/journal`,
+upstream's guard against exactly this, orders against nothing. Measured on
+boot 1 of the fresh machine, from systemd's own monotonic clock: flush
+finished at 8.24 s, zfs-mount ran at 9.35 s. In between, journald flushed the
+runtime journal into `/var/log/journal/<machine-id>` ON THE BOOT
+ENVIRONMENT'S ROOT DATASET — creating the whole chain itself, Storage=auto
+notwithstanding — and deleted `/run/log/journal/<machine-id>`. Then
+`zfs mount -a` put the real /var/log on top (`overlay=on` is the OpenZFS
+default, so mounting over the now-non-empty directory is silent). journald's
+fd 23 pointed at the shadowed file — 8 MiB and growing under a bind mount of
+/, invisible at every path journalctl checks. Every boot, deterministically:
+the flush takes ~0.2 s, the ZFS import chain ~1.2 s.
+
+Nothing errors, because nothing is wrong at the layer each tool checks:
+journald's writes succeed, the mount table is consistent, journalctl
+truthfully reports the visible roots empty, `systemctl is-active
+systemd-journald` truthfully says active. The one line the machine ever
+prints is journald's "Failed to open user journal file, falling back to
+system journal: No such file or directory" — in dmesg, the log that still
+works precisely because it is not journald's.
+
+The control that closed the diagnosis: `systemctl restart systemd-journald`
+on the running machine (mount now present, flushed flag standing) made the
+journal appear on the DATASET and `journalctl` return entries for the first
+time in the machine's life. Ordering is the whole defect.
+
+The fix is one drop-in, shipped by os7-release
+(`/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf`):
+`After=zfs-mount.service`. Ordering only, no Wants=; no new critical-path
+work, since zfs-mount is already Before=local-fs.target and tmpfiles-setup —
+which the flush precedes — is already After=local-fs.target. The runtime
+journal holds every early message until the real /var/log is there, which is
+what it is for. Verified on the machine: with the drop-in, the next boot's
+journal is on rpool/DATA/log and journalctl answers. `check-image.py` now
+requires the drop-in in the shipped squashfs.
+
+Two rules this paid for again: a subsystem that reports success is not a
+subsystem that worked (#73's shape — journald, the flush unit and zfs-mount
+all exited 0 on every affected boot); and the structural fix — shipping
+zfs-list.cache so EVERY dataset gets a real mount unit and RequiresMountsFor
+works as upstream designed — stays open beside this, as it did beside #104's
+fstab option.

@@ -1,0 +1,47 @@
+[Unit]
+# OS/7 — the unattended half of the update train. §6: it has to run from a
+# systemd timer, from Intune and from Azure Arc — non-interactive,
+# exit-code-correct, and logging somewhere both platforms can read
+# (/var/log/os7/update.log, the same file Update-OS7 writes).
+#
+# CHECK AND STAGE, NEVER ACTIVATE. §4.2 step 10 is "reboot on the operator's
+# schedule", and -Stage exists for exactly this: the new environment is built,
+# verified and INERT, one activation and one reboot away. A timer that
+# activated on its own would move a reboot into a moment nobody chose — on the
+# server product, into somebody's production hours. Activation stays a human
+# (or an Intune/Arc job a human scheduled) running Update-OS7 without -Stage,
+# or Set-OS7BootEnvironment plus a reboot window.
+#
+# THE EXIT-CODE CONTRACT, which is what Intune and Arc actually read:
+#   0  nothing to do — no channel configured, or already on the newest
+#      applicable release
+#   2  a release IS STAGED; activation and a reboot are pending
+#   1  the check or the staging FAILED — including a configured channel that
+#      cannot be reached, because a check that could not run must never read
+#      as a clean result
+# SuccessExitStatus lists 2 so that "staged, reboot pending" is not a red unit
+# — the same shape os7-theme-user-setup already uses for a benign second
+# outcome.
+Description=OS/7 update check — stage what the channel offers
+Documentation=file:///usr/lib/os7/migrations/README
+
+Wants=network-online.target
+After=network-online.target zfs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=TZ=UTC
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-update-check
+SuccessExitStatus=0 2
+
+# An update build is background work: apt in a chroot, an initramfs rebuild.
+# Same manners as the backup replication.
+Nice=10
+IOSchedulingClass=idle
+
+# Staging assembles and dismounts a boot environment; give it time.
+TimeoutStartSec=2h
+
+# No [Install]: the timer starts this. An enabled service here would run the
+# check once at every boot as well, which is a policy nobody decided.

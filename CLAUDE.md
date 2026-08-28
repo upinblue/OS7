@@ -14,32 +14,30 @@ on 2026-08-25:
 
 | host | builds | tests |
 |---|---|---|
-| **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness — they are `qemu-system-aarch64 -machine virt,accel=hvf` |
-| **x64 Windows + Docker Desktop** | `make build-amd64`, native, ~20 min. Four amd64 ISOs have come off one ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py` and the container-based checks. **No `run-*.py` harness runs here yet** — they are all `qemu-system-aarch64`. But see below: the reason given for that until 2026-08-26 was wrong |
+| **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness, on the arm64 branch of `installer/testing/vmarch.py` — `qemu-system-aarch64 -machine virt,accel=hvf` as a HOST process, byte-identical to the pre-port construction (`check-vm-arch.py` holds it) |
+| **x64 Windows + Docker Desktop** | `make build-amd64` — through WSL's make; native, ~20 min ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py`, the container checks — **and `run-s5.py` since 2026-08-28**: vmarch.py's amd64 branch runs `qemu-system-x86_64 -machine q35,accel=kvm` with OVMF INSIDE the `os7-vm:amd64` container, serial over the docker client's stdio ([SESSION-VM-HARNESS-PORT.md](docs/SESSION-VM-HARNESS-PORT.md)). The other harnesses are ported and UNRUN on this host |
 
-**"No QEMU here" stopped being true on 2026-08-26, and it was never measured.**
-This table used to say the VM work on Windows was "Hyper-V by hand". Asked
-directly, on that host:
+**The x86_64 port exists since 2026-08-28 and `run-s5.py all` has passed on
+it IN FULL** — install, boot (which measured #69 for the first time, see
+#100), the cycle, `Update-OS7` against a served repository (N → N+1,
+firstboot migrations, rollback by recorded ancestry) and the unattended
+timer's exit-code contract, on this box, on a fully packaged ISO
+(docs/SESSION-UPDATE-DELIVERY.md). `installer/testing/vmarch.py` is the ONE place machine,
+accelerator, firmware and execution vehicle come from; `check-vm-arch.py`
+rebuilds the pre-port arm64 command lines from commit 8700095's literals and
+requires the refactored harnesses to emit exactly those bytes, so the Mac's
+branch cannot drift unnoticed while nobody is on a Mac. The KVM facts that
+made it possible, re-measured 2026-08-28: WSL2 has nested virtualisation on,
+`/dev/kvm` exists, `docker run --device /dev/kvm` passes it through
+(`query-kvm → {"enabled": true}`), no elevation, no Hyper-V by hand. Beware
+#102 — Git Bash mangles `--device /dev/kvm` into a Windows path; PowerShell
+and subprocess do not.
 
-```
-$ docker run --rm --device /dev/kvm ubuntu:26.04 …
-qemu: QEMU emulator version 10.2.1
-{"execute":"query-kvm"} → {"return": {"enabled": true, "present": true}}
-```
-
-WSL2 has nested virtualisation on, `/dev/kvm` exists, and a `docker run --device
-/dev/kvm` passes it through — no elevation, no `sudo`, no Hyper-V by hand. What
-is still true is that **every harness in `installer/testing/` is
-`qemu-system-aarch64 -machine virt,accel=hvf`** and would need an x86_64 arm:
-`q35`, `accel=kvm`, OVMF instead of AAVMF. That port is the piece
-[docs/HANDOFF.md](docs/HANDOFF.md) §2 calls "the single piece that unblocks
-both", and it is now a port rather than an impossibility.
-
-So "not yet verified on a machine" means different things on the two hosts, and
-a session that cannot run `run-phase3.py` should say so rather than leave the
-next reader to assume it was run. There **is** a GitHub Actions workflow
-(`.github/workflows/build-iso.yml`), dispatch-only; nothing in this repository
-depends on it having run.
+So "not yet verified on a machine" still means different things on the two
+hosts — arm64 boots happen only on the Mac — and a session that cannot run a
+harness should say so rather than leave the next reader to assume it was run.
+There **is** a GitHub Actions workflow (`.github/workflows/build-iso.yml`),
+dispatch-only; nothing in this repository depends on it having run.
 
 ---
 
@@ -99,9 +97,20 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 ./installer/spikes/run-s4.py all          # Secure Boot + TPM2 unlock (budget 1h)
 ./installer/spikes/run-s6.py all          # TPM2 unlock across an update
 ./installer/spikes/run-s7.py all          # is the version number true (two builds)
-./installer/testing/run-s5.py all         # S5: install WITH A TPM, boot with no
-                                          #   passphrase typed, then clone a boot
-                                          #   environment, activate it, roll back
+./installer/testing/run-s5.py all         # S5 and the update train's gate:
+                                          #   install WITH A TPM, boot with no
+                                          #   passphrase typed, the clone cycle,
+                                          #   then Update-OS7 against a SERVED
+                                          #   repository (N -> N+1, firstboot
+                                          #   migrations, rollback) and the
+                                          #   unattended check's exit codes.
+                                          #   Runs on BOTH hosts since
+                                          #   2026-08-28 (amd64: KVM in Docker)
+./installer/testing/check-vm-arch.py      # the harness port's own check: the
+                                          #   arm64 command lines byte-identical
+                                          #   to the pre-port construction, the
+                                          #   amd64 ones by property. No QEMU,
+                                          #   no Docker, ~2s, both hosts
 ./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, 3s
 ./installer/testing/check-home-logic.py   # Get-/Move-OS7Home's decisions: a fake
                                           #   zfs whose datasets are real tmpfs

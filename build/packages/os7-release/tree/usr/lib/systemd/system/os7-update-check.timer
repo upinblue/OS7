@@ -1,0 +1,24 @@
+[Unit]
+# OS/7 — check the update channel, and stage what it offers. §6 of the release
+# plan: "On a managed fleet nobody types Update-OS7."
+#
+# DAILY, and the number is chosen against the HOTFIX path rather than the
+# release cadence. U5 proposes monthly releases; the out-of-band hotfix (§7,
+# UL3) exists so a security fix reaches a frozen archive in days, and a
+# monthly CHECK would leave it unseen for weeks — the exact regression UL3 is
+# the mitigation for. A daily check bounds hotfix latency at about a day and
+# costs one signed-index fetch on the days the channel offers nothing.
+#
+# The randomised delay is fleet manners: a thousand machines must not ask one
+# repository the same second every midnight. Persistent=true because a machine
+# that was off at its slot checks when it returns — the point is that the
+# check HAPPENS, not that it happens at midnight.
+Description=Daily OS/7 update check
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

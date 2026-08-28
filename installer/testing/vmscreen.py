@@ -48,6 +48,7 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vmconsole import Console, live_login, qemu_prefix, run, to_plain_bash   # noqa: F401
+from vmarch import VmArch                                                    # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -61,16 +62,23 @@ FB_W, FB_H = 1280, 800
 # QMP
 # ---------------------------------------------------------------------------
 class Qmp:
-    def __init__(self, path, timeout=120):
+    def __init__(self, endpoint, timeout=120):
+        """`endpoint` is a unix socket path, or ("tcp", host, port) when QEMU
+        runs inside a container — a unix socket cannot cross Docker Desktop's
+        file sharing, so vmarch publishes QMP on localhost TCP there."""
         deadline = time.time() + timeout
         while True:
             try:
-                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                self.sock.connect(path)
+                if isinstance(endpoint, str):
+                    self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    self.sock.connect(endpoint)
+                else:
+                    self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.sock.connect((endpoint[1], endpoint[2]))
                 break
-            except (FileNotFoundError, ConnectionRefusedError):
+            except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError, OSError):
                 if time.time() > deadline:
-                    raise SystemExit(f"QMP socket never appeared: {path}")
+                    raise SystemExit(f"QMP endpoint never answered: {endpoint}")
                 time.sleep(0.2)
         self.f = self.sock.makefile("rwb", buffering=0)
         self._read()                        # the greeting
@@ -97,10 +105,13 @@ class Qmp:
             raise SystemExit(f"QMP {name} failed: {reply['error']}")
         return reply.get("return")
 
-    def screendump(self, path):
+    def screendump(self, path, guest_path=None):
+        """`path` is where THIS process finds the file; `guest_path` is the
+        same file as QEMU sees it — different only when QEMU runs inside a
+        container writing onto a bind mount."""
         if os.path.exists(path):
             os.remove(path)
-        self.cmd("screendump", filename=path, format="ppm")
+        self.cmd("screendump", filename=guest_path or path, format="ppm")
         for _ in range(100):                # the write is asynchronous to the reply
             if os.path.exists(path) and os.path.getsize(path) > 0:
                 time.sleep(0.1)
@@ -293,8 +304,14 @@ class Lab:
     MEM = "4096"
     CPUS = "4"
 
-    def __init__(self, name, iso=None, target_gb=0, iso_as_disk=False, nic=False):
+    def __init__(self, name, iso=None, target_gb=0, iso_as_disk=False, nic=False,
+                 arch=None):
         self.name = name
+        # Which machine this is — binary, accelerator, firmware, and whether
+        # QEMU is a host process or lives in a container. One place decides
+        # (vmarch.py); default is the host's own architecture.
+        self.arch = arch if isinstance(arch, VmArch) else VmArch(arch)
+        self.MEM = self.arch.default_mem
         self.target_gb = target_gb
         # A virtio NIC on QEMU user-mode networking. OPT-IN, because it changes
         # what the guest sees: os7-setup's screen 9 is skipped entirely on a
@@ -317,28 +334,24 @@ class Lab:
         self.dir = os.path.join(REPO, ".vm", name)
         self.target = os.path.join(self.dir, "target.qcow2")
         self.shots = os.path.join(self.dir, "shots")
-        self.iso = iso or os.path.join(REPO, "out", "os7-arm64.iso")
+        self.iso = iso or self.arch.iso_default()
         self.kernel = os.path.join(self.dir, "vmlinuz")
         self.initrd = os.path.join(self.dir, "initrd")
         self.vars = os.path.join(self.dir, "edk2-vars.fd")
         self.payload = os.path.join(self.dir, "payload.iso")
         self.qmpsock = os.path.join(self.dir, "qmp.sock")
+        # What the container sees, when there is one: the lab's state and the
+        # directory holding the medium. No-ops on the host-process path.
+        self.arch.mount(self.dir, "/vm")
+        self.arch.mount(os.path.dirname(os.path.abspath(self.iso)), "/iso", ro=True)
 
     # -- setup --------------------------------------------------------------
     def prepare(self, payload_dir=None):
         os.makedirs(self.dir, exist_ok=True)
         os.makedirs(self.shots, exist_ok=True)
         if not os.path.exists(self.iso):
-            raise SystemExit(f"ISO not found: {self.iso}\nBuild it with: make build-arm64")
-        if not os.path.exists(self.vars):
-            pre = qemu_prefix()
-            for c in ("edk2-arm-vars.fd", "edk2-aarch64-vars.fd"):
-                src = os.path.join(pre, "share", "qemu", c)
-                if os.path.exists(src):
-                    shutil.copy(src, self.vars)
-                    break
-            else:
-                raise SystemExit("no EDK2 vars template found")
+            raise SystemExit(f"ISO not found: {self.iso}\nBuild it with: {self.arch.build_hint}")
+        self.arch.prepare_vars(self.vars)
         self.extract_boot_files()
         if self.target_gb:
             # A blank disk for the guest to install onto. Recreated from scratch
@@ -346,8 +359,7 @@ class Lab:
             # left half-partitioned is not testing what it thinks it is.
             if os.path.exists(self.target):
                 os.remove(self.target)
-            run("qemu-img", "create", "-f", "qcow2", self.target, f"{self.target_gb}G",
-                stdout=subprocess.DEVNULL)
+            self.arch.create_disk(self.target, self.target_gb)
             print(f"    target   {self.target} ({self.target_gb}G, blank)")
         if payload_dir is not None:
             self.build_payload(payload_dir)
@@ -385,9 +397,9 @@ class Lab:
                     os.chmod(f, 0o644)
                     os.remove(f)
         print("    extracting the kernel and initrd from the ISO …")
-        run("docker", "run", "--rm", "--privileged", "--platform", "linux/arm64",
+        run("docker", "run", "--rm", "--privileged", "--platform", self.arch.docker_platform,
             "-v", f"{os.path.dirname(self.iso)}:/iso:ro", "-v", f"{self.dir}:/vm",
-            "os7-build:arm64", "bash", "-c",
+            self.arch.build_image, "bash", "-c",
             f"set -e; mkdir -p /mnt/iso; mount -o loop,ro /iso/{os.path.basename(self.iso)} /mnt/iso; "
             "k=$(ls /mnt/iso/casper/vmlinuz*); i=$(ls /mnt/iso/casper/initrd*); "
             'test $(echo "$k" | wc -l) -eq 1 && test $(echo "$i" | wc -l) -eq 1; '
@@ -404,11 +416,7 @@ class Lab:
         at most one, so `x.psf.gz` arrives in the guest as `xpsf.gz` and the error
         names the path you asked for. docs/BUILD-NOTES.md #28.
         """
-        if os.path.exists(self.payload):
-            os.remove(self.payload)
-        run("hdiutil", "makehybrid", "-iso", "-joliet",
-            "-default-volume-name", self.label, "-o", self.payload, stage,
-            stdout=subprocess.DEVNULL)
+        self.arch.make_payload_iso(stage, self.payload, self.label)
         print(f"    payload  {self.payload}")
 
     @property
@@ -417,21 +425,17 @@ class Lab:
 
     # -- running ------------------------------------------------------------
     def qemu_args(self, cmdline, payload=True):
-        pre = qemu_prefix()
-        code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
+        p = self.arch.path
         if os.path.exists(self.qmpsock):
             os.remove(self.qmpsock)
-        args = [
-            "qemu-system-aarch64",
-            "-machine", "virt,accel=hvf", "-cpu", "host",
+        args = self.arch.base_args() + [
             "-smp", self.CPUS, "-m", self.MEM,
-            "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-            "-drive", f"if=pflash,format=raw,file={self.vars}",
+        ] + self.arch.firmware_args(self.vars) + [
             "-device", f"virtio-gpu-pci,xres={FB_W},yres={FB_H}",
             "-device", "qemu-xhci", "-device", "usb-kbd",
             "-display", "none", "-monitor", "none", "-serial", "stdio",
-            "-qmp", f"unix:{self.qmpsock},server,nowait",
-            "-kernel", self.kernel, "-initrd", self.initrd, "-append", cmdline,
+        ] + self.arch.qmp_args(self.qmpsock, self.name) + [
+            "-kernel", p(self.kernel), "-initrd", p(self.initrd), "-append", cmdline,
         ]
         if self.iso_as_disk:
             # FIRST, so it enumerates before the target: the disk screen lists
@@ -439,19 +443,19 @@ class Lab:
             # lands on. casper finds /casper/filesystem.squashfs by scanning
             # block devices, so a raw ISO on virtio-blk boots exactly as a USB
             # stick does.
-            args += ["-drive", f"if=none,id=live,file={self.iso},format=raw,readonly=on",
+            args += ["-drive", f"if=none,id=live,file={p(self.iso)},format=raw,readonly=on",
                      "-device", "virtio-blk-pci,drive=live,serial=os7live"]
         else:
-            args += ["-cdrom", self.iso]
+            args += ["-cdrom", p(self.iso)]
         if payload and os.path.exists(self.payload):
-            args += ["-drive", f"if=none,id=payload,file={self.payload},format=raw,readonly=on",
+            args += ["-drive", f"if=none,id=payload,file={p(self.payload)},format=raw,readonly=on",
                      "-device", "virtio-blk-pci,drive=payload"]
         if self.target_gb and os.path.exists(self.target):
             # serial= so the guest gets a /dev/disk/by-id/virtio-<serial> entry.
             # os7-setup stores a by-id path in the plan (§6.6, L12), and a target
             # with no stable name would exercise the fallback instead of the
             # thing being built.
-            args += ["-drive", f"if=none,id=target,file={self.target},format=qcow2",
+            args += ["-drive", f"if=none,id=target,file={p(self.target)},format=qcow2",
                      "-device", "virtio-blk-pci,drive=target,serial=os7target"]
         if self.nic:
             args += ["-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0"]
@@ -460,9 +464,9 @@ class Lab:
     def boot(self, cmdline, label, login=True, payload=True):
         """Start the VM. Returns (Console, Qmp)."""
         print(f"    booting ({label}) …")
-        c = Console(self.qemu_args(cmdline, payload),
+        c = Console(self.arch.command(self.qemu_args(cmdline, payload), name=self.name),
                     os.path.join(self.dir, f"{label}.serial.log"))
-        q = Qmp(self.qmpsock)
+        q = Qmp(self.arch.qmp_endpoint(self.qmpsock, self.name))
         if login:
             live_login(c)
             to_plain_bash(c)
@@ -485,7 +489,7 @@ class Lab:
         """Screendump, save a PNG, return the parsed pixels."""
         ppm = os.path.join(self.shots, f"{name}.ppm")
         png = os.path.join(self.shots, f"{name}.png")
-        q.screendump(ppm)
+        q.screendump(ppm, guest_path=self.arch.path(ppm))
         w, h, rgb = read_ppm(ppm)
         write_png(png, w, h, rgb)
         if not keep_ppm:

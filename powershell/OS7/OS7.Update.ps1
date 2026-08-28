@@ -193,9 +193,18 @@ function Get-OS7ReleaseConfField {
 		if ($eq -lt 1) { continue }
 		if ($t.Substring(0, $eq).Trim() -ne $Name) { continue }
 		$v = $t.Substring($eq + 1).Trim()
-		if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or
-				($v[0] -eq "'" -and $v[-1] -eq "'"))) {
-			$v = $v.Substring(1, $v.Length - 2)
+		if ($v.Length -ge 1 -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
+			# A quoted value ends at the NEXT matching quote, and anything after
+			# it makes the line malformed — loudly. Stripping only the outermost
+			# pair turned a glued line (an append onto a file with no trailing
+			# newline) into the channel name 'development"OS7_UPDATE_…' and sent
+			# the unattended check hunting for an index that cannot exist.
+			$close = $v.IndexOf($v[0], 1)
+			if ($close -lt 0 -or $v.Substring($close + 1).Trim().Length -gt 0) {
+				throw [System.FormatException]::new(
+					"$($Path): malformed line for ${Name}: $t")
+			}
+			$v = $v.Substring(1, $close - 1)
 		}
 		return $v
 	}
@@ -427,6 +436,21 @@ function Get-OS7ReleaseIndex {
 
 	$doc = ConvertFrom-Json ([System.IO.File]::ReadAllText($json))
 
+	# The file was FETCHED by channel name and the document SAYS which channel
+	# it is, and the two must agree. A signed index served under the wrong name
+	# is not a corrupt file — the signature verifies — it is a stable channel
+	# answering with a development listing, or the reverse, and every decision
+	# downstream (Applicable, the operator's own reading) would be made against
+	# the wrong population. Channels became real on 2026-08-28; before that
+	# there was only one and this could not fire.
+	$docChannel = [string](Get-OS7ManifestField $doc 'channel')
+	if ($docChannel -ne $Channel) {
+		throw [System.InvalidOperationException]::new(
+			"the index fetched as channel '$Channel' says it is channel '$docChannel'. " +
+			'A mislabelled index is refused: its signature proves who wrote it, not ' +
+			'that it is the channel it was asked for.')
+	}
+
 	# Freshness, and it is checked HERE rather than left to the caller because a
 	# reader that returns a stale index has already answered the question.
 	$validUntil = [string](Get-OS7ManifestField $doc 'valid_until')
@@ -637,6 +661,26 @@ function Get-OS7Release {
 			$major = ([version]$version).Major
 			$newer = $mine -and (Compare-OS7Version -Left $version -Right $mine) -gt 0
 
+			# The hotfix form (§7): a release that overlays a BASE release and
+			# is applicable only to a machine ON that base. The base is read
+			# from the signed index's entry and cross-checked against the
+			# descriptor the entry's hash binds — the two are one author
+			# (build-os7-repo.sh derives the entry from the descriptor), so a
+			# difference is tampering or a builder defect, and both are
+			# refusals rather than judgement calls.
+			$entryHotfixBase = [string](Get-OS7ManifestField $entry 'hotfix_base')
+			$descHotfix      = Get-OS7ManifestField $descriptor 'hotfix'
+			$descHotfixBase  = if ($null -ne $descHotfix) {
+				[string](Get-OS7ManifestField $descHotfix 'base') } else { '' }
+			if ($entryHotfixBase -ne $descHotfixBase) {
+				throw [System.InvalidOperationException]::new(
+					"release $version names hotfix base '$entryHotfixBase' in the index and " +
+					"'$descHotfixBase' in its descriptor. The two have one author; a " +
+					'difference means one of them is not the file that was published.')
+			}
+			$onBase = (-not $entryHotfixBase) -or
+				($mine -and (Compare-OS7Version -Left $entryHotfixBase -Right $mine) -eq 0)
+
 			[pscustomobject]@{
 				PSTypeName   = 'OS7.Release'
 				Version      = $version
@@ -645,12 +689,17 @@ function Get-OS7Release {
 				Architecture = [string](Get-OS7ManifestField $entry 'architecture')
 				Suite        = [string](Get-OS7ManifestField $entry 'os7_suite')
 				Snapshot     = [string](Get-OS7ManifestField $entry 'archive_snapshot')
-				# Whether Update-OS7 would take it. Both halves are said, because
-				# "not applicable" for two different reasons is two different
-				# conversations with the operator.
-				Applicable   = ($newer -and $major -eq $myMajor)
+				# Whether Update-OS7 would take it. Every half is said
+				# separately, because "not applicable" for three different
+				# reasons is three different conversations with the operator.
+				Applicable   = ($newer -and $major -eq $myMajor -and $onBase)
 				Newer        = [bool]$newer
 				CrossesMajor = ($major -ne $myMajor)
+				# §7: a hotfix moves the Build field alone and overlays exactly
+				# the base release it names. On any other machine it is listed
+				# and not applicable — the operator updates to the base first.
+				Hotfix       = [bool]$entryHotfixBase
+				HotfixBase   = $(if ($entryHotfixBase) { $entryHotfixBase } else { $null })
 				# C7a is open, so this is load-bearing rather than informational:
 				# Update-OS7 refuses a development release without
 				# -AllowDevelopment, and this is where an operator sees why.
@@ -771,12 +820,17 @@ function Set-OS7UpdateChannel {
 		if ($Channel) {
 			[System.IO.Directory]::CreateDirectory(
 				[System.IO.Path]::GetDirectoryName($script:OS7UpdateConf)) | Out-Null
-			[System.IO.File]::WriteAllText($script:OS7UpdateConf, @(
+			# The trailing newline is load-bearing: this is a KEY="value" file
+			# an operator appends to (OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT,
+			# per the timer's log message), and without it the first `echo >>`
+			# glues onto the channel line and corrupts BOTH settings. Measured:
+			# the timer read channel 'development"OS7_UPDATE_UNATTENDED_…'.
+			[System.IO.File]::WriteAllText($script:OS7UpdateConf, (@(
 				'# OS/7 — where this machine looks for its next release.'
 				'# Written by Set-OS7UpdateChannel. The repository URI is in'
 				"# $($script:OS7AptSource); this is the channel within it."
 				"OS7_UPDATE_CHANNEL=`"$Channel`""
-			) -join "`n")
+			) -join "`n") + "`n")
 
 			# Read it back. A file that was written is not a file that parses,
 			# and the next thing to read it is an unattended timer.
@@ -925,7 +979,13 @@ function Mount-OS7UpdateRoot {
 
 	# The ESP is ONE partition shared by every boot environment — it is not
 	# per-BE and must not be cloned into one. A bind is the only correct way to
-	# give the clone the ESP the machine actually boots from.
+	# give the clone the ESP the machine actually boots from — and it must BE
+	# mounted first, or the bind carries an empty directory into the chroot
+	# and grub's postinst writes into a hole (#104's other half). Guarded on
+	# the directory existing, because the bind loop below already SKIPS absent
+	# mountpoints — check-update-logic's world has no /boot/efi at all, and a
+	# world without the directory is not a world with an unmounted ESP.
+	if ([System.IO.Directory]::Exists('/boot/efi')) { Assert-OS7EspMounted }
 	$binds = @('/boot/efi')
 
 	# Every out-of-BE dataset, by its mountpoint (§4.4). Read from ZFS rather
@@ -954,6 +1014,18 @@ function Mount-OS7UpdateRoot {
 		if (-not [System.IO.Directory]::Exists($mp)) { continue }
 		[System.IO.Directory]::CreateDirectory($Root + $mp) | Out-Null
 		Invoke-OS7Native -Command 'mount' -Arguments @('--bind', $mp, ($Root + $mp)) `
+			-WhatIf:$WhatIf | Out-Null
+		# --make-slave IMMEDIATELY, and it is load-bearing: on a systemd system
+		# every mount is shared, so a plain bind JOINS ITS SOURCE'S PEER GROUP
+		# — the bind of /boot/efi and the real /boot/efi become peers, and a
+		# mount event under one propagates to the other. The first end-to-end
+		# update run ended with the RUNNING MACHINE's ESP unmounted at
+		# activation time, after the dismount had taken the assembly apart
+		# (#104). A slave receives events and sends none, which is exactly the
+		# relationship a scaffold should have to the machine it is built
+		# against — the same reasoning the rbinds below have carried all
+		# along, now applied to every bind.
+		Invoke-OS7Native -Command 'mount' -Arguments @('--make-slave', ($Root + $mp)) `
 			-WhatIf:$WhatIf | Out-Null
 		$mounted.Add($Root + $mp)
 	}
@@ -1579,6 +1651,20 @@ function Update-OS7 {
 				'use Restore-OS7.')
 		}
 
+		# §7: a hotfix overlays exactly the base release it names. Applying it
+		# to any other machine produces a system no descriptor describes — the
+		# overlay packages assume the base's package set, and the version
+		# number x.y.z.N+1 would claim a state the machine never held. An
+		# explicit -Version reaches here past Applicable, which is why this is
+		# its own refusal and not a filter.
+		if ($target.Hotfix -and
+				(Compare-OS7Version -Left $target.HotfixBase -Right $from) -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"$to is a hotfix of $($target.HotfixBase) and this machine runs $from. " +
+				"A hotfix overlays exactly the release it names (§7); update to " +
+				"$($target.HotfixBase) first, then apply the hotfix.")
+		}
+
 		# C7a is open. Every key that exists today is a development key, so this
 		# refusal fires on every real run — which is the honest state and not an
 		# inconvenience to be smoothed away.
@@ -1992,6 +2078,21 @@ function Update-OS7 {
 		Set-OS7BootEnvironment -Name $beName -Confirm:$false | Out-Null
 		$plan.Activated = $true
 
+		# WHAT THIS UPDATE CAME FROM, recorded as a fact — because the promote
+		# below ROTATES the ZFS ancestry: after it the new environment's origin
+		# is '-', the OLD one's origin points AT the new, and even sibling
+		# clones' origins move (all measured, BUILD-NOTES #107). Restore-OS7
+		# reads this property first; without it, "previous" degraded to an age
+		# heuristic that once rolled a machine back onto an experiment's
+		# leftover clone instead of the release the update was applied to.
+		try {
+			Set-ZfsProperty -Name "$($script:OS7RootParent)/$beName" `
+				-PropertyName 'org.os7:previous' -Value $fromBe.Name -Confirm:$false | Out-Null
+		}
+		catch {
+			Write-OS7Step "note: could not record the previous environment: $($_.Exception.Message)"
+		}
+
 		# ---- UL9's retention ----------------------------------------------
 		#
 		# A boot environment per release with no prune rule is how these systems
@@ -2097,11 +2198,36 @@ function Update-OS7 {
 		$half = if (Get-Variable -Name beName -Scope 0 -ErrorAction SilentlyContinue) { $beName } else { $null }
 		Write-OS7UpdateLog ("FAILED " + $_.Exception.Message.Replace("`n", ' ') +
 			$(if ($half) { "  left behind: $half" } else { '' }))
+		# FORENSICS FOR #104's open half: both end-to-end failures so far lost
+		# a RUNNING-SYSTEM mount (/boot/efi once, /boot once) somewhere around
+		# the dismount, at a point that moved between runs. Whatever the
+		# mechanism turns out to be, the next failure should carry the mount
+		# state out with it instead of leaving it to a later boot to infer.
+		foreach ($probe in @('/boot', '/boot/efi')) {
+			$state = try {
+				[string](Invoke-OS7Native -Command 'findmnt' -Arguments @('-no', 'SOURCE,FSTYPE', $probe))
+			} catch { 'NOT MOUNTED' }
+			Write-OS7UpdateLog "FAILED-state ${probe}: $state"
+		}
 		if ($half) {
-			Write-OS7Step ("the update failed. $half is built, INACTIVE and left in place " +
-				"as the evidence; this machine still boots what it booted. Clear it with " +
-				"Remove-OS7BootEnvironment -Name $half, and read " +
-				$script:OS7UpdateLog + '.')
+			# "Still boots what it booted" is a CLAIM, so ask the machine
+			# rather than assert it: an activation can fail AFTER its point of
+			# no return (the ESP stub rewrite), and then the new environment is
+			# what this machine boots, failure or not. The Menu property is
+			# read from the stub itself.
+			$switched = $false
+			try { $switched = [bool](Get-OS7BootEnvironment -Name $half).Menu } catch { }
+			if ($switched) {
+				Write-OS7Step ("the update failed AFTER activation's point of no return: " +
+					"the ESP already names $half and this machine will boot it. Read " +
+					$script:OS7UpdateLog + ' before rebooting.')
+			}
+			else {
+				Write-OS7Step ("the update failed. $half is built, INACTIVE and left in place " +
+					"as the evidence; this machine still boots what it booted. Clear it with " +
+					"Remove-OS7BootEnvironment -Name $half, and read " +
+					$script:OS7UpdateLog + '.')
+			}
 		}
 		throw
 	}
@@ -2295,6 +2421,22 @@ function Test-OS7Update {
 		}
 		catch { }
 		check 'a current index is accepted' ($null -ne $index)
+
+		# The document says which channel it is, and the fetch said which
+		# channel was wanted. Serving one channel's signed index under
+		# another's name must be a refusal — the signature proves authorship,
+		# not that this is the channel it was asked for.
+		$stablePath = [System.IO.Path]::Combine($repo, 'index', 'stable.json')
+		[System.IO.File]::Copy(
+			[System.IO.Path]::Combine($repo, 'index', 'development.json'), $stablePath, $true)
+		$threw = $false
+		try {
+			Get-OS7ReleaseIndex -BaseUri $repoUri -Channel 'stable' -WorkDir $tmp -SkipSignature | Out-Null
+		}
+		catch { $threw = $true }
+		check 'an index mislabelled as another channel is refused' $threw `
+			'a development listing served as stable would answer with the wrong population'
+		[System.IO.File]::Delete($stablePath)
 
 		# -------------------------------------------------------------------
 		# 6. A DESCRIPTOR IS BOUND TO THE INDEX THAT NAMED IT.

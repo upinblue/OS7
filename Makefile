@@ -67,6 +67,18 @@ endef
 # place that decision lives.
 SOURCE_FACTS = $(addprefix -e ,$(shell $(CURDIR)/scripts/os7-source-facts.sh $(CURDIR)))
 
+# ONE SIGNING KEY FOR THE ISO AND THE REPOSITORY (build/lib/os7-signing-key.sh).
+# The ISO installs os7-release, which ships the trust anchor; the repository is
+# signed by the key behind it. If the two targets resolved keys independently,
+# a machine installed from this tree's ISO would refuse this tree's repository
+# at the first `apt update`. Development-key state only — C7a is open, and a
+# real OS7_REPO_GNUPGHOME handed in by the operator overrides this default.
+# out/ is gitignored; nothing in this keyring may ever be published.
+# Override with `make KEYDIR=/path/to/real/gnupghome …` to sign with a real
+# key; the container sees whatever directory is mounted here.
+KEYDIR   ?= $(OUT)/os7-gnupg
+KEY_ARGS  = -v $(KEYDIR):/os7-gnupg -e OS7_REPO_GNUPGHOME=/os7-gnupg
+
 .PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
         build-amd64-vm build-amd64-vm-reset repo-amd64 repo-arm64 \
         lb-config shell-amd64 shell-arm64 clean
@@ -129,8 +141,8 @@ check-amd64-host:
 
 # On an x86_64 host this is native and fast - the right way to build amd64.
 build-amd64: check-amd64-host image-amd64
-	mkdir -p $(OUT)
-	$(call DOCKER_RUN,amd64,$(SOURCE_FACTS)) /work/build/build.sh amd64
+	mkdir -p $(OUT) $(KEYDIR)
+	$(call DOCKER_RUN,amd64,$(SOURCE_FACTS) $(KEY_ARGS)) /work/build/build.sh amd64
 
 # amd64 ISO via full x86 system emulation. Needed only on ARM hosts.
 # Not Docker: QEMU emulates a whole x86 machine, so no syscall translation and
@@ -142,8 +154,8 @@ build-amd64-vm-reset:
 	./scripts/build-amd64-vm.sh --reset
 
 build-arm64: image-arm64
-	mkdir -p $(OUT)
-	$(call DOCKER_RUN,arm64,$(SOURCE_FACTS)) /work/build/build.sh arm64
+	mkdir -p $(OUT) $(KEYDIR)
+	$(call DOCKER_RUN,arm64,$(SOURCE_FACTS) $(KEY_ARGS)) /work/build/build.sh arm64
 
 # OS/7's own package repository (docs/CURATION-AND-DELIVERY-PLAN.md C7).
 #
@@ -161,10 +173,10 @@ build-arm64: image-arm64
 #
 # Prove it with:  ./installer/testing/check-os7-repo.py --arch <arch>
 define BUILD_REPO
-mkdir -p $(OUT)/os7-repo
+mkdir -p $(OUT)/os7-repo $(KEYDIR)
 docker run --rm --platform linux/$(1) \
   -v $(CURDIR):/work -v $(OUT)/os7-repo:/out \
-  $(SOURCE_FACTS) -e OS7_ARCH=$(1) \
+  $(SOURCE_FACTS) $(KEY_ARGS) -e OS7_ARCH=$(1) \
   $(IMAGE):$(1) /work/build/lib/build-os7-repo.sh \
   /work/build/config/os7-release.conf /out
 endef
