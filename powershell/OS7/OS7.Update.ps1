@@ -965,7 +965,13 @@ function Mount-OS7UpdateRoot {
 
 	# The ESP is ONE partition shared by every boot environment — it is not
 	# per-BE and must not be cloned into one. A bind is the only correct way to
-	# give the clone the ESP the machine actually boots from.
+	# give the clone the ESP the machine actually boots from — and it must BE
+	# mounted first, or the bind carries an empty directory into the chroot
+	# and grub's postinst writes into a hole (#104's other half). Guarded on
+	# the directory existing, because the bind loop below already SKIPS absent
+	# mountpoints — check-update-logic's world has no /boot/efi at all, and a
+	# world without the directory is not a world with an unmounted ESP.
+	if ([System.IO.Directory]::Exists('/boot/efi')) { Assert-OS7EspMounted }
 	$binds = @('/boot/efi')
 
 	# Every out-of-BE dataset, by its mountpoint (§4.4). Read from ZFS rather
@@ -994,6 +1000,18 @@ function Mount-OS7UpdateRoot {
 		if (-not [System.IO.Directory]::Exists($mp)) { continue }
 		[System.IO.Directory]::CreateDirectory($Root + $mp) | Out-Null
 		Invoke-OS7Native -Command 'mount' -Arguments @('--bind', $mp, ($Root + $mp)) `
+			-WhatIf:$WhatIf | Out-Null
+		# --make-slave IMMEDIATELY, and it is load-bearing: on a systemd system
+		# every mount is shared, so a plain bind JOINS ITS SOURCE'S PEER GROUP
+		# — the bind of /boot/efi and the real /boot/efi become peers, and a
+		# mount event under one propagates to the other. The first end-to-end
+		# update run ended with the RUNNING MACHINE's ESP unmounted at
+		# activation time, after the dismount had taken the assembly apart
+		# (#104). A slave receives events and sends none, which is exactly the
+		# relationship a scaffold should have to the machine it is built
+		# against — the same reasoning the rbinds below have carried all
+		# along, now applied to every bind.
+		Invoke-OS7Native -Command 'mount' -Arguments @('--make-slave', ($Root + $mp)) `
 			-WhatIf:$WhatIf | Out-Null
 		$mounted.Add($Root + $mp)
 	}

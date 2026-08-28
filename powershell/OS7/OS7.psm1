@@ -1000,6 +1000,54 @@ $script:OS7EspStubs = @(
 	'/boot/efi/EFI/OS7/grub.cfg'
 )
 
+function Assert-OS7EspMounted {
+	<#
+	.SYNOPSIS
+		The ESP is mounted at /boot/efi, or systemd is asked to mount it.
+		Internal.
+
+	.DESCRIPTION
+		Everything that touches the ESP stubs globs under /boot/efi, and a
+		glob over an UNMOUNTED ESP quietly finds nothing — activation then
+		throws its zero-stubs-rewritten error about a partition that is
+		perfectly fine and merely not there. The first end-to-end update run
+		hit exactly that: the machine's own ESP had come unmounted during the
+		run (BUILD-NOTES #104), and the error named grub-install, which had
+		done nothing wrong.
+
+		So the precondition is made explicit, and self-healing where systemd
+		can heal it: `boot-efi.mount` is the systemd-escaped unit for the
+		fstab entry this layout ships, and starting it is a no-op when the
+		ESP is already mounted. Through the Systemd layer, not systemctl —
+		P2-systemd's baseline may fall and may not rise.
+	#>
+	# Derived from the stub list, not a second literal: check-be-logic.py
+	# points $script:OS7EspStubs at a temporary tree, and an assert that
+	# hard-coded /boot/efi would fail that harness against a tree where the
+	# stubs are demonstrably present.
+	$espRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $script:OS7EspStubs[0]))
+	$efiDir = [System.IO.Path]::Combine($espRoot, 'EFI')
+	if ([System.IO.Directory]::Exists($efiDir)) { return }
+	if ($espRoot -ne '/boot/efi') {
+		throw [System.InvalidOperationException]::new(
+			"the ESP at $espRoot carries no EFI directory.")
+	}
+	Write-OS7Step 'the ESP is not mounted at /boot/efi — asking systemd to mount it'
+	try {
+		Import-OS7SystemdLayer
+		Start-SystemdUnit -Name 'boot-efi.mount' -Confirm:$false | Out-Null
+	}
+	catch {
+		Write-OS7Step "note: boot-efi.mount could not be started: $($_.Exception.Message)"
+	}
+	if (-not [System.IO.Directory]::Exists($efiDir)) {
+		throw [System.InvalidOperationException]::new(
+			'/boot/efi is not mounted and systemd could not mount it, so the ESP ' +
+			'stubs cannot be reached. Nothing about what this machine boots has ' +
+			'changed.')
+	}
+}
+
 # The running system's /boot. A variable rather than a literal so that
 # installer/testing/check-be-logic.py can point the whole of this at a temporary
 # tree — the alternative is that the activation path is only ever exercised by a
@@ -1864,7 +1912,16 @@ exec cat $($script:OS7MenuFile)
 	}
 	Write-OS7Step "menu entry: $entry"
 
-	# 3 — canmount, across every environment, as one operation. Measured fact 5.
+	# 3 — canmount, across every environment, as one operation — AND UNDONE as
+	# one if anything after it fails. The first end-to-end update threw at
+	# step 6 (the ESP, #104) with these flips already applied, and the cmdlet's
+	# own catch then promised "this machine still boots what it booted" — while
+	# the target's datasets sat canmount=on, so the NEXT boot's `zfs mount -a`
+	# mounted the target's /boot over the running system's and buried the ESP
+	# under it: §4.3's half-activated pair, reached by an activation that
+	# failed halfway and kept half its work. Every flip is recorded with the
+	# value it replaced, and the catch below restores them before rethrowing.
+	$flipped = [System.Collections.Generic.List[object]]::new()
 	foreach ($be in $all) {
 		$want = if ($be.Name -eq $Name) { 'on' } else { 'noauto' }
 		foreach ($parent in @($script:OS7RootParent, $script:OS7BootParent)) {
@@ -1887,84 +1944,108 @@ exec cat $($script:OS7MenuFile)
 				if ([string]$p.Value -eq $set) { continue }
 				Set-ZfsProperty -Name ([string]$p.Dataset) -PropertyName canmount -Value $set `
 					-Confirm:$false | Out-Null
+				$flipped.Add(@{ Dataset = [string]$p.Dataset; Was = [string]$p.Value })
 			}
 		}
 	}
 
-	# 4 — the target's own copy of the menu.
-	New-Item -ItemType Directory -Force -Path $script:OS7BeScratch | Out-Null
+	# Steps 4 to 7 either all complete or the flips above are taken back.
 	try {
-		Invoke-OS7Native -Command 'mount' -Arguments @(
-			'-t', 'zfs', '-o', 'zfsutil', $target.BootDataset, $script:OS7BeScratch) | Out-Null
-		$dest = Join-Path $script:OS7BeScratch 'grub/grub.cfg'
-		if (-not (Test-Path (Split-Path -Parent $dest))) {
-			throw [System.InvalidOperationException]::new(
-				"$($target.BootDataset) has no grub directory — it is not a boot dataset")
-		}
-		Copy-Item -Force $script:OS7GrubCfg $dest
-		Write-OS7Step "menu copied into $($target.BootDataset)"
+		# 4 — the target's own copy of the menu.
+		New-Item -ItemType Directory -Force -Path $script:OS7BeScratch | Out-Null
+		try {
+			Invoke-OS7Native -Command 'mount' -Arguments @(
+				'-t', 'zfs', '-o', 'zfsutil', $target.BootDataset, $script:OS7BeScratch) | Out-Null
+			$dest = Join-Path $script:OS7BeScratch 'grub/grub.cfg'
+			if (-not (Test-Path (Split-Path -Parent $dest))) {
+				throw [System.InvalidOperationException]::new(
+					"$($target.BootDataset) has no grub directory — it is not a boot dataset")
+			}
+			Copy-Item -Force $script:OS7GrubCfg $dest
+			Write-OS7Step "menu copied into $($target.BootDataset)"
 
-		# 5 — the default, named. In the target's own grubenv, because the stub
-		# about to be rewritten makes THAT the one GRUB loads.
+			# 5 — the default, named. In the target's own grubenv, because the stub
+			# about to be rewritten makes THAT the one GRUB loads.
+			Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
+				(Join-Path $script:OS7BeScratch 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
+		}
+		finally {
+			# Tolerant on purpose: if the mount above failed, this one fails too, and
+			# an exception thrown out of a finally block replaces the real cause with
+			# "umount: not mounted".
+			try { Invoke-OS7Native -Command 'umount' -Arguments @($script:OS7BeScratch) | Out-Null }
+			catch { Write-OS7Step "note: $($script:OS7BeScratch) was not mounted" }
+		}
+
+		# …and in the running system's, so that a machine whose firmware takes the
+		# other EFI path — or which never gets as far as step 6 — still boots what
+		# was asked for rather than what it happens to list first.
 		Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
-			(Join-Path $script:OS7BeScratch 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
-	}
-	finally {
-		# Tolerant on purpose: if the mount above failed, this one fails too, and
-		# an exception thrown out of a finally block replaces the real cause with
-		# "umount: not mounted".
-		try { Invoke-OS7Native -Command 'umount' -Arguments @($script:OS7BeScratch) | Out-Null }
-		catch { Write-OS7Step "note: $($script:OS7BeScratch) was not mounted" }
-	}
+			(Join-Path $script:OS7BootDir 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
 
-	# …and in the running system's, so that a machine whose firmware takes the
-	# other EFI path — or which never gets as far as step 6 — still boots what
-	# was asked for rather than what it happens to list first.
-	Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
-		(Join-Path $script:OS7BootDir 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
-
-	# 6 — the ESP stub. THE LINE THAT DECIDES WHICH MENU IS READ AT ALL.
-	$rewrote = 0
-	foreach ($stub in $script:OS7EspStubs) {
-		if (-not (Test-Path $stub)) { continue }
-		$text = Get-Content -Raw $stub
-		$new = [regex]::Replace($text, "/BOOT/[^@']+@/grub", "/BOOT/$Name@/grub")
-		if ($new -ne $text) {
-			Set-Content -NoNewline -Path $stub -Value $new
-			$rewrote++
+		# 6 — the ESP stub. THE LINE THAT DECIDES WHICH MENU IS READ AT ALL. The
+		# ESP itself first (#104): a glob over an unmounted /boot/efi finds
+		# nothing and reads as "grub-install never wrote one".
+		Assert-OS7EspMounted
+		$rewrote = 0
+		foreach ($stub in $script:OS7EspStubs) {
+			if (-not (Test-Path $stub)) { continue }
+			$text = Get-Content -Raw $stub
+			$new = [regex]::Replace($text, "/BOOT/[^@']+@/grub", "/BOOT/$Name@/grub")
+			if ($new -ne $text) {
+				Set-Content -NoNewline -Path $stub -Value $new
+				$rewrote++
+			}
+			elseif ($text -match "/BOOT/$([regex]::Escape($Name))@/grub") {
+				$rewrote++
+			}
 		}
-		elseif ($text -match "/BOOT/$([regex]::Escape($Name))@/grub") {
-			$rewrote++
+		if ($rewrote -eq 0) {
+			throw [System.InvalidOperationException]::new(
+				'no ESP stub was rewritten — /boot/efi is not mounted, or grub-install ' +
+				'never wrote one. Nothing about what this machine boots has changed.')
 		}
-	}
-	if ($rewrote -eq 0) {
-		throw [System.InvalidOperationException]::new(
-			'no ESP stub was rewritten — /boot/efi is not mounted, or grub-install ' +
-			'never wrote one. Nothing about what this machine boots has changed.')
-	}
-	Write-OS7Step "$rewrote ESP stub(s) now point at $Name"
+		Write-OS7Step "$rewrote ESP stub(s) now point at $Name"
 
-	# 7 — when this environment was last made current. 10_linux_zfs sorts the
-	# menu by com.ubuntu.zsys:last-used and, where it is unset, by the mtime of
-	# /etc/machine-id inside the environment — which is the install date and
-	# therefore the same for a clone and its origin.
-	#
-	# IT DOES NOT REORDER THE MENU THAT WAS JUST GENERATED, and saying otherwise
-	# would be the kind of claim this repository exists to avoid: the generator
-	# hands the RUNNING environment the current time, so whatever is running is
-	# first in any menu it produces. This value is read the next time a menu is
-	# generated — from the other environment, where it is the only thing that
-	# distinguishes two datasets installed on the same day. The default entry
-	# does not depend on it; that is what saved_entry is for.
-	# ToUnixTimeSeconds rather than `Get-Date -UFormat %s`: the latter returns a
-	# string this code would have to parse back, and parsing a number out of a
-	# formatted date is culture-dependent — on a machine whose locale uses a
-	# comma it would throw, during a rollback, for a reason with nothing to do
-	# with rollback. OS/7 installs de_DE by default in this very harness.
-	Set-ZfsProperty -Name $target.RootDataset `
-		-PropertyName 'com.ubuntu.zsys:last-used' `
-		-Value ([string][System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) `
-		-Confirm:$false | Out-Null
+		# 7 — when this environment was last made current. 10_linux_zfs sorts the
+		# menu by com.ubuntu.zsys:last-used and, where it is unset, by the mtime of
+		# /etc/machine-id inside the environment — which is the install date and
+		# therefore the same for a clone and its origin.
+		#
+		# IT DOES NOT REORDER THE MENU THAT WAS JUST GENERATED, and saying otherwise
+		# would be the kind of claim this repository exists to avoid: the generator
+		# hands the RUNNING environment the current time, so whatever is running is
+		# first in any menu it produces. This value is read the next time a menu is
+		# generated — from the other environment, where it is the only thing that
+		# distinguishes two datasets installed on the same day. The default entry
+		# does not depend on it; that is what saved_entry is for.
+		# ToUnixTimeSeconds rather than `Get-Date -UFormat %s`: the latter returns a
+		# string this code would have to parse back, and parsing a number out of a
+		# formatted date is culture-dependent — on a machine whose locale uses a
+		# comma it would throw, during a rollback, for a reason with nothing to do
+		# with rollback. OS/7 installs de_DE by default in this very harness.
+		Set-ZfsProperty -Name $target.RootDataset `
+			-PropertyName 'com.ubuntu.zsys:last-used' `
+			-Value ([string][System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) `
+			-Confirm:$false | Out-Null
+
+	}
+	catch {
+		foreach ($flip in $flipped) {
+			try {
+				Set-ZfsProperty -Name $flip.Dataset -PropertyName canmount `
+					-Value $flip.Was -Confirm:$false | Out-Null
+			}
+			catch {
+				Write-OS7Step "note: could not restore canmount=$($flip.Was) on $($flip.Dataset)"
+			}
+		}
+		if ($flipped.Count) {
+			Write-OS7Step ("activation failed — canmount restored on $($flipped.Count) " +
+				'dataset(s); nothing about what this machine boots has changed')
+		}
+		throw
+	}
 
 	Get-OS7BootEnvironment -Name $Name
 }

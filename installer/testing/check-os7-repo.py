@@ -74,6 +74,14 @@ export DEBIAN_FRONTEND=noninteractive
 install -Dm644 /repo/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 cat > /etc/apt/apt.conf.d/99os7-check <<'CONF'
 Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";
+// --force-confold, because DEBIAN_FRONTEND=noninteractive does NOT cover
+// dpkg's conffile prompt: this harness writes its own os7.sources BEFORE
+// installing os7-release, which ships the same path as a CONFFILE, and the
+// first run after that change died with "end of file on stdin at conffile
+// prompt" — os7-release left unconfigured, and every identity check after it
+// reporting a machine that was never branded. Update-OS7's own apt runs
+// already carry exactly this option, for exactly this reason.
+Dpkg::Options { "--force-confdef"; "--force-confold"; };
 CONF
 
 # The machine takes its Ubuntu half from the PINNED SNAPSHOT, not from the live
@@ -307,12 +315,14 @@ Pin-Priority: 1001
 PIN
 apt-get install -y -qq "os7-server=${OS7_CHECK_STABLE}" > /tmp/hotfix-base.log 2>&1
 say hotfix.base.rc "$?"
+say hotfix.base.log "$(tail -6 /tmp/hotfix-base.log)"
 say hotfix.mid "$(dpkg-query -W -f='${Version}' os7-base 2>/dev/null)"
 # The pin comes out for the upgrade: from here the machine follows the suite,
 # and the newest release in it is the hotfix.
 rm -f /etc/apt/preferences.d/os7-check.pref
 apt-get full-upgrade -y -qq > /tmp/hotfix-up.log 2>&1
 say hotfix.upgrade.rc "$?"
+say hotfix.upgrade.log "$(tail -6 /tmp/hotfix-up.log)"
 say hotfix.final "$(dpkg-query -W -f='${Version}' os7-base 2>/dev/null)"
 say hotfix.less "$(dpkg-query -W -f='${Version}' less 2>/dev/null)"
 say hotfix.reljson "$(grep -o '"version": *"[^"]*"' /usr/lib/os7/release.json 2>/dev/null | head -1)"
@@ -862,10 +872,11 @@ def main():
     print("\n  the hotfix path, applied — one package on a frozen snapshot (UL3)")
     check(f.get("hotfix.base.rc") == "0",
           f"the stable base installs by exact version",
-          f.get("hotfix.mid", ""))
+          f.get("hotfix.base.log", "").replace("~", " | ")[-160:])
     check(f.get("hotfix.mid", "") == v_stable,
           f"and the machine sits on {v_stable}", f.get("hotfix.mid", ""))
-    check(f.get("hotfix.upgrade.rc") == "0", "one apt full-upgrade applies the hotfix")
+    check(f.get("hotfix.upgrade.rc") == "0", "one apt full-upgrade applies the hotfix",
+          f.get("hotfix.upgrade.log", "").replace("~", " | ")[-160:])
     check(f.get("hotfix.final", "") == v_hotfix,
           f"os7-base moved to {v_hotfix} — the Build field alone",
           f.get("hotfix.final", ""))

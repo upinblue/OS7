@@ -148,7 +148,16 @@ def body_of(text, command_fragment):
     anchored with a dollar, was green, and the clone had three of them.
     """
     body = text.split(command_fragment, 1)[-1] if command_fragment in text else text
-    return body.replace("\r", "")
+    body = body.replace("\r", "")
+    # TERMINAL ESCAPES ARE STRIPPED HERE TOO, and the reason is the same
+    # shape as the CR one above: with `answering` on, bracketed-paste and
+    # query sequences interleave with real output, and `\x1b[?2004l` glues
+    # straight onto the next byte — `\x1b[?2004l1.0.0.133` has no word
+    # boundary before the version, so a \b-anchored match silently finds
+    # nothing, and `0\x1b[m` from systemctl is not a digit line. Measured on
+    # the first amd64 `update` run, which failed its very first assertion on
+    # a machine that had answered correctly.
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", body)
 
 
 def ps(c, script, label, timeout=300):

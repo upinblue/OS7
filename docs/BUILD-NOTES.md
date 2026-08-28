@@ -36,7 +36,7 @@ table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written. Numbers above 102 are free. (#94–#96 are claimed
+Everything below is written. Numbers above 105 are free. (#94–#96 are claimed
 by the Active Directory session and land with its commit; this tree jumps from
 #93 to #97 on purpose rather than colliding.)
 
@@ -5013,3 +5013,72 @@ Windows path before docker ever sees it. The same command from PowerShell, or
 from Python's `subprocess` (no shell), passes the literal string and works —
 which is why the harness never hits this and an interactive probe does.
 `MSYS_NO_PATHCONV=1` or a doubled slash (`//dev/kvm`) are the escapes.
+
+## #103 — DEBIAN_FRONTEND=noninteractive does not answer dpkg's conffile prompt
+
+**2026-08-28, one check-os7-repo iteration.** The harness writes its own
+`/etc/apt/sources.list.d/os7.sources` before installing os7-release — which
+ships the same path as a CONFFILE since the same day — and the install died
+with
+
+    *** os7.sources (Y/I/N/O/D/Z) [default=N] ? dpkg: error processing
+    package os7-release (--configure):
+     end of file on stdin at conffile prompt
+
+`DEBIAN_FRONTEND=noninteractive` silences DEBCONF; dpkg's conffile prompt is
+dpkg's own, and with stdin at EOF it is an ERROR, not a default. The nine
+failures it produced downstream all described a machine that was never
+branded — none of them named the prompt. The answer is
+`Dpkg::Options { "--force-confdef"; "--force-confold"; }` (apt.conf, or
+`-o Dpkg::Options::=` per call), which is exactly what `Update-OS7`'s own apt
+runs have carried since their review — the production path never had the bug,
+only the harness that judges it did.
+
+## #104 — an activation that fails halfway keeps half its work, and the next boot is the half-activated pair
+
+**2026-08-28, the first end-to-end `Update-OS7` run.** The update built the
+new environment, upgraded it, and threw at activation step 6: "no ESP stub
+was rewritten — /boot/efi is not mounted". The catch said, as designed,
+*"os7_1.0.0.134… is built, INACTIVE and left in place; this machine still
+boots what it booted."* Both halves of that sentence were false.
+
+`Set-OS7BootEnvironment` had already run step 3 — canmount flipped across
+every environment, the target's datasets to `on` — before it threw. Nothing
+took the flips back. The environment was therefore not inactive but ARMED:
+on the next boot, `zfs mount -a` mounted the target's `bpool/BOOT` dataset
+**over the running system's /boot**, burying the ESP's vfat mount under it —
+`findmnt /boot/efi` still showed vfat (the shadowed mount entry survives in
+mountinfo) while the PATH resolved to an empty directory on the target's
+dataset. Measured directly:
+
+    556 … /efi /run/os7-update/boot/efi … zfs bpool/BOOT/os7_1.0.0.134_…
+
+— a `mount --bind /boot/efi` that carried the CLONE's empty efi directory,
+because /boot/efi no longer meant the ESP. That is §4.3's half-activated
+pair, reached by an activation that failed halfway and kept half its work,
+and it is the road "nothing checks" that the plan warned about.
+
+Three changes, one per layer:
+
+* **The flips are transactional now.** Every canmount change records the
+  value it replaced, and any throw between the flips and the end of
+  activation restores them before rethrowing — "left in place, INACTIVE" is
+  a promise the catch can keep.
+* **Every plain bind the update assembler makes is `--make-slave`d** the
+  moment it exists: on a systemd system every mount is shared, so a bind
+  JOINS ITS SOURCE'S PEER GROUP, and a scaffold must receive events, not
+  send them — the reasoning the rbinds carried all along.
+* **`Assert-OS7EspMounted`** runs before anything globs the ESP: an
+  unmounted /boot/efi reads as "grub-install never wrote one", and a
+  precondition that can be stated should not be inferred from an empty glob.
+  It asks systemd (`boot-efi.mount`, through the Systemd layer — P2-systemd's
+  baseline may not rise) to mount it where possible.
+
+WHAT IS NOT PROVEN: why /boot/efi was unavailable at step 6 *within the
+failing run itself* — before any reboot could arm the shadow. The idle-
+automount theory was refuted (fstab entry, no automount, ESP survives 150 s
+idle), and a faithful reproduction of the assembler's mount shape did not
+reproduce the loss in isolation — it was itself contaminated by the leftover
+shadow, which is how the shadow was found. The three changes close the class
+either way; the in-session mechanism is recorded as open rather than
+invented.
