@@ -2630,9 +2630,10 @@ foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
-			"$part is missing from $PSScriptRoot. The OS7 module is staged by copying the " +
-			'whole directory (build.sh stage_ps_module); a partial copy is what this looks ' +
-			'like.')
+			"$part is missing from $PSScriptRoot. The OS7 module reaches a machine as the " +
+			'os7-module .deb, which copies the whole directory; a partial copy is what ' +
+			'this looks like. build.sh no longer stages the module CODE at all: that was ' +
+			'stage_ps_module, and this message named it until the merge that deleted it.')
 	}
 	. $file
 }

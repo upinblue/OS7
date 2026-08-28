@@ -611,11 +611,33 @@ build_os7_module() {
 	# missing modules produced a green build for as long as both were wrong
 	# together. A required-path list that only names what the loop already
 	# copies is decoration; one file per module is what makes it an assertion.
+	#
+	# AND EVERY FILE OS7.psm1 DOT-SOURCES, since 2026-08-28. It named three of
+	# fourteen, which is the sampling this comment says it is not: the merge that
+	# brought Active Directory and the update train together added OS7.Directory,
+	# OS7.DirectoryObject, OS7.Domain and OS7.Update between them, and not one of
+	# them landed here, because each branch added a file where the other was not
+	# looking. The .psm1 throws by name when one is missing, so a partial copy
+	# cannot reach an operator quietly - but it throws on a MACHINE, at import,
+	# and this list is what refuses to build the .deb in the first place. The two
+	# lists are asserted equal by nothing; they are just short enough to read
+	# side by side, and the OS7.psm1 foreach is the one to read.
 	pkg_finish   os7-module "${stage}" all \
 		./usr/local/share/powershell/Modules/OS7/OS7.psd1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.psm1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Backup.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.BackupTarget.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.BackupRestore.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.BackupSelfTest.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Home.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Network.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Time.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Remoting.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Service.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Management.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Directory.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.DirectoryObject.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Domain.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Update.ps1 \
 		./usr/local/share/powershell/Modules/Zfs/Zfs.psd1 \
 		./usr/local/share/powershell/Modules/Zfs/Zfs.psm1 \
