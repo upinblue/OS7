@@ -165,9 +165,18 @@ never an icon name. It is a wide lockup rather than the square `os7.svg`
 `/etc/os-release`'s `LOGO=` names: gnome-shell loads the key at **natural size
 times the HiDPI scale factor** (`load_file_sync(..., -1, -1, scaleFactor, ...)`,
 read out of `libshell-18.so`), onto a wide empty strip below the user list,
-where a square tile reads as a misplaced app icon. Hook 0035 rasterises it with
-`rsvg-convert` at build time and fails the build if it does not render, because
-its wordmark is `<text>` and a missing font family substitutes in silence.
+where a square tile reads as a misplaced app icon.
+
+Its documentation lives **inside** the `<svg>` element, and that is not a style
+choice. GdkPixbuf — what `St.TextureCache` uses — sniffs a 256-byte prefix to
+decide whether a file is an image, and a 35-line header above the root element
+put `<svg` at byte 2764. `load_file_sync` then throws inside `LoginDialog`
+while the dialog is being built, so the greeter came up with a background, a
+top bar and nothing to log in with. Hook 0090 now asks **GdkPixbuf itself**, at
+natural size and at scale 2, plus `fc-match` for the `<text>` wordmark's face.
+The `rsvg-convert` check that used to do this reported the broken file green,
+because rsvg parses properly and never sniffs.
+[BUILD-NOTES #111](../../../docs/BUILD-NOTES.md).
 
 [BUILD-NOTES #110](../../../docs/BUILD-NOTES.md).
 

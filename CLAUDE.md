@@ -417,6 +417,15 @@ the ones a fresh session hits first.
   — a dconf value beats a schema default. The check that means anything is a
   CONTROL: ask GSettings through the compiled database, then ask again with the
   keyfile removed and require Ubuntu's answer back.
+- **#111 — the login screen came up EMPTY, because the check used a tool the
+  greeter does not.** gnome-shell loads the greeter logo through **GdkPixbuf**,
+  which decides whether a file is an image by SNIFFING A 256-BYTE PREFIX rather
+  than parsing it; a 35-line documentation header put `<svg` at byte 2764.
+  `load_file_sync` then THROWS inside `LoginDialog`, mid-construction, so what
+  is lost is not the logo but the whole dialog. Hook 0035 had rasterised the
+  same file with `rsvg-convert` and reported it green, because rsvg parses and
+  never sniffs. Ask which program actually opens the file. (And `--` inside an
+  XML comment is illegal, which fails the same way with a different message.)
 - **#84 — GNOME 50 will not draw 1-bit text.** `font-antialiasing='none'` was a
   deliberate Windows-2000 choice against a GNOME that no longer honours it: GTK 4
   loses vertical stems, GTK 3 on the same screen at the same size does not.

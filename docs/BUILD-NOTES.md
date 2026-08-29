@@ -5793,3 +5793,76 @@ bug:** the session chooser lists "Ubuntu" and "Ubuntu on Xorg" because
 `ubuntu-session` ships those `.desktop` files and `gdm3` depends on it. The
 default is `gnome-classic` (the dconf key #85 added), but the names in the
 menu are Ubuntu's.
+
+## #111 — the login screen came up EMPTY, because the check rendered the logo with a tool the greeter does not use
+
+**2026-08-29, found by booting `OS7-1.0.0.153-amd64.iso` on a real machine**
+([SESSION-LOGIN-SCREEN.md](SESSION-LOGIN-SCREEN.md) §11). The first machine
+installed from the ISO that #110 fixed came up with the OS/7 blue background,
+a working top bar, and **no login dialog at all**. Nothing to type a password
+into. Every build check had been green, twice.
+
+**The mechanism.** `gnome-shell` loads `org.gnome.login-screen logo` through
+`St.TextureCache.load_file_sync`, which goes through **GdkPixbuf** — glycin on
+Ubuntu 26.04 — and GdkPixbuf decides whether a file is an image by **sniffing a
+fixed prefix**, not by parsing it. Measured on the shipped image by binary
+search against a known-good SVG with a padded comment:
+
+```
+'<svg' beginning at byte 256   ->  loads
+'<svg' beginning at byte 257   ->  "Couldn't recognize the image file format"
+```
+
+This repository writes long documentation headers. `os7-logo-login.svg` had a
+35-line one, which put `<svg` at **byte 2764**.
+
+**And the symptom is not a missing logo.** `load_file_sync` THROWS, inside
+`LoginDialog._updateLogoTexture`, *while the dialog is being constructed*. The
+background is painted by Ubuntu's `com.ubuntu.login-screen` patch elsewhere and
+the panel is a separate actor, so both survive — and what is left is a screen a
+user cannot log in from. A logo is cosmetic; the code path that loads it is not.
+
+**Why every check passed.** Hook 0035 already had `librsvg2-bin` installed for
+the plymouth mark, so it rasterised the greeter mark with `rsvg-convert` and
+reported it green. `rsvg-convert` parses the XML properly and does not sniff
+anything, so it renders the file perfectly. **It is simply not the loader the
+greeter uses.** This repository's own rule — *a diagnostic must be checked
+against the thing it claims to check* — broken by the person who had just
+written three negative controls for the same feature.
+
+The fix has three parts and the middle one is the durable one:
+
+1. Both SVGs put their documentation **inside** the `<svg>` element, so `<svg`
+   is at byte 39 whatever gets written about them later.
+2. The check moved to hook 0090 and asks **GdkPixbuf**, through `python3-gi`
+   (`Priority: important` on the image, with the GdkPixbuf typelib beside it) —
+   the same call the greeter makes, at natural size and at scale 2. The
+   rsvg-convert check in 0035 is **deleted**, not kept beside it: a check that
+   can go green while the machine is broken is worse than no check.
+3. `check-image.py` asks the same question of the finished ISO.
+
+**A second, independent trap on the way to the fix, worth its own paragraph
+because it produced a DIFFERENT error message.** Moving the comment inside the
+element is not enough if the comment contains `--`: two consecutive hyphens are
+**illegal inside an XML comment**, and a dashed rule (`-----`) used as a heading
+underline is exactly that. That file passes the byte-offset test and then fails
+to *parse*:
+
+```
+byte offset wrong  ->  "Couldn't recognize the image file format"   (sniffing)
+'--' in a comment  ->  "Failed to load image ... org.gnome.glycin.Error"  (parsing)
+```
+
+Both produce the same empty login screen. The check asks both questions for
+that reason.
+
+**The controls.** The new check was run against three files: the fixed marks
+(green), the file **exactly as 1.0.0.153 shipped it** (red, naming byte 2764),
+and a file with an illegal `--` (red, naming the parse error). A check that
+cannot fail on the artefact that caused the incident is not a fix.
+
+**And one more time, the general shape**, which is #62's and #85's and #73's:
+every declaration was satisfied, every check reported success, and the thing
+they were about was decided by a component nobody had asked. Here the component
+was the image loader, and the question that would have found it in one second is
+"which program actually opens this file?"

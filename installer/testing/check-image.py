@@ -158,6 +158,26 @@ echo "font=$(get org.gnome.desktop.interface font-name)"
 echo "background=$(get com.ubuntu.login-screen background-color)"
 echo "theme=$(readlink -f /usr/share/gnome-shell/gdm-theme.gresource)"
 echo "icons=$(readlink -f /usr/share/gnome-shell/gdm-icons.gresource)"
+# THE MARK, ASKED OF THE LOADER THAT WILL LOAD IT. Not rsvg-convert, which is
+# what the build hook used for one build while the login screen came up EMPTY:
+# gnome-shell's St.TextureCache goes through GdkPixbuf, GdkPixbuf sniffs a
+# 256-byte prefix rather than parsing, and a documentation header put `<svg`
+# at byte 2764. load_file_sync then THROWS inside LoginDialog, mid-construction,
+# and there is no dialog to log in from. docs/BUILD-NOTES.md #111.
+python3 - <<'PYPROBE' 2>/dev/null
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+for path in ("/usr/share/pixmaps/os7-logo-login.svg",
+             "/usr/share/pixmaps/upinblue-logo.svg"):
+    tag = path.split("/")[-1].split(".")[0]
+    try:
+        off = open(path, "rb").read().find(b"<svg")
+        pb = GdkPixbuf.Pixbuf.new_from_file(path)
+        print("%s=OK %dx%d off=%d" % (tag, pb.get_width(), pb.get_height(), off))
+    except BaseException as exc:
+        print("%s=FAIL %s" % (tag, " ".join(str(exc).split())[:90]))
+PYPROBE
 GREETER
 emit desktop.greeter   bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin sh /tmp/os7-greeter-probe.sh 2>&1 || true'
 emit desktop.greeterdir bash -c 'ls /mnt/sq/usr/share/gdm/dconf/ 2>&1 || true'
@@ -1165,6 +1185,20 @@ def main() -> None:
         check(greeter_listed("os7-logo-login.svg") and greeter_listed("upinblue-logo.svg"),
               "and both marks the greeter names are in the image",
               " ".join(img.get("desktop.greeterlogo", "").split())[:120])
+
+        # AND THAT THE GREETER CAN ACTUALLY LOAD THEM. This is not the same
+        # question as "is the file there", and the difference cost a machine:
+        # OS7-1.0.0.153 shipped a mark that rsvg-convert rendered happily and
+        # GdkPixbuf refused, because GdkPixbuf sniffs a 256-byte prefix and a
+        # documentation header had pushed `<svg` to byte 2764. The greeter's
+        # load_file_sync throws mid-construction, so what the user sees is a
+        # background, a top bar, and nothing to log in with. BUILD-NOTES #111.
+        for tag, human in (("os7-logo-login", "the greeter mark"),
+                           ("upinblue-logo", "the vendor mark")):
+            got = greeter.get(tag, "")
+            check(got.startswith("OK"),
+                  f"and GdkPixbuf — the loader gnome-shell uses — loads {human}",
+                  got or "<python3-gi said nothing>")
 
         auto = {}
         for line in img.get("desktop.autostart", "").splitlines():

@@ -459,18 +459,83 @@ if [ "${mech}" -eq 1 ]; then
 	rm -rf "${SCRATCH}"
 fi
 
-# 6c. The mark itself, and that it arrived as a PACKAGE rather than as a file
-#     somebody copied in. Hook 0035 has already rasterised it with rsvg-convert
-#     and failed the build if it did not render; this is the cheap half.
-if [ -s "${WANT_LOGO}" ]; then
-	owner="$(dpkg -S "${WANT_LOGO}" 2>/dev/null | cut -d: -f1 || true)"
-	if [ "${owner}" = "os7-desktop-theme" ]; then
-		ok "${WANT_LOGO} ($(stat -c%s "${WANT_LOGO}") bytes) owned by os7-desktop-theme"
-	else
-		note "${WANT_LOGO} belongs to '${owner:-nobody}' - an unowned file is not replaced by an update"
+# 6c. THE MARK, ASKED OF THE LOADER THAT WILL ACTUALLY LOAD IT.
+#
+# This check used to live in hook 0035 and used rsvg-convert, because that hook
+# already had librsvg2-bin installed for the plymouth mark. It reported the
+# greeter mark green, the build passed, check-image.py passed, and the first
+# machine that booted the ISO came up with a background, a top bar and NO LOGIN
+# DIALOG AT ALL. docs/BUILD-NOTES.md #111.
+#
+# gnome-shell does not use librsvg. St.TextureCache.load_file_sync goes through
+# GdkPixbuf, which on Ubuntu 26.04 is glycin, and glycin decides whether a file
+# is an image by SNIFFING A FIXED PREFIX rather than by parsing it. Measured on
+# the shipped image by binary search: `<svg` beginning at byte 256 loads, at
+# byte 257 the loader answers "Couldn't recognize the image file format". This
+# repository writes long documentation headers, and a 35-line one put `<svg` at
+# byte 2764.
+#
+# And the failure is not a missing logo. load_file_sync THROWS, inside
+# LoginDialog._updateLogoTexture, while the dialog is being constructed - so
+# what the user gets is an empty screen they cannot log in from.
+#
+# So the check asks GdkPixbuf, in the image, through python3-gi (Priority:
+# important, and the GdkPixbuf typelib is beside it). Two questions, because
+# they fail differently: the byte offset catches the sniff, and the load catches
+# everything else - a `--` inside an XML comment, which is illegal and which
+# cost the SECOND attempt at this fix, would pass the offset check and fail here.
+for svg in "${WANT_LOGO}" /usr/share/pixmaps/upinblue-logo.svg; do
+	name="$(basename "${svg}")"
+	if [ ! -s "${svg}" ]; then
+		note "${name} is missing or empty - the greeter would draw no logo at all"
+		continue
 	fi
+	if out="$(python3 - "${svg}" 2>/dev/null <<'PY'
+import sys
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+path = sys.argv[1]
+raw = open(path, "rb").read()
+off = raw.find(b"<svg")
+try:
+    if off < 0:
+        raise ValueError("no <svg> element at all")
+    if off > 256:
+        raise ValueError("'<svg' at byte %d, past the 256-byte sniff window" % off)
+    pb = GdkPixbuf.Pixbuf.new_from_file(path)
+    # and the way the greeter asks on a HiDPI screen: natural size times scale
+    GdkPixbuf.Pixbuf.new_from_file_at_scale(
+        path, pb.get_width() * 2, pb.get_height() * 2, True)
+    print("%dx%d, '<svg' at byte %d" % (pb.get_width(), pb.get_height(), off))
+except BaseException as exc:
+    print(" ".join(str(exc).split())[:120])
+    sys.exit(1)
+PY
+	)"; then
+		ok "${name}: GdkPixbuf loads it - ${out}"
+	else
+		note "${name}: GdkPixbuf REFUSES it - ${out:-<no answer>}"
+		note "${name}: the greeter would throw in _updateLogoTexture and draw NO dialog"
+	fi
+done
+
+# And that the mark arrived as a PACKAGE rather than as a file somebody copied
+# in: an unowned file is not replaced by an update.
+owner="$(dpkg -S "${WANT_LOGO}" 2>/dev/null | cut -d: -f1 || true)"
+if [ "${owner}" = "os7-desktop-theme" ]; then
+	ok "${WANT_LOGO} ($(stat -c%s "${WANT_LOGO}") bytes) owned by os7-desktop-theme"
 else
-	note "${WANT_LOGO} is missing or empty - the greeter would draw no logo at all"
+	note "${WANT_LOGO} belongs to '${owner:-nobody}' - an unowned file is not replaced by an update"
+fi
+
+# The face the wordmark names. fc-match answers with the family fontconfig WOULD
+# use; `dpkg -s fonts-dejavu-core` does not.
+DEJAVU="$(fc-match -f '%{family}' 'DejaVu Sans' 2>/dev/null || true)"
+if [ "${DEJAVU}" = "DejaVu Sans" ]; then
+	ok "fc-match 'DejaVu Sans' -> DejaVu Sans (the greeter wordmark's face)"
+else
+	note "fc-match 'DejaVu Sans' -> '${DEJAVU}': the greeter wordmark would substitute"
 fi
 
 # 6d. The greeter's stylesheet. Hook 0035 step 9 moves it off Yaru with

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  up in blue GmbH — the vendor mark, verbatim.
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 510.9 223.7">
+<!--  up in blue GmbH — the vendor mark, verbatim.
 
   PROVENANCE. Supplied by the vendor on 2026-08-29 as
   "Marketing/General/Media/Logo/upinblue.svg" and copied here byte for byte
@@ -13,8 +13,24 @@
   unreadable. This file is the one to reach for anywhere the mark appears on a
   light or neutral surface, and it is the source the lockup is generated from,
   so the two cannot drift.
+  WHY THIS COMMENT IS INSIDE THE <svg> ELEMENT AND NOT ABOVE IT
+  ==============================================================
+  Because it was above it, and that blanked the login screen on a real machine
+  (2026-08-29, docs/BUILD-NOTES.md #111).
+
+  GdkPixbuf - which is what gnome-shell's St.TextureCache uses to load this
+  file - decides whether a file is an image by SNIFFING A FIXED PREFIX, not by
+  parsing it. Measured on the shipped image by binary search: `<svg` beginning
+  at byte 256 loads, at byte 257 the loader answers "Couldn't recognize the
+  image file format". A 35-line documentation header put it at byte 2764.
+
+  What that does is not a missing logo. St.TextureCache.load_file_sync THROWS,
+  inside LoginDialog._updateLogoTexture, while the dialog is being built - so
+  the greeter came up with a background, a top bar, and no login dialog at all.
+
+  So: `<?xml?>` then `<svg>` then prose. Anything that has to be said about
+  this file gets said from here, below byte 256.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 510.9 223.7">
   <defs>
     <style>
       .cls-1 {

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  OS/7 — the mark the LOGIN SCREEN shows, and the only thing that decides that
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     width="216" height="98" viewBox="0 0 880 400">
+<!--  OS/7 — the mark the LOGIN SCREEN shows, and the only thing that decides that
   it is shown is one dconf value:
 
       /org/gnome/login-screen/logo = '/usr/share/pixmaps/os7-logo-login.svg'
@@ -48,9 +49,24 @@
   GENERATED, and re-generatable: the 215 vendor paths below are
   `sed 's/ class="cls-1"//'` over upinblue-logo.svg's, in document order. Do
   not hand-edit them; edit the vendor file and regenerate.
+  WHY THIS COMMENT IS INSIDE THE <svg> ELEMENT AND NOT ABOVE IT
+  ==============================================================
+  Because it was above it, and that blanked the login screen on a real machine
+  (2026-08-29, docs/BUILD-NOTES.md #111).
+
+  GdkPixbuf - which is what gnome-shell's St.TextureCache uses to load this
+  file - decides whether a file is an image by SNIFFING A FIXED PREFIX, not by
+  parsing it. Measured on the shipped image by binary search: `<svg` beginning
+  at byte 256 loads, at byte 257 the loader answers "Couldn't recognize the
+  image file format". A 35-line documentation header put it at byte 2764.
+
+  What that does is not a missing logo. St.TextureCache.load_file_sync THROWS,
+  inside LoginDialog._updateLogoTexture, while the dialog is being built - so
+  the greeter came up with a background, a top bar, and no login dialog at all.
+
+  So: `<?xml?>` then `<svg>` then prose. Anything that has to be said about
+  this file gets said from here, below byte 256.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
-     width="216" height="98" viewBox="0 0 880 400">
 
   <!-- OS/7, the product. -->
   <text x="440" y="180"

@@ -252,10 +252,10 @@ it shipped: the mark's 2.4-unit stripes resolve into a soft frame at scale 1 and
 sharpen at scale 2, which is a property of the artwork at that size and not a
 defect in the file.
 
-The wordmark is `<text>`, the same deliberate trade `os7.svg` makes, so hook
-0035 rasterises it while `librsvg2-bin` is installed for the plymouth mark and
-fails the build if it does not produce a PNG — a substituted font family is
-otherwise completely silent.
+The wordmark is `<text>`, the same deliberate trade `os7.svg` makes. That was
+originally checked by rasterising it with `rsvg-convert` in hook 0035, which
+had librsvg in its hands for the plymouth mark. **That check was wrong, and
+§11 is what it cost.** It now lives in hook 0090 and asks GdkPixbuf.
 
 ---
 
@@ -335,3 +335,89 @@ without them:
 * **Whether the composition looks good** is a matter of taste that a rendering
   at 1× and 2× can only half answer. The background colour is one dconf value
   and the logo one file path.
+
+---
+
+## 11. What booting it found: the login screen came up EMPTY
+
+**Same day, an hour after §9.** The machine installed from
+`OS7-1.0.0.153-amd64.iso` booted to the OS/7 blue background with a working top
+bar and **no login dialog at all** — nothing to type a password into. Every
+check in §9 had been green, including three negative controls.
+
+`gnome-shell` loads `org.gnome.login-screen logo` through
+`St.TextureCache.load_file_sync`, which goes through **GdkPixbuf** — glycin on
+Ubuntu 26.04 — and GdkPixbuf decides whether a file is an image by **sniffing a
+fixed prefix**, not by parsing it. Asked of the image's own loader:
+
+```
+OK   ubuntu-logo-text-dark.svg   187 x 72
+FAIL os7-logo-login.svg          Couldn't recognize the image file format
+```
+
+Binary search against a known-good SVG with a padded comment pinned the window
+exactly:
+
+```
+'<svg' beginning at byte 256  ->  loads
+'<svg' beginning at byte 257  ->  refused
+```
+
+This repository writes long documentation headers. §7's file had a 35-line one,
+which put `<svg` at **byte 2764**. And the symptom is not a missing logo:
+`load_file_sync` throws inside `LoginDialog._updateLogoTexture` *while the
+dialog is being constructed*, so the background (painted by Ubuntu's patch) and
+the panel (a separate actor) survive, and the dialog never exists.
+
+**Why §9's checks did not catch it.** Hook 0035 already had `librsvg2-bin`
+installed for the plymouth mark, so it rasterised the greeter mark with
+`rsvg-convert` and reported it green. `rsvg-convert` parses the XML properly and
+never sniffs anything. It is simply **not the loader the greeter uses** — this
+repository's own rule, *a diagnostic must be checked against the thing it claims
+to check*, broken in the same session that wrote three controls for the feature
+next to it.
+
+A second, independent trap surfaced while fixing it, with a **different** error
+message: moving the comment inside `<svg>` is not enough if the comment contains
+`--`, which is illegal in XML. A dashed heading underline is exactly that.
+
+```
+byte offset wrong  ->  "Couldn't recognize the image file format"        (sniffing)
+'--' in a comment  ->  "Failed to load image ... org.gnome.glycin.Error" (parsing)
+```
+
+Both produce the same empty screen, so the check asks both questions.
+
+### The fix
+
+| | |
+|---|---|
+| both SVGs | documentation moved **inside** `<svg>`; `<svg` at byte 39 whatever gets written about them later |
+| hook 0035 | the `rsvg-convert` check **deleted** — a check that goes green while the machine is broken is worse than none |
+| hook 0090 §6c | asks **GdkPixbuf** through `python3-gi`, at natural size and at scale 2, plus the byte-offset assertion and `fc-match` for the `<text>` face |
+| `check-image.py` | the same question, of the finished ISO |
+
+### The controls that make it a fix
+
+| file the check was run against | result |
+|---|---|
+| the repaired marks | `ok: 216x98, '<svg' at byte 39` |
+| **the file exactly as 1.0.0.153 shipped it** | `FAIL: '<svg' at byte 2764, past the 256-byte sniff window` |
+| a file with an illegal `--` in its comment | `FAIL: Failed to load image ... glycin.Error` |
+
+A check that cannot fail on the artefact that caused the incident is not a fix.
+
+`OS7-1.0.0.154-amd64.iso` was built with all of it: zero `FAIL` lines, and
+`check-image.py` green including
+
+```
+ok  and GdkPixbuf — the loader gnome-shell uses — loads the greeter mark — OK 216x98 off=39
+ok  and GdkPixbuf — the loader gnome-shell uses — loads the vendor mark  — OK 511x224 off=39
+```
+
+**Still not measured: nobody has booted 1.0.0.154.** The broken machine was
+repaired in place with `sed -i '/^<!--$/,/^-->$/d'` over the shipped SVG — the
+same transformation, verified against the image's own loader before it was
+handed over.
+
+[BUILD-NOTES #111](BUILD-NOTES.md).

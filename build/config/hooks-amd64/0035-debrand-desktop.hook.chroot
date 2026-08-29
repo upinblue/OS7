@@ -67,12 +67,19 @@
 #
 # THE LOGIN SCREEN is the third kind of Ubuntu on this image, and neither
 # purging nor pinning reaches it: gdm3, ubuntu-settings and
-# yaru-theme-gnome-shell are all hard dependencies of the desktop. So step 7a
-# proves the OS/7 greeter mark actually renders, and step 9 moves the greeter's
-# stylesheet off Yaru with update-alternatives. The mark itself, the background
-# and the accent are DATA, and they live in os7-desktop-theme's
+# yaru-theme-gnome-shell are all hard dependencies of the desktop. Step 9 moves
+# the greeter's stylesheet off Yaru with update-alternatives. The mark itself,
+# the background and the accent are DATA, and they live in os7-desktop-theme's
 # /usr/share/gdm/dconf/95-os7-login-screen - docs/BUILD-NOTES.md #110 for why
 # that directory and not the one GNOME's documentation names.
+#
+# THE GREETER MARK IS NOT CHECKED HERE, and it was, for one build. This hook has
+# rsvg-convert in its hands for the plymouth mark, so it rasterised the greeter
+# mark too and reported it green - and the login screen came up EMPTY on the
+# first machine that booted it, because gnome-shell does not use librsvg, it
+# uses GdkPixbuf, and GdkPixbuf refused the same file. A check that passes with
+# a different tool than the consumer is not a check. It now lives in hook 0090,
+# where it asks GdkPixbuf. docs/BUILD-NOTES.md #111.
 #
 # ORDERING: 0035 runs after 0030 (the Microsoft stack, so its packages are here
 # to be checked) and after 0022 (the OS/7 packages, so os7-desktop-theme's
@@ -337,46 +344,6 @@ else
 	dpkg-divert --local --rename --add "${FALLBACK}" >/dev/null
 	rsvg-convert -w 128 -h 128 "${SRC_SVG}" -o "${FALLBACK}"
 	chmod 0644 "${FALLBACK}"
-
-	# 7a. THE GREETER'S MARK, RENDERED WHILE THE RASTERISER IS STILL HERE.
-	#
-	# /usr/share/pixmaps/os7-logo-login.svg is what the login screen draws
-	# (os7-desktop-theme, /usr/share/gdm/dconf/95-os7-login-screen). Its
-	# wordmark is <text>, the same deliberate trade os7.svg makes, and the way
-	# that trade fails is silent: fontconfig answers a missing family with the
-	# default sans face and nothing anywhere says so. The only thing that
-	# cannot be fooled is rendering it.
-	#
-	# The PNG is thrown away - it is a proof, not an asset. What is kept is the
-	# build failing here instead of a login screen nobody looks at until it is
-	# on somebody's desk.
-	LOGIN_SVG=/usr/share/pixmaps/os7-logo-login.svg
-	if [ ! -r "${LOGIN_SVG}" ]; then
-		note "${LOGIN_SVG} is missing - os7-desktop-theme did not install (hook 0022)"
-	else
-		# Rendered at scale 2 (432x196), because that is what a HiDPI greeter
-		# asks for: gnome-shell loads this key at natural size TIMES the scale
-		# factor. If it renders there it renders at scale 1.
-		if rsvg-convert -w 432 -h 196 "${LOGIN_SVG}" -o /tmp/os7-login-logo.png 2>/dev/null; then
-			magic="$(head -c 8 /tmp/os7-login-logo.png 2>/dev/null || true)"
-			case "${magic}" in
-				*PNG*) ok "greeter mark rasterises: $(stat -c%s /tmp/os7-login-logo.png) bytes at 432x196" ;;
-				*)     note "${LOGIN_SVG} did not rasterise to a PNG" ;;
-			esac
-		else
-			note "rsvg-convert could not render ${LOGIN_SVG}"
-		fi
-		rm -f /tmp/os7-login-logo.png
-		# And the family the wordmark names. fc-match answers with the face
-		# fontconfig WOULD use, which is the question; `dpkg -s fonts-dejavu-core`
-		# is not.
-		DEJAVU="$(fc-match -f '%{family}' 'DejaVu Sans' 2>/dev/null || true)"
-		if [ "${DEJAVU}" = "DejaVu Sans" ]; then
-			ok "fc-match 'DejaVu Sans' -> DejaVu Sans (the greeter wordmark's face)"
-		else
-			note "fc-match 'DejaVu Sans' -> '${DEJAVU}': the greeter wordmark would substitute"
-		fi
-	fi
 
 	apt-get purge -y librsvg2-bin
 
