@@ -52,7 +52,14 @@ table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written. Numbers above 109 are free.
+**#112, #113 and #114 are CLAIMED** on branch `admin-manual`, 2026-08-29, and
+this line is the claim — the entries are written in the commit after this one.
+They are, in order: `Get-OS7BackupStatus` throwing on the two ordinary machines
+that have nothing to compare; `Get-OS7Service` pinning `Type = 'service'` so the
+unattended update TIMER is invisible to the cmdlet surface; and a captured
+terminal slice replayed at a different geometry than the guest believed it had.
+
+Everything below is written. Numbers above 114 are free.
 
 *(#108 was claimed TWICE on 2026-08-28, and both claimants had already been
 committed — the Active Directory line took it for the installer/cmdlet
