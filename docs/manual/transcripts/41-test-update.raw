@@ -1,0 +1,41 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nT[6n[24;81H[24;80HTe[6n[24;82H[24;80HTes[6n[24;83H[24;80HTest[6n[24;84H[24;80HTest-[6n[24;85H[24;80HTest-O[6n[24;86H[24;80HTest-OS[6n[24;87H[24;80HTest-OS7[6n[24;88H[24;80HTest-OS7U[6n[24;89H[24;80HTest-OS7Up[6n[24;90H[24;80HTest-OS7Upd[6n[24;91H[24;80HTest-OS7Upda[6n[24;92H[24;80HTest-OS7Updat[6n[24;93H[24;80HTest-OS7Update[6n[24;94H
+[?1lOS/7 Update self-test
+  PASS  a four-field version compares numerically, not lexically
+  PASS  the string comparison it replaces would have been wrong
+  PASS  equal versions compare equal
+  PASS  a minor beats a build
+  PASS  something that is not a version is refused, not coerced
+  PASS  the newest kernel is 7.0.0-31, not 7.0.0-9
+  PASS  a /boot with no kernel answers null rather than guessing
+  PASS  a double-quoted value is unquoted
+  PASS  a single-quoted value is unquoted too
+  PASS  an unquoted value is taken as it stands
+  PASS  surrounding whitespace is not part of the value
+  PASS  a comment mentioning a name does not define it
+  PASS  a name that is not in the file is null, not empty
+  PASS  the kernel's mount list is read
+  PASS  a nested mount is read too
+  PASS  an octal-escaped space is decoded
+  PASS  a path that is not mounted is absent
+  PASS  an expired index is refused
+  PASS  a current index is accepted
+  PASS  an index mislabelled as another channel is refused
+  PASS  a descriptor matching the index hash is accepted
+  PASS  a descriptor whose hash the index does not record is refused
+  PASS  migrations are ordered by their numeric prefix
+  PASS  a release with no migrations yields none, not an error
+  PASS  the firstboot context is separate from the chroot one
+  PASS  the dataset serving / is the one at /, not the one mounted elsewhere
+  PASS  a machine that is not ZFS-rooted answers null rather than guessing
+  PASS  Running decides when the kernel could answer
+  PASS  a merely-mounted environment is not the running one
+  PASS  and Active is the fallback when it could not
+  PASS  a root with nothing mounted under it is refused
+
+OS/7 Update self-test: 31 passed, 0 failed
+OS/7 Update self-test: PASS
+True
+[6n
+PS /home/os7admin> [?1h[6n

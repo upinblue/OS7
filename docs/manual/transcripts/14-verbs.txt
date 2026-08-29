@@ -1,0 +1,15 @@
+CommandType     Name                                               Version    S
+                                                                              o
+                                                                              u
+                                                                              r
+                                                                              c
+                                                                              e
+-----------     ----                                               -------    -
+Function        Get-OS7BackupCoverage                              1.0.0.148  O
+Function        Get-OS7BackupPolicy                                1.0.0.148  O
+Function        Get-OS7BackupStatus                                1.0.0.148  O
+Function        Get-OS7BackupTarget                                1.0.0.148  O
+Function        Get-OS7BootEnvironment                             1.0.0.148  O
+
+
+PS /home/os7admin>

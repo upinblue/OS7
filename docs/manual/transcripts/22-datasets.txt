@@ -1,0 +1,24 @@
+rpool                                              /
+rpool/DATA
+rpool/DATA/lib
+rpool/DATA/lib/authd                               /var/lib/authd
+rpool/DATA/lib/azcmagent                           /var/opt/azcmagent
+rpool/DATA/lib/networkmanager                      /var/lib/NetworkManager
+rpool/DATA/log                                     /var/log
+rpool/DATA/snapd                                   /var/lib/snapd
+rpool/DATA/spool                                   /var/spool
+rpool/DATA/srv                                     /srv
+rpool/DATA/tmp                                     /var/tmp
+rpool/ROOT
+rpool/ROOT/os7_1.0.0.148_202608281306              /
+rpool/ROOT/os7_1.0.0.148_202608281306/var          /var
+rpool/ROOT/os7_1.0.0.148_202608281306/var/cache    /var/cache
+rpool/ROOT/os7_1.0.0.148_202608281306/var/lib      /var/lib
+rpool/ROOT/os7_1.0.0.148_202608281306/var/lib/apt  /var/lib/apt
+rpool/ROOT/os7_1.0.0.148_202608281306/var/lib/dpkg /var/lib/dpkg
+rpool/USERDATA
+rpool/USERDATA/os7admin_a5e6c1bd                   /home/os7admin
+rpool/USERDATA/root_a5e6c1bd                       /root
+
+
+PS /home/os7admin>

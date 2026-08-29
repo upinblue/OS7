@@ -1,0 +1,44 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7M[6n[24;88H[24;80HGet-OS7Ma[6n[24;89H[24;80HGet-OS7Man[6n[24;90H[24;80HGet-OS7Mana[6n[24;91H[24;80HGet-OS7Manag[6n[24;92H[24;80HGet-OS7Manage[6n[24;93H[24;80HGet-OS7Managem[6n[24;94H[24;80HGet-OS7Manageme[6n[24;95H[24;80HGet-OS7Managemen[6n[24;96H[24;80HGet-OS7Management[6n[24;97H[24;80HGet-OS7ManagementS[6n[24;98H[24;80HGet-OS7ManagementSt[6n[24;99H[24;80HGet-OS7ManagementSta[6n[24;100H[24;80HGet-OS7ManagementStat[6n[24;101H[24;80HGet-OS7ManagementStatu[6n[24;102H[24;80HGet-OS7ManagementStatus[6n[24;103H[24;80HGet-OS7ManagementStatus [6n[24;104H[24;80HGet-OS7ManagementStatus |[6n[24;105H[24;80HGet-OS7ManagementStatus | [6n[24;106H[24;80HGet-OS7ManagementStatus | F[6n[24;107H[24;80HGet-OS7ManagementStatus | Fo[6n[24;108H[24;80HGet-OS7ManagementStatus | For[6n[24;109H[24;80HGet-OS7ManagementStatus | Form[6n[24;110H[24;80HGet-OS7ManagementStatus | Forma[6n[24;111H[24;80HGet-OS7ManagementStatus | Format[6n[24;112H[24;80HGet-OS7ManagementStatus | Format-[6n[24;113H[24;80HGet-OS7ManagementStatus | Format-L[6n[24;114H[24;80HGet-OS7ManagementStatus | Format-Li[6n[24;115H[24;80HGet-OS7ManagementStatus | Format-Lis[6n[24;116H[24;80HGet-OS7ManagementStatus | Format-List[6n[24;117H
+[?1lOS7-STEP run: dpkg-query -W -f=${Status} ${Version} authd
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} microsoft-identity-broker
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} intune-portal
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} azcmagent
+
+[32;1mEntra     : [0m@{AuthdInstalled=True; AuthdVersion=0.6.1ubuntu0.1; IdentityBrokerV
+            ersion=3.0.2-resolute; BrokerRegistered=False; Brokers=System.Objec
+            t[]; BrokerDirectory=/etc/authd/brokers.d; PamConfigured=True; Serv
+            iceState=active; ServiceHealthy=True; Ready=False; Detail=authd is 
+            installed and PAM is wired to it, but /etc/authd/brokers.d is empty
+             — there is no Entra broker for it to talk to, so a sign-in will fa
+            il as though the password were wrong. See C8a: authd-msentraid is a
+             snap and is not seeded into the image.}
+[32;1mIntune    : [0m@{Installed=True; Version=1.2607.4-resolute; Binaries=System.Object
+            []; PamConfigured=True; DaemonState=inactive; DaemonHealthy=True; S
+            ocketPath=/run/intune/daemon.socket; SocketPresent=True; Enrolled=;
+             EnrolledReason=intune-agent exposes no status interface (measured:
+             its options are --interactive, --socket-path, --help, --version), 
+            and no enrolled machine has ever been available to learn the on-dis
+            k state from. Enrolment is visible in the Intune portal, not here.;
+             Detail=installed and wired; intune-daemon.service is inactive}
+[32;1mArc       : [0m@{Installed=False; Version=; StagedPackage=System.Object[]; StagedI
+            n=/var/cache/os7/packages; Raw=; Reason=; Connected=; Detail=azcmag
+            ent is not installed; azcmagent_1.67.03504.1320_amd64.deb is staged
+             in /var/cache/os7/packages for the installer to place, which is de
+            liberate — its postinst needs a running systemd}
+[32;1mReachable : [0mFalse
+[32;1mEndpoints : [0m{@{Name=Entra; Host=login.microsoftonline.com; Port=443; Reachable=
+            True; Detail=connected in 28 ms; Verified=}, @{Name=Graph; Host=gra
+            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 17 
+            ms; Verified=}, @{Name=Intune; Host=manage.microsoft.com; Port=443;
+             Reachable=True; Detail=connected in 37 ms; Verified=}, @{Name=Arc;
+             Host=management.azure.com; Port=443; Reachable=True; Detail=connec
+            ted in 16 ms; Verified=}}
+[32;1mSummary   : [0mauthd is installed and PAM is wired to it, but /etc/authd/brokers.d
+             is empty — there is no Entra broker for it to talk to, so a sign-i
+            n will fail as though the password were wrong. See C8a: authd-msent
+            raid is a snap and is not seeded into the image.
+
+[6n
+PS /home/os7admin> [?1h[6n

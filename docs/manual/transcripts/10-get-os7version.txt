@@ -1,0 +1,6 @@
+OS/7 1.0.0 (development)
+Ubuntu 26.04 base, Server, amd64
+
+
+
+PS /home/os7admin>

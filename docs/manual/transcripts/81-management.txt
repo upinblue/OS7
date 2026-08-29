@@ -1,0 +1,24 @@
+             its options are --interactive, --socket-path, --help, --version),
+            and no enrolled machine has ever been available to learn the on-dis
+            k state from. Enrolment is visible in the Intune portal, not here.;
+             Detail=installed and wired; intune-daemon.service is inactive}
+Arc       : @{Installed=False; Version=; StagedPackage=System.Object[]; StagedI
+            n=/var/cache/os7/packages; Raw=; Reason=; Connected=; Detail=azcmag
+            ent is not installed; azcmagent_1.67.03504.1320_amd64.deb is staged
+             in /var/cache/os7/packages for the installer to place, which is de
+            liberate — its postinst needs a running systemd}
+Reachable : False
+Endpoints : {@{Name=Entra; Host=login.microsoftonline.com; Port=443; Reachable=
+            True; Detail=connected in 28 ms; Verified=}, @{Name=Graph; Host=gra
+            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 17
+            ms; Verified=}, @{Name=Intune; Host=manage.microsoft.com; Port=443;
+             Reachable=True; Detail=connected in 37 ms; Verified=}, @{Name=Arc;
+             Host=management.azure.com; Port=443; Reachable=True; Detail=connec
+            ted in 16 ms; Verified=}}
+Summary   : authd is installed and PAM is wired to it, but /etc/authd/brokers.d
+             is empty — there is no Entra broker for it to talk to, so a sign-i
+            n will fail as though the password were wrong. See C8a: authd-msent
+            raid is a snap and is not seeded into the image.
+
+
+PS /home/os7admin>

@@ -1,0 +1,227 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7S[6n[24;88H[24;80HGet-OS7Se[6n[24;89H[24;80HGet-OS7Ser[6n[24;90H[24;80HGet-OS7Serv[6n[24;91H[24;80HGet-OS7Servi[6n[24;92H[24;80HGet-OS7Servic[6n[24;93H[24;80HGet-OS7Service[6n[24;94H[24;80HGet-OS7Service [6n[24;95H[24;80HGet-OS7Service -[6n[24;96H[24;80HGet-OS7Service -O[6n[24;97H[24;80HGet-OS7Service -OS[6n[24;98H[24;80HGet-OS7Service -OS7[6n[24;99H[24;80HGet-OS7Service -OS7O[6n[24;100H[24;80HGet-OS7Service -OS7On[6n[24;101H[24;80HGet-OS7Service -OS7Onl[6n[24;102H[24;80HGet-OS7Service -OS7Only[6n[24;103H[24;80HGet-OS7Service -OS7Only [6n[24;104H[24;80HGet-OS7Service -OS7Only -[6n[24;105H[24;80HGet-OS7Service -OS7Only -D[6n[24;106H[24;80HGet-OS7Service -OS7Only -De[6n[24;107H[24;80HGet-OS7Service -OS7Only -Det[6n[24;108H[24;80HGet-OS7Service -OS7Only -Deta[6n[24;109H[24;80HGet-OS7Service -OS7Only -Detai[6n[24;110H[24;80HGet-OS7Service -OS7Only -Detail[6n[24;111H[24;80HGet-OS7Service -OS7Only -Detaile[6n[24;112H[24;80HGet-OS7Service -OS7Only -Detailed[6n[24;113H
+[?1l
+[32;1mName         : [0mauthd.service
+[32;1mDescription  : [0mauthd daemon service
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mrunning
+[32;1mStartupType  : [0mstatic
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m1495
+[32;1mActiveSince  : [0m08/29/2026 16:56:52
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0mnotify
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mchrony.service
+[32;1mDescription  : [0mchrony, an NTP client/server
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mrunning
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m1208
+[32;1mActiveSince  : [0m08/29/2026 16:56:45
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0mnotify
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mintune-daemon.service
+[32;1mDescription  : [0mIntune daemon
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mindirect
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0msimple
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mos7-backup-firstboot.service
+[32;1mDescription  : [0mOS/7 first-boot backup enablement
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mos7-backup-replicate.service
+[32;1mDescription  : [0mOS/7 backup replication
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mstatic
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mos7-migrations-firstboot.service
+[32;1mDescription  : [0mOS/7 firstboot release migrations
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mdisabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mos7-update-check.service
+[32;1mDescription  : [0mOS/7 update check — stage what the channel offers
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mstatic
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mssh.service
+[32;1mDescription  : [0mOpenBSD Secure Shell server
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mdisabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0mnotify
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0msshd-keygen.service
+[32;1mDescription  : [0mGenerate sshd host keys on first boot
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0msshd@sshd-keygen.service
+[32;1mDescription  : [0mOpenBSD Secure Shell server per-connection daemon
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mstatic
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0mexec
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0msystemd-resolved.service
+[32;1mDescription  : [0mNetwork Name Resolution
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mrunning
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m636
+[32;1mActiveSince  : [0m08/29/2026 16:56:43
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0mnotify-reload
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mzfs-import-cache.service
+[32;1mDescription  : [0mImport ZFS pools by cache file
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mexited
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m797
+[32;1mActiveSince  : [0m08/29/2026 16:56:43
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mzfs-load-module.service
+[32;1mDescription  : [0mInstall ZFS kernel module
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mexited
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m795
+[32;1mActiveSince  : [0m08/29/2026 16:56:43
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mzfs-mount.service
+[32;1mDescription  : [0mMount ZFS filesystems
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mexited
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m895
+[32;1mActiveSince  : [0m08/29/2026 16:56:44
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mzfs-share.service
+[32;1mDescription  : [0mZFS file system shares
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mexited
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m1224
+[32;1mActiveSince  : [0m08/29/2026 16:56:45
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mzfs-volume-wait.service
+[32;1mDescription  : [0mWait for ZFS Volume (zvol) links in /dev
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mexited
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m896
+[32;1mActiveSince  : [0m08/29/2026 16:56:44
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mzfs-zed.service
+[32;1mDescription  : [0mZFS Event Daemon (zed)
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mrunning
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m1225
+[32;1mActiveSince  : [0m08/29/2026 16:56:45
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0msimple
+[32;1mHealthy      : [0mTrue
+
+[6n
+PS /home/os7admin> [?1h[6n

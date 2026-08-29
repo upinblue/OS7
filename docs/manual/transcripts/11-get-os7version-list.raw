@@ -1,0 +1,23 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7V[6n[24;88H[24;80HGet-OS7Ve[6n[24;89H[24;80HGet-OS7Ver[6n[24;90H[24;80HGet-OS7Vers[6n[24;91H[24;80HGet-OS7Versi[6n[24;92H[24;80HGet-OS7Versio[6n[24;93H[24;80HGet-OS7Version[6n[24;94H[24;80HGet-OS7Version [6n[24;95H[24;80HGet-OS7Version |[6n[24;96H[24;80HGet-OS7Version | [6n[24;97H[24;80HGet-OS7Version | F[6n[24;98H[24;80HGet-OS7Version | Fo[6n[24;99H[24;80HGet-OS7Version | For[6n[24;100H[24;80HGet-OS7Version | Form[6n[24;101H[24;80HGet-OS7Version | Forma[6n[24;102H[24;80HGet-OS7Version | Format[6n[24;103H[24;80HGet-OS7Version | Format-[6n[24;104H[24;80HGet-OS7Version | Format-L[6n[24;105H[24;80HGet-OS7Version | Format-Li[6n[24;106H[24;80HGet-OS7Version | Format-Lis[6n[24;107H[24;80HGet-OS7Version | Format-List[6n[24;108H[24;80HGet-OS7Version | Format-List [6n[24;109H[24;80HGet-OS7Version | Format-List *[6n[24;110H
+[?1l
+[32;1mProductName  : [0mOS/7
+[32;1mKnown        : [0mTrue
+[32;1mVersion      : [0m1.0.0
+[32;1mBuild        : [0m148
+[32;1mFullVersion  : [0m1.0.0.148
+[32;1mChannel      : [0mdevelopment
+[32;1mEdition      : [0mServer
+[32;1mArchitecture : [0mamd64
+[32;1mBaseRelease  : [0m26.04
+[32;1mBuilt        : [0m08/28/2026 11:11:40
+[32;1mReproducible : [0mTrue
+[32;1mShort        : [0m1.0.0 (development)
+[32;1mFull         : [0m1.0.0.148 (development)
+[32;1mDisplay      : [0mOS/7 1.0.0 (development)
+[32;1mDrift        : [0m
+[32;1mManifestPath : [0m/usr/lib/os7/release.json
+
+[6n
+PS /home/os7admin> [?1h[6n

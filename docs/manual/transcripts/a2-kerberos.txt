@@ -1,0 +1,6 @@
+Known Reason              Principal Ticket
+----- ------              --------- ------
+ True no credential cache           {}
+
+
+PS /home/os7admin>

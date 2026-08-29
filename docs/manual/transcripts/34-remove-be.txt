@@ -1,0 +1,5 @@
+ZFS-STEP destroy bpool/BOOT/demo
+ZFS-STEP destroy rpool/ROOT/demo
+OS7-STEP boot environment demo destroyed
+
+PS /home/os7admin>

@@ -1,0 +1,24 @@
+[  OK  ] Finished setvtrgb.service - Set console scheme.
+[  OK  ] Created slice system-getty.slice - Slice /system/getty.
+[  OK  ] Started getty@tty1.service - Getty on tty1.
+[  OK  ] Reached target getty.target - Login Prompts.
+[  OK  ] Started cups.service - CUPS Scheduler.
+[  OK  ] Reached target printer.target - Printer Support.
+         Starting authd.service - authd daemon service...
+[  OK  ] Started snapd.service - Snap Daemon.
+[  OK  ] Finished systemd-networkd-wait-onl…ce - Wait for Network to be Online.
+[  OK  ] Reached target network-online.target - Network is Online.
+[  OK  ] Started update-notifier-download.t…hat failed at package install time.
+[  OK  ] Started update-notifier-motd.timer… a new version of Ubuntu available.
+[  OK  ] Reached target timers.target - Timer Units.
+[  OK  ] Started cups-browsed.service - Mak…te CUPS printers available locally.
+
+OS/7 1.0.0 (development) os7-s5 ttyS0
+
+os7-s5 login: os7admin
+Password:
+OS/7 1.0.0 (development)
+kernel 7.0.0-30-generic (x86_64), boot environment os7_1.0.0.148_202608281306
+
+
+PS /home/os7admin>

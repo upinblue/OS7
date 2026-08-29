@@ -1,0 +1,16 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-M[6n[24;85H[24;80HGet-Mo[6n[24;86H[24;80HGet-Mod[6n[24;87H[24;80HGet-Modu[6n[24;88H[24;80HGet-Modul[6n[24;89H[24;80HGet-Module[6n[24;90H[24;80HGet-Module [6n[24;91H[24;80HGet-Module -[6n[24;92H[24;80HGet-Module -L[6n[24;93H[24;80HGet-Module -Li[6n[24;94H[24;80HGet-Module -Lis[6n[24;95H[24;80HGet-Module -List[6n[24;96H[24;80HGet-Module -ListA[6n[24;97H[24;80HGet-Module -ListAv[6n[24;98H[24;80HGet-Module -ListAva[6n[24;99H[24;80HGet-Module -ListAvai[6n[24;100H[24;80HGet-Module -ListAvail[6n[24;101H[24;80HGet-Module -ListAvaila[6n[24;102H[24;80HGet-Module -ListAvailab[6n[24;103H[24;80HGet-Module -ListAvailabl[6n[24;104H[24;80HGet-Module -ListAvailable[6n[24;105H[24;80HGet-Module -ListAvailable [6n[24;106H[24;80HGet-Module -ListAvailable O[6n[24;107H[24;80HGet-Module -ListAvailable OS[6n[24;108H[24;80HGet-Module -ListAvailable OS7[6n[24;109H[24;80HGet-Module -ListAvailable OS7,[6n[24;110H[24;80HGet-Module -ListAvailable OS7,Z[6n[24;111H[24;80HGet-Module -ListAvailable OS7,Zf[6n[24;112H[24;80HGet-Module -ListAvailable OS7,Zfs[6n[24;113H[24;80HGet-Module -ListAvailable OS7,Zfs,[6n[24;114H[24;80HGet-Module -ListAvailable OS7,Zfs,N[6n[24;115H[24;80HGet-Module -ListAvailable OS7,Zfs,Ne[6n[24;116H[24;80HGet-Module -ListAvailable OS7,Zfs,Net[6n[24;117H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,[6n[24;118H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,T[6n[24;119H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Ti[6n[24;120H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Tim[6n[24;121H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time[6n[24;122H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,[6n[24;123H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,S[6n[24;124H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,Sy[6n[24;125H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,Sys[6n[24;126H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,Syst[6n[24;127H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,Syste[6n[24;128H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,System[6n[24;129H[24;80HGet-Module -ListAvailable OS7,Zfs,Net,Time,Systemd[6n[24;130H
+[?1l
+    Directory: /usr/local/share/powershell/Modules
+
+[32;1mModuleType[0m[32;1m Version   [0m [32;1;3mPreRelease[0m[32;1m Name                               [0m [32;1;3mPSEdition[0m
+[32;1m----------[0m [32;1m-------   [0m [32;1m----------[0m [32;1m----                               [0m [32;1m---------[0m
+Script     1.0.0.148             Net                                 Desk     
+Script     1.0.0.148             OS7                                 Desk     
+Script     1.0.0.148             Systemd                             Desk     
+Script     1.0.0.148             Time                                Desk     
+Script     1.0.0.148             Zfs                                 Desk     
+
+[6n
+PS /home/os7admin> [?1h[6n

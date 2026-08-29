@@ -1,0 +1,8 @@
+Path       : /home/os7admin
+Dataset    : rpool/USERDATA/os7admin_a5e6c1bd
+OwnDataset : True
+Covered    : True
+Reason     : covered
+
+
+PS /home/os7admin>

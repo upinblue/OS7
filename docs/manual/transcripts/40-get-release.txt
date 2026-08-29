@@ -1,0 +1,9 @@
+OperationStopped: /usr/local/share/powershell/Modules/OS7/OS7.Update.ps1:417
+Line |
+ 417 |          throw [System.InvalidOperationException]::new(
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | no release index for channel 'development' at file:///usr/lib/os7/repo.
+     | Either the channel is wrong or this machine is pointed at something that
+     | is not an OS/7 repository — see Set-OS7UpdateChannel.
+
+PS /home/os7admin>

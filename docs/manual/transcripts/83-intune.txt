@@ -1,0 +1,20 @@
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} intune-portal
+
+Installed      : True
+Version        : 1.2607.4-resolute
+Binaries       : {intune-portal, intune-daemon, intune-agent}
+PamConfigured  : True
+DaemonState    : inactive
+DaemonHealthy  : True
+SocketPath     : /run/intune/daemon.socket
+SocketPresent  : True
+Enrolled       :
+EnrolledReason : intune-agent exposes no status interface (measured: its option
+                 s are --interactive, --socket-path, --help, --version), and no
+                  enrolled machine has ever been available to learn the on-disk
+                  state from. Enrolment is visible in the Intune portal, not he
+                 re.
+Detail         : installed and wired; intune-daemon.service is inactive
+
+
+PS /home/os7admin>

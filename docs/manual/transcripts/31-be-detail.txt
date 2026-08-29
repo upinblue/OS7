@@ -1,0 +1,14 @@
+Name        : os7_1.0.0.148_202608281306
+Release     : 1.0.0.148
+Created     : 08/28/2026 15:06:37
+Active      : True
+Running     : True
+Menu        : True
+Complete    : True
+RootDataset : rpool/ROOT/os7_1.0.0.148_202608281306
+BootDataset : bpool/BOOT/os7_1.0.0.148_202608281306
+Used        : 4821544960
+Origin      :
+
+
+PS /home/os7admin>

@@ -1,0 +1,24 @@
+Created     : 08/28/2026 15:06:37
+Active      : True
+Running     : True
+Menu        : True
+Complete    : True
+RootDataset : rpool/ROOT/os7_1.0.0.148_202608281306
+BootDataset : bpool/BOOT/os7_1.0.0.148_202608281306
+Used        : 4821544960
+Origin      :
+
+Name        : demo
+Release     :
+Created     : 08/29/2026 18:57:47
+Active      : False
+Running     : False
+Menu        : False
+Complete    : True
+RootDataset : rpool/ROOT/demo
+BootDataset : bpool/BOOT/demo
+Used        : 32768
+Origin      : rpool/ROOT/os7_1.0.0.148_202608281306@demo
+
+
+PS /home/os7admin>

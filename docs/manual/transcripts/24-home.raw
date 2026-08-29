@@ -1,0 +1,19 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7H[6n[24;88H[24;80HGet-OS7Ho[6n[24;89H[24;80HGet-OS7Hom[6n[24;90H[24;80HGet-OS7Home[6n[24;91H[24;80HGet-OS7Home [6n[24;92H[24;80HGet-OS7Home |[6n[24;93H[24;80HGet-OS7Home | [6n[24;94H[24;80HGet-OS7Home | F[6n[24;95H[24;80HGet-OS7Home | Fo[6n[24;96H[24;80HGet-OS7Home | For[6n[24;97H[24;80HGet-OS7Home | Form[6n[24;98H[24;80HGet-OS7Home | Forma[6n[24;99H[24;80HGet-OS7Home | Format[6n[24;100H[24;80HGet-OS7Home | Format-[6n[24;101H[24;80HGet-OS7Home | Format-L[6n[24;102H[24;80HGet-OS7Home | Format-Li[6n[24;103H[24;80HGet-OS7Home | Format-Lis[6n[24;104H[24;80HGet-OS7Home | Format-List[6n[24;105H
+[?1lOS7-STEP run: stat -c %d /
+OS7-STEP run: getent passwd os7admin
+OS7-STEP run: stat -c %d /home/os7admin
+
+[32;1mPath          : [0m/home/os7admin
+[32;1mAccount       : [0mos7admin
+[32;1mUid           : [0m1000
+[32;1mDataset       : [0mrpool/USERDATA/os7admin_a5e6c1bd
+[32;1mOwnDataset    : [0mTrue
+[32;1mOwnFilesystem : [0mTrue
+[32;1mAgrees        : [0mTrue
+[32;1mDeviceId      : [0m63
+[32;1mNote          : [0mon its own dataset, outside the boot environment
+
+[6n
+PS /home/os7admin> [?1h[6n

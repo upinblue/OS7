@@ -1,0 +1,33 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-Z[6n[24;85H[24;80HGet-Zf[6n[24;86H[24;80HGet-Zfs[6n[24;87H[24;80HGet-ZfsD[6n[24;88H[24;80HGet-ZfsDa[6n[24;89H[24;80HGet-ZfsDat[6n[24;90H[24;80HGet-ZfsData[6n[24;91H[24;80HGet-ZfsDatas[6n[24;92H[24;80HGet-ZfsDatase[6n[24;93H[24;80HGet-ZfsDataset[6n[24;94H[24;80HGet-ZfsDataset [6n[24;95H[24;80HGet-ZfsDataset |[6n[24;96H[24;80HGet-ZfsDataset | [6n[24;97H[24;80HGet-ZfsDataset | F[6n[24;98H[24;80HGet-ZfsDataset | Fo[6n[24;99H[24;80HGet-ZfsDataset | For[6n[24;100H[24;80HGet-ZfsDataset | Form[6n[24;101H[24;80HGet-ZfsDataset | Forma[6n[24;102H[24;80HGet-ZfsDataset | Format[6n[24;103H[24;80HGet-ZfsDataset | Format-[6n[24;104H[24;80HGet-ZfsDataset | Format-T[6n[24;105H[24;80HGet-ZfsDataset | Format-Ta[6n[24;106H[24;80HGet-ZfsDataset | Format-Tab[6n[24;107H[24;80HGet-ZfsDataset | Format-Tabl[6n[24;108H[24;80HGet-ZfsDataset | Format-Table[6n[24;109H[24;80HGet-ZfsDataset | Format-Table [6n[24;110H[24;80HGet-ZfsDataset | Format-Table N[6n[24;111H[24;80HGet-ZfsDataset | Format-Table Na[6n[24;112H[24;80HGet-ZfsDataset | Format-Table Nam[6n[24;113H[24;80HGet-ZfsDataset | Format-Table Name[6n[24;114H[24;80HGet-ZfsDataset | Format-Table Name,[6n[24;115H[24;80HGet-ZfsDataset | Format-Table Name,M[6n[24;116H[24;80HGet-ZfsDataset | Format-Table Name,Mo[6n[24;117H[24;80HGet-ZfsDataset | Format-Table Name,Mou[6n[24;118H[24;80HGet-ZfsDataset | Format-Table Name,Moun[6n[24;119H[24;80HGet-ZfsDataset | Format-Table Name,Mount[6n[24;120H[24;80HGet-ZfsDataset | Format-Table Name,Mountp[6n[24;121H[24;80HGet-ZfsDataset | Format-Table Name,Mountpo[6n[24;122H[24;80HGet-ZfsDataset | Format-Table Name,Mountpoi[6n[24;123H[24;80HGet-ZfsDataset | Format-Table Name,Mountpoin[6n[24;124H[24;80HGet-ZfsDataset | Format-Table Name,Mountpoint[6n[24;125H
+[?1l
+[32;1mName                                              [0m[32;1m Mountpoint[0m
+[32;1m----                                              [0m [32;1m----------[0m
+bpool                                              /boot
+bpool/BOOT                                         
+bpool/BOOT/os7_1.0.0.148_202608281306              /boot
+rpool                                              /
+rpool/DATA                                         
+rpool/DATA/lib                                     
+rpool/DATA/lib/authd                               /var/lib/authd
+rpool/DATA/lib/azcmagent                           /var/opt/azcmagent
+rpool/DATA/lib/networkmanager                      /var/lib/NetworkManager
+rpool/DATA/log                                     /var/log
+rpool/DATA/snapd                                   /var/lib/snapd
+rpool/DATA/spool                                   /var/spool
+rpool/DATA/srv                                     /srv
+rpool/DATA/tmp                                     /var/tmp
+rpool/ROOT                                         
+rpool/ROOT/os7_1.0.0.148_202608281306              /
+rpool/ROOT/os7_1.0.0.148_202608281306/var          /var
+rpool/ROOT/os7_1.0.0.148_202608281306/var/cache    /var/cache
+rpool/ROOT/os7_1.0.0.148_202608281306/var/lib      /var/lib
+rpool/ROOT/os7_1.0.0.148_202608281306/var/lib/apt  /var/lib/apt
+rpool/ROOT/os7_1.0.0.148_202608281306/var/lib/dpkg /var/lib/dpkg
+rpool/USERDATA                                     
+rpool/USERDATA/os7admin_a5e6c1bd                   /home/os7admin
+rpool/USERDATA/root_a5e6c1bd                       /root
+
+[6n
+PS /home/os7admin> [?1h[6n

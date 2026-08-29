@@ -1,0 +1,12 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7R[6n[24;88H[24;80HGet-OS7Re[6n[24;89H[24;80HGet-OS7Rel[6n[24;90H[24;80HGet-OS7Rele[6n[24;91H[24;80HGet-OS7Relea[6n[24;92H[24;80HGet-OS7Releas[6n[24;93H[24;80HGet-OS7Release[6n[24;94H
+[?1l[31;1mOperationStopped: [0m/usr/local/share/powershell/Modules/OS7/OS7.Update.ps1:417[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m 417 | [0m         [36;1mthrow [System.InvalidOperationException]::new([0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mno release index for channel 'development' at file:///usr/lib/os7/repo.[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mEither the channel is wrong or this machine is pointed at something that[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mis not an OS/7 repository — see Set-OS7UpdateChannel.[0m
+[6n
+PS /home/os7admin> [?1h[6n

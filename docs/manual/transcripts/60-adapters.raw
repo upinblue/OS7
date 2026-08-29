@@ -1,0 +1,19 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7N[6n[24;88H[24;80HGet-OS7Ne[6n[24;89H[24;80HGet-OS7Net[6n[24;90H[24;80HGet-OS7Netw[6n[24;91H[24;80HGet-OS7Netwo[6n[24;92H[24;80HGet-OS7Networ[6n[24;93H[24;80HGet-OS7Network[6n[24;94H[24;80HGet-OS7NetworkA[6n[24;95H[24;80HGet-OS7NetworkAd[6n[24;96H[24;80HGet-OS7NetworkAda[6n[24;97H[24;80HGet-OS7NetworkAdap[6n[24;98H[24;80HGet-OS7NetworkAdapt[6n[24;99H[24;80HGet-OS7NetworkAdapte[6n[24;100H[24;80HGet-OS7NetworkAdapter[6n[24;101H
+[?1lOS7-STEP network layer: /usr/local/share/powershell/Modules/Net/Net.psd1
+
+[32;1mName         : [0menp0s2
+[32;1mKind         : [0mEthernet
+[32;1mMacAddress   : [0m52:54:00:12:34:56
+[32;1mOperState    : [0mUP
+[32;1mUp           : [0mTrue
+[32;1mCarrier      : [0mTrue
+[32;1mMtu          : [0m1500
+[32;1mIPv4Address  : [0m{10.0.2.15/24}
+[32;1mIPv6Address  : [0m{fec0::5054:ff:fe12:3456/64, fe80::5054:ff:fe12:3456/64}
+[32;1mGateway      : [0m10.0.2.2
+[32;1mRadioBlocked : [0m
+
+[6n
+PS /home/os7admin> [?1h[6n

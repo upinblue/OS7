@@ -1,0 +1,19 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7B[6n[24;88H[24;80HGet-OS7Ba[6n[24;89H[24;80HGet-OS7Bac[6n[24;90H[24;80HGet-OS7Back[6n[24;91H[24;80HGet-OS7Backu[6n[24;92H[24;80HGet-OS7Backup[6n[24;93H[24;80HGet-OS7BackupP[6n[24;94H[24;80HGet-OS7BackupPo[6n[24;95H[24;80HGet-OS7BackupPol[6n[24;96H[24;80HGet-OS7BackupPoli[6n[24;97H[24;80HGet-OS7BackupPolic[6n[24;98H[24;80HGet-OS7BackupPolicy[6n[24;99H[24;80HGet-OS7BackupPolicy [6n[24;100H[24;80HGet-OS7BackupPolicy |[6n[24;101H[24;80HGet-OS7BackupPolicy | [6n[24;102H[24;80HGet-OS7BackupPolicy | F[6n[24;103H[24;80HGet-OS7BackupPolicy | Fo[6n[24;104H[24;80HGet-OS7BackupPolicy | For[6n[24;105H[24;80HGet-OS7BackupPolicy | Form[6n[24;106H[24;80HGet-OS7BackupPolicy | Forma[6n[24;107H[24;80HGet-OS7BackupPolicy | Format[6n[24;108H[24;80HGet-OS7BackupPolicy | Format-[6n[24;109H[24;80HGet-OS7BackupPolicy | Format-L[6n[24;110H[24;80HGet-OS7BackupPolicy | Format-Li[6n[24;111H[24;80HGet-OS7BackupPolicy | Format-Lis[6n[24;112H[24;80HGet-OS7BackupPolicy | Format-List[6n[24;113H
+[?1l
+[32;1mConfigured  : [0mTrue
+[32;1mEnabled     : [0mTrue
+[32;1mConfigPath  : [0m/etc/os7/backup.json
+[32;1mSanoidConf  : [0m/etc/sanoid/sanoid.conf
+[32;1mSources     : [0m{@{Dataset=rpool/USERDATA; Recursive=True; ChildrenOnly=True; Ret
+              ention=System.Collections.Specialized.OrderedDictionary; Exists=T
+              rue; Datasets=System.Object[]; Snapshots=8; Newest=08/29/2026 18:
+              45:02}, @{Dataset=rpool/DATA/srv; Recursive=True; ChildrenOnly=Fa
+              lse; Retention=System.Collections.Specialized.OrderedDictionary; 
+              Exists=True; Datasets=System.Object[]; Snapshots=4; Newest=08/29/
+              2026 18:45:02}}
+[32;1mTargetCount : [0m0
+
+[6n
+PS /home/os7admin> [?1h[6n

@@ -1,0 +1,4 @@
+Get-OS7BackupStatus: The property 'NewestReplicated' cannot be found on this obj
+ect. Verify that the property exists.
+
+PS /home/os7admin>

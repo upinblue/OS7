@@ -1,0 +1,24 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7E[6n[24;88H[24;80HGet-OS7En[6n[24;89H[24;80HGet-OS7Ent[6n[24;90H[24;80HGet-OS7Entr[6n[24;91H[24;80HGet-OS7Entra[6n[24;92H[24;80HGet-OS7EntraS[6n[24;93H[24;80HGet-OS7EntraSt[6n[24;94H[24;80HGet-OS7EntraSta[6n[24;95H[24;80HGet-OS7EntraStat[6n[24;96H[24;80HGet-OS7EntraStatu[6n[24;97H[24;80HGet-OS7EntraStatus[6n[24;98H[24;80HGet-OS7EntraStatus [6n[24;99H[24;80HGet-OS7EntraStatus |[6n[24;100H[24;80HGet-OS7EntraStatus | [6n[24;101H[24;80HGet-OS7EntraStatus | F[6n[24;102H[24;80HGet-OS7EntraStatus | Fo[6n[24;103H[24;80HGet-OS7EntraStatus | For[6n[24;104H[24;80HGet-OS7EntraStatus | Form[6n[24;105H[24;80HGet-OS7EntraStatus | Forma[6n[24;106H[24;80HGet-OS7EntraStatus | Format[6n[24;107H[24;80HGet-OS7EntraStatus | Format-[6n[24;108H[24;80HGet-OS7EntraStatus | Format-L[6n[24;109H[24;80HGet-OS7EntraStatus | Format-Li[6n[24;110H[24;80HGet-OS7EntraStatus | Format-Lis[6n[24;111H[24;80HGet-OS7EntraStatus | Format-List[6n[24;112H
+[?1lOS7-STEP run: dpkg-query -W -f=${Status} ${Version} authd
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} microsoft-identity-broker
+
+[32;1mAuthdInstalled        : [0mTrue
+[32;1mAuthdVersion          : [0m0.6.1ubuntu0.1
+[32;1mIdentityBrokerVersion : [0m3.0.2-resolute
+[32;1mBrokerRegistered      : [0mFalse
+[32;1mBrokers               : [0m{}
+[32;1mBrokerDirectory       : [0m/etc/authd/brokers.d
+[32;1mPamConfigured         : [0mTrue
+[32;1mServiceState          : [0mactive
+[32;1mServiceHealthy        : [0mTrue
+[32;1mReady                 : [0mFalse
+[32;1mDetail                : [0mauthd is installed and PAM is wired to it, but /etc/aut
+                        hd/brokers.d is empty — there is no Entra broker for it
+                         to talk to, so a sign-in will fail as though the passw
+                        ord were wrong. See C8a: authd-msentraid is a snap and 
+                        is not seeded into the image.
+
+[6n
+PS /home/os7admin> [?1h[6n

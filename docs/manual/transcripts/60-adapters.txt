@@ -1,0 +1,16 @@
+OS7-STEP network layer: /usr/local/share/powershell/Modules/Net/Net.psd1
+
+Name         : enp0s2
+Kind         : Ethernet
+MacAddress   : 52:54:00:12:34:56
+OperState    : UP
+Up           : True
+Carrier      : True
+Mtu          : 1500
+IPv4Address  : {10.0.2.15/24}
+IPv6Address  : {fec0::5054:ff:fe12:3456/64, fe80::5054:ff:fe12:3456/64}
+Gateway      : 10.0.2.2
+RadioBlocked :
+
+
+PS /home/os7admin>

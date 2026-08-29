@@ -1,0 +1,24 @@
+OffsetSeconds      : 0.000527687
+LeapStatus         : Normal
+WithinKerberosSkew : True
+MaxSkewSeconds     : 300
+Servers            : {1.ntp.ubuntu.com, 2.ntp.ubuntu.com, 3.ntp.ubuntu.com, 4.n
+                     tp.ubuntu.com…}
+Sources            : {@{Mode=Server; State=Excluded; Name=185.125.190.122; Stra
+                     tum=2; PollInterval=6; Reachability=37; LastReceived=44; O
+                     ffsetSeconds=0.000179834; MeasuredOffsetSeconds=0.00017983
+                     4; EstimatedErrorSeconds=0.014434405}, @{Mode=Server; Stat
+                     e=Selected; Name=185.125.190.123; Stratum=2; PollInterval=
+                     6; Reachability=37; LastReceived=45; OffsetSeconds=-5.461E
+                     -05; MeasuredOffsetSeconds=-0.001039739; EstimatedErrorSec
+                     onds=0.015128523}, @{Mode=Server; State=Excluded; Name=91.
+                     189.91.112; Stratum=2; PollInterval=6; Reachability=37; La
+                     stReceived=45; OffsetSeconds=0.006684604; MeasuredOffsetSe
+                     conds=0.005699474; EstimatedErrorSeconds=0.07821878}, @{Mo
+                     de=Server; State=Excluded; Name=91.189.91.113; Stratum=2;
+                     PollInterval=6; Reachability=37; LastReceived=44; OffsetSe
+                     conds=0.006703952; MeasuredOffsetSeconds=0.006703952; Esti
+                     matedErrorSeconds=0.076403588}…}
+
+
+PS /home/os7admin>

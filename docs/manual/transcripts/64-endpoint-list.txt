@@ -1,0 +1,9 @@
+Name   Host                      Port
+----   ----                      ----
+Entra  login.microsoftonline.com  443
+Graph  graph.microsoft.com        443
+Intune manage.microsoft.com       443
+Arc    management.azure.com       443
+
+
+PS /home/os7admin>

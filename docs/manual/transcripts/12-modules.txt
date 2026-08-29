@@ -1,0 +1,12 @@
+    Directory: /usr/local/share/powershell/Modules
+
+ModuleType Version    PreRelease Name                                PSEdition
+---------- -------    ---------- ----                                ---------
+Script     1.0.0.148             Net                                 Desk
+Script     1.0.0.148             OS7                                 Desk
+Script     1.0.0.148             Systemd                             Desk
+Script     1.0.0.148             Time                                Desk
+Script     1.0.0.148             Zfs                                 Desk
+
+
+PS /home/os7admin>

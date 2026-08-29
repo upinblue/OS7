@@ -1,0 +1,32 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7T[6n[24;88H[24;80HGet-OS7Ti[6n[24;89H[24;80HGet-OS7Tim[6n[24;90H[24;80HGet-OS7Time[6n[24;91H[24;80HGet-OS7TimeS[6n[24;92H[24;80HGet-OS7TimeSy[6n[24;93H[24;80HGet-OS7TimeSyn[6n[24;94H[24;80HGet-OS7TimeSync[6n[24;95H[24;80HGet-OS7TimeSynch[6n[24;96H[24;80HGet-OS7TimeSynchr[6n[24;97H[24;80HGet-OS7TimeSynchro[6n[24;98H[24;80HGet-OS7TimeSynchron[6n[24;99H[24;80HGet-OS7TimeSynchroni[6n[24;100H[24;80HGet-OS7TimeSynchroniz[6n[24;101H[24;80HGet-OS7TimeSynchroniza[6n[24;102H[24;80HGet-OS7TimeSynchronizat[6n[24;103H[24;80HGet-OS7TimeSynchronizati[6n[24;104H[24;80HGet-OS7TimeSynchronizatio[6n[24;105H[24;80HGet-OS7TimeSynchronization[6n[24;106H[24;80HGet-OS7TimeSynchronization [6n[24;107H[24;80HGet-OS7TimeSynchronization |[6n[24;108H[24;80HGet-OS7TimeSynchronization | [6n[24;109H[24;80HGet-OS7TimeSynchronization | F[6n[24;110H[24;80HGet-OS7TimeSynchronization | Fo[6n[24;111H[24;80HGet-OS7TimeSynchronization | For[6n[24;112H[24;80HGet-OS7TimeSynchronization | Form[6n[24;113H[24;80HGet-OS7TimeSynchronization | Forma[6n[24;114H[24;80HGet-OS7TimeSynchronization | Format[6n[24;115H[24;80HGet-OS7TimeSynchronization | Format-[6n[24;116H[24;80HGet-OS7TimeSynchronization | Format-L[6n[24;117H[24;80HGet-OS7TimeSynchronization | Format-Li[6n[24;118H[24;80HGet-OS7TimeSynchronization | Format-Lis[6n[24;119H[24;80HGet-OS7TimeSynchronization | Format-List[6n[24;120H
+[?1l
+[32;1mSynchronised       : [0mTrue
+[32;1mReason             : [0m
+[32;1mSource             : [0m185.125.190.123
+[32;1mStratum            : [0m3
+[32;1mOffsetSeconds      : [0m0.000527687
+[32;1mLeapStatus         : [0mNormal
+[32;1mWithinKerberosSkew : [0mTrue
+[32;1mMaxSkewSeconds     : [0m300
+[32;1mServers            : [0m{1.ntp.ubuntu.com, 2.ntp.ubuntu.com, 3.ntp.ubuntu.com, 4.n
+                     tp.ubuntu.com…}
+[32;1mSources            : [0m{@{Mode=Server; State=Excluded; Name=185.125.190.122; Stra
+                     tum=2; PollInterval=6; Reachability=37; LastReceived=44; O
+                     ffsetSeconds=0.000179834; MeasuredOffsetSeconds=0.00017983
+                     4; EstimatedErrorSeconds=0.014434405}, @{Mode=Server; Stat
+                     e=Selected; Name=185.125.190.123; Stratum=2; PollInterval=
+                     6; Reachability=37; LastReceived=45; OffsetSeconds=-5.461E
+                     -05; MeasuredOffsetSeconds=-0.001039739; EstimatedErrorSec
+                     onds=0.015128523}, @{Mode=Server; State=Excluded; Name=91.
+                     189.91.112; Stratum=2; PollInterval=6; Reachability=37; La
+                     stReceived=45; OffsetSeconds=0.006684604; MeasuredOffsetSe
+                     conds=0.005699474; EstimatedErrorSeconds=0.07821878}, @{Mo
+                     de=Server; State=Excluded; Name=91.189.91.113; Stratum=2; 
+                     PollInterval=6; Reachability=37; LastReceived=44; OffsetSe
+                     conds=0.006703952; MeasuredOffsetSeconds=0.006703952; Esti
+                     matedErrorSeconds=0.076403588}…}
+
+[6n
+PS /home/os7admin> [?1h[6n

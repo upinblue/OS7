@@ -1,0 +1,18 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7A[6n[24;88H[24;80HGet-OS7Ar[6n[24;89H[24;80HGet-OS7Arc[6n[24;90H[24;80HGet-OS7ArcS[6n[24;91H[24;80HGet-OS7ArcSt[6n[24;92H[24;80HGet-OS7ArcSta[6n[24;93H[24;80HGet-OS7ArcStat[6n[24;94H[24;80HGet-OS7ArcStatu[6n[24;95H[24;80HGet-OS7ArcStatus[6n[24;96H[24;80HGet-OS7ArcStatus [6n[24;97H[24;80HGet-OS7ArcStatus |[6n[24;98H[24;80HGet-OS7ArcStatus | [6n[24;99H[24;80HGet-OS7ArcStatus | F[6n[24;100H[24;80HGet-OS7ArcStatus | Fo[6n[24;101H[24;80HGet-OS7ArcStatus | For[6n[24;102H[24;80HGet-OS7ArcStatus | Form[6n[24;103H[24;80HGet-OS7ArcStatus | Forma[6n[24;104H[24;80HGet-OS7ArcStatus | Format[6n[24;105H[24;80HGet-OS7ArcStatus | Format-[6n[24;106H[24;80HGet-OS7ArcStatus | Format-L[6n[24;107H[24;80HGet-OS7ArcStatus | Format-Li[6n[24;108H[24;80HGet-OS7ArcStatus | Format-Lis[6n[24;109H[24;80HGet-OS7ArcStatus | Format-List[6n[24;110H
+[?1lOS7-STEP run: dpkg-query -W -f=${Status} ${Version} azcmagent
+
+[32;1mInstalled     : [0mFalse
+[32;1mVersion       : [0m
+[32;1mStagedPackage : [0m{azcmagent_1.67.03504.1320_amd64.deb}
+[32;1mStagedIn      : [0m/var/cache/os7/packages
+[32;1mRaw           : [0m
+[32;1mReason        : [0m
+[32;1mConnected     : [0m
+[32;1mDetail        : [0mazcmagent is not installed; azcmagent_1.67.03504.1320_amd64.deb
+                 is staged in /var/cache/os7/packages for the installer to plac
+                e, which is deliberate — its postinst needs a running systemd
+
+[6n
+PS /home/os7admin> [?1h[6n

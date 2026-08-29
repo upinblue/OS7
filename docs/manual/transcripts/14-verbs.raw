@@ -1,0 +1,19 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-C[6n[24;85H[24;80HGet-Co[6n[24;86H[24;80HGet-Com[6n[24;87H[24;80HGet-Comm[6n[24;88H[24;80HGet-Comma[6n[24;89H[24;80HGet-Comman[6n[24;90H[24;80HGet-Command[6n[24;91H[24;80HGet-Command [6n[24;92H[24;80HGet-Command -[6n[24;93H[24;80HGet-Command -M[6n[24;94H[24;80HGet-Command -Mo[6n[24;95H[24;80HGet-Command -Mod[6n[24;96H[24;80HGet-Command -Modu[6n[24;97H[24;80HGet-Command -Modul[6n[24;98H[24;80HGet-Command -Module[6n[24;99H[24;80HGet-Command -Module [6n[24;100H[24;80HGet-Command -Module O[6n[24;101H[24;80HGet-Command -Module OS[6n[24;102H[24;80HGet-Command -Module OS7[6n[24;103H[24;80HGet-Command -Module OS7 [6n[24;104H[24;80HGet-Command -Module OS7 -[6n[24;105H[24;80HGet-Command -Module OS7 -V[6n[24;106H[24;80HGet-Command -Module OS7 -Ve[6n[24;107H[24;80HGet-Command -Module OS7 -Ver[6n[24;108H[24;80HGet-Command -Module OS7 -Verb[6n[24;109H[24;80HGet-Command -Module OS7 -Verb [6n[24;110H[24;80HGet-Command -Module OS7 -Verb G[6n[24;111H[24;80HGet-Command -Module OS7 -Verb Ge[6n[24;112H[24;80HGet-Command -Module OS7 -Verb Get[6n[24;113H[24;80HGet-Command -Module OS7 -Verb Get [6n[24;114H[24;80HGet-Command -Module OS7 -Verb Get -[6n[24;115H[24;80HGet-Command -Module OS7 -Verb Get -N[6n[24;116H[24;80HGet-Command -Module OS7 -Verb Get -No[6n[24;117H[24;80HGet-Command -Module OS7 -Verb Get -Nou[6n[24;118H[24;80HGet-Command -Module OS7 -Verb Get -Noun[6n[24;119H[24;80HGet-Command -Module OS7 -Verb Get -Noun [6n[24;120H[24;80HGet-Command -Module OS7 -Verb Get -Noun O[6n[24;121H[24;80HGet-Command -Module OS7 -Verb Get -Noun OS[6n[24;122H[24;80HGet-Command -Module OS7 -Verb Get -Noun OS7[6n[24;123H[24;80HGet-Command -Module OS7 -Verb Get -Noun OS7B[6n[24;124H[24;80HGet-Command -Module OS7 -Verb Get -Noun OS7B*[6n[24;125H
+[?1l
+[32;1mCommandType    [0m[32;1m Name                                              [0m[32;1m Version   [0m[32;1m S[0m
+[32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m o[0m
+[32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m u[0m
+[32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m r[0m
+[32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m c[0m
+[32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m e[0m
+[32;1m-----------    [0m [32;1m----                                              [0m [32;1m-------   [0m [32;1m-[0m
+Function        Get-OS7BackupCoverage                              1.0.0.148  O
+Function        Get-OS7BackupPolicy                                1.0.0.148  O
+Function        Get-OS7BackupStatus                                1.0.0.148  O
+Function        Get-OS7BackupTarget                                1.0.0.148  O
+Function        Get-OS7BootEnvironment                             1.0.0.148  O
+
+[6n
+PS /home/os7admin> [?1h[6n

@@ -1,0 +1,246 @@
+# Anhang A  Alle Befehle
+
+Diese Liste wurde **erzeugt, indem die Module gefragt wurden** — jeder Name, jede Beschreibung und jede Parameterliste stammt von `Get-Command` und `Get-Help` auf einer OS/7-Maschine. Was hier fehlt, gibt es nicht; was hier steht, existiert mit genau diesen Parametern.
+
+Die Beschreibungen sind die englischen Originaltexte der Module — es ist derselbe Satz, den `Get-Help <Befehl>` auf der Maschine ausgibt. Eine übersetzte Fassung an dieser Stelle wäre eine zweite Beschreibung neben der, die ein Administrator tatsächlich zu sehen bekommt.
+
+**Pflichtparameter sind fett.** Ein Cmdlet mit mehreren Parametersätzen hat mehrere Pflichtparameter, von denen jeweils nur einer gebraucht wird — `Get-Help <Befehl>` zeigt die Sätze einzeln.
+
+## Die sechs Module
+
+| Modul | Schicht | Befehle |
+|---|---|---|
+| `powershell/Zfs/` | generisch | 26 |
+| `powershell/Net/` | generisch | 11 |
+| `powershell/Time/` | generisch | 9 |
+| `powershell/Systemd/` | generisch | 8 |
+| `powershell/Directory/` | generisch | 36 |
+| `powershell/OS7/` | das Produkt | 95 |
+
+## `Zfs`
+
+ZFS: Pools, Datasets, Snapshots. Kennt nichts von OS/7.
+
+| Befehl | Beschreibung | Parameter |
+|---|---|---|
+| `Clear-ZfsProperty` | Return a property to its inherited or default value. `zfs inherit`. | **Name**, **Property**, Recurse |
+| `Clear-ZpoolLabel` | Remove ZFS's label from a device, so a pool can be created on it again. | **Device**, Force |
+| `Convert-ZfsClone` | Promote a clone so it no longer depends on its origin. `zfs promote`. | **Name** |
+| `Dismount-ZfsDataset` | Unmount a dataset. `zfs unmount`. | Name, All, Force |
+| `Export-Zpool` | Export a pool, so it can be imported elsewhere. | **Name**, Force |
+| `Format-ZfsSize` | A byte count as a human-readable binary size. The display half of Z6. | Size |
+| `Get-ZfsDataset` | Filesystems, volumes and snapshots, as objects. | Name, Type, Recurse, Depth, Property, ComputerName, SshArgument |
+| `Get-ZfsProperty` | Properties of a dataset, one object per property, with their source. | **Name**, Property |
+| `Get-ZfsSnapshot` | Snapshots, as objects. | Name, NoRecurse, ComputerName, SshArgument |
+| `Get-ZfsSpace` | Where a dataset's space has actually gone. | Name, Recurse |
+| `Get-Zpool` | The ZFS storage pools on this system. | Name, ComputerName, SshArgument |
+| `Get-ZpoolStatus` | Pool health with the vdev tree as objects, not as indented text. | Name, Flat |
+| `Import-Zpool` | Import a pool. | Name, All, Directory, AltRoot, Force |
+| `Mount-ZfsDataset` | Mount a dataset, and confirm from ZFS that it is mounted. | Name, All, Overlay |
+| `New-ZfsClone` | Create a writable clone of a snapshot. | **Snapshot**, **Name**, Property, Parents |
+| `New-ZfsDataset` | Create a filesystem or a volume. | **Name**, Property, Size, Parents, Sparse |
+| `New-ZfsSnapshot` | Snapshot a dataset. | **Name**, **SnapshotName**, Recurse, Property |
+| `New-Zpool` | Create a storage pool. | **Name**, **Device**, Layout, Property, FilesystemProperty, AltRoot, Force |
+| `Remove-ZfsDataset` | Destroy a dataset. Irreversible. | **Name**, Recurse |
+| `Remove-ZfsSnapshot` | Destroy a snapshot. Irreversible. | **Name**, Recurse |
+| `Remove-Zpool` | Destroy a pool and everything in it. Irreversible. | **Name**, Force |
+| `Rename-ZfsDataset` | Rename or move a dataset. | **Name**, **NewName**, Parents, Force |
+| `Restore-ZfsSnapshot` | Roll a dataset back to a snapshot. DESTRUCTIVE. | **Name**, Force, DestroyClones |
+| `Set-ZfsProperty` | Set one or more properties on a dataset, and report what ZFS then holds. | **Name**, **Property**, **PropertyName**, **Value** |
+| `Start-ZpoolScrub` | Start, pause or stop a scrub, and report what the pool then says. | **Name**, Stop, Pause |
+| `Test-ZfsModule` | Check the module against recorded real ZFS output, or against real ZFS. | Live, LiveWrite, Pool, FixturePath |
+
+## `Net`
+
+Das Netzwerk: `ip`, netplan, networkd, NetworkManager, resolved.
+
+| Befehl | Beschreibung | Parameter |
+|---|---|---|
+| `Get-NetLink` | The network links this kernel has, with the addresses actually on them. | Name, SysfsRoot |
+| `Get-NetplanConfiguration` | What netplan is configured to do - merged, with the files it was merged from named separately. | RootDir |
+| `Get-NetRadio` | Whether any radio is blocked - and whether that question could be answered at all. | *keine* |
+| `Get-NetRoute` | The routes this kernel has. | Family |
+| `Invoke-NetplanApply` | Runs `netplan apply`. DOES NOT JUDGE WHETHER IT WORKED. | *keine* |
+| `New-NetplanDocument` | Renders a netplan document. A pure function - it touches no file, no interface and no running system. | **Renderer**, **Version**, WrittenBy, InterfaceName, MacAddress, Wireless, **Method**, Address, Gateway, Nameserver, SearchDomain, Ssid, Hidden, Security, Psk, Identity, AnonymousIdentity, Password, CaCertificate |
+| `Remove-NetplanDocument` | Deletes a netplan document. Used to undo a document that did not exist before. | **Path** |
+| `Resolve-NetSrvRecord` | The SRV records for a name - and whether the resolver could be asked at all. | **Name**, Server, Tool |
+| `Set-NetplanDocument` | Writes a netplan document, and hands back what was there before. | **Path**, **Content** |
+| `Test-NetModule` | Checks this module's own contract. Needs no network and no root. | FixturePath |
+| `Wait-NetLinkAddress` | Waits for a link to have an address, and answers by asking the kernel. | **Name**, TimeoutSeconds, RequireGateway |
+
+## `Time`
+
+Die Uhr: chrony, Zeitzone, Hardware-Uhr.
+
+| Befehl | Beschreibung | Parameter |
+|---|---|---|
+| `Get-ChronySource` | The time sources chrony knows about, and what it thinks of each. | *keine* |
+| `Get-ChronySourceFile` | Where chrony reads NTP sources from, and what is in each file. | Root |
+| `Get-ChronyTracking` | What chrony is doing with this clock - whether it is disciplined, by whom, and how far off it is. | *keine* |
+| `Get-SystemClock` | The clock: local, UTC, and whether the hardware clock is kept in local time. | Root |
+| `Get-SystemTimeZone` | The zone this machine is in, read from the only thing that decides it. | Root |
+| `Set-ChronySource` | Writes one `.sources` file and asks chrony to reload - without restarting it. | **Name**, Server, Pool, Root |
+| `Set-SystemTimeZone` | Sets the zone by writing the symlink, and reads it back. | **Id**, Root |
+| `Sync-ChronyClock` | Tells chronyd to STEP the clock now rather than slew it. | *keine* |
+| `Test-TimeModule` | Checks this module against RECORDED REAL chrony output and a zone tree it builds. No daemon, no root, no network. | FixturePath |
+
+## `Systemd`
+
+Units und das Journal.
+
+| Befehl | Beschreibung | Parameter |
+|---|---|---|
+| `Get-SystemdJournal` | The journal, as objects with real types. | Unit, Identifier, Priority, Since, Until, Tail, Boot |
+| `Get-SystemdUnit` | The units this machine has, and what state they are in. | Name, Type, State, Detailed |
+| `Restart-SystemdUnit` | Restarts a unit and reports what it became. | **Name** |
+| `Set-SystemdUnitStartup` | Whether a unit starts at boot, and reports what it became. | **Name**, **Startup** |
+| `Start-SystemdUnit` | Starts a unit and reports what it became. | **Name** |
+| `Stop-SystemdUnit` | Stops a unit and reports what it became. | **Name** |
+| `Test-SystemdModule` | Checks this module against RECORDED REAL systemctl and journalctl output. Needs no systemd, no root and no journal. | FixturePath |
+| `Update-SystemdUnit` | Tells a running unit to re-read its own configuration - `systemctl reload`. | **Name** |
+
+## `Directory`
+
+LDAP, Kerberos und die Realm-Mitgliedschaft. Kennt nichts von Active Directorys Richtlinien und nichts von OS/7.
+
+| Befehl | Beschreibung | Parameter |
+|---|---|---|
+| `Connect-DirectoryServer` | Open a bound connection to an LDAP server and return a session object. | **Server**, Credential, Port, AuthType, NoTls, TimeoutSeconds |
+| `ConvertFrom-DirectoryFileTime` | An AD FILETIME (100-ns ticks since 1601) as a DateTime, or $null. | Value |
+| `ConvertFrom-DirectoryGeneralizedTime` | An LDAP generalized time (20260827190803.0Z) as a DateTime, or $null. | Value |
+| `ConvertFrom-DirectoryGuid` | An objectGUID byte array as a GUID string, or $null. | Bytes |
+| `ConvertFrom-DirectorySid` | An objectSid byte array as S-1-5-21-... , or $null. | Bytes |
+| `ConvertTo-DirectoryDnValue` | Escape one RDN value for use in a distinguished name (RFC 4514). | **Value** |
+| `ConvertTo-DirectoryDomainDn` | A DNS domain name as a distinguished name: os7.test -> DC=os7,DC=test. | **DnsDomain** |
+| `ConvertTo-DirectoryFilterValue` | Escape a value for use inside an LDAP search filter (RFC 4515). | **Value** |
+| `ConvertTo-DirectoryInt64` | Internal. An LDAP integer string, parsed invariantly. $null on failure. | Value |
+| `Disconnect-DirectoryServer` | Close a session's connection. Safe to call twice. | **Session** |
+| `Get-DirectoryAccountControl` | Decode userAccountControl into named flags and the two answers an operator actually asks for. | Value |
+| `Get-DirectoryAttributeScalar` | The first value of one attribute, or $null. Never a character. | **Attributes**, **Name** |
+| `Get-DirectoryAttributeValues` | Every value of one attribute, ALWAYS as an array - empty when absent. | **Attributes**, **Name** |
+| `Get-DirectoryErrorMeaning` | Turn an LdapException into a sentence about what is wrong. | **Exception** |
+| `Get-DirectoryIdentityResolution` | Whether the name service can resolve a directory account on this host. | **Name** |
+| `Get-DirectoryKeytabPrincipal` | The principals in a keytab, read with klist -k. | KeytabPath |
+| `Get-DirectoryLdapException` | Internal. Dig the LdapException out of whatever PowerShell wrapped it in. | Exception |
+| `Get-DirectoryRealmConfiguration` | What this host is configured to believe about a realm, read off disk. | SssdConfPath, KeytabPath, Krb5ConfPath |
+| `Get-DirectoryRootDse` | The server's own description of itself: naming contexts, functional levels, the DC's name. | **Session** |
+| `Get-DirectoryTicket` | Get-DirectoryTicket | *keine* |
+| `Get-DirectoryWhoAmI` | Ask the SERVER who it thinks this connection is (RFC 4532). | **Session** |
+| `Join-DirectoryRealm` | Join this host to a Kerberos realm with adcli, and write sssd's configuration for it. | **Domain**, UserName, Password, OneTimePassword, ComputerName, OrganizationalUnit, KeytabPath, SssdConfPath, AllowGroup, AllowAllDomainUsers, HomeDirectoryTemplate, LoginShell |
+| `Move-DirectoryEntry` | Move or rename one object. | **Session**, **DistinguishedName**, **NewParentDistinguishedName**, NewName |
+| `New-DirectoryEntry` | Create one object. | **Session**, **DistinguishedName**, **ObjectClass**, Attribute |
+| `New-DirectorySssdConfiguration` | The text of an sssd.conf for a realm. A pure function, so it can be checked without a domain. | **Domain**, AllowGroup, AllowAllDomainUsers, HomeDirectoryTemplate, LoginShell |
+| `New-DirectoryTicket` | Obtain a Kerberos ticket for a principal. | **Principal**, **Password** |
+| `Remove-DirectoryEntry` | Delete one object. | **Session**, **DistinguishedName** |
+| `Remove-DirectoryRealm` | Leave a realm: delete the computer account and remove the keytab. | **Domain**, UserName, Password, KeytabPath, SssdConfPath |
+| `Remove-DirectoryTicket` | Destroy the credential cache. | *keine* |
+| `Search-Directory` | Run one LDAP search, following the pages to the end. | **Session**, **SearchBase**, **Filter**, Scope, Property, PageSize, SizeLimit |
+| `Set-DirectoryEntry` | Modify attributes of one object. | **Session**, **DistinguishedName**, **Name**, **Value**, Operation |
+| `Set-DirectoryPassword` | Set an account's password through unicodePwd. | **Session**, **DistinguishedName**, **NewPassword**, CurrentPassword |
+| `Split-DirectoryDn` | Split a distinguished name into its components, honouring escapes. | **DistinguishedName** |
+| `Test-DirectoryModule` | Check this module against recorded output from a real directory. | Quiet |
+| `Test-DirectoryTool` | Whether a program this module needs is present. Never throws. | **Name** |
+| `Update-DirectoryRealm` | Renew this host's machine account password and keytab. | Domain, KeytabPath |
+
+## `OS7`
+
+Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis — alles, was OS/7-spezifisch ist.
+
+| Befehl | Beschreibung | Parameter |
+|---|---|---|
+| `Add-OS7ADGroupMember` | Add one or more members to a group. | **Identity**, **Member**, Session |
+| `Add-OS7DirectoryTrust` | Trust a domain controller's issuing certificate authority, machine-wide. | **Path**, Name |
+| `Disable-OS7ADAccount` | Disable a user or computer account. | **Identity**, Session |
+| `Disable-OS7Backup` | Stop taking scheduled snapshots. Destroys nothing. | *keine* |
+| `Disable-OS7Remoting` | Stops offering the PowerShell subsystem. | *keine* |
+| `Dismount-OS7BackupTarget` | Export a local backup pool and lock its container, so the drive can go. | **Name** |
+| `Enable-OS7ADAccount` | Enable a user or computer account. | **Identity**, Session |
+| `Enable-OS7Backup` | Turn scheduled snapshots on, writing a default policy if there is none. | *keine* |
+| `Enable-OS7Remoting` | Makes `Enter-PSSession -HostName` work against this machine. | *keine* |
+| `Enter-OS7AdminSession` | Sign in to Active Directory with an administrative account, for this shell. | **Domain**, Credential, Server, UseKerberos, AllowUnencrypted, TimeoutSeconds |
+| `Exit-OS7AdminSession` | Close the directory session and forget it. | Session |
+| `Get-OS7ADComputer` | Find computer accounts in Active Directory. | Identity, Filter, SearchBase, Property, Session |
+| `Get-OS7ADDomain` | What the domain controller says about the domain. | Session |
+| `Get-OS7ADDomainController` | The domain controllers a domain publishes in DNS. | **Domain**, First |
+| `Get-OS7ADGroup` | Find groups in Active Directory. | Identity, Filter, SearchBase, Property, Session |
+| `Get-OS7ADGroupMember` | The members of a group. | **Identity**, Recursive, SearchBase, Session |
+| `Get-OS7AdminSession` | The directory session this shell is signed in with, if any. | *keine* |
+| `Get-OS7ADObject` | One object by distinguished name, with every attribute it carries. | **DistinguishedName**, Property, Session |
+| `Get-OS7ADOrganizationalUnit` | Find organisational units. | Identity, SearchBase, Session |
+| `Get-OS7ADUser` | Find users in Active Directory. | Identity, Filter, SearchBase, Property, Session |
+| `Get-OS7ArcStatus` | Azure Arc: whether the Connected Machine agent is installed, and what it says about itself. | *keine* |
+| `Get-OS7BackupCoverage` | Which home directories the policy actually reaches - and which it cannot. | Policy |
+| `Get-OS7BackupPolicy` | What this machine is configured to snapshot, and what it actually has. | ConfigOnly |
+| `Get-OS7BackupStatus` | Whether this machine's data is actually backed up, asked of ZFS. | SkipTargets |
+| `Get-OS7BackupTarget` | Where copies go, and what is actually there. | Name, SkipProbe |
+| `Get-OS7BootEnvironment` | The boot environments on this machine, with what is active and what boots. | Name |
+| `Get-OS7Domain` | Whether this machine is a member of a domain, as configured and as it actually stands. | ProbeAccount |
+| `Get-OS7DomainLogonPolicy` | Which domain groups may sign in to this machine, and which administer it. | SudoersPath |
+| `Get-OS7Endpoint` | The named services OS/7 knows how to test for, out of the data file beside this module. | Cloud, Name |
+| `Get-OS7EntraStatus` | Whether this machine can sign a user in with Entra ID - and if not, why not. | *keine* |
+| `Get-OS7FileVersion` | Every version of a file or folder that a snapshot still holds. | **Path**, Newest, DistinctOnly, IncludeCurrent |
+| `Get-OS7Home` | Every home directory on this machine, and whether it has a dataset. | UserName |
+| `Get-OS7InstallLog` | What os7-setup did when this machine was installed. | Path |
+| `Get-OS7IntuneEnrollment` | What can be said about Intune on this machine - and what cannot. | *keine* |
+| `Get-OS7KerberosTicket` | The Kerberos tickets this session holds. | *keine* |
+| `Get-OS7Log` | The system log, as objects. | Unit, Priority, Since, Until, Tail, Boot, OS7Only |
+| `Get-OS7ManagementStatus` | The three management paths in one answer: can this machine sign users in, be managed, and be inventoried? | SkipNetwork |
+| `Get-OS7NetworkAdapter` | The network adapters this machine has, and what is actually on them. | Name, IncludeLoopback |
+| `Get-OS7NetworkConfiguration` | What this machine is CONFIGURED to do about the network, and what it is ACTUALLY doing - as two separate answers. | *keine* |
+| `Get-OS7Release` | What OS/7 releases this machine's channel offers. | Available, Channel, Source |
+| `Get-OS7Remoting` | Whether this machine can be reached with PowerShell - both ways it can be meant. | *keine* |
+| `Get-OS7Service` | The services on this machine, and whether they are actually well. | Name, State, OS7Only, Detailed |
+| `Get-OS7Theme` | Reports which desktop appearance this session is actually using. | *keine* |
+| `Get-OS7Time` | The clock: local, UTC, the zone, and whether the hardware clock is kept in local time. | *keine* |
+| `Get-OS7TimeSynchronization` | Whether this machine's clock is being disciplined, by whom, and whether it is close enough for Entra sign-in to work. | *keine* |
+| `Get-OS7Version` | Which OS/7 this is. | Detailed, CheckDrift, Path |
+| `Join-OS7Domain` | Join this machine to an Active Directory domain. | **Domain**, UserName, Password, OneTimePassword, ComputerName, OrganizationalUnit, AllowGroup, AdministratorGroup, HomeDirectoryTemplate, TargetRoot, SkipServiceRestart |
+| `Mount-OS7BackupTarget` | Unlock and import a local backup pool that is not currently available. | **Name**, Passphrase |
+| `Move-OS7ADObject` | Move an object to another container. | **DistinguishedName**, **TargetPath**, Session |
+| `Move-OS7Home` | Move an existing home directory onto a USERDATA dataset of its own. | **UserName**, RemoveOriginal, SkipContentVerify |
+| `New-OS7ADGroup` | Create a group. | **Name**, **Path**, Scope, DistributionList, Description, Session |
+| `New-OS7ADUser` | Create a user account. | **Name**, **Path**, Password, DisplayName, GivenName, Surname, UserPrincipalName, Mail, Description, Enabled, Session |
+| `New-OS7BackupTarget` | Define where backups go - and, with -CreateOn, build it. | **Name**, **Pool**, **ComputerName**, **CreateOn**, Dataset, **ConfirmDisk**, Passphrase, PoolName, SshKey, Enabled |
+| `New-OS7BootEnvironment` | Clone the running boot environment into a new one, inactive. | Name, From, Release |
+| `New-OS7BootEnvironmentName` | The name of a new boot environment: os7_<release>_<yyyyMMddHHmm>. | Release, When |
+| `New-OS7KerberosTicket` | Obtain a Kerberos ticket for a principal. | **Principal**, Credential |
+| `New-OS7Storage` | Create bpool and rpool and lay down the OS/7 dataset hierarchy. | **Root**, **RootDevice**, **BootDevice**, **BootEnvironment**, UserName |
+| `Remove-OS7ADGroupMember` | Remove one or more members from a group. | **Identity**, **Member**, Session |
+| `Remove-OS7ADObject` | Delete an object. | **DistinguishedName**, Session |
+| `Remove-OS7BackupTarget` | Forget a target. Destroys nothing on it. | **Name**, KeepSyncSnapshots |
+| `Remove-OS7BootEnvironment` | Destroy a boot environment, both halves. | **Name** |
+| `Remove-OS7Domain` | Leave the domain: delete the computer account and remove the credential. | **Domain**, UserName, Password |
+| `Remove-OS7KerberosTicket` | Destroy this session's Kerberos tickets. | *keine* |
+| `Rename-OS7ADObject` | Rename an object, leaving it where it is. | **DistinguishedName**, **NewName**, Session |
+| `Repair-OS7Domain` | Renew this machine's domain credential after it has gone stale. | Domain |
+| `Reset-OS7ADAccountPassword` | Set a user's password. | **Identity**, **NewPassword**, CurrentPassword, MustChangeAtNextLogon, Session |
+| `Restart-OS7Service` | Restarts a service and reports what it became. | **Name** |
+| `Restore-OS7` | Roll the system back to a previous OS/7 boot environment. | BootEnvironment |
+| `Restore-OS7File` | Copy a file or folder back out of a snapshot. | **Path**, Snapshot, AsOf, Destination, Force |
+| `Search-OS7AD` | Run a raw LDAP filter and get the rows back undecorated. | **Filter**, SearchBase, Scope, Property, Session |
+| `Set-OS7ADObject` | Set any attribute on any object. | **DistinguishedName**, **Name**, **Value**, Operation, Session |
+| `Set-OS7ADUser` | Change attributes of a user account. | **Identity**, DisplayName, GivenName, Surname, Mail, Title, Department, Description, Attribute, Session |
+| `Set-OS7BackupPolicy` | Decide what this machine snapshots, and how long it keeps it. | Dataset, Retention, Enabled, Force |
+| `Set-OS7BootEnvironment` | Make a boot environment the one this machine boots. | **Name**, SkipGrubUpdate |
+| `Set-OS7DomainLogonPolicy` | Grant a domain group the right to administer this machine. | **AdministratorGroup**, TargetRoot, SudoersPath |
+| `Set-OS7Mode` | STUB. Sets the OS/7 system mode. | **Mode** |
+| `Set-OS7NetworkAdapter` | Configures an adapter, applies it, checks that it worked - and puts the old configuration back when it did not. | **Name**, **Dhcp**, **Address**, Gateway, Nameserver, SearchDomain, TimeoutSeconds, Force |
+| `Set-OS7Service` | Whether a service starts at boot. | **Name**, **StartupType** |
+| `Set-OS7Theme` | Switches this user's desktop between OS/7 Classic and stock GNOME. | **Name** |
+| `Set-OS7TimeSynchronization` | Points this machine at NTP servers. | NtpServer, Pool, Exclusive |
+| `Set-OS7TimeZone` | Sets this machine's time zone. | **Id** |
+| `Set-OS7UpdateChannel` | Point this machine at an OS/7 repository, and choose its channel. | Channel, Uri, Disable |
+| `Start-OS7Backup` | Snapshot now, replicate now, or both - without waiting for the timer. | Snapshot, Replicate, Target |
+| `Start-OS7BackupReplication` | Send this machine's snapshots to its targets, and check they arrived. | Target, Force |
+| `Start-OS7Service` | Starts a service and reports what it became. | **Name** |
+| `Stop-OS7Service` | Stops a service and reports what it became. | **Name** |
+| `Sync-OS7Time` | Asks chrony to correct the clock now, and reports what it did. | SettleSeconds |
+| `Test-OS7Backup` | Check the backup layer's decisions, offline or against this machine. | Live |
+| `Test-OS7BackupTarget` | Is this target reachable, healthy, and holding what it should? | Name |
+| `Test-OS7Directory` | Whether this machine can reach and use a domain controller, and which part is broken when it cannot. | **Domain**, Server, Credential, AllowUnencrypted |
+| `Test-OS7Domain` | Whether the domain membership actually works, and which part does not. | Domain, ProbeAccount |
+| `Test-OS7Network` | Whether this machine can actually reach the network, its resolver and the services OS/7 exists to reach. | Endpoint, Cloud, TimeoutSeconds |
+| `Test-OS7Update` | Check the update train's decisions. No ZFS, no repository, no VM. | *keine* |
+| `Unlock-OS7ADAccount` | Unlock an account that lockout policy has locked. | **Identity**, Session |
+| `Update-OS7` | Apply the next curated OS/7 release into a new boot environment. | Version, Channel, Source, Stage, Reboot, Keep, AllowDevelopment, Force |
+

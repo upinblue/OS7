@@ -1,0 +1,24 @@
+  PASS  the kernel's mount list is read
+  PASS  a nested mount is read too
+  PASS  an octal-escaped space is decoded
+  PASS  a path that is not mounted is absent
+  PASS  an expired index is refused
+  PASS  a current index is accepted
+  PASS  an index mislabelled as another channel is refused
+  PASS  a descriptor matching the index hash is accepted
+  PASS  a descriptor whose hash the index does not record is refused
+  PASS  migrations are ordered by their numeric prefix
+  PASS  a release with no migrations yields none, not an error
+  PASS  the firstboot context is separate from the chroot one
+  PASS  the dataset serving / is the one at /, not the one mounted elsewhere
+  PASS  a machine that is not ZFS-rooted answers null rather than guessing
+  PASS  Running decides when the kernel could answer
+  PASS  a merely-mounted environment is not the running one
+  PASS  and Active is the fallback when it could not
+  PASS  a root with nothing mounted under it is refused
+
+OS/7 Update self-test: 31 passed, 0 failed
+OS/7 Update self-test: PASS
+True
+
+PS /home/os7admin>
