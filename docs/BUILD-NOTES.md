@@ -59,7 +59,15 @@ ordinary machines that have nothing to compare; `Get-OS7Service` pinning
 surface; and a captured terminal slice replayed at a different geometry than the
 guest believed it had.
 
-Everything below is written. Numbers above 114 are free.
+**#115 and #116 are CLAIMED (2026-08-29, the scheduled-task feature)**: the
+enable-without-start trap — `systemctl enable` on a timer arms the NEXT boot
+only, leaving a timer that is enabled, inactive, and never firing, with nothing
+reporting it — and the timer-listing traps: a timer that is neither enabled nor
+active is invisible to BOTH `list-timers --all` AND `list-units --all`, and
+`list-timers`' JSON `left`/`passed` fields are not the durations their names
+promise.
+
+Everything below is written. Numbers above 116 are free.
 
 *(#108 was claimed TWICE on 2026-08-28, and both claimants had already been
 committed — the Active Directory line took it for the installer/cmdlet
