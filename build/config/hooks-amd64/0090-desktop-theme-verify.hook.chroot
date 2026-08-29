@@ -163,6 +163,11 @@ done
 echo "OS/7 hook 0090: checking every default against the installed schemas"
 
 KEYFILE="/etc/dconf/db/os7.d/00-os7-classic"
+# The greeter's defaults are a SECOND keyfile, in a second database, read
+# through a second profile - see section 6. The way a key in it goes stale is
+# identical to the way a key in the session's does, so the loop below runs over
+# both rather than being written twice.
+GREETER_KEYFILE="/usr/share/gdm/dconf/95-os7-login-screen"
 ALL_SCHEMAS="$(gsettings list-schemas 2>/dev/null || true)"
 # The two lists are DISJOINT, which is the whole reason this second one exists:
 # `list-schemas` omits every relocatable schema. See the note at its use below.
@@ -192,54 +197,60 @@ else
 		esac
 	}
 
-	checked=0
-	reloc=0
-	group=""
-	rawgroup=""
-	while IFS= read -r line || [ -n "${line}" ]; do
-		case "${line}" in
-			\[*\])
-				rawgroup="$(printf '%s' "${line}" | tr -d '[]' | sed 's|^/||; s|/$||')"
-				group="$(printf '%s' "${rawgroup}" | sed 's|/|.|g')"
-				;;
-			""|\#*)
-				;;
-			*=*)
-				[ -n "${group}" ] || continue
-				key="${line%%=*}"
-				key="$(printf '%s' "${key}" | tr -d '[:space:]')"
-				checked=$((checked + 1))
+	for kf in "${KEYFILE}" "${GREETER_KEYFILE}"; do
+		if [ ! -r "${kf}" ]; then
+			note "${kf} is missing - its defaults were never checked"
+			continue
+		fi
+		checked=0
+		reloc=0
+		group=""
+		rawgroup=""
+		while IFS= read -r line || [ -n "${line}" ]; do
+			case "${line}" in
+				\[*\])
+					rawgroup="$(printf '%s' "${line}" | tr -d '[]' | sed 's|^/||; s|/$||')"
+					group="$(printf '%s' "${rawgroup}" | sed 's|/|.|g')"
+					;;
+				""|\#*)
+					;;
+				*=*)
+					[ -n "${group}" ] || continue
+					key="${line%%=*}"
+					key="$(printf '%s' "${key}" | tr -d '[:space:]')"
+					checked=$((checked + 1))
 
-				schema="$(relocatable_schema "${rawgroup}")"
-				if [ -n "${schema}" ]; then
-					reloc=$((reloc + 1))
-					# RELOC_SCHEMAS, not ALL_SCHEMAS. `gsettings list-schemas`
-					# lists only schemas with a fixed path; a relocatable one is
-					# NOT in it, and looking there reported "no such schema"
-					# about a schema that was installed and working - which
-					# failed a build (1.0.0.114) on a right answer, the exact
-					# thing the comment above says a check must not do.
-					if ! printf '%s\n' "${RELOC_SCHEMAS}" | grep -qx "${schema}"; then
-						note "no such relocatable schema: ${schema} (for key ${key})"
+					schema="$(relocatable_schema "${rawgroup}")"
+					if [ -n "${schema}" ]; then
+						reloc=$((reloc + 1))
+						# RELOC_SCHEMAS, not ALL_SCHEMAS. `gsettings list-schemas`
+						# lists only schemas with a fixed path; a relocatable one is
+						# NOT in it, and looking there reported "no such schema"
+						# about a schema that was installed and working - which
+						# failed a build (1.0.0.114) on a right answer, the exact
+						# thing the comment above says a check must not do.
+						if ! printf '%s\n' "${RELOC_SCHEMAS}" | grep -qx "${schema}"; then
+							note "no such relocatable schema: ${schema} (for key ${key})"
+							continue
+						fi
+						if ! gsettings list-keys "${schema}:/${rawgroup}/" 2>/dev/null | grep -qx "${key}"; then
+							note "${schema} at /${rawgroup}/ has no key '${key}'"
+						fi
 						continue
 					fi
-					if ! gsettings list-keys "${schema}:/${rawgroup}/" 2>/dev/null | grep -qx "${key}"; then
-						note "${schema} at /${rawgroup}/ has no key '${key}'"
-					fi
-					continue
-				fi
 
-				if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${group}"; then
-					note "no such schema: ${group} (for key ${key})"
-					continue
-				fi
-				if ! gsettings list-keys "${group}" 2>/dev/null | grep -qx "${key}"; then
-					note "schema ${group} has no key '${key}'"
-				fi
-				;;
-		esac
-	done < "${KEYFILE}"
-	ok "${checked} defaults checked against GNOME's own schema list (${reloc} through a relocatable schema)"
+					if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${group}"; then
+						note "no such schema: ${group} (for key ${key})"
+						continue
+					fi
+					if ! gsettings list-keys "${group}" 2>/dev/null | grep -qx "${key}"; then
+						note "schema ${group} has no key '${key}'"
+					fi
+					;;
+			esac
+		done < "${kf}"
+		ok "${kf##*/}: ${checked} defaults checked against GNOME's own schema list (${reloc} through a relocatable schema)"
+	done
 fi
 
 # --- 4. The font ---------------------------------------------------------
@@ -312,6 +323,168 @@ fi
 [ -r /etc/profile.d/95-os7-powershell.sh ] \
 	&& ok "/etc/profile.d/95-os7-powershell.sh" \
 	|| note "the PowerShell drop-in is missing - hook 0050 did not run"
+
+# --- 6. The login screen -------------------------------------------------
+# The screen the machine shows before anybody has proved who they are, and the
+# one surface none of the checks above can see: the greeter reads a DIFFERENT
+# database, through a DIFFERENT profile, as a DIFFERENT user. Everything
+# section 3 proved about /etc/dconf/db/os7 was true while the login screen said
+# Ubuntu.
+#
+# THE MECHANISM, measured out of the shipped image on 2026-08-29 and re-asked
+# here because it is the half that can be taken away by an upgrade:
+#
+#   /usr/share/dconf/profile/gdm    user-db:user
+#                                   file-db:/var/lib/gdm3/greeter-dconf-defaults
+#   /usr/share/gdm/generate-config  dconf compile <that file> /usr/share/gdm/dconf
+#   gdm.service                     ExecStartPre=/usr/share/gdm/generate-config
+#
+# There is no `system-db:gdm` anywhere in it, so GNOME's documented
+# /etc/dconf/db/gdm.d/ is not a thing on this distribution and a keyfile put
+# there is read by nobody. docs/BUILD-NOTES.md #110.
+echo "OS/7 hook 0090: checking the login screen"
+
+GDM_PROFILE=/usr/share/dconf/profile/gdm
+GDM_DCONF_DIR=/usr/share/gdm/dconf
+GDM_GENCONF=/usr/share/gdm/generate-config
+WANT_LOGO=/usr/share/pixmaps/os7-logo-login.svg
+UBUNTU_LOGO=/usr/share/pixmaps/ubuntu-logo-text-dark.svg
+
+mech=1
+if [ -r "${GDM_PROFILE}" ]; then
+	prof="$(cat "${GDM_PROFILE}" 2>/dev/null || true)"
+	case "${prof}" in
+		*file-db:/var/lib/gdm3/greeter-dconf-defaults*)
+			ok "${GDM_PROFILE} reads file-db:/var/lib/gdm3/greeter-dconf-defaults" ;;
+		*)
+			note "${GDM_PROFILE} no longer names that file-db - the greeter defaults are inert"
+			mech=0 ;;
+	esac
+else
+	note "${GDM_PROFILE} is missing - gdm3 is not installed on a desktop image"
+	mech=0
+fi
+
+if [ -r "${GDM_GENCONF}" ]; then
+	genconf="$(cat "${GDM_GENCONF}" 2>/dev/null || true)"
+	case "${genconf}" in
+		*"dconf compile"*"${GDM_DCONF_DIR}"*)
+			ok "${GDM_GENCONF} compiles ${GDM_DCONF_DIR}" ;;
+		*)
+			note "${GDM_GENCONF} no longer compiles ${GDM_DCONF_DIR}"
+			mech=0 ;;
+	esac
+else
+	note "${GDM_GENCONF} is missing - nothing recompiles the greeter defaults"
+	mech=0
+fi
+
+# Our file must SORT LAST in that directory, or it loses to gdm3's own
+# 00-upstream-settings and to 90-debian-settings (a symlink to the ucf conffile
+# /etc/gdm3/greeter.dconf-defaults). `dconf compile` takes the last writer.
+if [ -r "${GREETER_KEYFILE}" ]; then
+	LAST="$(ls "${GDM_DCONF_DIR}" 2>/dev/null | grep -v '^locks$' | sort | tail -1 || true)"
+	if [ "${LAST}" = "$(basename "${GREETER_KEYFILE}")" ]; then
+		ok "${LAST} sorts last in ${GDM_DCONF_DIR} - it out-ranks gdm3's and Debian's"
+	else
+		note "${LAST} sorts after $(basename "${GREETER_KEYFILE}") - our defaults lose"
+	fi
+else
+	note "${GREETER_KEYFILE} is missing - os7-desktop-theme did not ship the greeter defaults"
+	mech=0
+fi
+
+# 6a. WHAT THE GREETER WOULD ACTUALLY SHOW.
+#
+# Not `dconf read`, which would only say that our own keyfile parsed - both
+# sides of that question come from this repository. The thing the login screen
+# is competing with is a GSCHEMA OVERRIDE:
+#
+#   /usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override
+#       [org.gnome.login-screen]  logo='/usr/share/pixmaps/ubuntu-logo-text-dark.svg'
+#       [org.gnome.desktop.interface]  accent-color = 'orange'
+#
+# owned by ubuntu-settings, which ubuntu-desktop-minimal Depends on and which
+# therefore cannot be removed. A dconf VALUE beats a schema DEFAULT - that is
+# the entire mechanism - and GSettings is the only thing that resolves the two.
+# So: compile the directory the way generate-config does, point a profile at
+# the result, and ask GSettings.
+if [ "${mech}" -eq 1 ]; then
+	SCRATCH="$(mktemp -d)"
+	if dconf compile "${SCRATCH}/db" "${GDM_DCONF_DIR}" 2>/dev/null; then
+		printf 'file-db:%s/db\n' "${SCRATCH}" > "${SCRATCH}/profile"
+		greeter_get() {
+			DCONF_PROFILE="${SCRATCH}/profile" gsettings get "$1" "$2" 2>/dev/null | tr -d "'" || true
+		}
+		greeter_key() {
+			got="$(greeter_get "$1" "$2")"
+			if [ "${got}" = "$3" ]; then
+				ok "greeter $1 $2 = ${got}"
+			else
+				note "greeter $1 $2 reads '${got:-<nothing>}', expected '$3'"
+			fi
+		}
+		greeter_key org.gnome.login-screen      logo             "${WANT_LOGO}"
+		greeter_key org.gnome.desktop.interface accent-color     "blue"
+		greeter_key org.gnome.desktop.interface font-name        "Tahoma 11"
+		greeter_key com.ubuntu.login-screen     background-color "#0057ad"
+
+		# 6b. AND THE CONTROL, because a check that cannot fail is not a check.
+		#
+		# The same query, against the same directory with our file taken out.
+		# It must come back with UBUNTU's logo. If it came back with ours the
+		# test above would be proving nothing - the value would be arriving
+		# from somewhere else entirely and 95-os7-login-screen could be deleted
+		# without anything noticing. Same discipline as #16: never accept a
+		# marker the command itself could have produced.
+		CONTROL="$(mktemp -d)"
+		mkdir -p "${CONTROL}/dir"
+		cp -a "${GDM_DCONF_DIR}/." "${CONTROL}/dir/"
+		rm -f "${CONTROL}/dir/$(basename "${GREETER_KEYFILE}")"
+		if dconf compile "${CONTROL}/db" "${CONTROL}/dir" 2>/dev/null; then
+			printf 'file-db:%s/db\n' "${CONTROL}" > "${CONTROL}/profile"
+			base="$(DCONF_PROFILE="${CONTROL}/profile" gsettings get org.gnome.login-screen logo 2>/dev/null | tr -d "'" || true)"
+			if [ "${base}" = "${UBUNTU_LOGO}" ]; then
+				ok "control: without 95-os7-login-screen the greeter shows ${base} - so the check above measures precedence"
+			else
+				note "control: without our keyfile the greeter shows '${base:-<nothing>}', not ${UBUNTU_LOGO} - the logo check proves nothing"
+			fi
+		else
+			note "control: dconf compile failed on the directory without our keyfile"
+		fi
+		rm -rf "${CONTROL}"
+	else
+		note "dconf compile failed on ${GDM_DCONF_DIR} - the greeter defaults would not load"
+	fi
+	rm -rf "${SCRATCH}"
+fi
+
+# 6c. The mark itself, and that it arrived as a PACKAGE rather than as a file
+#     somebody copied in. Hook 0035 has already rasterised it with rsvg-convert
+#     and failed the build if it did not render; this is the cheap half.
+if [ -s "${WANT_LOGO}" ]; then
+	owner="$(dpkg -S "${WANT_LOGO}" 2>/dev/null | cut -d: -f1 || true)"
+	if [ "${owner}" = "os7-desktop-theme" ]; then
+		ok "${WANT_LOGO} ($(stat -c%s "${WANT_LOGO}") bytes) owned by os7-desktop-theme"
+	else
+		note "${WANT_LOGO} belongs to '${owner:-nobody}' - an unowned file is not replaced by an update"
+	fi
+else
+	note "${WANT_LOGO} is missing or empty - the greeter would draw no logo at all"
+fi
+
+# 6d. The greeter's stylesheet. Hook 0035 step 9 moves it off Yaru with
+#     update-alternatives; this asks the link where it points. Yaru is not a
+#     neutral theme that happens to be installed - it is Ubuntu's brand, and it
+#     is what draws the login screen unless something says otherwise.
+for altname in gdm-theme.gresource gdm-icons.gresource; do
+	got="$(readlink -f "/usr/share/gnome-shell/${altname}" 2>/dev/null || true)"
+	case "${got}" in
+		"")      note "${altname} resolves to nothing" ;;
+		*Yaru*)  note "${altname} -> ${got}: the login screen is themed by Ubuntu" ;;
+		*)       ok "${altname} -> ${got}" ;;
+	esac
+done
 
 if [ "${fail}" -ne 0 ]; then
 	echo "OS/7 hook 0090: the classic desktop is NOT correctly installed." >&2

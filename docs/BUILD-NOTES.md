@@ -5685,3 +5685,111 @@ all exited 0 on every affected boot); and the structural fix — shipping
 zfs-list.cache so EVERY dataset gets a real mount unit and RequiresMountsFor
 works as upstream designed — stays open beside this, as it did beside #104's
 fstab option.
+
+## #110 — GNOME's documented way to brand the login screen does nothing on Ubuntu, and does it silently
+
+**2026-08-29, measured out of the shipped `OS7-1.0.0.150-amd64.iso`**
+([SESSION-LOGIN-SCREEN.md](SESSION-LOGIN-SCREEN.md)). An OS/7 desktop that
+passed every check in hook 0090 and every desktop check in `check-image.py`
+greeted its user with the Ubuntu wordmark, an orange highlight ring and a
+Yaru-dark background. This is #85 in a second place: everything declared was
+true, and the thing it was about was decided somewhere nothing looked.
+
+**The greeter reads a different database, through a different profile, as a
+different user.** GNOME's System Administration Guide gives one instruction —
+put a keyfile in `/etc/dconf/db/gdm.d/` and run `dconf update` — and on Ubuntu
+26.04 that directory is read by nobody:
+
+```
+/etc/dconf/db/gdm.d/           does not exist
+/etc/dconf/profile/gdm         does not exist
+/usr/share/dconf/profile/gdm   user-db:user
+                               file-db:/var/lib/gdm3/greeter-dconf-defaults
+```
+
+There is no `system-db:gdm` in that profile, so there is nothing for a
+`gdm.d` tree to be compiled into. `dconf update` reads it, writes
+`/etc/dconf/db/gdm`, exits 0, and the greeter never opens the file. The
+extension point that DOES work is Debian's, and it is written down in the first
+six lines of `/usr/share/gdm/dconf/00-upstream-settings`: *"create your own file
+next to it with a higher numbered prefix"*. `gdm.service` has
+`ExecStartPre=/usr/share/gdm/generate-config`, which runs
+`dconf compile /var/lib/gdm3/greeter-dconf-defaults /usr/share/gdm/dconf` on
+**every start**. Sort order is precedence: `00-upstream-settings` (gdm3's),
+`90-debian-settings` (a symlink to the ucf conffile
+`/etc/gdm3/greeter.dconf-defaults`), then anything later.
+
+**And the Ubuntu logo is not a default nobody set — it is set, by name, in a
+package that cannot be removed.**
+
+```
+/usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override
+    [org.gnome.login-screen]       logo='/usr/share/pixmaps/ubuntu-logo-text-dark.svg'
+    [org.gnome.desktop.interface]  accent-color = 'orange'
+```
+
+`ubuntu-settings` owns that file and `ubuntu-desktop-minimal` **Depends** on it,
+so hook 0035's purge cannot reach it and its APT pin must not. A gschema
+override sets the schema DEFAULT; a dconf database sets a VALUE; values win.
+So the fix does not remove Ubuntu's line, it out-ranks it — one keyfile,
+`/usr/share/gdm/dconf/95-os7-login-screen`, shipped by `os7-desktop-theme`.
+
+**The orange is a SETTING, not the theme.** Both shell themes on the image
+honour `org.gnome.desktop.interface accent-color` — 807 references to
+`-st-accent-color` inside gnome-shell's own `gnome-shell-theme.gresource`, 903
+inside Yaru's — so the ring around the highlighted user came from
+`accent-color='orange'` in the same override, applying to the whole system.
+The OS/7 desktop session had been drawing it too, under a theme whose entire
+point is that it does not look like Ubuntu.
+
+**Which stylesheet the greeter uses is an `update-alternatives` decision Ubuntu
+wins by priority**, and that one can be answered with dpkg's own mechanism
+rather than by replacing a file:
+
+```
+/var/lib/dpkg/alternatives/gdm-theme.gresource
+  link  /usr/share/gnome-shell/gdm-theme.gresource                       (auto)
+  10    /usr/share/gnome-shell/gnome-shell-theme.gresource               gnome-shell
+  15    /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource    yaru-theme-gnome-shell
+```
+
+`update-alternatives --set` selects gnome-shell's own and puts the link in
+manual mode, so an upgrade of either package cannot take it back — the same
+mechanism, and the same reasoning, as `x-terminal-emulator` in hook 0035 step
+5a. Ubuntu's greeter refinements go with Yaru; what is kept is a stylesheet
+that gnome-shell upgrades in lockstep with itself and that recolours from a
+setting.
+
+**The check that matters is a CONTROL, not a presence test.** Reading our own
+keyfile back proves nothing — both sides come from this repository — and the
+question is not "is the value there" but "does it beat the override". So hook
+0090, the package's postinst and `check-image.py` all compile
+`/usr/share/gdm/dconf` the way `generate-config` does, point a profile at the
+result and ask **GSettings**, which is the only thing that resolves an override
+against a dconf database. Then they compile the same directory with
+`95-os7-login-screen` removed and require the answer to come back as Ubuntu's.
+Measured, on the image, before any of this shipped:
+
+```
+with 95-os7-login-screen   logo = '/usr/share/pixmaps/os7-logo-login.svg'   accent = 'blue'
+without it                 logo = '/usr/share/pixmaps/ubuntu-logo-text-dark.svg'   accent = 'orange'
+```
+
+A test whose control also passes is a test that measures nothing — #16's rule
+about markers the command itself could have produced, applied to a setting.
+
+**Ubuntu's own greeter-background schema is a real lever and a distribution-
+specific one.** `com.ubuntu.login-screen` (`background-picture-uri`,
+`background-color`, `background-repeat`, `background-size`) is consumed by
+`/usr/lib/gnome-shell/libshell-18.so` and by nothing else on the image — it is
+a Canonical patch, not GNOME. It is the only way to set the greeter background
+without replacing a gresource, and if Ubuntu ever drops it the schema goes with
+it, hook 0090's schema check turns red at build time, and a shipped machine
+falls back to the stylesheet's dark grey. That is the correct failure mode for
+a cosmetic; the wrong one would have been a stale CSS file nobody notices.
+
+**What is still Ubuntu on that screen, stated so it is not rediscovered as a
+bug:** the session chooser lists "Ubuntu" and "Ubuntu on Xorg" because
+`ubuntu-session` ships those `.desktop` files and `gdm3` depends on it. The
+default is `gnome-classic` (the dconf key #85 added), but the names in the
+menu are Ubuntu's.

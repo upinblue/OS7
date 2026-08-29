@@ -20,6 +20,7 @@ Everything below is a consequence of that sentence.
 | Shell | `gnome-shell/gnome-shell.css` via `user-theme` | **Partly.** Shell CSS is internal; the file styles colour only, so a renamed node costs one surface, not the desktop |
 | GTK 4 | `os7-theme/gtk-4.0/os7-classic.css`, colours only | **Partly.** `@define-color` is the only lever libadwaita honours; structural CSS there breaks on upgrade and is therefore forbidden in that file |
 | Defaults | `/etc/dconf/db/os7.d/` | **Yes.** A key GNOME drops becomes silently inert instead of failing |
+| **The login screen** | `/usr/share/gdm/dconf/95-os7-login-screen`, plus an `update-alternatives` choice | **Yes.** gdm recompiles that directory at every start, and the alternative is dpkg's own mechanism — see below |
 
 ## The one key that decides whether any of the rest is seen
 
@@ -75,6 +76,101 @@ image (`gsettings get org.gnome.Terminal.ProfilesList default`) rather than
 copied from anywhere, and hook 0090 asks the same question at build time — if a
 future gnome-terminal changes it, this setting lands in a profile nobody opens.
 
+## The login screen is a different database entirely
+
+Added 2026-08-29, after this package had shipped in an ISO, been verified by its
+own hook, been verified again by `check-image.py`, and produced a machine that
+greeted its user with the Ubuntu wordmark. Same shape as the session-name bug
+above: everything declared was true, and the thing it was about was decided
+somewhere nothing looked.
+
+Nothing in `/etc/dconf/db/os7` reaches the greeter. GDM runs as its own user,
+with its own profile, over a database this package's `dconf update` never
+touches:
+
+```
+the session   /etc/dconf/profile/user  ->  system-db:os7  ->  /etc/dconf/db/os7
+the greeter   /usr/share/dconf/profile/gdm  ->  file-db:/var/lib/gdm3/greeter-dconf-defaults
+```
+
+and that file-db is built by `/usr/share/gdm/generate-config`, which
+`gdm.service` runs as `ExecStartPre` on **every** start:
+
+```
+dconf compile /var/lib/gdm3/greeter-dconf-defaults /usr/share/gdm/dconf
+```
+
+**GNOME's documented `/etc/dconf/db/gdm.d/` does not work here** — the gdm
+profile contains no `system-db:`, so there is nothing for such a tree to be
+compiled into, and `dconf update` writes a database nobody opens. The
+extension point that does work is Debian's, and it is written in the first six
+lines of the file next to ours: *"create your own file next to it with a higher
+numbered prefix"*. Hence `95-os7-login-screen` — after gdm3's
+`00-upstream-settings` and after `90-debian-settings`, which is a symlink to
+the ucf conffile `/etc/gdm3/greeter.dconf-defaults`, and leaving 91–94 and
+96–99 free for an operator who wants to out-rank us without editing a shipped
+file.
+
+**What it has to beat.** The Ubuntu logo and the orange accent are not
+defaults nobody set — they are named in
+`/usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override`, owned by
+`ubuntu-settings`, which `ubuntu-desktop-minimal` **Depends** on. The package
+cannot be purged and the override cannot be pinned away. A gschema override
+sets the schema DEFAULT and a dconf database sets a VALUE, so this file does
+not remove Ubuntu's line — it out-ranks it.
+
+Which is a claim, and this package does not ship claims. The postinst, hook
+0090 and `check-image.py` each compile that directory the way `generate-config`
+does, point a throwaway profile at the result, and ask **GSettings** — the one
+thing that resolves an override against a dconf database. Then they compile the
+same directory with our keyfile removed and require the answer to come back as
+Ubuntu's, because a test whose control also passes measures nothing:
+
+```
+with 95-os7-login-screen   logo = '/usr/share/pixmaps/os7-logo-login.svg'
+without it                 logo = '/usr/share/pixmaps/ubuntu-logo-text-dark.svg'
+```
+
+**The background is Ubuntu's own lever.** `com.ubuntu.login-screen` —
+`background-picture-uri`, `background-color` — is a Canonical patch, consumed
+by `/usr/lib/gnome-shell/libshell-18.so` and by nothing else on the image. It
+is the only way to set the greeter background without replacing a gresource.
+`#0057ad` is FIELD from `build/lib/palette.py`: the blue of `os7-setup`'s own
+screens, so the greeter and the installer the administrator just walked through
+are the same colour. If Ubuntu drops the patch the schema goes with it and hook
+0090's schema check turns red at build time; a shipped machine falls back to
+the stylesheet's dark grey, which is the right failure for a cosmetic.
+
+**The orange was a setting, not the theme.** Both shell themes on the image
+honour `org.gnome.desktop.interface accent-color` — 807 references to
+`-st-accent-color` in gnome-shell's own gresource, 903 in Yaru's — so
+`accent-color='blue'` recolours the greeter without a line of CSS. The same key
+is set for the session in `00-os7-classic`, separately, because neither
+database can see the other.
+
+**And the greeter's stylesheet is chosen, not replaced.** `gdm-theme.gresource`
+and `gdm-icons.gresource` are `update-alternatives` links with two candidates —
+gnome-shell's at priority 10, `yaru-theme-gnome-shell`'s at 15 — and Yaru wins
+on every machine in auto mode. `yaru-theme-gnome-shell` is a Depends of
+`ubuntu-session`, which `gdm3` depends on, so it stays installed; hook 0035 step
+9 simply `--set`s the link to gnome-shell's own, which puts it in manual mode so
+an upgrade of either package cannot take it back. What is traded is Ubuntu's
+greeter refinements. What is kept is a stylesheet that gnome-shell upgrades in
+lockstep with itself. `update-alternatives --auto gdm-theme.gresource` puts
+Ubuntu's back.
+
+The mark itself is `/usr/share/pixmaps/os7-logo-login.svg` — beside Ubuntu's,
+in Ubuntu's own directory for exactly this, because `logo` is a FILE PATH and
+never an icon name. It is a wide lockup rather than the square `os7.svg`
+`/etc/os-release`'s `LOGO=` names: gnome-shell loads the key at **natural size
+times the HiDPI scale factor** (`load_file_sync(..., -1, -1, scaleFactor, ...)`,
+read out of `libshell-18.so`), onto a wide empty strip below the user list,
+where a square tile reads as a misplaced app icon. Hook 0035 rasterises it with
+`rsvg-convert` at build time and fails the build if it does not render, because
+its wordmark is `<text>` and a missing font family substitutes in silence.
+
+[BUILD-NOTES #110](../../../docs/BUILD-NOTES.md).
+
 ## Why not the obvious alternatives
 
 **Why not dash-to-panel and ArcMenu**, which `README.md` used to call for?
@@ -96,6 +192,10 @@ technical preference.
 **Why not replace `gnome-shell-theme.gresource`**, the way several retro
 desktops do? Because it belongs to `gnome-shell`, and every upgrade takes it
 back. That is precisely the maintenance treadmill this package exists to avoid.
+Note the difference from what hook 0035 does to the LOGIN screen: nothing there
+is replaced either — `update-alternatives` *chooses* between two gresources
+that two packages registered, and the one chosen is gnome-shell's, so it is
+upgraded along with the Shell it themes.
 
 ## What it cannot do
 
@@ -104,9 +204,12 @@ Stated here so it is not rediscovered as a bug:
 * **GTK 4 / libadwaita applications get classic colours and modern shapes.**
   Nautilus, Settings and most of GNOME's own applications are libadwaita, which
   ignores widget themes by design.
-* **GDM is nearly untouched** — background and cursor only. The login screen's
-  appearance lives in a `gnome-shell` file, and `user-theme` is a user
-  extension that does not apply to the greeter.
+* **The login screen is branded but not classic.** It is OS/7's logo, OS/7's
+  blue and a blue accent (see below), on GNOME's own greeter layout. Making it
+  look like a Windows 2000 logon box means Shell CSS, which is the treadmill.
+* **The session chooser still says "Ubuntu".** `ubuntu-session` ships
+  `/usr/share/wayland-sessions/ubuntu.desktop` and `gdm3` depends on it, so the
+  name is in the menu even though the default session is GNOME Classic.
 * **The Applications menu sits top-left, not bottom-left.** GNOME Classic puts
   its menus on the top panel and the window list on the bottom. Moving the menu
   to the bottom edge means rebuilding Shell layout, which is exactly the kind of
@@ -123,9 +226,15 @@ tree/                                     the package's files, 1:1
   usr/share/fonts/truetype/os7-classic/   Tahoma (LGPL, from Wine) — see below
   usr/libexec/os7-theme-user-setup        links the GTK 4 overrides into $HOME
   usr/lib/systemd/user/                   the unit that runs it, pre-enabled
-  etc/dconf/db/os7.d/00-os7-classic       the defaults
+  etc/dconf/db/os7.d/00-os7-classic       the defaults, for a SESSION
+  usr/share/gdm/dconf/95-os7-login-screen the defaults, for the GREETER —
+                                          a different database read through a
+                                          different profile, see below
+  usr/share/pixmaps/os7-logo-login.svg    what the login screen draws
+  usr/share/pixmaps/upinblue-logo.svg     the vendor mark, verbatim
 control.in                                @OS7_VERSION@ comes from the pin
-postinst / postrm                         dconf profile, database, font cache
+postinst / postrm                         dconf profile, database, font cache,
+                                          and the greeter's precedence proof
 ```
 
 `../../lib/build-desktop-theme.sh` turns this into a `.deb`.

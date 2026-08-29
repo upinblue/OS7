@@ -34,6 +34,18 @@ gtk-theme='OS7-Classic'
 color-scheme='default'
 icon-theme='Adwaita'
 cursor-theme='Adwaita'
+# THE ACCENT, and it was Ubuntu's until 2026-08-29.
+#
+# GNOME 47 made the accent colour a setting rather than a property of the
+# theme, and 10_ubuntu-settings.gschema.override sets accent-color='orange'
+# for the whole system - so every libadwaita application and every Shell
+# surface on an OS/7 desktop drew its selection and its focus ring in Ubuntu
+# orange, under a theme whose entire point is that it does not look like
+# Ubuntu. The enum allows ten names and no hex, so this is 'blue' and not
+# #0057ad. The greeter is given the same value in
+# /usr/share/gdm/dconf/95-os7-login-screen, separately, because the greeter
+# reads a different database and neither can see the other.
+accent-color='blue'
 # Tahoma 8 is the historically exact Windows 2000 UI font size at 96 dpi.
 # 9 is used here because GNOME's padding is larger than Windows 2000's and 8
 # reads as broken rather than as authentic. This is the line to change.

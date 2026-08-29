@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OS/7 — the mark the LOGIN SCREEN shows, and the only thing that decides that
+  it is shown is one dconf value:
+
+      /org/gnome/login-screen/logo = '/usr/share/pixmaps/os7-logo-login.svg'
+
+  set in /usr/share/gdm/dconf/95-os7-login-screen. Until it existed, GDM drew
+  /usr/share/pixmaps/ubuntu-logo-text-dark.svg, named by
+  10_ubuntu-settings.gschema.override, which ubuntu-settings owns and
+  ubuntu-desktop-minimal Depends on - so it cannot be removed and must be
+  OUT-RANKED instead. docs/BUILD-NOTES.md #110.
+
+  WHY A SEPARATE FILE FROM os7.svg. That one is the ICON /etc/os-release's
+  LOGO= names: square, 128x128, a blue tile meant to sit in an icon grid and in
+  plymouth's 128px slot. A greeter logo is not an icon - it lands on a wide,
+  empty strip below the user list, and a square tile there reads as a misplaced
+  app icon.
+
+  AND THE SIZE IS NOT A GUESS. gnome-shell's LoginDialog._updateLogoTexture,
+  read out of libshell-18.so in the shipped image, calls
+
+      load_file_sync(..., this._logoFile, -1, -1, scaleFactor, resourceScale)
+
+  and -1, -1 is "natural size" - so what the screen shows is this file's own
+  width/height attributes times the HiDPI scale factor, with the viewBox doing
+  nothing but fixing the aspect ratio. Ubuntu's is 187x72; 216x98 is the same
+  order and leaves the vendor mark below the rule about 100 px to work with.
+  That is not enough for its 2.4-unit stripes to stay separate - they resolve
+  into a soft frame at scale 1 and sharpen at scale 2, which is a property of
+  the mark and not a defect here. Rendered at both before it shipped.
+
+  THE INK IS WHITE because the greeter background is OS/7 blue (#0057ad, the
+  Setup field colour), set in the same keyfile. The vendor mark below the rule
+  is up in blue GmbH's, path for path, from upinblue-logo.svg beside this file
+  - recoloured, not redrawn, because its own #417cbf against #0057ad is a
+  contrast ratio of about 1.7:1. Change the background and this file's ink has
+  to change with it; they are one decision written in two places, which is why
+  both say so.
+
+  THE WORDMARK IS <text>, NOT PATHS - the same trade os7.svg makes and for the
+  same reason: a path version cannot be read or corrected by a human. Both
+  renderers that see this file have DejaVu Sans (fonts-dejavu-core is in the
+  image), and hook 0035 rasterises it with rsvg-convert at build time and
+  fails the build if the result is not a PNG - so a substituted font is a
+  build failure, not a login screen nobody looked at.
+
+  GENERATED, and re-generatable: the 215 vendor paths below are
+  `sed 's/ class="cls-1"//'` over upinblue-logo.svg's, in document order. Do
+  not hand-edit them; edit the vendor file and regenerate.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     width="216" height="98" viewBox="0 0 880 400">
+
+  <!-- OS/7, the product. -->
+  <text x="440" y="180"
+        font-family="DejaVu Sans, Verdana, sans-serif"
+        font-size="180" font-weight="bold"
+        text-anchor="middle" fill="#ffffff">OS/7</text>
+
+  <!-- The rule that separates product from vendor. -->
+  <rect x="220" y="226" width="440" height="4" fill="#ffffff" opacity="0.55"/>
+
+  <!-- up in blue GmbH, the vendor. 510.9 x 223.7 at scale 0.6 is 306.5 x 134.2,
+       centred at x=(880-306.5)/2 and resting on the viewBox floor. -->
+  <g transform="translate(286.75 262) scale(0.6)" fill="#ffffff" opacity="0.85">
+    <path d="M2.4.1v223.5H0V0h2.4Z"/>
+    <path d="M7.2.1v223.5h-2.4V0h2.4Z"/>
+    <path d="M12,.1v223.5h-2.4V0h2.4Z"/>
+    <path d="M16.8.1v223.6h-2.4V.1h2.4Z"/>
+    <path d="M510.9.1v223.5h-2.4V0h2.4Z"/>
+    <path d="M501.3.1v223.5h-2.4V0h2.4Z"/>
+    <path d="M496.5.1v223.5h-2.4V0h2.4Z"/>
+    <path d="M506.1.1v223.5h-2.4V0h2.4Z"/>
+    <path d="M69.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M74.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M79.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M83.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M88.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M93.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M98.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M103.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M107.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M112.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M117.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M122.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M127.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M131.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M136.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M141.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M146.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M151.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M155.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M160.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M165.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M170.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M175.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M179.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M184.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M189.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M194.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M199.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M203.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M208.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M213.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M218.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M223.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M227.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M232.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M237.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M242.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M247.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M251.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M256.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M261.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M266.3.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M271.1.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M275.9.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M280.7.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M285.5.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M290.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M295,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M299.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M304.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M309.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M314.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M319,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M323.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M328.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M333.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M338.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M343,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M347.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M352.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M357.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M362.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M367,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M371.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M376.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M381.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M386.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M391,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M400.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M405.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M410.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M415,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M419.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M424.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M429.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M434.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M439,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M443.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M448.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M453.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M458.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M463,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M467.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M472.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M477.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M482.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M487,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M491.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M395.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M21.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M26.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M31.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M36,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M40.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M45.6.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M50.4.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M55.2.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M60,.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M64.8.1v21.2h-2.4V.1h2.4Z"/>
+    <path d="M289.9,141.3v-62.9h13.9v14h12.3c9.7,0,15.6,5.9,15.6,15.6v19.2c0,7.9-6.1,14-14,14.1h-27.8ZM303.9,99.4v34.8h13.8v-34.8h-13.8Z"/>
+    <path d="M110,141.3v13.9h-13.9v-62.8h27.2c8.2,0,14.6,6.4,14.6,14.6v19.8c0,8.2-6.4,14.5-14.6,14.5h-13.3ZM123.9,134.2v-34.8h-13.8v34.8h13.8Z"/>
+    <path d="M40.2,92.4h13.9v41.8h14v-41.8h13.9v48.8h-27.2c-8.2,0-14.4-5.9-14.5-14.1,0-11.3,0-22.7,0-34v-.7h0Z"/>
+    <path d="M415.6,141.1c-9.9,0-19.8.5-29.6-.2-7.1-.4-11.9-5.8-12.1-13-.3-11.8,0-23.6,0-35.4h13.9v41.8h14v-41.8h13.9v48.7h0Z"/>
+    <path d="M234.9,99.4h-14v41.8h-14v-48.8h27.7c7.4,0,14.1,6.8,14.1,14.2v34.7h-13.9v-41.9h.1Z"/>
+    <path d="M443.8,134c4.9,0,9.8.4,14.6-.1,3.4-.3,5.8-2.8,6.2-6.6h6.9c-.2,1.2-.3,2.4-.7,3.5-1.8,5.9-7.9,10.4-14.1,10.4s-9.5.3-14.3,0c-6.6-.5-12.4-6.6-12.7-13.6-.3-7.5-.3-15,.1-22.5.4-6.7,7.1-12.6,13.9-12.6s10.3-.3,15.3.3c7,.8,12,6.7,12.2,13.7.2,4.6,0,9.2,0,13.9h-27.6v13.7h.2ZM457.4,99.4h-13.6v13.8h13.6v-13.8Z"/>
+    <path d="M345.8,78.4h13.8v62.8h-13.8v-62.8Z"/>
+    <path d="M192.9,141.3h-13.8v-48.8h13.8v48.8Z"/>
+    <path d="M192.9,78.4v6.9h-13.9v-6.9h13.9Z"/>
+    <path d="M21.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M26.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M31.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M36,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M40.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M45.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M50.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M55.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M60,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M64.7,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M69.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M74.3,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M79.1,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M83.9,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M88.7,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M93.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M96.1,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M103.1,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M105.7,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M110.5,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M115.3,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M120.1,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M127.1,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M131.9,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M136.7,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M141.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M144.1,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M148.8,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M153.6,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M160.7,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M165.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M168,223.6v-21h2.3v21h-2.3Z"/>
+    <path d="M175.1,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M179.9,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M182.4,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M189.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M194.3,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M196.8,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M201.6,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M206.4,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M211.2,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M218.3,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M223.1,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M227.9,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M232.7,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M237.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M242.3,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M247.1,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M251.9,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M256.7,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M261.5,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M264,223.7v-21h2.3v21h-2.3Z"/>
+    <path d="M271,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M275.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M280.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M285.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M290.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M295,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M299.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M304.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M309.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M314.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M319,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M323.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M328.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M333.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M338.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M343,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M347.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M352.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M355.2,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M359.9,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M364.8,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M369.6,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M376.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M381.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M386.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M388.7,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M395.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M400.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M405.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M407.9,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M412.7,223.7v-21.1h2.3v21.1h-2.3Z"/>
+    <path d="M417.5,202.6h2.2v21.1h-2.2v-21.1Z"/>
+    <path d="M422.3,223.7v-21h2.3v21h-2.3Z"/>
+    <path d="M429.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M434.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M439,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M443.8,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M448.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M453.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M458.2,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M463,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M465.5,202.6h2.3v21.1h-2.3v-21.1Z"/>
+    <path d="M472.6,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M477.4,223.7h-2.3v-21.1h2.3v21.1Z"/>
+    <path d="M479.9,223.7v-21.1h2.3v21.1h-2.3Z"/>
+    <path d="M484.7,223.7v-21h2.3v21h-2.3Z"/>
+    <path d="M489.5,223.7v-21.1h2.3v21.1h-2.3Z"/>
+  </g>
+</svg>

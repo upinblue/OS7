@@ -4,7 +4,7 @@ Architecture: all
 Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
 Section: gnome
 Priority: optional
-Depends: dconf-cli, dconf-gsettings-backend, gnome-shell-extension-user-theme, gnome-shell-extension-window-list, gnome-shell-extension-apps-menu, gnome-shell-extension-places-menu, gnome-shell-extension-launch-new-instance, fontconfig
+Depends: dconf-cli, dconf-gsettings-backend, libglib2.0-bin, gnome-shell-extension-user-theme, gnome-shell-extension-window-list, gnome-shell-extension-apps-menu, gnome-shell-extension-places-menu, gnome-shell-extension-launch-new-instance, fontconfig
 Homepage: https://github.com/upinblue/os7
 Description: OS/7 Classic — the Windows 2000 desktop surface for GNOME
  A GTK 3 theme, a GNOME Shell theme, a set of libadwaita colour overrides and

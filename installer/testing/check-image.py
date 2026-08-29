@@ -131,6 +131,37 @@ emit desktop.kept      bash -c 'for p in ubuntu-desktop-minimal gnome-shell gdm3
 emit desktop.pin       bash -c 'cat /mnt/sq/etc/apt/preferences.d/os7-desktop-exclusions.pref 2>/dev/null || true'
 emit desktop.pinforce  bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin apt-cache policy gnome-initial-setup firefox ubuntu-report 2>/dev/null || true'
 emit desktop.logo      bash -c 'ls -l /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png.distrib 2>&1 || true'
+
+# THE LOGIN SCREEN — the surface every check above is blind to.
+#
+# The greeter does not read /etc/dconf/db/os7. It reads
+# /var/lib/gdm3/greeter-dconf-defaults, compiled from /usr/share/gdm/dconf by
+# gdm.service's ExecStartPre, through a profile with no system-db in it at all
+# — so GNOME's documented /etc/dconf/db/gdm.d/ is inert on Ubuntu and a keyfile
+# put there is read by nobody (BUILD-NOTES #110). Everything `desktop.dconf`
+# above proves was true of an image whose login screen said Ubuntu.
+#
+# And the value it has to beat is a gschema override in a package that cannot
+# be removed, so PRESENCE of our keyfile answers nothing. This compiles the
+# directory the way gdm does, inside the image's own root, and asks GSettings —
+# the one thing that resolves an override against a dconf database — what the
+# greeter would draw.
+cat > /mnt/root/tmp/os7-greeter-probe.sh <<'GREETER'
+#!/bin/sh
+d=$(mktemp -d) || exit 0
+dconf compile "$d/db" /usr/share/gdm/dconf 2>/dev/null || exit 0
+printf 'file-db:%s/db\n' "$d" > "$d/profile"
+get() { DCONF_PROFILE="$d/profile" gsettings get "$1" "$2" 2>/dev/null; }
+echo "logo=$(get org.gnome.login-screen logo)"
+echo "accent=$(get org.gnome.desktop.interface accent-color)"
+echo "font=$(get org.gnome.desktop.interface font-name)"
+echo "background=$(get com.ubuntu.login-screen background-color)"
+echo "theme=$(readlink -f /usr/share/gnome-shell/gdm-theme.gresource)"
+echo "icons=$(readlink -f /usr/share/gnome-shell/gdm-icons.gresource)"
+GREETER
+emit desktop.greeter   bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin sh /tmp/os7-greeter-probe.sh 2>&1 || true'
+emit desktop.greeterdir bash -c 'ls /mnt/sq/usr/share/gdm/dconf/ 2>&1 || true'
+emit desktop.greeterlogo bash -c 'ls -l /mnt/sq/usr/share/pixmaps/os7-logo-login.svg /mnt/sq/usr/share/pixmaps/upinblue-logo.svg 2>&1 || true'
 # `grep -c` prints 0 AND exits 1 when nothing matches, so `$(grep -c … || echo 0)`
 # yields TWO lines and the parser on the other side gets a row with one field.
 # grep -q in an if, which answers the question that was actually asked.
@@ -1080,6 +1111,60 @@ def main() -> None:
         # being present proves only that something wrote it.
         check(listed("bgrt-fallback.png.distrib"),
               "and plymouth's Ubuntu logo is diverted out of the boot splash")
+
+        # THE LOGIN SCREEN. Three claims, and the first is the one that has
+        # actually been wrong: an OS/7 machine whose every check above was
+        # green still greeted its user with the Ubuntu wordmark, because the
+        # greeter reads a database nothing in this file used to look at.
+        #
+        # `desktop.greeter` is not a file listing. It is GSettings' own answer,
+        # obtained inside the image's root, after compiling /usr/share/gdm/dconf
+        # exactly the way gdm.service does — so what it reports is what the
+        # login screen draws, override and all.
+        greeter = {}
+        for line in img.get("desktop.greeter", "").splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                greeter[k.strip()] = v.strip().strip("'")
+
+        check(greeter.get("logo") == "/usr/share/pixmaps/os7-logo-login.svg",
+              "the login screen shows the OS/7 mark, not Ubuntu's",
+              greeter.get("logo") or "<gsettings said nothing — is gdm3 installed?>")
+        check(greeter.get("accent") == "blue",
+              "and its accent is OS/7 blue, not Ubuntu orange",
+              greeter.get("accent") or "<unset>")
+        check(greeter.get("background") == "#0057ad",
+              "and its background is the Setup field colour",
+              greeter.get("background") or "<unset>")
+
+        # Yaru is not a neutral theme that happens to be installed — it IS
+        # Ubuntu's brand, and yaru-theme-gnome-shell cannot be removed
+        # (ubuntu-session Depends on it). Hook 0035 step 9 moves the greeter
+        # off it with update-alternatives; this asks the link in the image.
+        gres = [greeter.get("theme", ""), greeter.get("icons", "")]
+        check(all(g and "Yaru" not in g for g in gres),
+              "and the greeter's stylesheet is GNOME's, not Yaru's",
+              " ".join(g or "<unresolved>" for g in gres))
+
+        # PRECEDENCE IS SORT ORDER in that directory: 00-upstream-settings is
+        # gdm3's, 90-debian-settings is the ucf conffile, and `dconf compile`
+        # takes the last writer. A file that stops sorting last stops applying
+        # without anything failing.
+        gdir = sorted(f for f in img.get("desktop.greeterdir", "").split()
+                      if f and f != "locks")
+        check(bool(gdir) and gdir[-1] == "95-os7-login-screen",
+              "and OS/7's greeter defaults sort last in /usr/share/gdm/dconf",
+              " ".join(gdir) or "<empty>")
+
+        def greeter_listed(name: str) -> bool:
+            for line in img.get("desktop.greeterlogo", "").splitlines():
+                if name in line and not line.startswith("ls:"):
+                    return True
+            return False
+
+        check(greeter_listed("os7-logo-login.svg") and greeter_listed("upinblue-logo.svg"),
+              "and both marks the greeter names are in the image",
+              " ".join(img.get("desktop.greeterlogo", "").split())[:120])
 
         auto = {}
         for line in img.get("desktop.autostart", "").splitlines():

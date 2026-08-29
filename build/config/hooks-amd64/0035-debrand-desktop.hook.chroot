@@ -65,8 +65,18 @@
 # it — which is the actual requirement. It is verified below by asking APT what
 # it would now do, not by reading back the file this hook just wrote.
 #
+# THE LOGIN SCREEN is the third kind of Ubuntu on this image, and neither
+# purging nor pinning reaches it: gdm3, ubuntu-settings and
+# yaru-theme-gnome-shell are all hard dependencies of the desktop. So step 7a
+# proves the OS/7 greeter mark actually renders, and step 9 moves the greeter's
+# stylesheet off Yaru with update-alternatives. The mark itself, the background
+# and the accent are DATA, and they live in os7-desktop-theme's
+# /usr/share/gdm/dconf/95-os7-login-screen - docs/BUILD-NOTES.md #110 for why
+# that directory and not the one GNOME's documentation names.
+#
 # ORDERING: 0035 runs after 0030 (the Microsoft stack, so its packages are here
-# to be checked) and before 0085/0090 (theme install and verify), so hook 0090
+# to be checked) and after 0022 (the OS/7 packages, so os7-desktop-theme's
+# greeter mark is here to be rendered), and before 0090 (verify), so hook 0090
 # can check this hook's work.
 
 set -euo pipefail
@@ -327,6 +337,47 @@ else
 	dpkg-divert --local --rename --add "${FALLBACK}" >/dev/null
 	rsvg-convert -w 128 -h 128 "${SRC_SVG}" -o "${FALLBACK}"
 	chmod 0644 "${FALLBACK}"
+
+	# 7a. THE GREETER'S MARK, RENDERED WHILE THE RASTERISER IS STILL HERE.
+	#
+	# /usr/share/pixmaps/os7-logo-login.svg is what the login screen draws
+	# (os7-desktop-theme, /usr/share/gdm/dconf/95-os7-login-screen). Its
+	# wordmark is <text>, the same deliberate trade os7.svg makes, and the way
+	# that trade fails is silent: fontconfig answers a missing family with the
+	# default sans face and nothing anywhere says so. The only thing that
+	# cannot be fooled is rendering it.
+	#
+	# The PNG is thrown away - it is a proof, not an asset. What is kept is the
+	# build failing here instead of a login screen nobody looks at until it is
+	# on somebody's desk.
+	LOGIN_SVG=/usr/share/pixmaps/os7-logo-login.svg
+	if [ ! -r "${LOGIN_SVG}" ]; then
+		note "${LOGIN_SVG} is missing - os7-desktop-theme did not install (hook 0022)"
+	else
+		# Rendered at scale 2 (432x196), because that is what a HiDPI greeter
+		# asks for: gnome-shell loads this key at natural size TIMES the scale
+		# factor. If it renders there it renders at scale 1.
+		if rsvg-convert -w 432 -h 196 "${LOGIN_SVG}" -o /tmp/os7-login-logo.png 2>/dev/null; then
+			magic="$(head -c 8 /tmp/os7-login-logo.png 2>/dev/null || true)"
+			case "${magic}" in
+				*PNG*) ok "greeter mark rasterises: $(stat -c%s /tmp/os7-login-logo.png) bytes at 432x196" ;;
+				*)     note "${LOGIN_SVG} did not rasterise to a PNG" ;;
+			esac
+		else
+			note "rsvg-convert could not render ${LOGIN_SVG}"
+		fi
+		rm -f /tmp/os7-login-logo.png
+		# And the family the wordmark names. fc-match answers with the face
+		# fontconfig WOULD use, which is the question; `dpkg -s fonts-dejavu-core`
+		# is not.
+		DEJAVU="$(fc-match -f '%{family}' 'DejaVu Sans' 2>/dev/null || true)"
+		if [ "${DEJAVU}" = "DejaVu Sans" ]; then
+			ok "fc-match 'DejaVu Sans' -> DejaVu Sans (the greeter wordmark's face)"
+		else
+			note "fc-match 'DejaVu Sans' -> '${DEJAVU}': the greeter wordmark would substitute"
+		fi
+	fi
+
 	apt-get purge -y librsvg2-bin
 
 	# Ask, do not assume. A diversion that did not take and a rasteriser that
@@ -363,6 +414,85 @@ if [ -r "${SRC_SVG}" ]; then
 else
 	note "no product mark at ${SRC_SVG} - LOGO=os7 resolves to nothing"
 fi
+
+# --- 9. The login screen's Shell theme is Yaru, and Yaru IS the Ubuntu brand --
+#
+# The greeter draws itself from a GResource, and MEASURED out of the shipped
+# image, which one is an update-alternatives decision that Ubuntu wins by
+# priority:
+#
+#   /var/lib/dpkg/alternatives/gdm-theme.gresource
+#     link  /usr/share/gnome-shell/gdm-theme.gresource            (auto)
+#     10    /usr/share/gnome-shell/gnome-shell-theme.gresource         gnome-shell
+#     15    /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+#                                                                yaru-theme-gnome-shell
+#
+# and the same table for gdm-icons.gresource. yaru-theme-gnome-shell is a
+# Depends of ubuntu-session, which is a Depends of gdm3 AND of
+# ubuntu-desktop-minimal, so it cannot be removed - the header of this hook
+# lists it among the things that stay. In auto mode 15 beats 10 on every
+# machine, for ever.
+#
+# THIS IS NOT A FILE BEING OVERWRITTEN. update-alternatives is dpkg's own
+# mechanism for choosing between two packages' implementations of one thing,
+# both candidates are registered by their own packages, and the one selected
+# here belongs to gnome-shell - so it is upgraded, and stays correct, with the
+# Shell it themes. `--set` puts the link in MANUAL mode, which is what makes
+# the choice survive: an automatic link would go back to Yaru the moment
+# either package is upgraded. Identical reasoning, and identical mechanism, to
+# x-terminal-emulator in step 5a.
+#
+# WHAT IS TRADED, and it is less than it sounds. The two gresources were
+# DIFFED before this was written, not assumed about:
+#
+#   .login-dialog* selectors        Yaru 30, GNOME 30, and the sets are EQUAL
+#   authd / broker / web-login hits Yaru 328, GNOME 328
+#   both contain gdm.css
+#
+# Yaru is a RECOLOUR of the same upstream stylesheet, not a structural fork, so
+# nothing on the greeter loses its styling - including the authd surfaces the
+# Entra sign-in path will eventually need (C8a). What changes is the palette.
+#
+# And the palette is where the win is: GNOME's own honours
+# org.gnome.desktop.interface accent-color - 807 references to -st-accent-color
+# inside it - so the login screen is recoloured by a SETTING
+# (95-os7-login-screen sets 'blue') instead of by a stylesheet OS/7 would then
+# have to maintain against every GNOME generation. That is the whole reason
+# this is three lines and not a theme fork;
+# build/packages/os7-desktop-theme/README.md, "Why not replace
+# gnome-shell-theme.gresource".
+#
+# To put Ubuntu's back: update-alternatives --auto gdm-theme.gresource
+for pair in \
+	"gdm-theme.gresource:/usr/share/gnome-shell/gnome-shell-theme.gresource" \
+	"gdm-icons.gresource:/usr/share/gnome-shell/gnome-shell-icons.gresource"
+do
+	altname="${pair%%:*}"
+	alttarget="${pair#*:}"
+
+	if ! update-alternatives --list "${altname}" >/dev/null 2>&1; then
+		note "no ${altname} alternative on this image - the greeter theme cannot be chosen"
+		continue
+	fi
+	if [ ! -e "${alttarget}" ]; then
+		note "${alttarget} does not exist - gnome-shell no longer ships its own greeter theme"
+		continue
+	fi
+
+	update-alternatives --set "${altname}" "${alttarget}"
+
+	# ASK THE LINK, not update-alternatives' exit code. The two answer
+	# different questions, and only one of them is about the image.
+	got="$(readlink -f "/usr/share/gnome-shell/${altname}" 2>/dev/null || true)"
+	if [ "${got}" = "${alttarget}" ]; then
+		ok "${altname} -> ${got}"
+	else
+		note "${altname} resolves to ${got:-<nothing>}, not ${alttarget}"
+	fi
+	case "${got}" in
+		*Yaru*) note "${altname} still resolves into Yaru - the greeter is Ubuntu's" ;;
+	esac
+done
 
 if [ "${fail}" -ne 0 ]; then
 	echo "OS/7 hook 0035: the desktop was NOT correctly debranded."

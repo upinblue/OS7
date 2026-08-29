@@ -406,6 +406,17 @@ the ones a fresh session hits first.
   declaration satisfied, and the thing they were about decided elsewhere. The
   second half of the fix is checking that the session the key names **exists** —
   dconf stores any string and GDM falls back silently.
+- **#110 — the LOGIN screen reads a different database, and GNOME's documented
+  way of branding it does nothing on Ubuntu.** `/usr/share/dconf/profile/gdm`
+  has **no `system-db:`** — only `file-db:/var/lib/gdm3/greeter-dconf-defaults`,
+  which `gdm.service`'s `ExecStartPre` recompiles from **`/usr/share/gdm/dconf/`**
+  at every start. So a keyfile in `/etc/dconf/db/gdm.d/` compiles, stores, and is
+  read by nobody. And the Ubuntu logo and the orange accent are *named* in
+  `10_ubuntu-settings.gschema.override`, owned by a package
+  `ubuntu-desktop-minimal` Depends on: they cannot be removed, only **out-ranked**
+  — a dconf value beats a schema default. The check that means anything is a
+  CONTROL: ask GSettings through the compiled database, then ask again with the
+  keyfile removed and require Ubuntu's answer back.
 - **#84 — GNOME 50 will not draw 1-bit text.** `font-antialiasing='none'` was a
   deliberate Windows-2000 choice against a GNOME that no longer honours it: GTK 4
   loses vertical stems, GTK 3 on the same screen at the same size does not.

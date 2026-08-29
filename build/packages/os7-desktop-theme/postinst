@@ -2,7 +2,7 @@
 # =============================================================================
 # OS/7 Classic — post-installation.
 #
-# Three jobs, and each one FAILS LOUDLY rather than leaving a half-applied
+# Four jobs, and each one FAILS LOUDLY rather than leaving a half-applied
 # theme behind. A theme that silently did not apply is the exact failure shape
 # this repository keeps paying for: a program reports success and the thing it
 # was meant to change did not change.
@@ -10,6 +10,9 @@
 #   1. compile the dconf database that carries the defaults
 #   2. make sure a dconf user profile actually reads it
 #   3. register the shipped fonts with fontconfig
+#   4. prove the LOGIN SCREEN's defaults out-rank Ubuntu's - a separate
+#      database, a separate profile, and a contest against a gschema override
+#      that no amount of checking our own file could settle
 # =============================================================================
 set -e
 
@@ -64,6 +67,91 @@ fi
 # --- 3. Fonts ------------------------------------------------------------
 if [ -d /usr/share/fonts/truetype/os7-classic ]; then
 	fc-cache -f /usr/share/fonts/truetype/os7-classic >/dev/null 2>&1 || true
+fi
+
+# --- 4. The login screen -------------------------------------------------
+# The greeter does NOT read the database compiled above. It reads its own, and
+# the two mechanisms have nothing in common:
+#
+#   the session   /etc/dconf/profile/user -> system-db:os7 -> /etc/dconf/db/os7
+#   the greeter   /usr/share/dconf/profile/gdm -> file-db:
+#                     /var/lib/gdm3/greeter-dconf-defaults, compiled from
+#                     /usr/share/gdm/dconf by /usr/share/gdm/generate-config,
+#                     which gdm.service runs as ExecStartPre on EVERY start
+#
+# So there is nothing for this script to install: dpkg has already put
+# 95-os7-login-screen in that directory and gdm recompiles it by itself at the
+# next start. What is left is the part that matters — proving that the file is
+# read and that what it says WINS, because what it is competing with is
+# 10_ubuntu-settings.gschema.override, which names Ubuntu's logo and cannot be
+# removed. docs/BUILD-NOTES.md #110.
+GREETER_KEYFILE=/usr/share/gdm/dconf/95-os7-login-screen
+GREETER_PROFILE=/usr/share/dconf/profile/gdm
+WANT_LOGO=/usr/share/pixmaps/os7-logo-login.svg
+
+if [ ! -e "${GREETER_PROFILE}" ]; then
+	# No gdm3 on this machine. Say so out loud: a silent skip is how a check
+	# that stopped running goes on reporting success.
+	echo "os7-desktop-theme: no ${GREETER_PROFILE} - gdm3 is not installed," >&2
+	echo "os7-desktop-theme: so the login-screen defaults were NOT verified." >&2
+elif [ ! -r "${GREETER_KEYFILE}" ]; then
+	echo "os7-desktop-theme: ${GREETER_KEYFILE} is missing from this package" >&2
+	exit 1
+else
+	# 4a. The MECHANISM, before our own file. If a future gdm3 stops compiling
+	#     that directory, or points its profile somewhere else, this package's
+	#     keyfile becomes a text file nothing reads — present, correct and
+	#     inert, which is the failure shape this repository keeps paying for.
+	if ! grep -q '^file-db:/var/lib/gdm3/greeter-dconf-defaults$' "${GREETER_PROFILE}"; then
+		echo "os7-desktop-theme: ${GREETER_PROFILE} no longer names" >&2
+		echo "os7-desktop-theme: file-db:/var/lib/gdm3/greeter-dconf-defaults." >&2
+		echo "os7-desktop-theme: gdm changed how the greeter reads its defaults;" >&2
+		echo "os7-desktop-theme: ${GREETER_KEYFILE} is now inert." >&2
+		exit 1
+	fi
+	if ! grep -q "dconf compile .*/usr/share/gdm/dconf" /usr/share/gdm/generate-config 2>/dev/null; then
+		echo "os7-desktop-theme: /usr/share/gdm/generate-config no longer compiles" >&2
+		echo "os7-desktop-theme: /usr/share/gdm/dconf - nothing reads ${GREETER_KEYFILE}." >&2
+		exit 1
+	fi
+
+	# 4b. Compile the directory the way generate-config does, into a scratch
+	#     file, and then ASK GSETTINGS through it. Not `dconf read`: dconf would
+	#     only tell us that our own keyfile parsed, and both sides of that
+	#     question come from this package. GSettings is the one thing that
+	#     resolves a gschema override against a dconf database, which is exactly
+	#     the contest this file has to win.
+	SCRATCH="$(mktemp -d)"
+	dconf compile "${SCRATCH}/db" /usr/share/gdm/dconf
+	printf 'file-db:%s/db\n' "${SCRATCH}" > "${SCRATCH}/profile"
+
+	GOT="$(DCONF_PROFILE="${SCRATCH}/profile" gsettings get org.gnome.login-screen logo 2>/dev/null | tr -d "'")"
+	if [ "${GOT}" != "${WANT_LOGO}" ]; then
+		rm -rf "${SCRATCH}"
+		echo "os7-desktop-theme: the login screen would show '${GOT:-<nothing>}'," >&2
+		echo "os7-desktop-theme: not ${WANT_LOGO}." >&2
+		echo "os7-desktop-theme: check ${GREETER_KEYFILE} for a syntax error -" >&2
+		echo "os7-desktop-theme: dconf compile accepts an unparseable keyfile and exits 0." >&2
+		exit 1
+	fi
+	if [ ! -s "${WANT_LOGO}" ]; then
+		rm -rf "${SCRATCH}"
+		echo "os7-desktop-theme: ${WANT_LOGO} is missing or empty - the greeter" >&2
+		echo "os7-desktop-theme: would draw no logo at all rather than Ubuntu's." >&2
+		exit 1
+	fi
+	rm -rf "${SCRATCH}"
+
+	# 4c. Apply it to a machine that is already running. gdm.service would do
+	#     this at its next start anyway, so a failure here is not a failure of
+	#     the package - inside a build chroot there is no /var/lib/gdm3 and no
+	#     gdm user to compile as. The verification above is the part that must
+	#     hold; this is only about not needing a reboot.
+	if [ -x /usr/share/gdm/generate-config ]; then
+		/usr/share/gdm/generate-config >/dev/null 2>&1 \
+			|| echo "os7-desktop-theme: generate-config did not run here; gdm will" \
+			        "recompile the greeter defaults at its next start."
+	fi
 fi
 
 exit 0

@@ -1,0 +1,140 @@
+# =============================================================================
+# OS/7 — the LOGIN SCREEN. The one screen the machine shows before anybody has
+# proved who they are, and until this file existed it said Ubuntu.
+#
+# WHY IT IS HERE AND NOT WHERE GNOME'S DOCUMENTATION SAYS
+# -------------------------------------------------------
+# GNOME's System Administration Guide gives one instruction for branding the
+# greeter: put a keyfile in /etc/dconf/db/gdm.d/ and run `dconf update`. On
+# Ubuntu 26.04 that does nothing at all, and it does it silently. MEASURED out
+# of the shipped OS7-1.0.0.150-amd64.iso, 2026-08-29:
+#
+#   /etc/dconf/db/gdm.d/         does not exist
+#   /etc/dconf/profile/gdm       does not exist
+#   /usr/share/dconf/profile/gdm contains exactly two lines:
+#           user-db:user
+#           file-db:/var/lib/gdm3/greeter-dconf-defaults
+#
+# There is no `system-db:gdm` in that profile, so there is nothing for a
+# /etc/dconf/db/gdm.d/ tree to be compiled INTO. The greeter reads one file-db,
+# and that file-db is built by /usr/share/gdm/generate-config, which gdm.service
+# runs as ExecStartPre on every single start:
+#
+#       dconf compile /var/lib/gdm3/greeter-dconf-defaults /usr/share/gdm/dconf
+#
+# THIS directory is therefore the extension point, and it is not a discovery —
+# it is written down in the first six lines of the file next to this one:
+#
+#       # This file is part of the GDM packaging and should not be changed.
+#       # Instead create your own file next to it with a higher numbered
+#       # prefix, and run `dconf update`.
+#
+# 95 is chosen against what is already there: 00-upstream-settings (gdm3's own)
+# and 90-debian-settings, which is a symlink to the ucf conffile
+# /etc/gdm3/greeter.dconf-defaults. Later file wins, so 95 out-ranks both while
+# leaving an operator 91–94 and 96–99 to out-rank US without editing a shipped
+# file. docs/BUILD-NOTES.md #110.
+#
+# WHAT THIS BEATS, AND WHY IT HAS TO BEAT SOMETHING
+# --------------------------------------------------
+# The Ubuntu logo on the greeter is not a default nobody set. It is set, by
+# name, in a file OS/7 cannot remove:
+#
+#   /usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override
+#       [org.gnome.login-screen]
+#       logo='/usr/share/pixmaps/ubuntu-logo-text-dark.svg'
+#       [org.gnome.desktop.interface]
+#       accent-color = 'orange'
+#
+# ubuntu-settings owns that file and ubuntu-desktop-minimal DEPENDS on
+# ubuntu-settings, so the package stays (hook 0035's header lists it among the
+# things that cannot leave) and the override stays with it. A gschema override
+# sets the SCHEMA DEFAULT. A dconf database sets a VALUE. Values win over
+# defaults, always, and that is the whole mechanism: this file does not remove
+# Ubuntu's line, it out-ranks it.
+#
+# Which is a claim, so hook 0090 does not take it on trust — it compiles this
+# directory the way generate-config does and then asks GSettings, through that
+# database, what `org.gnome.login-screen logo` reads. GSettings is the thing
+# that resolves override-against-dconf at login; nothing else can answer.
+#
+# NOTHING HERE IS LOCKED, the same rule /etc/dconf/db/os7.d/00-os7-classic
+# follows: /usr/share/gdm/dconf/locks/ stays gdm3's, these are defaults an
+# operator may override, and fleet-wide enforcement belongs in an Intune policy
+# where a support case can tell a policy from a bug.
+# =============================================================================
+
+[org/gnome/login-screen]
+# THE MARK. Ships in this package at /usr/share/pixmaps/os7-logo-login.svg —
+# beside Ubuntu's, in Ubuntu's own directory for exactly this, rather than in
+# the hicolor icon theme: gnome-shell loads this key as a FILE PATH, at natural
+# size, and never as an icon name.
+logo='/usr/share/pixmaps/os7-logo-login.svg'
+
+[com/ubuntu/login-screen]
+# THE BACKGROUND, and this schema is Ubuntu's own, not GNOME's.
+#
+# The greeter background is normally a property of the Shell stylesheet
+# (#lockDialogGroup), which lives inside a gresource belonging to gnome-shell —
+# unreachable without replacing a file another package owns, which is the
+# maintenance treadmill this package exists to avoid. Ubuntu patched their Shell
+# to read it from settings instead, and MEASURED 2026-08-29 the consumer is
+# real: `com.ubuntu.login-screen` appears in /usr/lib/gnome-shell/libshell-18.so
+# and in no other binary on the image.
+#
+# So this is a supported lever on this distribution and nowhere else. If Ubuntu
+# ever drops the patch the schema goes with it, hook 0090's schema check turns
+# red at build time, and the worst a shipped machine does is fall back to the
+# stylesheet's dark grey. That is the correct failure for a cosmetic.
+#
+# #0057ad is not a colour picked here. It is FIELD in build/lib/palette.py —
+# the blue of os7-setup's own screens — so the greeter and the installer the
+# administrator just walked through are the same blue. os7-logo-login.svg is
+# drawn in white FOR this background; change one and the other has to change.
+background-picture-uri=''
+background-color='#0057ad'
+
+[org/gnome/desktop/background]
+# MEASURED NOT TO BE WHAT DRAWS THE BACKGROUND — the block above is. This is
+# here to clear what 10_ubuntu-settings.gschema.override puts in it:
+#
+#   [org.gnome.desktop.background:GNOME-Greeter]
+#   picture-uri = 'file:///usr/share/backgrounds/warty-final-ubuntu.png'
+#
+# an Ubuntu-branded asset named at the greeter, today unused, and one GNOME
+# release away from being honoured again. Emptying it costs two lines and means
+# no future Shell can put that wallpaper back without somebody deciding to.
+picture-uri=''
+picture-uri-dark=''
+
+[org/gnome/desktop/interface]
+# THE ORANGE. GNOME 47 made the accent a first-class setting and both shell
+# themes on this image honour it — 807 references to -st-accent-color in
+# gnome-shell's own gnome-shell-theme.gresource, 903 in Yaru's — so the ring
+# around the highlighted user is not Yaru being Ubuntu, it is
+# 10_ubuntu-settings.gschema.override setting accent-color='orange' for the
+# whole system. 'blue' is one of the ten values the enum allows and it is the
+# product's colour. The desktop session is given the same value in
+# /etc/dconf/db/os7.d/00-os7-classic; this is the greeter's copy of that
+# decision, because the two databases do not see each other.
+accent-color='blue'
+
+# Tahoma reaches the greeter because it ships in THIS package, system-wide, and
+# fc-cache runs in the postinst — the greeter runs as the gdm user and has no
+# home directory to install a font into. 11 rather than the desktop's 9: GNOME's
+# greeter layout is built around ~11 and the classic 8/9 metrics that carry the
+# Windows 2000 look have no bevels or 96-dpi grid to be right about here.
+font-name='Tahoma 11'
+
+# The same choice, and the same reason, as the desktop's: docs/BUILD-NOTES.md
+# #84. Ubuntu's global default is 'rgba'.
+font-antialiasing='grayscale'
+font-hinting='full'
+
+# What /etc/alternatives/x-cursor-theme already resolves to system-wide. Said
+# again here so that the greeter and the session cannot disagree about it.
+cursor-theme='Adwaita'
+
+# 24h, like every other clock this product draws.
+clock-format='24h'
+clock-show-weekday=true
