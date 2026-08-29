@@ -104,6 +104,29 @@ code with the client under test; and the stage-1 section runs a second time with
 `adcli`, `kinit`, `klist` and `sssctl` moved out of `PATH`, so "stage 1 needs
 none of stage 2's packages" is a measurement rather than an intention.
 
+**TWO CMDLET DEFECTS ARE OPEN SINCE 2026-08-29, and both were found by typing
+the commands at a machine rather than by a check.** Writing the administrator
+manual ([docs/manual/](manual/README.md)) required every example to be run and
+photographed on an installed disk, and that is a use of this surface nothing
+here had made before.
+
+* **#112 — `Get-OS7BackupStatus` throws on an ordinary machine.** No
+  replication target means `$targets` is empty, `Select-Object -Last 1` is
+  `$null`, and `Set-StrictMode` turns the property read into a terminating
+  error. Replication is opt-in (B4), so this is *every* machine that has not
+  opted in — and under `-SkipTargets` it is unconditional. The same shape one
+  line above fires on a machine whose first snapshot has not run, so the first
+  status a new installation is asked for is the one that cannot be given.
+  `Test-OS7Backup` is 63 green assertions and covers neither state.
+* **#113 — the cmdlet surface cannot see a timer.** `Get-OS7Service` pins
+  `Type = 'service'`, so `os7-update-check.timer` is invisible — the mechanism
+  RELEASE-AND-UPDATE-PLAN §6 ships for *"on a managed fleet nobody types
+  `Update-OS7`"*. `Set-OS7Service -StartupType` reaches a type-agnostic helper,
+  so enabling the timer works and looking at it does not.
+
+[SESSION-ADMIN-MANUAL.md](SESSION-ADMIN-MANUAL.md) has the measurements, and
+#114 there is the harness lesson that cost three VM runs.
+
 **What is owed, in order, and none of it is small:**
 
 1. **A real Windows Server domain controller.** Samba exercises the protocol; it

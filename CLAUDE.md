@@ -55,6 +55,7 @@ here either — this file points, they rule.
 | What the product CONTAINS, how a release is delivered, decisions C1–C12 | [docs/CURATION-AND-DELIVERY-PLAN.md](docs/CURATION-AND-DELIVERY-PLAN.md) — **§9 (C10) CORRECTS three steps of the release plan's §4.2**, so read them together and let C10 win. C7a — where a release signing key lives — is open |
 | What the machine calls itself and to whom, the friendly `1.x.x`, `Get-OS7Version`, decisions I1–I10 | [docs/IDENTITY-PLAN.md](docs/IDENTITY-PLAN.md) — **it supersedes the `NAME=` row of the release plan's §3.5** |
 | What works today and what to do next | [docs/HANDOFF.md](docs/HANDOFF.md) — **read this first** |
+| How an OPERATOR runs one of these machines | [docs/manual/](docs/manual/README.md) — the administrator manual, DE and EN. It decides nothing; it is the product described from the outside, and its examples were typed at a machine. **It carries no maturity markers by request**, so it describes the domain join and backup as usable — which HANDOFF.md does not |
 | ZFS from PowerShell: the two layers, decisions Z1–Z14, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
 | What OS/7 exposes as cmdlets, what it deliberately does not, how the layers are cut, decisions P1–P7 | [docs/POWERSHELL-SURFACE-PLAN.md](docs/POWERSHELL-SURFACE-PLAN.md) |
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
@@ -114,6 +115,14 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   to the pre-port construction, the
                                           #   amd64 ones by property. No QEMU,
                                           #   no Docker, ~2s, both hosts
+./installer/testing/shoot-manual.py       # the administrator manual's pictures,
+                                          #   taken from a machine: boot an
+                                          #   installed disk with NO medium, log
+                                          #   in as a person does, type 41
+                                          #   cmdlets, keep the screen's text AND
+                                          #   the screen. --render redraws from
+                                          #   the saved bytes with no VM. It is
+                                          #   what found #112 and #113
 ./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, 3s
 ./installer/testing/check-home-logic.py   # Get-/Move-OS7Home's decisions: a fake
                                           #   zfs whose datasets are real tmpfs

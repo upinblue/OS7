@@ -52,12 +52,12 @@ table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-**#112, #113 and #114 are CLAIMED** on branch `admin-manual`, 2026-08-29, and
-this line is the claim — the entries are written in the commit after this one.
-They are, in order: `Get-OS7BackupStatus` throwing on the two ordinary machines
-that have nothing to compare; `Get-OS7Service` pinning `Type = 'service'` so the
-unattended update TIMER is invisible to the cmdlet surface; and a captured
-terminal slice replayed at a different geometry than the guest believed it had.
+**#112, #113 and #114 were claimed and are now written** (branch `admin-manual`,
+2026-08-29). They are, in order: `Get-OS7BackupStatus` throwing on the two
+ordinary machines that have nothing to compare; `Get-OS7Service` pinning
+`Type = 'service'` so the unattended update TIMER is invisible to the cmdlet
+surface; and a captured terminal slice replayed at a different geometry than the
+guest believed it had.
 
 Everything below is written. Numbers above 114 are free.
 
@@ -5873,3 +5873,136 @@ every declaration was satisfied, every check reported success, and the thing
 they were about was decided by a component nobody had asked. Here the component
 was the image loader, and the question that would have found it in one second is
 "which program actually opens this file?"
+
+## #112 — `Get-OS7BackupStatus` throws on the two machines that have nothing to compare
+
+**Found by writing a manual.** Chapter 12 needed a picture of the backup status,
+so the command was typed on a real installed machine. It did not print a status:
+
+```
+Get-OS7BackupStatus: The property 'NewestReplicated' cannot be found on this
+object. Verify that the property exists.
+```
+
+The machine was healthy. `Get-OS7BackupPolicy` on the same console, one command
+earlier, reported `Configured: True`, `Enabled: True`, two sources, eight and
+four snapshots taken minutes before — and `TargetCount: 0`, because no
+replication target had been created. That is an ordinary machine: snapshots are
+on by default and replication is opt-in (BACKUP-PLAN B4), so **every machine
+that has not opted in is this machine.**
+
+The cause is two lines in `Get-OS7BackupStatus`
+(`powershell/OS7/OS7.Backup.ps1`):
+
+```powershell
+$newestLocal  = ($policy.Sources | Where-Object Newest | Sort-Object Newest |
+    Select-Object -Last 1).Newest
+$newestRemote = ($targets | Where-Object { $_.NewestReplicated } |
+    Sort-Object NewestReplicated | Select-Object -Last 1).NewestReplicated
+```
+
+`Select-Object -Last 1` over an empty pipeline yields **`$null`**, and
+`OS7.psm1` line 53 sets `Set-StrictMode -Version Latest`, under which reading a
+property off `$null` is a terminating error rather than `$null`. `$targets` is
+`@()` whenever there is no target — and unconditionally so under `-SkipTargets`,
+which is the parameter offered for exactly the case of not having one.
+
+**Both lines have it, and the second one is the worse of the two.** `$newestLocal`
+survived here only because this machine had already taken snapshots. On a
+machine that has just been configured and whose first snapshot has not run,
+`$policy.Sources | Where-Object Newest` is empty as well, and the same command
+fails one line earlier — so the first status a new installation is asked for is
+the one that cannot be given.
+
+**The file already knew.** Sixty lines above, the same source carries a comment
+saying that under `Set-StrictMode` a missing property is an error and not
+`$null`, and that reading one unguarded throws *naming the property and not the
+cause* — which is precisely the message above. The knowledge was written down
+and the code below it did the other thing. Same shape as the P2-time paragraph
+in CLAUDE.md, and the same argument: a paragraph has nothing checking it.
+
+The fix is to take the value in two steps rather than as a property of a
+pipeline that may be empty, and `Test-OS7Backup` should gain the two states —
+no target, and no snapshot yet — because both are ordinary and neither was
+covered by 63 green assertions.
+
+## #113 — the cmdlet surface cannot see a timer, and the unattended update check is one
+
+`Get-OS7Service` is the only view of systemd units the OS/7 layer offers. It
+opens with:
+
+```powershell
+$splat = @{ Type = 'service' }
+```
+
+— pinned, with no parameter to widen it (`powershell/OS7/OS7.Service.ps1`). The
+generic layer underneath accepts any type: `Get-SystemdUnit -Type` passes
+`--type=` to `systemctl list-units`, and omitting it lists everything.
+
+So `Get-OS7Service -Name os7-update-check.timer` returns nothing at all, on a
+machine where that timer is installed. It is not a stale name:
+`build/packages/os7-release/tree/usr/lib/systemd/system/` holds
+`os7-update-check.timer` beside `os7-update-check.service`, and the timer is the
+half that does the work — `OnCalendar=daily`, `RandomizedDelaySec=3600`,
+`Persistent=true`, written against RELEASE-AND-UPDATE-PLAN §6, *"on a managed
+fleet nobody types `Update-OS7`."*
+
+**The failure mode is quiet and it is the wrong kind of quiet.** The `.service`
+half IS a service and appears normally, so an operator asking about the
+unattended check sees a unit that is `inactive/dead` — which is correct and
+completely uninformative, because a template service pulled by a timer is
+supposed to look like that. Whether the mechanism is *armed* is a property of
+the timer, and the surface has no way to ask. §6's whole promise is a check that
+happens without anyone typing anything; there is currently no cmdlet that can
+confirm it will.
+
+`Set-OS7Service -StartupType` has the same shape from the other side: it reaches
+`Set-SystemdUnitStartup`, which is type-agnostic, so **enabling the timer works
+and looking at it does not.** A surface where the write succeeds and the read
+returns nothing is worse than one where both fail.
+
+Until it is widened, the timer is inspected through the generic layer, and the
+manual says so rather than pretending otherwise:
+
+```powershell
+Get-SystemdUnit -Name os7-update-check.timer -Detailed
+```
+
+## #114 — a captured terminal slice must be replayed at the geometry the guest believed it had
+
+The manual's console pictures are made by capturing the bytes one command
+produced and replaying them into a terminal emulator, then painting the result
+with the PSF the image ships. Three runs of `shoot-manual.py` produced garbage
+before the pictures were right, and all three failures were the same mistake
+seen from different sides.
+
+**The mistake:** the emulator's size, and the slice's starting point, have to
+match what the guest thought was true when it emitted the bytes. PowerShell
+positions with ABSOLUTE cursor moves — `ESC[24;80H` before every repaint —
+because PSReadLine redraws the line being edited on each keystroke. Those
+coordinates are meaningful only against the screen the guest had.
+
+| what was wrong | what the picture showed |
+|---|---|
+| harness set the guest to 100x30 with `stty`; PowerShell's formatter took the 100 and PSReadLine kept positioning in 80x24 | the command at the bottom right of an otherwise empty screen |
+| slice started at the prompt AFTER `Clear-Host`, leaving the clear sequence outside it, so the replaying terminal never cleared | every absolute move landed on a screen that was not the one the machine had |
+| slice included the keystroke-by-keystroke echo of a wrapped command | a staircase of half-typed commands, scrolling the real output away |
+
+**What fixed it:** leave the console at its own 80x24 — which is also
+SETUP-PLAN §2.4's reference geometry, so the emulator, the guest and the font
+cell all agree; start the slice BEFORE the `Clear-Host` so the clear is inside
+it and erases its own echo; and drop the input echo entirely, cutting at the end
+of the last complete rendering of the command.
+
+**`Remove-Module PSReadLine` does not help** and the log says why: the module
+comes back for the next prompt. It was tried, the repaints continued, and the
+byte stream is the evidence.
+
+**And one that was not about rendering at all.** An earlier version ran `sudo
+stty`, which needs no privilege. sudo printed a password prompt, the harness was
+not waiting for one, and the NEXT COMMAND was typed into it — `sudo pwsh
+-NoLogo` is seventeen characters and the log shows seventeen asterisks and
+*"Authentication failed"* three times. Nothing reported that a command had been
+eaten; the run simply never reached a prompt. That is #16 again, in its third
+costume: **never send a second thing before the first one's acknowledgement has
+actually arrived.**
