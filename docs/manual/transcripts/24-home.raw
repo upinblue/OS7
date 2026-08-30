@@ -8,11 +8,11 @@ OS7-STEP run: stat -c %d /home/os7admin
 [32;1mPath          : [0m/home/os7admin
 [32;1mAccount       : [0mos7admin
 [32;1mUid           : [0m1000
-[32;1mDataset       : [0mrpool/USERDATA/os7admin_9d9c4225
+[32;1mDataset       : [0mrpool/USERDATA/os7admin_8caded3b
 [32;1mOwnDataset    : [0mTrue
 [32;1mOwnFilesystem : [0mTrue
 [32;1mAgrees        : [0mTrue
-[32;1mDeviceId      : [0m55
+[32;1mDeviceId      : [0m54
 [32;1mNote          : [0mon its own dataset, outside the boot environment
 
 [6n

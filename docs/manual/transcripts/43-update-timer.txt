@@ -2,8 +2,8 @@ OS7-STEP systemd layer: /usr/local/share/powershell/Modules/Systemd/Systemd.psd1
 
 Name        : os7-update-check.timer
 Description : Daily OS/7 update check
-NextRun     : 08/31/2026 00:53:59
-LastRun     :
+NextRun     : 08/31/2026 00:00:48
+LastRun     : 08/30/2026 12:15:16
 LastResult  : success
 Activates   : os7-update-check.service
 StartupType : disabled

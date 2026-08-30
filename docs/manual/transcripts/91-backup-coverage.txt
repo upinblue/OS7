@@ -1,8 +1,8 @@
-Get-OS7BackupPolicy: /usr/local/share/powershell/Modules/OS7/OS7.Backup.ps1:1033
-Line |
-1033 |      if (-not $Policy) { $Policy = Get-OS7BackupPolicy }
-     |                                    ~~~~~~~~~~~~~~~~~~~
-     | The property 'Creation' cannot be found on this object. Verify that the
-     | property exists.
+Path       : /home/os7admin
+Dataset    : rpool/USERDATA/os7admin_8caded3b
+OwnDataset : True
+Covered    : True
+Reason     : covered
+
 
 PS /home/os7admin>

@@ -406,7 +406,14 @@ function Restore-OS7File {
 		}
 
 		if (-not $pick) {
-			$oldest = ($versions | Sort-Object Created | Select-Object -First 1).Created
+			# BUILD-NOTES #119, and here the empty case is the LIKELY one: this
+			# branch is reached because nothing matched, and "nothing matched"
+			# very often means $versions is empty. Reading `.Created` off the
+			# $null that `@() | Select-Object -First 1` produces replaced a
+			# clear "no version of X at or before Y" with a StrictMode property
+			# error about the error path itself.
+			$oldestVersion = $versions | Sort-Object Created | Select-Object -First 1
+			$oldest = if ($oldestVersion) { $oldestVersion.Created } else { $null }
 			throw [System.InvalidOperationException]::new(
 				$(if ($Snapshot) { "no version of '$Path' in snapshot '$Snapshot'." }
 					else { "no version of '$Path' at or before $AsOf; the oldest is $oldest." }))

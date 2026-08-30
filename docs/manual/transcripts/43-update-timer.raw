@@ -5,8 +5,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 
 [32;1mName        : [0mos7-update-check.timer
 [32;1mDescription : [0mDaily OS/7 update check
-[32;1mNextRun     : [0m08/31/2026 00:53:59
-[32;1mLastRun     : [0m
+[32;1mNextRun     : [0m08/31/2026 00:00:48
+[32;1mLastRun     : [0m08/30/2026 12:15:16
 [32;1mLastResult  : [0msuccess
 [32;1mActivates   : [0mos7-update-check.service
 [32;1mStartupType : [0mdisabled

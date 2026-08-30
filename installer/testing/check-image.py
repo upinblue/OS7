@@ -102,6 +102,38 @@ emit issue             cat /mnt/sq/etc/issue
 emit issue.net         cat /mnt/sq/etc/issue.net
 emit motd.d            bash -c 'cd /mnt/sq/etc/update-motd.d 2>/dev/null && for f in *; do [ -f "$f" ] && printf "%s %s\n" "$f" "$(stat -c %A "$f")"; done || true'
 emit motd-news         bash -c 'cat /mnt/sq/etc/default/motd-news 2>/dev/null || true'
+# WHAT IS WORLD-WRITABLE IN THE SHIPPED IMAGE (BUILD-NOTES #117).
+#
+# Not a hygiene sweep — a regression test for a specific defect that shipped.
+# live-build copies config/includes.chroot/ verbatim, and on the x64 Windows
+# host Docker Desktop presents every bind-mounted path as 0777, so the modes
+# `cp -a` preserved were the mount's invention. OS7-1.0.0.159-amd64.iso carried
+# 27 world-writable paths, among them /usr/lib/systemd/system and
+# /usr/lib/systemd/system-generators: a local user could drop in a unit or a
+# generator that systemd then runs as root.
+#
+# Symlinks are excluded because a symlink is always 0777 and says nothing, and
+# the sticky ones (/tmp, /var/tmp) are excluded because 1777 is correct there.
+emit perms.worldwritable bash -c 'find /mnt/sq -xdev \( -type f -o -type d \) -perm -0002 ! -perm -1000 -printf "%M %p\n" 2>/dev/null | sed "s|/mnt/sq||" | sort'
+# And the same question from the other side: does each file the authored tree
+# ships carry the mode GIT records for it? The paths and the expected modes are
+# git's answer, substituted in by read_image, so a file added to
+# includes.chroot is covered the moment it is committed.
+# stat -c %a:%F UNQUOTED, deliberately: this whole line reaches the container as
+# one `bash -c` argument inside another, and a nested pair of double quotes did
+# not survive the trip -- every file came back MISSING, which reads as an image
+# defect and is a quoting bug in the probe. The format string has no whitespace,
+# so it needs no quotes.
+emit perms.includes    bash -c 'for p in INCLUDESPATHS; do if [ -L /mnt/sq/$p ]; then k=symlink; else k=file; fi; printf "%s %s %s\n" "$(stat -c %a /mnt/sq/$p 2>/dev/null || echo MISSING)" "$k" "$p"; done'
+# THE SSH HOST KEYS, and the unit that makes them (BUILD-NOTES #118).
+#
+# Three questions, because two of them can be right while the machine is still
+# unreachable: is OS/7's unit there, is it ENABLED (a unit nothing wants is a
+# unit that never runs), and does the image ship no host keys of its own --
+# which it must not, or every OS/7 machine in the world would share one.
+emit ssh.keygen.unit   bash -c 'test -f /mnt/sq/usr/lib/systemd/system/os7-sshd-keygen.service && echo present || echo ABSENT'
+emit ssh.keygen.wanted bash -c 'test -L /mnt/sq/usr/lib/systemd/system/multi-user.target.wants/os7-sshd-keygen.service && echo enabled || echo NOT-ENABLED'
+emit ssh.hostkeys      bash -c 'ls /mnt/sq/etc/ssh/ssh_host_* 2>/dev/null | wc -l'
 emit sources.list      cat /mnt/sq/etc/apt/sources.list
 emit sources.list.d    bash -c 'cat /mnt/sq/etc/apt/sources.list.d/*.sources 2>/dev/null || true'
 emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
@@ -391,6 +423,35 @@ umount /mnt/root/proc /mnt/root/dev /mnt/root /mnt/rw /mnt/sq /mnt/iso
 """
 
 
+def includes_modes(arch: str) -> dict[str, str]:
+    """What mode each file of the authored includes tree SHOULD have, per git.
+
+    git is the authority rather than the working tree because the working tree
+    cannot be one: on the Windows host every file in it reads 0777 through
+    Docker's mount and 0666 or 0777 through Python's stat, depending on which
+    layer is asked. git stores one bit — 100644 or 100755 — and stores it the
+    same on both hosts, which is exactly the property a cross-host build needs.
+
+    Returns image paths (`etc/ssh/...`) mapped to octal modes.
+    """
+    out = subprocess.run(["git", "ls-files", "-s", "build/config/includes.chroot",
+                          f"build/config/includes.chroot-{arch}"],
+                         capture_output=True, text=True, cwd=REPO)
+    modes = {}
+    for line in out.stdout.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        gitmode = parts[0].split()[0]
+        path = parts[1]
+        for prefix in (f"build/config/includes.chroot-{arch}/",
+                       "build/config/includes.chroot/"):
+            if path.startswith(prefix):
+                modes[path[len(prefix):]] = "755" if gitmode == "100755" else "644"
+                break
+    return modes
+
+
 def read_image(arch: str) -> dict[str, str]:
     iso = os.path.join(REPO, "out", f"os7-{arch}.iso")
     if not os.path.exists(iso):
@@ -403,7 +464,8 @@ def read_image(arch: str) -> dict[str, str]:
     out = subprocess.run(
         ["docker", "run", "--rm", "--privileged", "--platform", f"linux/{arch}",
          "-v", f"{os.path.join(REPO, 'out')}:/iso:ro", f"os7-build:{arch}",
-         "bash", "-c", PROBE.replace("ISONAME", real)],
+         "bash", "-c", PROBE.replace("ISONAME", real).replace(
+             "INCLUDESPATHS", " ".join(sorted(includes_modes(arch))) or "/dev/null")],
         capture_output=True, text=True)
     if out.returncode != 0:
         sys.exit(f"could not read the image:\n{out.stderr[-2000:]}")
@@ -1241,6 +1303,66 @@ def main() -> None:
         check(bool(want_pwsh) and want_pwsh in handoff,
               f"an interactive login lands in PowerShell {want_pwsh or '?'}",
               handoff.replace("\n", " ")[-80:] if handoff else "<no reply>")
+
+    # -- can this machine ever accept an ssh connection (BUILD-NOTES #118) ---
+    check(img.get("ssh.keygen.unit") == "present",
+          "the image carries OS/7's ssh host key unit",
+          img.get("ssh.keygen.unit", "<no reply>"))
+    check(img.get("ssh.keygen.wanted") == "enabled",
+          "and something wants it, so it will actually run",
+          img.get("ssh.keygen.wanted", "<no reply>"))
+    # ZERO IS THE PASS. Host keys baked into an image would be the same keys on
+    # every machine installed from it -- a far worse defect than the one #118
+    # is about. The unit above is what makes them per-machine, on first boot.
+    check(img.get("ssh.hostkeys", "").strip() == "0",
+          "and the image itself ships no host keys, so every machine gets its own",
+          img.get("ssh.hostkeys", "<no reply>"))
+
+    # -- what anyone may write to (BUILD-NOTES #117) -------------------------
+    ww = [ln for ln in img.get("perms.worldwritable", "").splitlines() if ln.strip()]
+    check(not ww, "nothing in the image is world-writable",
+          f"{len(ww)}: " + ", ".join(ln.split()[-1] for ln in ww[:6]) if ww else "")
+    if ww and len(ww) > 6:
+        for ln in ww:
+            print(f"              {ln}")
+
+    want = includes_modes(arch)
+    # ONE FILE IS DELIBERATELY NOT GIT'S MODE, and naming it here is cheaper
+    # than pretending it is. Hook 0075 chmods /etc/update-motd.d/00-os7-header
+    # to 0755 because run-parts only runs what is executable — and it verifies
+    # the chmod afterwards, refusing the build if the file is still not
+    # executable. Two checks above already assert that it IS executable in the
+    # shipped image, so dropping it here loses nothing.
+    want.pop("etc/update-motd.d/00-os7-header", None)
+    # THREE FIELDS, AND THE KIND IS ONE WORD ON PURPOSE. The first version
+    # emitted `stat -c %a:%F`, whose %F is "symbolic link" -- two words -- so
+    # splitting mode from path put "link" at the front of every path and the
+    # lookup matched nothing. Every file then read MISSING, which is a report
+    # that the IMAGE is broken produced entirely inside this check.
+    got = {}
+    for ln in img.get("perms.includes", "").splitlines():
+        parts = ln.split(None, 2)
+        if len(parts) == 3:
+            got[parts[2]] = (parts[0], parts[1])
+    # A SYMLINK HAS NO MODE OF ITS OWN. GNU stat does not dereference by
+    # default, so a link reads `777:symbolic link` -- and /etc/default/console-setup
+    # IS one in the shipped image (a hook replaces the regular file git tracks
+    # with a link to /usr/share/os7/console-setup). Reporting that as a
+    # permission defect would be this check failing the thing it checks for.
+    wrong = []
+    for p, m in sorted(want.items()):
+        mode, kind = got.get(p, ("MISSING", "file"))
+        # A symlink has no mode of its own -- GNU stat does not dereference by
+        # default, so it always reads 777 -- and /etc/default/console-setup IS
+        # one in the shipped image, where a hook replaces the regular file git
+        # tracks with a link to /usr/share/os7/console-setup.
+        if kind == "symlink":
+            continue
+        if mode != m:
+            wrong.append(f"{p} is {mode}, git says {m}")
+    check(bool(want) and not wrong,
+          f"the {len(want)} authored includes.chroot files carry git's modes",
+          "; ".join(wrong[:4]) if wrong else "")
 
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",

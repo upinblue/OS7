@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Three PowerShell traps this repository has paid for, as a mechanism rather than a note.
+Four PowerShell traps this repository has paid for, as a mechanism rather than a note.
 
     ./check-ps-traps.py            report, and fail if any of them got worse
 
-All three are the same kind of defect: code that reads correctly, parses
+All four are the same kind of defect: code that reads correctly, parses
 correctly, and means something else. None produces a warning; each was found by
 a machine doing the wrong thing.
 
@@ -44,7 +44,20 @@ about itself. This scan finds it in seconds. Which module a name belongs to is
 ASKED of Get-Command rather than kept in a list here, and names the tree itself
 DEFINES are collected by the parser first, so neither can go stale.
 
-ALL THREE BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
+#112/#119 — A PROPERTY READ OFF A PIPELINE THAT MAY BE EMPTY.
+`(… | Select-Object -Last 1).Property` is `$null.Property` when nothing
+matched, and both OS7.psm1 and Zfs.psm1 set `Set-StrictMode -Version Latest`,
+under which that is a TERMINATING error rather than $null. The empty case is
+not exotic: it is a machine with no replication target, no snapshot yet, no
+release index — a fresh install. It shipped thirteen times, made
+`Get-OS7BackupStatus` throw on every new machine, and put an exception into
+the administrator manual's own screenshot of that cmdlet. #112 diagnosed it
+correctly on 2026-08-29, recommended a two-step fix, and nothing changed until
+2026-08-30 — which is the argument for this rule rather than a fourth
+paragraph. The scan added it on the day of the fix and immediately found
+THREE more sites than the grep that preceded it, in three different modules.
+
+ALL FOUR BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
 word for word: "a rule that is only written down erodes."
 
 It needs `pwsh` and nothing else — no container, no ZFS, no VM. The scan is
@@ -60,7 +73,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 # Measured by running this, not counted by eye. #65 was 2 and #91 was 4 before
 # 2026-08-27.
-BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0}
+BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0, "STRICTPROP": 0}
 
 SCAN = r'''
 $root = $env:OS7_SCAN_ROOT
@@ -132,6 +145,40 @@ foreach ($file in $files) {
         Write-Output ("ARRAYPLUS`t{0}`t{1}`t{2}" -f $file.Name, $b.Extent.StartLineNumber, $text)
     }
 
+    # ---- #112 / #119 --------------------------------------------------
+    #
+    # `(… | Select-Object -Last 1).Property` is `$null.Property` when the
+    # pipeline is empty, and OS7.psm1 sets Set-StrictMode -Version Latest,
+    # under which that is a TERMINATING error rather than $null.
+    #
+    # THE SIGNATURE IS NARROW ON PURPOSE. It fires only on a member access
+    # whose target is a parenthesised pipeline of two or more elements ENDING
+    # IN Select-Object. `(Get-Foo).Bar` can fail the same way and is not
+    # matched: it would fire on hundreds of correct lines and a check that
+    # cries wolf is a check people delete. What IS matched is the exact idiom
+    # this repository shipped thirteen times, twice into an administrator
+    # manual's screenshots.
+    #
+    # The fix a hit asks for is two statements -- name the selection, then read
+    # the property if there is one -- or, for the nine ZFS-property cases,
+    # OS7.psm1's private Get-OS7ZfsPropertyValue.
+    $members = $ast.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] }, $true)
+    foreach ($m in $members) {
+        $paren = $m.Expression
+        if ($paren -isnot [System.Management.Automation.Language.ParenExpressionAst]) { continue }
+        $pipe = $paren.Pipeline
+        if ($pipe -isnot [System.Management.Automation.Language.PipelineAst]) { continue }
+        if ($pipe.PipelineElements.Count -lt 2) { continue }
+        $last = $pipe.PipelineElements[-1]
+        if ($last -isnot [System.Management.Automation.Language.CommandAst]) { continue }
+        $name = $last.GetCommandName()
+        if ($name -notin @('Select-Object', 'select')) { continue }
+        $text = $m.Extent.Text -replace '\s+', ' '
+        if ($text.Length -gt 70) { $text = $text.Substring(0, 70) + '...' }
+        Write-Output ("STRICTPROP`t{0}`t{1}`t{2}" -f $file.Name, $m.Extent.StartLineNumber, $text)
+    }
+
     # ---- #82 ----------------------------------------------------------
     #
     # A command call OUTSIDE every function definition runs at IMPORT, and hook
@@ -183,7 +230,7 @@ def find_pwsh():
 
 
 def main():
-    print("\n### three PowerShell traps, asked of the parser rather than of a regex")
+    print("\n### four PowerShell traps, asked of the parser rather than of a regex")
 
     pwsh = find_pwsh()
     if not pwsh:
@@ -198,7 +245,8 @@ def main():
         print(got.stderr[-2000:], file=sys.stderr)
         sys.exit(1)
 
-    found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "PARSE": []}
+    found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "STRICTPROP": [],
+             "PARSE": []}
     files = 0
     for line in got.stdout.splitlines():
         parts = line.strip().split("\t")
@@ -231,9 +279,17 @@ def main():
     else:
         print("      (none)")
 
+    print("\n  #112/#119 - a property read off a pipeline that may be empty")
+    if found["STRICTPROP"]:
+        for name, line, text in found["STRICTPROP"]:
+            print("      %s:%s  %s" % (name, line, text))
+    else:
+        print("      (none)")
+
     bad = False
     print()
-    for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82")):
+    for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82"),
+                       ("STRICTPROP", "#112/#119")):
         n = len(found[key])
         base = BASELINE[key]
         if n > base:
@@ -252,9 +308,10 @@ def main():
         sys.exit(1)
     if bad:
         sys.exit(1)
-    print("\nAll three held: no local shadows a parameter, no array literal hides "
-          "an append, and nothing outside a function calls a cmdlet the build "
-          "chroot cannot autoload.")
+    print("\nAll four held: no local shadows a parameter, no array literal hides "
+          "an append, nothing outside a function calls a cmdlet the build "
+          "chroot cannot autoload, and no property is read off a pipeline that "
+          "may be empty.")
 
 
 if __name__ == "__main__":

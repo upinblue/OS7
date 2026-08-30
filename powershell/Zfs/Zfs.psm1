@@ -1928,6 +1928,13 @@ function Test-ZfsModule {
 			$dg = @(Get-ZpoolStatus)[0]
 			$flat = @(Get-ZpoolStatus -Flat)
 			$offline = @($flat | Where-Object State -eq 'OFFLINE')
+			# @(...) FIRST, like $offline above (BUILD-NOTES #119). Written as
+			# `($flat | … | Select-Object -First 1).TotalSpace`, an assertion
+			# that is about to FAIL throws a StrictMode property error instead
+			# of reporting a failure -- a self-test that explodes rather than
+			# saying which check went red, which is the failure mode this whole
+			# file exists to avoid.
+			$fileLeaf = @($flat | Where-Object Type -eq 'file')
 			foreach ($t in @(
 					@{ n = 'degraded: pool state'; c = ($dg.State -eq 'DEGRADED') }
 					@{ n = 'degraded: a Status appears'; c = ($null -ne $dg.Status) }
@@ -1935,7 +1942,7 @@ function Test-ZfsModule {
 					@{ n = 'degraded: -Flat finds the OFFLINE leaf'; c = ($offline.Count -eq 1) }
 					@{ n = 'degraded: -Flat emits only vdevs, no pool object'; c = (@($flat | Where-Object { $_.PSObject.TypeNames[0] -ne 'OS7.Zfs.VdevNode' }).Count -eq 0) }
 					@{ n = 'degraded: every flat node names its pool'; c = (@($flat | Where-Object Pool -ne 'tank').Count -eq 0) }
-					@{ n = 'degraded: a leaf reports its size'; c = ($null -ne ($flat | Where-Object Type -eq 'file' | Select-Object -First 1).TotalSpace) }
+					@{ n = 'degraded: a leaf reports its size'; c = ($fileLeaf.Count -gt 0 -and $null -ne $fileLeaf[0].TotalSpace) }
 				)) { if (ok $t.n $t.c) { $pass++ } else { $fail.Add($t.n) } }
 
 			& $replay 'zfs.list.json'

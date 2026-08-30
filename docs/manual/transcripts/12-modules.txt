@@ -2,11 +2,11 @@
 
 ModuleType Version    PreRelease Name                                PSEdition
 ---------- -------    ---------- ----                                ---------
-Script     1.0.0.159             Net                                 Desk
-Script     1.0.0.159             OS7                                 Desk
-Script     1.0.0.159             Systemd                             Desk
-Script     1.0.0.159             Time                                Desk
-Script     1.0.0.159             Zfs                                 Desk
+Script     1.0.0.161             Net                                 Desk
+Script     1.0.0.161             OS7                                 Desk
+Script     1.0.0.161             Systemd                             Desk
+Script     1.0.0.161             Time                                Desk
+Script     1.0.0.161             Zfs                                 Desk
 
 
 PS /home/os7admin>

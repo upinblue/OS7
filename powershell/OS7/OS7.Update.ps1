@@ -963,11 +963,9 @@ function Mount-OS7UpdateRoot {
 	# child. canmount=off datasets are containers and have nothing to mount.
 	foreach ($d in @(Get-ZfsDataset -Name $rootDs -Recurse -Type Filesystem | Sort-Object Name)) {
 		if ($d.Name -eq $rootDs) { continue }
-		$cm = (Get-ZfsProperty -Name $d.Name -Property canmount |
-			Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+		$cm = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'canmount'
 		if ([string]$cm -eq 'off') { continue }
-		$mp = (Get-ZfsProperty -Name $d.Name -Property mountpoint |
-			Where-Object Name -eq 'mountpoint' | Select-Object -First 1).Value
+		$mp = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'mountpoint'
 		$mp = [string]$mp
 		if (-not $mp -or $mp -eq 'none' -or $mp -eq 'legacy') { continue }
 		& $zfsMount $d.Name ($Root + $mp)
@@ -992,8 +990,7 @@ function Mount-OS7UpdateRoot {
 	# than listed here, so a layout that gains a dataset does not need this file
 	# edited — which is how the list would fall behind.
 	foreach ($d in @(Get-ZfsDataset -Name 'rpool/DATA' -Recurse -Type Filesystem -ErrorAction SilentlyContinue)) {
-		$mp = (Get-ZfsProperty -Name $d.Name -Property mountpoint |
-			Where-Object Name -eq 'mountpoint' | Select-Object -First 1).Value
+		$mp = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'mountpoint'
 		$mp = [string]$mp
 		if (-not $mp -or $mp -eq 'none' -or $mp -eq 'legacy') { continue }
 		$binds += $mp
@@ -1468,7 +1465,11 @@ function Get-OS7NewestKernel {
 		@{ Expression = { if ($_.Numbers.Count -gt 2) { $_.Numbers[2] } else { 0 } } },
 		@{ Expression = { if ($_.Numbers.Count -gt 3) { $_.Numbers[3] } else { 0 } } },
 		@{ Expression = { $_.Release } }
-	return ($sorted | Select-Object -Last 1).Release
+	# BUILD-NOTES #119: `$sorted` is empty whenever the caller had no releases
+	# to sort, and `$null.Release` under Set-StrictMode is a terminating error
+	# rather than the $null this returns everywhere else.
+	$newest = $sorted | Select-Object -Last 1
+	return $(if ($newest) { $newest.Release } else { $null })
 }
 
 

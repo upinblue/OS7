@@ -1,19 +1,13 @@
 OS7-STEP run: /usr/sbin/sshd -T
 
-Subsystem        :
-SubsystemLine    :
-SubsystemReason  : /usr/sbin/sshd -T
-                   exited 1
-                   sshd: no hostkeys available -- exiting.
-
+Subsystem        : True
+SubsystemLine    : subsystem powershell /usr/bin/pwsh -sshs -NoLogo
+SubsystemReason  :
 DropInPath       : /etc/ssh/sshd_config.d/60-os7-powershell.conf
 DropInPresent    : True
 InteractiveShell : True
 InteractivePath  : /etc/profile.d/95-os7-powershell.sh
-Detail           : sshd could not be asked: /usr/sbin/sshd -T
-                   exited 1
-                   sshd: no hostkeys available -- exiting.
-
+Detail           : ssh lands in PowerShell, and Enter-PSSession works
 
 
 PS /home/os7admin>

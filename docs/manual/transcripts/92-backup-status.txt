@@ -1,8 +1,18 @@
-Get-OS7BackupPolicy: /usr/local/share/powershell/Modules/OS7/OS7.Backup.ps1:944
-Line |
- 944 |      $policy = Get-OS7BackupPolicy
-     |                ~~~~~~~~~~~~~~~~~~~
-     | The property 'Creation' cannot be found on this object. Verify that the
-     | property exists.
+Configured                : True
+Enabled                   : True
+ScheduleFileInstalled     : True
+Sources                   : {@{Dataset=rpool/USERDATA; Exists=True; Datasets=2;
+                             Snapshots=8; Newest=08/30/2026 12:30:16; AgeMinute
+                            s=6; Oldest=}, @{Dataset=rpool/DATA/srv; Exists=Tru
+                            e; Datasets=1; Snapshots=4; Newest=08/30/2026 12:30
+                            :16; AgeMinutes=6; Oldest=}}
+Targets                   :
+Uncovered                 : {}
+NewestLocalSnapshot       : 08/30/2026 12:30:16
+MinutesSinceLocalSnapshot : 6
+NewestReplication         :
+HoursSinceReplication     :
+CheckedAt                 : 08/30/2026 12:36:11
+
 
 PS /home/os7admin>

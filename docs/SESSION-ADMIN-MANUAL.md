@@ -146,8 +146,10 @@ refuses to emit a document in which no image became a figure.
 
 ## 6. What to do next
 
-1. Fix #112 — two lines, plus the two states in `Test-OS7Backup` that 63 green
-   assertions did not cover.
+1. ~~Fix #112 — two lines, plus the two states in `Test-OS7Backup` that 63 green
+   assertions did not cover.~~ **DONE 2026-08-30** — and it took until then,
+   which is the point: this line was the whole plan and nothing was watching
+   whether it happened. See #112/#119.
 2. Decide #113: either `Get-OS7Service -Type`, or a separate noun for timers.
    The update train's §6 promise currently has no cmdlet that can confirm it.
 3. Re-run `make-reference.py` whenever the module surface changes — the

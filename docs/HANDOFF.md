@@ -77,6 +77,37 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**THERE IS A WORKBENCH SINCE 2026-08-30, AND IT CHANGES WHAT "GO AND LOOK" COSTS.**
+`installer/testing/os7lab.py` runs a VM that outlives the process that started
+it, so asking a booted machine a question costs a command instead of a boot —
+and `snapshot`/`restore` are **0.6 s and 0.7 s** against the 25 minutes an
+install takes. Three channels, and which one answered is part of the answer:
+the serial line (needs only a kernel, and is the only one that can watch a boot
+fail), ssh (a real exit code and no quoting limit), QMP (the screen, the
+keyboard and the tablet). `run-surface.py` types every Get- and Test- cmdlet at
+that machine and writes [SURFACE-MATRIX.md](SURFACE-MATRIX.md).
+
+It found three defects in its first hour, and **none of them was reachable by
+the checks that existed** — they ask a build host or a container about an
+image, and these needed an installed machine:
+
+* **#117 — 27 world-writable paths in the shipped ISO**, `/usr/lib/systemd/system`
+  and `…/system-generators` among them. Docker Desktop presents the Windows
+  bind mount as 0777 and `cp -a` preserved it. **FIXED**, and the ISO is
+  measured at 0 by two new `check-image.py` assertions that were red against
+  1.0.0.159 before the fix existed.
+* **#118 — no installed machine can accept an SSH connection. STILL OPEN.**
+  `/etc/ssh/ssh_host_*` does not exist and `ssh.service` dies on every attempt
+  with `no hostkeys available`. `sshd-keygen.service` is enabled and its
+  condition (`ConditionFirstBoot=yes`) was never met, although `os7-setup`
+  correctly writes an empty machine-id and the ISO ships one. **Why the
+  installation's first boot did not count as a first boot is the open
+  question**, and the bench can reproduce it: install, snapshot, watch boot one.
+* **#112/#119 — FIXED**, see above.
+
+[SESSION-WORKBENCH.md](SESSION-WORKBENCH.md) is the measurement; the arm64 half
+of the bench is written and **unrun**.
+
 **ACTIVE DIRECTORY WORKS OUTBOUND SINCE 2026-08-28, AND THE MACHINE IS NOT IN
 THE DOMAIN.** An administrator signs in to AD **from** an OS/7 machine with their
 own AD admin account and works as themselves — users, groups, computers, OUs, a
@@ -104,20 +135,30 @@ code with the client under test; and the stage-1 section runs a second time with
 `adcli`, `kinit`, `klist` and `sssctl` moved out of `PATH`, so "stage 1 needs
 none of stage 2's packages" is a measurement rather than an intention.
 
-**ONE CMDLET DEFECT IS STILL OPEN of the two found on 2026-08-29 by typing
-the commands at a machine rather than by a check.** Writing the administrator
-manual ([docs/manual/](manual/README.md)) required every example to be run and
-photographed on an installed disk, and that is a use of this surface nothing
-here had made before.
+**BOTH CMDLET DEFECTS FOUND ON 2026-08-29 ARE NOW CLOSED** — #113 on the day,
+#112 on 2026-08-30 — and both were found the same way: **by typing the commands
+at a machine rather than by a check.** Writing the administrator manual
+([docs/manual/](manual/README.md)) required every example to be run and
+photographed on an installed disk, and that was a use of this surface nothing
+here had made before. `installer/testing/run-surface.py` now makes it routine:
+it types every Get- and Test- cmdlet at a booted machine in one pass, which is
+how #112 was found a second time after its own note recommended a fix that was
+never applied.
 
-* **#112 — `Get-OS7BackupStatus` throws on an ordinary machine. STILL OPEN.**
-  No replication target means `$targets` is empty, `Select-Object -Last 1` is
-  `$null`, and `Set-StrictMode` turns the property read into a terminating
-  error. Replication is opt-in (B4), so this is *every* machine that has not
-  opted in — and under `-SkipTargets` it is unconditional. The same shape one
-  line above fires on a machine whose first snapshot has not run, so the first
-  status a new installation is asked for is the one that cannot be given.
-  `Test-OS7Backup` is 63 green assertions and covers neither state.
+* ~~**#112 — `Get-OS7BackupStatus` throws on an ordinary machine. STILL OPEN.**~~
+  **FIXED 2026-08-30, together with the idiom behind it (#119).** No
+  replication target meant `$targets` was empty, `Select-Object -Last 1` was
+  `$null`, and `Set-StrictMode` turned the property read into a terminating
+  error — on *every* machine that had not opted into replication (B4), and
+  unconditionally under `-SkipTargets`. Four sites now take the selection in
+  two steps, and the nine `Get-ZfsProperty … .Value` occurrences of the same
+  idiom became one private helper. **Verified on a booted machine**, not by a
+  self-test: `Test-OS7Backup` was 63 green before and after and covers neither
+  state. Two things this note should be read for now: the fix sat here as a
+  RECOMMENDATION for a day and nothing was watching the difference, and what
+  found it again was `run-surface.py` asking a machine. The manual's picture of
+  this cmdlet (`docs/manual/transcripts/92-backup-status.txt`) still shows the
+  exception and needs re-shooting from an image built after the fix.
 * ~~**#113 — the cmdlet surface cannot see a timer.**~~ **FIXED 2026-08-29 as
   a NOUN** — POWERSHELL-SURFACE-PLAN **P9**: `Get-OS7Service` stays
   deliberately services-only (Windows' own services.msc/taskschd.msc split),
@@ -264,9 +305,14 @@ make build-arm64                       # no arm64 ISO has been built with hook
 `run-s5.py` grew a `serialize` phase for BUILD-NOTES #99 — x86 has no
 device-tree console, os7-setup correctly writes no `console=`, and the
 installed machine talks to tty0. run-phase3 has no equivalent, so its `boot`
-phase times out for 599 seconds on a machine that boots perfectly. Until it
-does, #74 cannot be discharged on this host either, because its two /home
-checks live in that phase.
+phase times out for 599 seconds on a machine that boots perfectly.
+
+~~Until it does, #74 cannot be discharged on this host either, because its two
+/home checks live in that phase.~~ **Not true since 2026-08-30**: the two /home
+checks live in that phase, but the QUESTION does not. `os7lab.py install` built
+a machine on this host and `Get-OS7Home` answered it directly —
+`rpool/USERDATA/os7admin_8caded3b`, `OwnDataset: True`, `Agrees: True`. What
+run-phase3 still owes is its own coverage of the installer walk, not this.
 
 **Either host owes:** a hotfix applied through `Update-OS7` on a booted
 machine (the form is container-proven, `check-os7-repo.py` walks a real one;
@@ -382,7 +428,18 @@ every answer. Until it passes, `Get-OS7BackupStatus` is a claim about code.
 [BACKUP-PLAN.md](BACKUP-PLAN.md) B-5 is the gate; §12 is the honest limitation
 list, and BL1 is at the top of it.
 
-**#74 IS WRITTEN AND UNVERIFIED, AND IT IS THE FIRST THING TO RUN ON THE MAC.**
+**#74 — MEASURED ON A MACHINE 2026-08-30, ON THIS HOST, AND IT LANDED.**
+`os7lab.py install` produced an OS/7 1.0.0.161 machine and `Get-OS7Home` on it
+said `Dataset: rpool/USERDATA/os7admin_8caded3b`, `OwnDataset: True`,
+`OwnFilesystem: True`, `Agrees: True` — ZFS and `stat(2)` asked separately and
+agreeing — with `findmnt` and `zfs list` saying the same. The home an OS/7
+install produces is outside the boot environment. **`Move-OS7Home`, the
+migration for machines installed before the fix, is still unverified**, and
+`run-phase3.py all` still owes its own coverage of the installer walk. The
+paragraph below is what the question WAS, and it is kept because the reasoning
+in it is still how the defect is explained.
+
+**~~#74 IS WRITTEN AND UNVERIFIED, AND IT IS THE FIRST THING TO RUN ON THE MAC.~~**
 `New-OS7Storage`'s `-UserName` defaulted to `os7` and `os7-setup` never passed
 it, so on the machine this repository has actually booted the account's home is
 an ordinary directory **inside the boot environment** and `/home/os7` is an
@@ -969,8 +1026,15 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
   is replaced by `0090-desktop-theme-verify.hook.chroot`, which verifies instead
   of recording. The desktop also carries OS/7 Classic, a Windows 2000 theme. Its
   **GTK half is measured from rendered pixels** (`build/testing/render-theme.sh`);
-  its **GNOME Shell half — panel, taskbar, black desktop — has never been seen**,
-  because that needs a session and no amd64 ISO has been built with it.
+  its ~~**GNOME Shell half — panel, taskbar, black desktop — has never been
+  seen**, because that needs a session and no amd64 ISO has been built with
+  it.~~ **SEEN 2026-08-30**, on a machine `os7lab.py install gui --mode Gui`
+  produced and a session logged into through the HID keyboard and tablet:
+  `.vm/gui/shots/` holds the greeter (OS/7 blue, the OS/7 mark, no Ubuntu
+  orange), the desktop (panel with Apps and Places, window-list taskbar along
+  the bottom, black desktop, Home icon) and the Apps menu opened BY MOUSE,
+  listing Microsoft Edge, Files, Terminal and Microsoft Intune in the classic
+  grey. What was missing was never the ISO — it was a way to log in and look.
   [SESSION-CLASSIC-DESKTOP.md](SESSION-CLASSIC-DESKTOP.md) §7 lists exactly what
   that leaves unproven.
 - **D8/L16 — `/etc/os-release` identity.** D8 is *decided* (`IMAGE_ID` /

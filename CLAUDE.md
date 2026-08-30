@@ -87,12 +87,18 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   ORDER of them, against fake zfs,
                                           #   apt and chroot - with REAL mounts
                                           #   and REAL signatures. ~3 min, no VM
-./installer/testing/check-ps-traps.py     # THREE PowerShell traps this repo has
-                                          #   paid for (#65, #91, #82), asked of
-                                          #   the parser. Seconds; needs only pwsh.
-                                          #   #82 is the import-scope one: it went
-                                          #   red on the tree whose ISO build had
-                                          #   just died of it, in one second
+./installer/testing/check-ps-traps.py     # FOUR PowerShell traps this repo has
+                                          #   paid for (#65, #91, #82, #112/#119),
+                                          #   asked of the parser. Seconds; needs
+                                          #   only pwsh. #82 is the import-scope
+                                          #   one: it went red on the tree whose
+                                          #   ISO build had just died of it, in
+                                          #   one second. #112/#119 is the
+                                          #   property read off a possibly-empty
+                                          #   pipeline, and on the day it was
+                                          #   added it found THREE sites in three
+                                          #   modules that the grep before it
+                                          #   had missed
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
                                           #   install again BY KEYPRESS (walk)
@@ -123,6 +129,34 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   the screen. --render redraws from
                                           #   the saved bytes with no VM. It is
                                           #   what found #112 and #113
+./installer/testing/os7lab.py             # THE WORKBENCH, and the only thing
+                                          #   here that is not a batch run: a VM
+                                          #   that OUTLIVES the process that
+                                          #   started it, so asking a booted
+                                          #   machine something costs a command
+                                          #   and not a boot. Three channels -
+                                          #   the serial line (a kernel is all it
+                                          #   needs), ssh (real exit codes, no
+                                          #   quoting limit), QMP (the screen and
+                                          #   the keyboard). snapshot/restore in
+                                          #   0.7s against 25 min for an install.
+                                          #   `install` builds its own machine
+                                          #   (--mode Gui for the desktop), then
+                                          #   `up`, `login`, `exec`, `shot`,
+                                          #   `type`, `click`, `snapshot`. It is
+                                          #   for LOOKING: what is to count as
+                                          #   evidence must still be reproducible
+                                          #   by a harness from a named snapshot
+./installer/testing/run-surface.py        # every cmdlet TYPED at that machine.
+                                          #   Asks the MACHINE what it has, runs
+                                          #   the Get- and Test- verbs, records
+                                          #   what each printed ->
+                                          #   docs/SURFACE-MATRIX.md. 77 in one
+                                          #   pass; the one `error` in them was
+                                          #   #112/#119, and it is now 48 ok, 0
+                                          #   error. --stage write is the 117
+                                          #   that change something and REFUSES
+                                          #   to run on a bench with no snapshot
 ./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, 3s
 ./installer/testing/check-home-logic.py   # Get-/Move-OS7Home's decisions: a fake
                                           #   zfs whose datasets are real tmpfs

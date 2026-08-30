@@ -322,7 +322,13 @@ def save(name, raw, mod, command=None, resave_raw=True):
         text = re.sub(r"\x1b\][0-9;]*[^\x07\x1b]*(\x07|\x1b\\)", "", text)
         text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
         text = text.replace("\r", "")
-    with open(os.path.join(OUT_TXT, name + ".txt"), "w", encoding="utf-8") as f:
+    # LF EXPLICITLY: Python's text mode writes CRLF on Windows, and this file
+    # goes into the repository beside transcripts written on a Mac. Without the
+    # newline argument, re-shooting on this host rewrites the line endings of
+    # every transcript, and the one line that actually changed hides in
+    # fifty-four files of noise.
+    with open(os.path.join(OUT_TXT, name + ".txt"), "w", encoding="utf-8",
+              newline="\n") as f:
         f.write(text + "\n")
 
 

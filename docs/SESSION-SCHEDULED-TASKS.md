@@ -239,9 +239,11 @@ modules; Systemd 11, OS7 101), and both PDFs were rebuilt.
 
 ## 7. What to do next
 
-1. **#112 is still open** — `Get-OS7BackupStatus` throws on every machine
+1. ~~**#112 is still open** — `Get-OS7BackupStatus` throws on every machine
    without a replication target. Same shape of fix as this session's
-   (two-step value taking, plus the two missing states in `Test-OS7Backup`).
+   (two-step value taking, plus the two missing states in `Test-OS7Backup`).~~
+   **CLOSED 2026-08-30** (#112/#119), by exactly that fix — found again by
+   `run-surface.py` typing the cmdlet at a machine, not by re-reading this.
 2. The default rendering of a task list is PowerShell's (>4 properties →
    list); a table view in `OS7.format.ps1xml` would make the bare
    `Get-OS7ScheduledTask` picture nicer. Cosmetic, deliberate deferral.

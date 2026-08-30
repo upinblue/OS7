@@ -452,6 +452,58 @@ if (( ${#AUTHORED_HOOKS[@]} > 0 )) && (( ${#STAGED_HOOKS[@]} == 0 )); then
 fi
 echo "    staged ${#STAGED_HOOKS[@]} hook(s) at config/hooks/*.chroot"
 
+# ---------------------------------------------------------------------------
+# THE PERMISSIONS OF includes.chroot ARE SET HERE, NOT INHERITED FROM THE HOST.
+#
+# BUILD-NOTES #117. live-build copies config/includes.chroot/ into the image
+# verbatim, `cp -a` above copies the authored tree with its modes, and on the
+# x64 Windows host those modes are a lie: Docker Desktop presents every bind
+# mounted file and directory as 0777. Measured in the build container itself —
+#
+#     stat -c %a /work/build/config/includes.chroot/etc   ->  777
+#
+# — so every path this tree touches shipped world-writable in the ISO, and
+# `find -perm -0002` on the 1.0.0.159 squashfs returned 27 of them: `/`, /etc,
+# /usr, /etc/ssh/sshd_config.d/60-os7-powershell.conf, and
+# /usr/lib/systemd/system plus /usr/lib/systemd/system-generators — two
+# directories a local user could drop a unit or a generator into, each of
+# which systemd runs as root on the next boot.
+#
+# The Mac never showed it because a native mount carries real modes, and amd64
+# ISOs have only been built on Windows since 2026-08-28. That is exactly why
+# the modes are DECLARED here instead of inherited: a build must not depend on
+# what the host filesystem is willing to say, and the two hosts must produce
+# the same image.
+#
+# 0644/0755 by default, and the executables named. The list is short because
+# git says it is short — `git ls-files -s build/config/includes.chroot*` has
+# exactly one 100755 entry — and check-image.py asks git the same question
+# about the SHIPPED squashfs, so a new executable that is not named here fails
+# the image check rather than silently arriving non-executable.
+# ---------------------------------------------------------------------------
+INCLUDES="${WORK}/config/includes.chroot"
+if [[ -d "${INCLUDES}" ]]; then
+	find "${INCLUDES}" -type d -exec chmod 0755 {} +
+	find "${INCLUDES}" -type f -exec chmod 0644 {} +
+	for exe in usr/lib/systemd/system-generators/os7-setup-quiesce; do
+		if [[ -f "${INCLUDES}/${exe}" ]]; then
+			chmod 0755 "${INCLUDES}/${exe}"
+		else
+			echo "!!! includes.chroot executable ${exe} is missing" >&2
+			exit 1
+		fi
+	done
+	# Asked of the tree, not assumed of the chmod: a `find` that matched
+	# nothing and a chmod that silently did nothing look identical from here.
+	LEFT="$(find "${INCLUDES}" -perm -0002 | wc -l | tr -d ' ')"
+	if [[ "${LEFT}" != "0" ]]; then
+		echo "!!! ${LEFT} world-writable path(s) remain under includes.chroot" >&2
+		find "${INCLUDES}" -perm -0002 >&2
+		exit 1
+	fi
+	echo "    includes.chroot: modes normalised, 0 world-writable paths"
+fi
+
 cd "${WORK}"
 
 export OS7_ARCH="${ARCH}"        # read by auto/config

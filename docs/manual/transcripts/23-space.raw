@@ -3,12 +3,12 @@ C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;8
 PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-Z[6n[24;85H[24;80HGet-Zf[6n[24;86H[24;80HGet-Zfs[6n[24;87H[24;80HGet-ZfsS[6n[24;88H[24;80HGet-ZfsSp[6n[24;89H[24;80HGet-ZfsSpa[6n[24;90H[24;80HGet-ZfsSpac[6n[24;91H[24;80HGet-ZfsSpace[6n[24;92H[24;80HGet-ZfsSpace [6n[24;93H[24;80HGet-ZfsSpace r[6n[24;94H[24;80HGet-ZfsSpace rp[6n[24;95H[24;80HGet-ZfsSpace rpo[6n[24;96H[24;80HGet-ZfsSpace rpoo[6n[24;97H[24;80HGet-ZfsSpace rpool[6n[24;98H[24;80HGet-ZfsSpace rpool [6n[24;99H[24;80HGet-ZfsSpace rpool |[6n[24;100H[24;80HGet-ZfsSpace rpool | [6n[24;101H[24;80HGet-ZfsSpace rpool | F[6n[24;102H[24;80HGet-ZfsSpace rpool | Fo[6n[24;103H[24;80HGet-ZfsSpace rpool | For[6n[24;104H[24;80HGet-ZfsSpace rpool | Form[6n[24;105H[24;80HGet-ZfsSpace rpool | Forma[6n[24;106H[24;80HGet-ZfsSpace rpool | Format[6n[24;107H[24;80HGet-ZfsSpace rpool | Format-[6n[24;108H[24;80HGet-ZfsSpace rpool | Format-L[6n[24;109H[24;80HGet-ZfsSpace rpool | Format-Li[6n[24;110H[24;80HGet-ZfsSpace rpool | Format-Lis[6n[24;111H[24;80HGet-ZfsSpace rpool | Format-List[6n[24;112H
 [?1l
 [32;1mName                 : [0mrpool
-[32;1mAvailable            : [0m17143304192
-[32;1mUsed                 : [0m4700831744
+[32;1mAvailable            : [0m17118863360
+[32;1mUsed                 : [0m4725272576
 [32;1mUsedBySnapshots      : [0m0
 [32;1mUsedByDataset        : [0m98304
 [32;1mUsedByRefReservation : [0m0
-[32;1mUsedByChildren       : [0m4700733440
+[32;1mUsedByChildren       : [0m4725174272
 
 [6n
 PS /home/os7admin> [?1h[6n

@@ -2,7 +2,7 @@ OS7-STEP run: dpkg-query -W -f=${Status} ${Version} intune-portal
 
 Installed      : True
 Version        : 1.2607.4-resolute
-Binaries       : {intune-daemon, intune-agent, intune-portal}
+Binaries       : {intune-agent, intune-portal, intune-daemon}
 PamConfigured  : True
 DaemonState    : inactive
 DaemonHealthy  : True

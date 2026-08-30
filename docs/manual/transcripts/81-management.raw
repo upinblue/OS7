@@ -29,12 +29,12 @@ OS7-STEP run: dpkg-query -W -f=${Status} ${Version} azcmagent
             liberate — its postinst needs a running systemd}
 [32;1mReachable : [0mFalse
 [32;1mEndpoints : [0m{@{Name=Entra; Host=login.microsoftonline.com; Port=443; Reachable=
-            True; Detail=connected in 23 ms; Verified=}, @{Name=Graph; Host=gra
-            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 24 
+            True; Detail=connected in 37 ms; Verified=}, @{Name=Graph; Host=gra
+            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 37 
             ms; Verified=}, @{Name=Intune; Host=manage.microsoft.com; Port=443;
              Reachable=False; Detail=One or more errors occurred. (Name or serv
             ice not known); Verified=}, @{Name=Arc; Host=management.azure.com; 
-            Port=443; Reachable=True; Detail=connected in 15 ms; Verified=}}
+            Port=443; Reachable=True; Detail=connected in 26 ms; Verified=}}
 [32;1mSummary   : [0mauthd is installed and PAM is wired to it, but /etc/authd/brokers.d
              is empty — there is no Entra broker for it to talk to, so a sign-i
             n will fail as though the password were wrong. See C8a: authd-msent

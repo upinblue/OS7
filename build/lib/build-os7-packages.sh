@@ -184,6 +184,24 @@ pkg_finish() {
 	# covers the bits, which a bind mount off a Windows host does not preserve.
 	if [[ -d "${stage}/usr" || -d "${stage}/etc" ]]; then
 		find "${stage}" -path "${stage}/DEBIAN" -prune -o -type d -exec chmod 0755 {} +
+		# FILES TOO, and only the ones that are EXACTLY 0777 (BUILD-NOTES #117).
+		#
+		# The line above covered directories and has since 2026-08-28; the files
+		# were left to the individual chmods below, and two of them had none:
+		# /usr/lib/os7/migrations/README and /usr/lib/os7-setup/os7-setup
+		# shipped world-writable in OS7-1.0.0.161-amd64.iso.
+		#
+		# It is not only what `cp -a` copies. The staging directory itself sits
+		# on the bind mount, so a file `dotnet publish` CREATES there is 0777
+		# too — which is why the installer binary was among them although
+		# nothing copied it from the host.
+		#
+		# `-perm 0777` is exact, and that is the point: it matches what the
+		# mount invented and never what a chmod below deliberately set. A file
+		# that must stay executable says so with its own chmod 0755 — and one
+		# of those is added at the os7-setup binary for exactly this reason.
+		find "${stage}" -path "${stage}/DEBIAN" -prune -o \
+			-type f -perm 0777 -exec chmod 0644 {} +
 	fi
 
 	local deb="${OUT_DIR}/${name}_${OS7_VERSION}_${arch}.deb"
@@ -393,6 +411,18 @@ build_os7_release() {
 	ln -sfn ../os7-migrations-firstboot.service \
 		"${stage}/usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service"
 
+	# The SSH host keys (BUILD-NOTES #118). Ubuntu's sshd-keygen.service is
+	# present and enabled and never runs, because its ConditionFirstBoot is
+	# never met on this product — measured on the first boot of a machine
+	# installed 2026-08-30. Without this unit an installed OS/7 machine has no
+	# host keys and sshd dies on every connection attempt, permanently, with
+	# nothing reporting it until somebody tries. Shipped enabled by symlink for
+	# the same reason as the unit above: `systemctl enable` needs a running
+	# systemd and a chroot has none.
+	chmod 0644 "${stage}/usr/lib/systemd/system/os7-sshd-keygen.service"
+	ln -sfn ../os7-sshd-keygen.service \
+		"${stage}/usr/lib/systemd/system/multi-user.target.wants/os7-sshd-keygen.service"
+
 	# The unattended check (§6): timer, service, and the pwsh -File script —
 	# 0644 and no shebang, the os7-backup convention. The TIMER SHIPS ENABLED,
 	# by symlink like everything else here, and that is a decision with a
@@ -455,6 +485,8 @@ build_os7_release() {
 		./usr/lib/systemd/system/os7-migrations-firstboot.service \
 		./usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service \
 		./usr/libexec/os7-migrate-firstboot \
+		./usr/lib/systemd/system/os7-sshd-keygen.service \
+		./usr/lib/systemd/system/multi-user.target.wants/os7-sshd-keygen.service \
 		./usr/lib/systemd/system/os7-update-check.timer \
 		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
 		./usr/libexec/os7-update-check \
@@ -726,6 +758,13 @@ build_os7_setup() {
 		dotnet publish "${REPO}/installer/src/OS7.Setup" -c Release -r "${rid}" \
 		-p:PublishAot=true -o "${dst}" --nologo
 	[[ -x "${dst}/os7-setup" ]] || { echo "!!! dotnet publish produced no binary" >&2; exit 1; }
+	# THE MODE IS DECLARED, and the -x test above cannot stand in for it: on
+	# the bind mount every file reads 0777, so -x is true of a file with no
+	# execute bit at all, and it was true of the world-writable binary that
+	# shipped in 1.0.0.161 (BUILD-NOTES #117). pkg_finish normalises 0777 files
+	# to 0644; this is the one that must come back as executable, so it says so
+	# here rather than relying on what the filesystem claims.
+	chmod 0755 "${dst}/os7-setup"
 	# Publish leaves debugging symbols beside the binary. They are a third of
 	# the size of the thing itself and nothing on the image can read them.
 	rm -f "${dst}"/*.dbg "${dst}"/*.pdb

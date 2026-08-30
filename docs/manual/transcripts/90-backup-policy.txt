@@ -1,4 +1,15 @@
-Get-OS7BackupPolicy: The property 'Creation' cannot be found on this object. Ver
-ify that the property exists.
+Configured  : True
+Enabled     : True
+ConfigPath  : /etc/os7/backup.json
+SanoidConf  : /etc/sanoid/sanoid.conf
+Sources     : {@{Dataset=rpool/USERDATA; Recursive=True; ChildrenOnly=True; Ret
+              ention=System.Collections.Specialized.OrderedDictionary; Exists=T
+              rue; Datasets=System.Object[]; Snapshots=8; Newest=08/30/2026 12:
+              30:16}, @{Dataset=rpool/DATA/srv; Recursive=True; ChildrenOnly=Fa
+              lse; Retention=System.Collections.Specialized.OrderedDictionary;
+              Exists=True; Datasets=System.Object[]; Snapshots=4; Newest=08/30/
+              2026 12:30:16}}
+TargetCount : 0
+
 
 PS /home/os7admin>

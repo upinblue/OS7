@@ -61,6 +61,42 @@ function Write-OS7Step {
 	[Console]::Error.WriteLine("OS7-STEP $Message")
 }
 
+function Get-OS7ZfsPropertyValue {
+	<#
+	.SYNOPSIS
+	One ZFS property's value, or $null when there is not one.
+
+	.DESCRIPTION
+	BUILD-NOTES #119. The idiom this replaces was written out nine times:
+
+	    (Get-ZfsProperty -Name $d -Property canmount |
+	        Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+
+	and when the pipeline yields nothing — the dataset went away between being
+	listed and being asked, a remote `zfs get` over ssh did not answer — that is
+	`$null.Value`, which under the Set-StrictMode -Version Latest set at the top
+	of this file is a TERMINATING error, not a $null. Every one of those six
+	callers was written expecting $null; one of them wraps itself in
+	try/catch to get it, and one tests `if ($theirGuid)` on the next line.
+
+	It is private (not in OS7.psd1's FunctionsToExport) because it is this
+	module tidying up after itself, not a surface an operator is offered —
+	P1/P4 admit a cmdlet only when an operator would otherwise type a Linux
+	command, and nobody types this.
+
+	Z1 is unaffected: the ZFS call is still Get-ZfsProperty and this only reads
+	what came back.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Property,
+		[hashtable]$Remote = @{}
+	)
+	$p = Get-ZfsProperty -Name $Name -Property $Property @Remote |
+		Where-Object Name -eq $Property | Select-Object -First 1
+	if ($p) { $p.Value } else { $null }
+}
+
 function Invoke-OS7Native {
 	<#
 	.SYNOPSIS
@@ -1337,12 +1373,18 @@ function Get-OS7BootEnvironmentKernel {
 					Rel = $rel
 				}
 			}
-			return ($keyed | Sort-Object `
+			# BUILD-NOTES #119. A /boot with no vmlinuz- at all makes $keyed
+			# empty, and `$null.File` under Set-StrictMode throws a property
+			# error where the caller expects $null and reports "no kernel
+			# found" -- turning a legible failure into a mystifying one at the
+			# exact moment the machine is already in trouble.
+			$newest = $keyed | Sort-Object `
 				@{ Expression = { if ($_.N.Count -gt 0) { $_.N[0] } else { 0 } } },
 				@{ Expression = { if ($_.N.Count -gt 1) { $_.N[1] } else { 0 } } },
 				@{ Expression = { if ($_.N.Count -gt 2) { $_.N[2] } else { 0 } } },
 				@{ Expression = { if ($_.N.Count -gt 3) { $_.N[3] } else { 0 } } },
-				@{ Expression = { $_.Rel } } | Select-Object -Last 1).File
+				@{ Expression = { $_.Rel } } | Select-Object -Last 1
+			return $(if ($newest) { $newest.File } else { $null })
 		}
 		$k = & $pick 'vmlinuz-'
 		$i = & $pick 'initrd.img-'
@@ -1759,16 +1801,14 @@ function New-OS7BootEnvironment {
 		# `.Value` off the result is trusting the count; when more than one
 		# arrives, `.Value` is an ARRAY and every comparison against it is false
 		# without saying so.
-		$cm = (Get-ZfsProperty -Name $d.Name -Property canmount |
-			Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+		$cm = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'canmount'
 		if ([string]$cm -eq 'on') {
 			throw [System.InvalidOperationException]::new(
 				"$($d.Name) came out canmount=on. It would be mounted over the running " +
 				'system by the next `zfs mount -a`; the clone has not been made inactive.')
 		}
 	}
-	$rootMp = (Get-ZfsProperty -Name "$($script:OS7RootParent)/$Name" -Property mountpoint |
-		Where-Object Name -eq 'mountpoint' | Select-Object -First 1).Value
+	$rootMp = Get-OS7ZfsPropertyValue -Name "$($script:OS7RootParent)/$Name" -Property 'mountpoint'
 	if ([string]$rootMp -ne '/') {
 		throw [System.InvalidOperationException]::new(
 			"$($script:OS7RootParent)/$Name has mountpoint '$rootMp', not '/'. GRUB's " +
@@ -2504,8 +2544,7 @@ function Restore-OS7 {
 		$pick = $null
 		if ($active) {
 			$recorded = try {
-				(Get-ZfsProperty -Name $active.RootDataset -Property 'org.os7:previous' |
-					Where-Object Name -eq 'org.os7:previous' | Select-Object -First 1).Value
+				Get-OS7ZfsPropertyValue -Name $active.RootDataset -Property 'org.os7:previous'
 			} catch { $null }
 			if ($recorded -and "$recorded" -ne '-') {
 				$pick = $all | Where-Object { $_.Name -eq "$recorded" -and $_.Complete } |
@@ -2517,8 +2556,7 @@ function Restore-OS7 {
 		}
 		if (-not $pick -and $active) {
 			$originDs = try {
-				(Get-ZfsProperty -Name $active.RootDataset -Property origin |
-					Where-Object Name -eq 'origin' | Select-Object -First 1).Value
+				Get-OS7ZfsPropertyValue -Name $active.RootDataset -Property 'origin'
 			} catch { $null }
 			if ($originDs -and "$originDs" -match '@' ) {
 				$originName = ("$originDs" -split '@')[0].Split('/')[-1]

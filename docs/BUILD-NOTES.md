@@ -5934,6 +5934,27 @@ pipeline that may be empty, and `Test-OS7Backup` should gain the two states —
 no target, and no snapshot yet — because both are ordinary and neither was
 covered by 63 green assertions.
 
+**FIXED 2026-08-30, and the delay is the note's real lesson.** The paragraph
+above says "the fix is" and it was written on 2026-08-29; nothing was changed,
+and the defect was still in the product a day later, when
+`installer/testing/run-surface.py` typed `Get-OS7BackupStatus -SkipTargets` at
+a booted machine and got the identical message back. **A recommended fix in a
+note is not a fix**, and nothing in this repository was watching the
+difference — `Test-OS7Backup` stayed at 63 green, `check-image.py` stayed
+green, and the only reason this surfaced again is that a new tool asked the
+machine instead of asking the source.
+
+What was actually changed, in `powershell/OS7/OS7.Backup.ps1`: both lines take
+the selection into a variable first and read the property only if there is
+one. The same was done at `OS7.Backup.ps1:331` (`.Creation`, which is the site
+the manual's own picture caught) and `OS7.BackupRestore.ps1:409`, and the
+nine-fold ZFS-property form of the same idiom is now one private helper —
+see **#119**, which is that idiom rather than this instance.
+
+Proof, on the machine and not in a self-test: the cmdlet returns a status
+object and `exit 0`, with `NewestReplication` empty — the `$null` the code
+always meant — where it previously threw.
+
 ## #113 — the cmdlet surface cannot see a timer, and the unattended update check is one
 
 `Get-OS7Service` is the only view of systemd units the OS/7 layer offers. It
@@ -6109,3 +6130,231 @@ Unlike journalctl's JSON (#113's session, point 2 of the Systemd module
 header), list-timers' numbers ARE numbers — so the two JSON emitters in one
 tool family disagree about whether a timestamp is a string, which is its own
 small argument for recorded fixtures over remembered shapes.
+
+---
+
+## #117 — the BUILD HOST's filesystem decided the shipped permissions, and on Windows it lies: 27 world-writable paths in the ISO, two of them systemd unit directories
+
+Found 2026-08-30 on the x64 Windows host, within an hour of the workbench
+(`installer/testing/os7lab.py`) being able to ask an installed machine a
+question. `ls -la /etc/ssh` on a booted OS/7 machine showed `drwxrwxrwx`, and
+the trail led back past the installer, past the ISO, to `cp -a`.
+
+**The chain, every link measured.**
+
+1. `build/build.sh` stages the authored tree with `cp -a
+   "${SRC_CONFIG}/includes.chroot" "${WORK}/config/includes.chroot"`, and
+   `cp -a` preserves modes.
+2. On this host the repository is a **Docker Desktop bind mount**, and it
+   presents every path as `0777`. Asked inside the build container itself:
+
+   ```
+   stat -c "%a %n" /work/build/config/includes.chroot/etc  →  777 …/etc
+   ```
+
+3. live-build copies `config/includes.chroot/` into the image verbatim.
+4. So the shipped squashfs of **OS7-1.0.0.159-amd64.iso** carried **27**
+   world-writable files and directories — `find /mnt/sq -xdev \( -type f -o
+   -type d \) -perm -0002 ! -perm -1000` — and they are *exactly* the paths the
+   authored tree touches. `/opt`, `/var`, `/boot`, `/srv`, which it does not
+   touch, are a correct `755`.
+
+**What is in the 27.** `/`, `/etc`, `/usr`, `/etc/ssh`,
+`/etc/ssh/sshd_config.d` and the config file in it, `/etc/xdg/autostart` and
+two `.desktop` files in it — and
+
+```
+drwxrwxrwx  /usr/lib/systemd/system
+drwxrwxrwx  /usr/lib/systemd/system-generators
+```
+
+Any local user can write a unit or a generator into those, and systemd runs
+both **as root** on the next boot. That is a local privilege escalation in the
+shipped product, not a hygiene complaint.
+
+**Why nobody saw it.** A native mount carries real modes, so the Mac never
+produced this image, and amd64 ISOs have only been built on Windows since
+2026-08-28 (SESSION-AMD64-ON-WINDOWS.md). Seven checks were green on the
+affected ISOs because not one of them asked about a mode. `check-image.py` read
+the *content* of files out of the squashfs and never their permissions.
+
+**The rule, and it is the general one.** A build must not depend on what the
+host filesystem is willing to say about itself. `build.sh` now DECLARES the
+modes after staging — `find -type d -exec chmod 0755`, `find -type f -exec
+chmod 0644`, then the executables by name — and verifies its own work with
+`find -perm -0002`, refusing the build if anything is left. Two hosts must
+produce the same image, and that is only possible if neither of them is asked.
+
+**And the check that makes it stay fixed** is not the build's own. `git` is the
+one authority that reports the same mode on both hosts — it stores `100644` or
+`100755` and nothing else — so `check-image.py` asks git what each authored
+file should be and asks the SHIPPED squashfs what it is, plus a blanket "is
+anything world-writable". Both went red against 1.0.0.159 before the fix
+existed, which is the only reason to believe they check anything (the rule
+about a diagnostic being checked against the thing it claims to check).
+
+One deliberate exception is named there: hook 0075 chmods
+`/etc/update-motd.d/00-os7-header` to 0755 because `run-parts` only runs what
+is executable, and it verifies that itself.
+
+---
+
+## #118 — no installed OS/7 machine has SSH host keys, so sshd dies on every connection, and `ConditionFirstBoot` is why
+
+Measured 2026-08-30 on a machine installed by `run-s5.py install` from
+OS7-1.0.0.159-amd64.iso. `openssh-server` is in `os7-base.list.chroot` and
+installed (`1:10.2p1-2ubuntu3.5`); `ssh.socket` is enabled, `ssh.service` is
+socket-activated. The first connection attempt ever made to one of these
+machines produced:
+
+```
+sshd[2090]: sshd: no hostkeys available -- exiting.
+systemd[1]: ssh.service: Failed with result 'exit-code'.
+systemd[1]: ssh.service: Start request repeated too quickly.
+```
+
+`/etc/ssh/ssh_host_*` does not exist. **Remote access to an installed OS/7
+machine is impossible**, permanently, and nothing on the machine says so until
+something tries to connect.
+
+**The generator exists and never ran.** Ubuntu ships
+`sshd-keygen.service` — `ExecStart=ssh-keygen -A` — and it is `enabled`. Its
+status:
+
+```
+Active: inactive (dead)
+Condition: start condition unmet
+           └─ ConditionFirstBoot=yes was not met
+```
+
+This is **#33 in its quietest form**: an enabled unit whose condition fails has
+not failed, it is `inactive (dead)`, and nothing anywhere reports a problem.
+
+**And os7-setup is not the culprit — it does its half right.**
+`installer/src/OS7.Setup/Steps/SystemSteps.cs:327` writes an EMPTY
+`/etc/machine-id` into the target, with the correct reason recorded above it
+(a machine-id copied from the live medium would make every machine the same
+one), and the shipped squashfs carries an empty machine-id too (0 bytes,
+measured).
+
+**MEASURED ON A FIRST BOOT, 2026-08-30**, on a machine `os7lab.py install` had
+produced twenty minutes earlier — `journalctl -b` on the only boot it has had:
+
+```
+systemd[1]: Initializing machine ID from random generator.
+first-boot-complete.target … skipped, unmet condition ConditionFirstBoot=yes
+sshd-keygen.service        … skipped, unmet condition ConditionFirstBoot=yes
+/run/systemd/first-boot: No such file or directory
+```
+
+So systemd finds the machine ID uninitialised, initialises it — the first-boot
+path, in so many words — and does **not** raise the first-boot flag, in the
+same boot. The two are decided separately and they disagree.
+
+**The consequence is wider than sshd.** Nothing gated on `ConditionFirstBoot`
+runs on this product: `first-boot-complete.target` is skipped as well, and
+anything that later hangs itself off that target would be skipped with it.
+Why systemd does not raise the flag while taking the path that raises it is
+**still open**, and it is now cheap to investigate: the bench installs a
+machine and snapshots it before boot one.
+
+**FIXED 2026-08-30 without answering that question**, because the answer is not
+needed to stop relying on the flag. `os7-sshd-keygen.service` (in the
+`os7-release` package, shipped enabled by symlink) runs `ssh-keygen -A` under
+`ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key` — the condition OS/7's own
+first-boot units already use, and one this product controls rather than one
+systemd computes. `check-image.py` asserts three things about it: the unit is
+present, something wants it, and **the image ships no host keys of its own**,
+because baked-in keys would give every machine in the world the same identity —
+a far worse defect than the one being fixed.
+
+**What was green while this was true.** `check-ssh-login.py` passes, and it is
+not wrong: it runs a real sshd against an `os7img:*` **container** built from
+the ISO. #93 said a container made from an ISO is not the ISO; this extends it
+one step further — it is not the INSTALLATION either. What a container inherits
+from the image build, an installed machine gets from its own first boot, and
+those are different events.
+
+---
+
+## #119 — `(collection | Select-Object -Last 1).Property` is `$null.Property` when the collection is empty, and under `Set-StrictMode` that throws — the empty machine is the normal one
+
+`powershell/OS7/OS7.psm1:53` sets `Set-StrictMode -Version Latest`, which is
+right, and which turns reading a property off `$null` from a silent `$null`
+into a terminating error. The idiom that meets it is everywhere:
+
+```powershell
+$newestRemote = ($targets | Where-Object { $_.NewestReplicated } |
+    Sort-Object NewestReplicated | Select-Object -Last 1).NewestReplicated
+```
+
+When `$targets` is `@()` the pipeline produces nothing, `Select-Object -Last 1`
+produces `$null`, and the trailing `.NewestReplicated` throws:
+
+```
+Get-OS7BackupStatus: The property 'NewestReplicated' cannot be found on this
+object. Verify that the property exists.
+```
+
+**And the empty case is not the exotic one — it is a fresh install.** No
+replication targets, no snapshots, no backup history: that is every machine on
+its first day, and it is the machine an administrator is most likely to be
+looking at.
+
+**This is #112's idiom, and #112 had not been fixed at all.** That note —
+written the day before — diagnoses the same two lines correctly, ends with
+"the fix is to take the value in two steps", and no code was changed. So the
+first thing this note records is not a subtle recurrence but a plain one: a
+defect stayed shipped for a day with its own diagnosis sitting in the repository
+beside it, and what found it again was a tool that asked a MACHINE rather than
+a person re-reading the note.
+
+The second thing is the part #112 did not see. The two lines it names are not
+two mistakes, they are one idiom, and it appears eleven more times: `.Creation`
+at `OS7.Backup.ps1:331` — the site the administrator manual's own picture
+caught — `.Created` at `OS7.BackupRestore.ps1:409`, and **nine** occurrences of
+
+```powershell
+(Get-ZfsProperty -Name $d -Property canmount |
+    Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+```
+
+across `OS7.psm1`, `OS7.Update.ps1` and `OS7.BackupTarget.ps1`. Two of those
+nine already wrap themselves in `try { } catch { $null }` and one tests
+`if ($theirGuid)` on the very next line — the callers were all written
+expecting `$null`, and StrictMode was giving them a terminating error instead.
+Fixing an idiom at the site where it was caught leaves the idiom.
+
+**FIXED 2026-08-30 — the idiom, not the sites.** Thirteen occurrences, all
+gone:
+
+* `OS7.Backup.ps1:331, 965, 967` and `OS7.BackupRestore.ps1:409` name the
+  selection in a variable and read the property only if there is one. These
+  are the four over a genuinely optional collection.
+* The nine `Get-ZfsProperty … | Where-Object Name -eq X | Select -First 1).Value`
+  sites are now one private helper, `Get-OS7ZfsPropertyValue` in `OS7.psm1`.
+  Private — it is not in `OS7.psd1`'s `FunctionsToExport`, so the surface is
+  still 194 functions and P1/P4 are untouched: nobody types this. Z1 is
+  untouched too, because the ZFS call is still `Get-ZfsProperty`.
+
+Proof is on a machine, not in a self-test: the fixed module was pushed to a
+running bench with `os7lab.py push` and `Get-OS7BackupStatus -SkipTargets`
+returned a status object and `exit 0`, `NewestReplication` empty. **The
+self-test could not have shown this** — `Test-OS7Backup` was 63 green
+throughout, before and after, because it never calls the cmdlet on a machine
+with nothing in it.
+
+**How it was found, and why that matters.** Not by a check — by
+`installer/testing/run-surface.py`, which types every Get- and Test- cmdlet at
+a booted machine and records what came back. Seventy-seven functions, one
+pass, and `Get-OS7BackupStatus -SkipTargets` came back `error` with the message
+above. The module's own `Test-OS7Backup` is green (63 checks) and
+`check-image.py` is green, because neither of them calls the cmdlet on a
+machine with nothing in it.
+
+**It is already visible in a shipped document.** `docs/manual/transcripts/92-backup-status.txt`
+— the administrator manual's own picture of `Get-OS7BackupStatus -SkipTargets`,
+taken from a machine by `shoot-manual.py` on 2026-08-29 — is not output. It is
+this exception, at line 944. The manual ships a screenshot of the defect, which
+is what happens when pictures are taken from a machine and nothing reads them
+back.
