@@ -5,16 +5,16 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mProductName  : [0mOS/7
 [32;1mKnown        : [0mTrue
 [32;1mVersion      : [0m1.0.0
-[32;1mBuild        : [0m148
-[32;1mFullVersion  : [0m1.0.0.148
+[32;1mBuild        : [0m159
+[32;1mFullVersion  : [0m1.0.0.159
 [32;1mChannel      : [0mdevelopment
 [32;1mEdition      : [0mServer
 [32;1mArchitecture : [0mamd64
 [32;1mBaseRelease  : [0m26.04
-[32;1mBuilt        : [0m08/28/2026 11:11:40
-[32;1mReproducible : [0mTrue
+[32;1mBuilt        : [0m08/30/2026 02:47:46
+[32;1mReproducible : [0mFalse
 [32;1mShort        : [0m1.0.0 (development)
-[32;1mFull         : [0m1.0.0.148 (development)
+[32;1mFull         : [0m1.0.0.159 (development)
 [32;1mDisplay      : [0mOS/7 1.0.0 (development)
 [32;1mDrift        : [0m
 [32;1mManifestPath : [0m/usr/lib/os7/release.json

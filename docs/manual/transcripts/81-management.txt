@@ -9,12 +9,12 @@ Arc       : @{Installed=False; Version=; StagedPackage=System.Object[]; StagedI
             liberate — its postinst needs a running systemd}
 Reachable : False
 Endpoints : {@{Name=Entra; Host=login.microsoftonline.com; Port=443; Reachable=
-            True; Detail=connected in 28 ms; Verified=}, @{Name=Graph; Host=gra
-            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 17
+            True; Detail=connected in 23 ms; Verified=}, @{Name=Graph; Host=gra
+            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 24
             ms; Verified=}, @{Name=Intune; Host=manage.microsoft.com; Port=443;
-             Reachable=True; Detail=connected in 37 ms; Verified=}, @{Name=Arc;
-             Host=management.azure.com; Port=443; Reachable=True; Detail=connec
-            ted in 16 ms; Verified=}}
+             Reachable=False; Detail=One or more errors occurred. (Name or serv
+            ice not known); Verified=}, @{Name=Arc; Host=management.azure.com;
+            Port=443; Reachable=True; Detail=connected in 15 ms; Verified=}}
 Summary   : authd is installed and PAM is wired to it, but /etc/authd/brokers.d
              is empty — there is no Entra broker for it to talk to, so a sign-i
             n will fail as though the password were wrong. See C8a: authd-msent

@@ -1,0 +1,24 @@
+e2scrub_all.timer              09/06/2026 03:10:27
+fstrim.timer                   08/31/2026 01:07:55
+fwupd-refresh.timer            08/30/2026 06:06:40
+logrotate.timer                08/31/2026 00:40:17
+man-db.timer                   08/31/2026 02:36:41
+motd-news.timer                08/30/2026 06:59:39
+os7-backup-replicate.timer     08/30/2026 06:12:15
+os7-update-check.timer         08/31/2026 00:53:59
+sanoid.timer                   08/30/2026 05:45:00
+snapd.snap-repair.timer
+sysstat-collect.timer          08/30/2026 05:40:00
+sysstat-rotate.timer           08/31/2026 00:00:00
+sysstat-summary.timer          08/31/2026 00:07:00
+systemd-tmpfiles-clean.timer   08/30/2026 05:48:22
+ua-timer.timer
+update-notifier-download.timer 08/30/2026 05:38:28
+update-notifier-motd.timer     09/03/2026 02:03:40
+zfs-scrub-monthly@.timer
+zfs-scrub-weekly@.timer
+zfs-trim-monthly@.timer
+zfs-trim-weekly@.timer
+
+
+PS /home/os7admin>

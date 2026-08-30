@@ -1,0 +1,21 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nR[6n[24;81H[24;80HRe[6n[24;82H[24;80HReg[6n[24;83H[24;80HRegi[6n[24;84H[24;80HRegis[6n[24;85H[24;80HRegist[6n[24;86H[24;80HRegiste[6n[24;87H[24;80HRegister[6n[24;88H[24;80HRegister-[6n[24;89H[24;80HRegister-O[6n[24;90H[24;80HRegister-OS[6n[24;91H[24;80HRegister-OS7[6n[24;92H[24;80HRegister-OS7S[6n[24;93H[24;80HRegister-OS7Sc[6n[24;94H[24;80HRegister-OS7Sch[6n[24;95H[24;80HRegister-OS7Sche[6n[24;96H[24;80HRegister-OS7Sched[6n[24;97H[24;80HRegister-OS7Schedu[6n[24;98H[24;80HRegister-OS7Schedul[6n[24;99H[24;80HRegister-OS7Schedule[6n[24;100H[24;80HRegister-OS7Scheduled[6n[24;101H[24;80HRegister-OS7ScheduledT[6n[24;102H[24;80HRegister-OS7ScheduledTa[6n[24;103H[24;80HRegister-OS7ScheduledTas[6n[24;104H[24;80HRegister-OS7ScheduledTask[6n[24;105H[24;80HRegister-OS7ScheduledTask [6n[24;106H[24;80HRegister-OS7ScheduledTask @[6n[24;107H[24;80HRegister-OS7ScheduledTask @t[6n[24;108H
+[?1lOS7-STEP task written: os7-task-scrub.timer + os7-task-scrub.service
+
+[32;1mName        : [0mos7-task-scrub.timer
+[32;1mDescription : [0mOS/7 task: scrub
+[32;1mNextRun     : [0m09/06/2026 03:00:00
+[32;1mLastRun     : [0m
+[32;1mLastResult  : [0msuccess
+[32;1mActivates   : [0mos7-task-scrub.service
+[32;1mStartupType : [0menabled
+[32;1mActiveState : [0mactive
+[32;1mSubState    : [0mwaiting
+[32;1mSchedule    : [0mSun *-*-* 03:00:00
+[32;1mPersistent  : [0mFalse
+[32;1mIsOS7       : [0mTrue
+[32;1mHealthy     : [0mTrue
+
+[6n
+PS /home/os7admin> [?1h[6n

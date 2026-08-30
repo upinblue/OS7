@@ -1,4 +1,8 @@
-Get-OS7BackupStatus: The property 'NewestReplicated' cannot be found on this obj
-ect. Verify that the property exists.
+Get-OS7BackupPolicy: /usr/local/share/powershell/Modules/OS7/OS7.Backup.ps1:944
+Line |
+ 944 |      $policy = Get-OS7BackupPolicy
+     |                ~~~~~~~~~~~~~~~~~~~
+     | The property 'Creation' cannot be found on this object. Verify that the
+     | property exists.
 
 PS /home/os7admin>

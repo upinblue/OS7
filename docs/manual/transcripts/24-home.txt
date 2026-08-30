@@ -5,11 +5,11 @@ OS7-STEP run: stat -c %d /home/os7admin
 Path          : /home/os7admin
 Account       : os7admin
 Uid           : 1000
-Dataset       : rpool/USERDATA/os7admin_a5e6c1bd
+Dataset       : rpool/USERDATA/os7admin_9d9c4225
 OwnDataset    : True
 OwnFilesystem : True
 Agrees        : True
-DeviceId      : 63
+DeviceId      : 55
 Note          : on its own dataset, outside the boot environment
 
 

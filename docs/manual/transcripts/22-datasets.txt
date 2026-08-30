@@ -10,15 +10,15 @@ rpool/DATA/spool                                   /var/spool
 rpool/DATA/srv                                     /srv
 rpool/DATA/tmp                                     /var/tmp
 rpool/ROOT
-rpool/ROOT/os7_1.0.0.148_202608281306              /
-rpool/ROOT/os7_1.0.0.148_202608281306/var          /var
-rpool/ROOT/os7_1.0.0.148_202608281306/var/cache    /var/cache
-rpool/ROOT/os7_1.0.0.148_202608281306/var/lib      /var/lib
-rpool/ROOT/os7_1.0.0.148_202608281306/var/lib/apt  /var/lib/apt
-rpool/ROOT/os7_1.0.0.148_202608281306/var/lib/dpkg /var/lib/dpkg
+rpool/ROOT/os7_1.0.0.159_202608300312              /
+rpool/ROOT/os7_1.0.0.159_202608300312/var          /var
+rpool/ROOT/os7_1.0.0.159_202608300312/var/cache    /var/cache
+rpool/ROOT/os7_1.0.0.159_202608300312/var/lib      /var/lib
+rpool/ROOT/os7_1.0.0.159_202608300312/var/lib/apt  /var/lib/apt
+rpool/ROOT/os7_1.0.0.159_202608300312/var/lib/dpkg /var/lib/dpkg
 rpool/USERDATA
-rpool/USERDATA/os7admin_a5e6c1bd                   /home/os7admin
-rpool/USERDATA/root_a5e6c1bd                       /root
+rpool/USERDATA/os7admin_9d9c4225                   /home/os7admin
+rpool/USERDATA/root_9d9c4225                       /root
 
 
 PS /home/os7admin>

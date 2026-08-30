@@ -9,8 +9,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0mstatic
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1495
-[32;1mActiveSince  : [0m08/29/2026 16:56:52
+[32;1mMainPid      : [0m6634
+[32;1mActiveSince  : [0m08/30/2026 03:33:39
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0mnotify
 [32;1mHealthy      : [0mTrue
@@ -22,8 +22,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1208
-[32;1mActiveSince  : [0m08/29/2026 16:56:45
+[32;1mMainPid      : [0m6349
+[32;1mActiveSince  : [0m08/30/2026 03:33:38
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0mnotify
 [32;1mHealthy      : [0mTrue
@@ -43,16 +43,16 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 
 [32;1mName         : [0mos7-backup-firstboot.service
 [32;1mDescription  : [0mOS/7 first-boot backup enablement
-[32;1mActiveState  : [0minactive
-[32;1mSubState     : [0mdead
+[32;1mActiveState  : [0mfailed
+[32;1mSubState     : [0mfailed
 [32;1mStartupType  : [0menabled
-[32;1mResult       : [0msuccess
+[32;1mResult       : [0mexit-code
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m0
+[32;1mMainPid      : [0m6389
 [32;1mActiveSince  : [0m
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
-[32;1mHealthy      : [0mTrue
+[32;1mHealthy      : [0mFalse
 
 [32;1mName         : [0mos7-backup-replicate.service
 [32;1mDescription  : [0mOS/7 backup replication
@@ -82,6 +82,32 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 
 [32;1mName         : [0mos7-update-check.service
 [32;1mDescription  : [0mOS/7 update check — stage what the channel offers
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mstatic
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0msanoid-prune.service
+[32;1mDescription  : [0mPrune ZFS snapshots
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0menabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0msanoid.service
+[32;1mDescription  : [0mSnapshot ZFS filesystems
 [32;1mActiveState  : [0minactive
 [32;1mSubState     : [0mdead
 [32;1mStartupType  : [0mstatic
@@ -139,8 +165,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m636
-[32;1mActiveSince  : [0m08/29/2026 16:56:43
+[32;1mMainPid      : [0m644
+[32;1mActiveSince  : [0m08/30/2026 03:33:28
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0mnotify-reload
 [32;1mHealthy      : [0mTrue
@@ -152,8 +178,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m797
-[32;1mActiveSince  : [0m08/29/2026 16:56:43
+[32;1mMainPid      : [0m791
+[32;1mActiveSince  : [0m08/30/2026 03:33:29
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -165,8 +191,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m795
-[32;1mActiveSince  : [0m08/29/2026 16:56:43
+[32;1mMainPid      : [0m789
+[32;1mActiveSince  : [0m08/30/2026 03:33:28
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -178,8 +204,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m895
-[32;1mActiveSince  : [0m08/29/2026 16:56:44
+[32;1mMainPid      : [0m889
+[32;1mActiveSince  : [0m08/30/2026 03:33:29
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -191,8 +217,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1224
-[32;1mActiveSince  : [0m08/29/2026 16:56:45
+[32;1mMainPid      : [0m6364
+[32;1mActiveSince  : [0m08/30/2026 03:33:38
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -204,8 +230,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m896
-[32;1mActiveSince  : [0m08/29/2026 16:56:44
+[32;1mMainPid      : [0m890
+[32;1mActiveSince  : [0m08/30/2026 03:33:29
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -217,8 +243,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1225
-[32;1mActiveSince  : [0m08/29/2026 16:56:45
+[32;1mMainPid      : [0m6366
+[32;1mActiveSince  : [0m08/30/2026 03:33:38
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0msimple
 [32;1mHealthy      : [0mTrue

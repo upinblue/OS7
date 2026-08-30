@@ -1,0 +1,18 @@
+OS7-STEP task written: os7-task-scrub.timer + os7-task-scrub.service
+
+Name        : os7-task-scrub.timer
+Description : OS/7 task: scrub
+NextRun     : 09/06/2026 03:00:00
+LastRun     :
+LastResult  : success
+Activates   : os7-task-scrub.service
+StartupType : enabled
+ActiveState : active
+SubState    : waiting
+Schedule    : Sun *-*-* 03:00:00
+Persistent  : False
+IsOS7       : True
+Healthy     : True
+
+
+PS /home/os7admin>

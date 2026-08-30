@@ -1,16 +1,16 @@
 ProductName  : OS/7
 Known        : True
 Version      : 1.0.0
-Build        : 148
-FullVersion  : 1.0.0.148
+Build        : 159
+FullVersion  : 1.0.0.159
 Channel      : development
 Edition      : Server
 Architecture : amd64
 BaseRelease  : 26.04
-Built        : 08/28/2026 11:11:40
-Reproducible : True
+Built        : 08/30/2026 02:47:46
+Reproducible : False
 Short        : 1.0.0 (development)
-Full         : 1.0.0.148 (development)
+Full         : 1.0.0.159 (development)
 Display      : OS/7 1.0.0 (development)
 Drift        :
 ManifestPath : /usr/lib/os7/release.json
