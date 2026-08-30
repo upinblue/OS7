@@ -124,6 +124,7 @@ class Bench:
         self.key = os.path.join(self.sshdir, "id_ed25519")
         self.kernel = os.path.join(self.dir, "vmlinuz")
         self.initrd = os.path.join(self.dir, "initrd")
+        self.repo = os.path.join(self.dir, "repo")
         self.arch.mount(self.dir, "/vm")
         self.container = "os7lab-" + name
 
@@ -487,6 +488,15 @@ def detach(b, args, tpm=None):
     if tpm is not None and tpm.enabled:
         os.makedirs(tpm.state_dir, exist_ok=True)
         argv += ["-e", "OS7_SWTPM=1", "-v", tpm.state_dir + ":/tpmstate"]
+    # The repository server, when one was declared. vmarch.serve_http() records
+    # it and vmarch.command() carries it in; this builds its own `docker run`,
+    # so it reads the same record rather than keeping a second one. The guest's
+    # 10.0.2.2 is slirp's host side, which IS this container -- a server on the
+    # Windows host would be unreachable from the guest (Dockerfile.vmhost).
+    if b.arch._http is not None:
+        argv += ["-e", "OS7_HTTP_PORT=%d" % b.arch._http[1],
+                 "-e", "OS7_HTTP_DIR=/os7http",
+                 "-v", b.arch._http[0] + ":/os7http:ro"]
     for kind in ("qmp", "serial", "ssh"):
         pn = b.port(kind)
         argv += ["-p", "127.0.0.1:%d:%d" % (pn, pn)]
@@ -548,6 +558,16 @@ def cmd_up(a):
     if os.path.exists(b.serial_log) and a.keep_log:
         shutil.copy(b.serial_log, b.serial_log + ".prev")
 
+    # SERVING IS DECLARED AT BOOT, not later, and that is slirp's doing rather
+    # than a design choice: the guest reaches the host side of the user-mode
+    # network at 10.0.2.2, that side lives wherever QEMU's network stack does,
+    # and on this host that is inside the container QEMU runs in. So the
+    # directory has to be mounted when the container starts.
+    if a.serve:
+        served = os.path.abspath(a.serve)
+        os.makedirs(served, exist_ok=True)
+        b.arch.serve_http(served, a.serve_port)
+
     tpm = SoftTpm(b.arch, b.tpmdir, not a.no_tpm)
     if not b.arch.containerised:
         tpm.__enter__()
@@ -576,6 +596,9 @@ def cmd_up(a):
     print("bench %s is up -- %s, %s" % (b.name, status.get("status"), describe_ports(b)))
     if iso:
         print("    medium   " + iso)
+    if a.serve:
+        print("    serving  %s  ->  the guest sees %s"
+              % (a.serve, b.arch.guest_host_url(a.serve_port)))
     print("    console  ./os7lab.py console %s --read" % b.name)
     return 0
 
@@ -938,6 +961,73 @@ def write_file(s, path, text):
     return ask(s, "wc -l " + path, "wrote " + path)
 
 
+SERVE_PORT = 8907          # run-s5.py's HTTP_PORT, so both use one number
+
+
+def cmd_release(a):
+    """Build a signed OS/7 release repository for this bench to update from.
+
+    run-s5.py's `build_release_repo` DOES THIS ALREADY, correctly, including
+    the part that is easy to get wrong: the repository is signed from
+    out/os7-gnupg, the same GNUPGHOME the ISO's os7-release ships the public
+    half of, so the installed machine can verify it — and one signed anywhere
+    else is the negative case check-os7-repo.py owns.
+
+    So it is CALLED, not reimplemented. run-s5.py reads its target directory,
+    its port and its architecture from three module globals; rebinding those
+    three and calling the function is what makes it build into THIS bench
+    instead of .vm/s5. The alternative was a second copy of a docker
+    invocation whose environment has eight variables in it, which is
+    BUILD-NOTES #66 waiting to happen: code written from the same notes as a
+    working script takes a different route.
+    """
+    b = Bench(a.name)
+    os.makedirs(b.repo, exist_ok=True)
+    mod = load_run_s5()
+    mod.lab = b                     # .arch and .dir are all it reads
+    mod.UPDATE_REPO = b.repo
+    mod.HTTP_PORT = a.port
+    version = a.version
+    if not version:
+        # The NEXT build after what this bench is running, which is what an
+        # update test wants: N -> N+1 and nothing invented.
+        # "$( … )" AND NOT THE BARE PROPERTY. FullVersion is a [version], and a
+        # [version] emitted bare renders as a TABLE -- `1      0      0    161`
+        # with Major/Minor/Build/Revision headings -- so the obvious form
+        # returns four numbers in a row and int() chokes on the lot. Format-List
+        # shows it as `1.0.0.161`, which is what made the bare property look
+        # safe. Interpolation asks for its ToString() and nothing else.
+        rc, out, _ = run_remote(b, '"$((Get-OS7Version).FullVersion)"',
+                                elevated=False) \
+            if b.running() and ssh_alive(b) else (1, "", "")
+        current = out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ""
+        if not current:
+            raise SystemExit(
+                "no --version given and this bench could not be asked what it "
+                "runs.\n  ./os7lab.py up %s && ./os7lab.py login %s, or pass "
+                "--version" % (a.name, a.name))
+        version = mod.next_build(current)
+        print("    this bench runs %s; building %s" % (current, version))
+    mod.build_release_repo(version)
+    print("    repo     %s" % b.repo)
+    print("    serve it: ./os7lab.py up %s --serve %s --serve-port %d"
+          % (a.name, b.repo, a.port))
+    print("    then     ./os7lab.py exec %s 'Set-OS7UpdateChannel -Uri %s "
+          "-Channel development' --sudo" % (a.name, b.arch.guest_host_url(a.port)))
+    return 0
+
+
+def load_run_s5():
+    """run-s5.py as a module. Its top level builds a Lab and registers mounts
+    on its OWN VmArch; it starts nothing and writes nothing."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run-s5.py")
+    spec = importlib.util.spec_from_file_location("run_s5_module", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def run_s5_scripts():
     """SERIAL_INNER and SERIAL_CONSOLE, taken FROM run-s5.py.
 
@@ -952,11 +1042,7 @@ def run_s5_scripts():
     The import runs run-s5.py's module level, which builds a Lab object and
     registers mounts on ITS OWN VmArch. It starts nothing and writes nothing.
     """
-    import importlib.util
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run-s5.py")
-    spec = importlib.util.spec_from_file_location("run_s5_scripts", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = load_run_s5()
     return mod.SERIAL_INNER, mod.SERIAL_CONSOLE
 
 
@@ -1018,7 +1104,7 @@ def cmd_install(a):
                     % b.arch.serial_tty)
     up = argparse.Namespace(name=a.name, iso=iso, install=False, size=0,
                             cmdline=live_cmdline, no_tpm=False, no_gui=False,
-                            keep_log=False)
+                            keep_log=False, serve=None, serve_port=SERVE_PORT)
     if cmd_up(up) != 0:
         return 1
 
@@ -1534,6 +1620,12 @@ def main():
                     help="no GPU, keyboard or tablet — serial and ssh only")
     sp.add_argument("--keep-log", action="store_true",
                     help="copy the previous console log to .prev first")
+    sp.add_argument("--serve", metavar="DIR",
+                    help="serve DIR to the guest over HTTP -- the transport for "
+                         "an update test. Declared at boot because the guest "
+                         "reaches it at 10.0.2.2, which is QEMU's own network "
+                         "stack and here lives inside the container")
+    sp.add_argument("--serve-port", type=int, default=SERVE_PORT)
     sp.set_defaults(func=cmd_up)
 
     sp = bench_arg(sub.add_parser("install", help="install OS/7 onto this bench, unattended"))
@@ -1560,6 +1652,12 @@ def main():
     sp.add_argument("--keep-disk", action="store_true",
                     help="do not wipe the disk, firmware vars and TPM state first")
     sp.set_defaults(func=cmd_install)
+
+    sp = bench_arg(sub.add_parser("release",
+                                  help="build a signed release repo to update from"))
+    sp.add_argument("--version", help="default: the next build after what this bench runs")
+    sp.add_argument("--port", type=int, default=SERVE_PORT)
+    sp.set_defaults(func=cmd_release)
 
     sp = bench_arg(sub.add_parser("down", help="shut the VM down"))
     sp.add_argument("--force", action="store_true", help="no ACPI, just stop it")

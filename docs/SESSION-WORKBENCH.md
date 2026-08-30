@@ -281,6 +281,38 @@ this repository's usual one: **the fixture was wrong and the report about the
 product looked convincing.** A session that renders nothing and a session
 photographed through the wrong adapter are indistinguishable from the outside.
 
+## 4c. The update train, driven by hand
+
+`run-s5.py update` proves this cycle as a gate. The bench makes it *steerable*,
+which is a different thing: you can stop between the steps and ask the machine
+what it thinks. Two additions were needed — `up --serve DIR` (serving is
+declared at boot, because the guest reaches it at `10.0.2.2`, which is QEMU's
+own network stack and on this host lives inside the container) and `release`,
+which **calls run-s5.py's `build_release_repo`** with three module globals
+rebound rather than reimplementing a docker invocation with eight environment
+variables in it.
+
+The whole cycle, on the desktop machine, one command at a time:
+
+| step | result |
+|---|---|
+| `release gui` | asked the machine what it runs (1.0.0.161), built **1.0.0.162** — 10 packages, Release signed and verified |
+| `Set-OS7UpdateChannel -Uri http://10.0.2.2:8907` | `Enabled: True` |
+| `Get-OS7Release` | sees 1.0.0.162, `Good signature from "OS/7 DEVELOPMENT signing key"` |
+| `Update-OS7 -AllowDevelopment` | exit 0; a second boot environment `os7_1.0.0.162_202608301440`, `Complete: True` |
+| reboot | **`RUNNING: 1.0.0.162`** |
+| `Restore-OS7` | `canmount=noauto` on .162, .161 mounted; it does not reboot, by design |
+| reboot | **`RUNNING: 1.0.0.161`** |
+
+N → N+1 → back, on a real machine, with each step's answer read before the
+next was typed.
+
+**And it surfaced #120 on the way**: after an ssh session ends, `ssh.socket`
+does not resume listening, so the machine is reachable exactly once per boot.
+That had been misread twice earlier in this session as boot timing. It is
+recorded as a symptom without a cause, because which of three mechanisms it is
+has not been measured.
+
 ## 5. What was NOT measured
 
 * **arm64: nothing.** The bench is symmetric by way of `vmarch.py` — host

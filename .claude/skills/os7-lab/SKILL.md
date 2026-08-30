@@ -67,6 +67,35 @@ os7lab.py shot manual desktop                     # PNG under .vm/<name>/shots/
 `--sudo` sends the password on stdin; it does **not** make the machine
 passwordless, because the next thing that happens to a bench is a snapshot.
 
+## Updates and rollback, driven by hand
+
+`run-s5.py update` is the gate and stays it. This is the same machinery made
+steerable, so you can look between the steps:
+
+```bash
+os7lab.py up gui --serve .vm/gui/repo     # serving is declared AT BOOT
+os7lab.py login gui
+os7lab.py release gui                      # builds the NEXT build after this bench's
+os7lab.py exec gui 'Set-OS7UpdateChannel -Uri http://10.0.2.2:8907 -Channel development -Confirm:$false' --sudo
+os7lab.py exec gui 'Get-OS7Release | Format-List' --sudo
+os7lab.py exec gui 'Update-OS7 -AllowDevelopment -Confirm:$false' --sudo --timeout 3600
+#   ... reboot, look, then:
+os7lab.py exec gui 'Restore-OS7 -Confirm:$false' --sudo
+```
+
+**`--serve` must be given at `up`.** The guest reaches the host side of
+user-mode networking at `10.0.2.2`, and that side is wherever QEMU's network
+stack lives — inside the container on this host — so the directory has to be
+mounted when the container starts. There is no way to start serving later.
+
+`release` calls **run-s5.py's** `build_release_repo` with three globals
+rebound, rather than reimplementing it: the repository must be signed from
+`out/os7-gnupg`, whose public half the ISO ships, and a second copy of that
+docker invocation is BUILD-NOTES #66 waiting to happen.
+
+Take a snapshot before the update. `Restore-OS7` is the product's rollback and
+is what you want to exercise; the snapshot is for when the run goes wrong.
+
 ## Snapshots are why this is cheap
 
 **0.6 s to take, 0.7 s to restore** (measured, amd64, 5 GB disk). A snapshot is

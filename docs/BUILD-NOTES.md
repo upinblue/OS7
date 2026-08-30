@@ -6358,3 +6358,63 @@ taken from a machine by `shoot-manual.py` on 2026-08-29 — is not output. It is
 this exception, at line 944. The manual ships a screenshot of the defect, which
 is what happens when pictures are taken from a machine and nothing reads them
 back.
+
+---
+
+## #120 — `ssh.socket` does not come back after `ssh.service` stops, so a machine is reachable for one session and then not at all
+
+Observed 2026-08-30 on the desktop bench, twice, while driving the update/
+rollback cycle. After a reboot the machine answers ssh normally; after the
+session ends, `ssh` gets
+
+```
+Connection closed by 127.0.0.1 port 6961
+```
+
+and both units are down:
+
+```
+systemctl is-active ssh.socket ssh.service   ->  inactive
+                                                 inactive
+systemctl is-enabled ssh.socket              ->  enabled
+```
+
+The journal shows an ordinary, complete session followed by an ordinary stop:
+
+```
+sshd-session[4406]: pam_unix(sshd:session): session opened for user os7admin
+sshd-session[4406]: pam_unix(sshd:session): session closed for user os7admin
+sshd[3324]: Received signal 15; terminating.
+systemd[1]: ssh.service: Deactivated successfully.
+```
+
+Nothing failed. `ssh.service` finished, and **`ssh.socket` did not resume
+listening**, which is the half socket activation exists to guarantee.
+`systemctl start ssh.socket` brings it straight back and the machine is
+reachable again, so nothing is broken about the socket itself — what is missing
+is whatever should re-arm it.
+
+**Why this matters more than it looks.** OS/7 ships `ssh.service` *disabled*
+and `ssh.socket` *enabled* — Ubuntu's socket-activated arrangement — so this is
+the only path to the machine. An administrator connects once, works, logs out,
+and the machine is then unreachable until somebody with physical or serial
+access starts a unit. For a product whose management story is remote
+(RELEASE-AND-UPDATE-PLAN §6 requires every cmdlet to work over ssh), that is
+close to the worst shape a defect can have: it works when you test it and is
+gone when you need it.
+
+**What has been ruled out.** `ssh.service` on this image carries no
+`Conflicts=ssh.socket`, so #33's transaction-time conflict resolution is not
+the mechanism — `grep -iE 'Conflicts|Requires' /usr/lib/systemd/system/ssh.service`
+returns nothing.
+
+**STILL OPEN, and deliberately not fixed on a guess.** What is not yet known is
+whether the stop is triggered by something OS/7 does, by an idle timeout, or by
+the connection count, and whether a stock Ubuntu 26.04 behaves the same. All
+three are cheap to ask now: `os7lab.py` can hold a machine up, connect, drop
+the connection and watch both units across the transition. Until that is
+measured, this note records a symptom and not a cause.
+
+**It also explains earlier confusion in this session.** Several `exec` calls
+returned exit 255 against a machine that had answered a minute before, and were
+put down to boot timing. They were this.
