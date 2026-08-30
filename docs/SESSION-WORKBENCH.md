@@ -307,11 +307,31 @@ The whole cycle, on the desktop machine, one command at a time:
 N → N+1 → back, on a real machine, with each step's answer read before the
 next was typed.
 
-**And it surfaced #120 on the way**: after an ssh session ends, `ssh.socket`
-does not resume listening, so the machine is reachable exactly once per boot.
-That had been misread twice earlier in this session as boot timing. It is
-recorded as a symptom without a cause, because which of three mechanisms it is
-has not been measured.
+**And it surfaced #120 on the way, which was this session's own doing.** The
+machine stopped listening on port 22 — and the cause was the fix for #118,
+written an hour earlier. `os7-sshd-keygen.service` said
+`Before=ssh.service ssh.socket`, which closes an ordering cycle (a `.service`
+is `After=basic.target`, `basic.target` is after `sockets.target`, and
+`ssh.socket` is `Before=sockets.target`), and systemd broke the cycle by
+**deleting the socket's start job**. So the fix for "no remote access" produced
+a worse "no remote access": before it, `ssh-keygen -A` repaired the machine;
+after it, nothing would.
+
+Three things about how it was found are worth keeping:
+
+* **The unit's own journal was empty.** `journalctl -u ssh.socket` returned
+  `-- No entries --`, which reads as "nothing happened to it". The decision is
+  logged against `sockets.target`. `journalctl -b | grep` found it in one go.
+* **`ConditionResult=no` sent me the wrong way first.** On a unit that was
+  never evaluated that is the default, not a failed check — the condition it
+  names (`/etc/ssh/sshd_not_to_be_run`) does not exist on the machine. A
+  diagnostic value that means something other than it appears to.
+* **Ubuntu's own `sshd-keygen.service` had the answer**: `Before=` names only
+  the services, and the direction is `WantedBy`, not `Wants`. Reading the unit
+  that already solves the problem beat reasoning about which orderings are safe.
+
+Measured after the correction, next boot: socket active, zero cycle lines, ssh
+answering from outside unaided.
 
 ## 5. What was NOT measured
 

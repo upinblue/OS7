@@ -6361,60 +6361,75 @@ back.
 
 ---
 
-## #120 — `ssh.socket` does not come back after `ssh.service` stops, so a machine is reachable for one session and then not at all
+## #120 — `Before=` on a socket that is `Before=sockets.target` builds an ordering cycle, and systemd breaks it by DELETING THE SOCKET
 
-Observed 2026-08-30 on the desktop bench, twice, while driving the update/
-rollback cycle. After a reboot the machine answers ssh normally; after the
-session ends, `ssh` gets
+Introduced and found on 2026-08-30, both within an hour, and the note is kept
+because the mistake is easy to make again and invisible from every angle except
+one.
 
-```
-Connection closed by 127.0.0.1 port 6961
-```
-
-and both units are down:
+**The symptom.** After a boot, an installed machine listens on nothing:
 
 ```
-systemctl is-active ssh.socket ssh.service   ->  inactive
-                                                 inactive
-systemctl is-enabled ssh.socket              ->  enabled
+ss -tlnp | grep :22                        ->  (no rows)
+systemctl is-active ssh.socket ssh.service ->  inactive / inactive
+systemctl is-enabled ssh.socket            ->  enabled
+journalctl -b -u ssh.socket                ->  -- No entries --
 ```
 
-The journal shows an ordinary, complete session followed by an ordinary stop:
+Enabled, wanted by an active `sockets.target`, its symlink in place since long
+before the boot — and **not one journal line about it**. It was never even
+skipped; no job for it was ever scheduled.
+
+**The cause, in systemd's own words**, found only by grepping the whole boot
+journal rather than the unit's:
 
 ```
-sshd-session[4406]: pam_unix(sshd:session): session opened for user os7admin
-sshd-session[4406]: pam_unix(sshd:session): session closed for user os7admin
-sshd[3324]: Received signal 15; terminating.
-systemd[1]: ssh.service: Deactivated successfully.
+sockets.target: Found ordering cycle: ssh.socket/start after
+  os7-sshd-keygen.service/start after basic.target/start after
+  sockets.target/start - after ssh.socket
+sockets.target: Job ssh.socket/start deleted to break ordering cycle
 ```
 
-Nothing failed. `ssh.service` finished, and **`ssh.socket` did not resume
-listening**, which is the half socket activation exists to guarantee.
-`systemctl start ssh.socket` brings it straight back and the machine is
-reachable again, so nothing is broken about the socket itself — what is missing
-is whatever should re-arm it.
+`os7-sshd-keygen.service` (#118's fix, written an hour earlier) said
+`Before=ssh.service ssh.socket`. A `.service` gets `After=basic.target` from
+DefaultDependencies; `basic.target` is after `sockets.target`; and `ssh.socket`
+itself declares `Before=sockets.target`. Naming the SOCKET in `Before=` closes
+the loop, and systemd's way out of a cycle is to delete one job from it — here,
+the socket's.
 
-**Why this matters more than it looks.** OS/7 ships `ssh.service` *disabled*
-and `ssh.socket` *enabled* — Ubuntu's socket-activated arrangement — so this is
-the only path to the machine. An administrator connects once, works, logs out,
-and the machine is then unreachable until somebody with physical or serial
-access starts a unit. For a product whose management story is remote
-(RELEASE-AND-UPDATE-PLAN §6 requires every cmdlet to work over ssh), that is
-close to the worst shape a defect can have: it works when you test it and is
-gone when you need it.
+**So the fix for #118 caused a worse version of #118.** Before it, sshd died
+per connection and `ssh-keygen -A` repaired the machine. After it, the socket
+never started at all, and no amount of key generation would help. The window
+where it looked fine is the nastiest part: whether the machine is reachable
+depends on which job systemd chooses to delete, so it worked on some boots.
 
-**What has been ruled out.** `ssh.service` on this image carries no
-`Conflicts=ssh.socket`, so #33's transaction-time conflict resolution is not
-the mechanism — `grep -iE 'Conflicts|Requires' /usr/lib/systemd/system/ssh.service`
-returns nothing.
+**The fix is Ubuntu's own ordering, which had it right.**
+`/usr/lib/systemd/system/sshd-keygen.service` says
 
-**STILL OPEN, and deliberately not fixed on a guess.** What is not yet known is
-whether the stop is triggered by something OS/7 does, by an idle timeout, or by
-the connection count, and whether a stock Ubuntu 26.04 behaves the same. All
-three are cheap to ask now: `os7lab.py` can hold a machine up, connect, drop
-the connection and watch both units across the transition. Until that is
-measured, this note records a symptom and not a cause.
+```
+Before=ssh.service sshd.service sshd@.service
+WantedBy=ssh.service sshd.service sshd@.service ssh.socket
+```
 
-**It also explains earlier confusion in this session.** Several `exec` calls
-returned exit 255 against a machine that had answered a minute before, and were
-put down to boot timing. They were this.
+— `Before=` names only the SERVICES, and the direction is `WantedBy`, not
+`Wants`. The socket may start whenever it likes; what must be true is that the
+keys exist before sshd RUNS, and sshd runs when the socket triggers it. Reading
+the unit that already solves the problem is cheaper than reasoning about which
+orderings are safe.
+
+**Measured after the change**, same machine, next boot: `ssh.socket` active,
+zero "ordering cycle" lines in the journal, ssh answering from outside with no
+intervention.
+
+**Two rules out of this.**
+
+1. **Never order a `.service` `Before=` a socket unit that is itself
+   `Before=sockets.target`.** Order before the service the socket triggers.
+2. **`journalctl -u <unit>` is not how you find out why a unit did not run.**
+   The decision to delete its job is logged against `sockets.target`, not
+   against the unit, so the unit's own journal is empty and reads as "nothing
+   happened". `journalctl -b | grep <unit>` is what finds it.
+
+`check-image.py` now asserts that this unit's `Before=` does not name
+`ssh.socket`, and that both `ssh.service.wants` and `ssh.socket.wants` carry
+its symlink.

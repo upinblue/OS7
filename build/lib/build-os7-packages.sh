@@ -419,9 +419,20 @@ build_os7_release() {
 	# nothing reporting it until somebody tries. Shipped enabled by symlink for
 	# the same reason as the unit above: `systemctl enable` needs a running
 	# systemd and a chroot has none.
+	# WANTED BY ssh.service AND ssh.socket, NOT BY multi-user.target
+	# (BUILD-NOTES #120). Hanging it off multi-user.target and having it order
+	# itself Before=ssh.socket built an ordering cycle that systemd broke by
+	# deleting the SOCKET's start job — a machine listening on nothing, which
+	# is the defect #118 is about, arrived from the other side. This is where
+	# Ubuntu's own sshd-keygen.service is wanted from, and being pulled in by
+	# the two units that need the keys is also what makes the ordering
+	# unnecessary in the first place.
 	chmod 0644 "${stage}/usr/lib/systemd/system/os7-sshd-keygen.service"
-	ln -sfn ../os7-sshd-keygen.service \
-		"${stage}/usr/lib/systemd/system/multi-user.target.wants/os7-sshd-keygen.service"
+	for want in ssh.service ssh.socket; do
+		install -d "${stage}/usr/lib/systemd/system/${want}.wants"
+		ln -sfn ../os7-sshd-keygen.service \
+			"${stage}/usr/lib/systemd/system/${want}.wants/os7-sshd-keygen.service"
+	done
 
 	# The unattended check (§6): timer, service, and the pwsh -File script —
 	# 0644 and no shebang, the os7-backup convention. The TIMER SHIPS ENABLED,
@@ -486,7 +497,8 @@ build_os7_release() {
 		./usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service \
 		./usr/libexec/os7-migrate-firstboot \
 		./usr/lib/systemd/system/os7-sshd-keygen.service \
-		./usr/lib/systemd/system/multi-user.target.wants/os7-sshd-keygen.service \
+		./usr/lib/systemd/system/ssh.service.wants/os7-sshd-keygen.service \
+		./usr/lib/systemd/system/ssh.socket.wants/os7-sshd-keygen.service \
 		./usr/lib/systemd/system/os7-update-check.timer \
 		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
 		./usr/libexec/os7-update-check \

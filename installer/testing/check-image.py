@@ -132,7 +132,13 @@ emit perms.includes    bash -c 'for p in INCLUDESPATHS; do if [ -L /mnt/sq/$p ];
 # unit that never runs), and does the image ship no host keys of its own --
 # which it must not, or every OS/7 machine in the world would share one.
 emit ssh.keygen.unit   bash -c 'test -f /mnt/sq/usr/lib/systemd/system/os7-sshd-keygen.service && echo present || echo ABSENT'
-emit ssh.keygen.wanted bash -c 'test -L /mnt/sq/usr/lib/systemd/system/multi-user.target.wants/os7-sshd-keygen.service && echo enabled || echo NOT-ENABLED'
+emit ssh.keygen.wanted bash -c 'test -L /mnt/sq/usr/lib/systemd/system/ssh.service.wants/os7-sshd-keygen.service && test -L /mnt/sq/usr/lib/systemd/system/ssh.socket.wants/os7-sshd-keygen.service && echo enabled || echo NOT-ENABLED'
+# AND THE ORDERING THAT #120 COST. Naming ssh.socket in Before= closes an
+# ordering cycle (the unit is After=basic.target, basic.target is after
+# sockets.target, ssh.socket is Before=sockets.target) and systemd breaks it by
+# deleting the SOCKET's start job -- a machine listening on nothing. The unit
+# must order itself before the SERVICES only.
+emit ssh.keygen.before bash -c 'grep -E "^Before=" /mnt/sq/usr/lib/systemd/system/os7-sshd-keygen.service 2>/dev/null || echo "(none)"'
 emit ssh.hostkeys      bash -c 'ls /mnt/sq/etc/ssh/ssh_host_* 2>/dev/null | wc -l'
 emit sources.list      cat /mnt/sq/etc/apt/sources.list
 emit sources.list.d    bash -c 'cat /mnt/sq/etc/apt/sources.list.d/*.sources 2>/dev/null || true'
@@ -1309,8 +1315,12 @@ def main() -> None:
           "the image carries OS/7's ssh host key unit",
           img.get("ssh.keygen.unit", "<no reply>"))
     check(img.get("ssh.keygen.wanted") == "enabled",
-          "and something wants it, so it will actually run",
+          "and ssh.service and ssh.socket both want it, so it will actually run",
           img.get("ssh.keygen.wanted", "<no reply>"))
+    before = img.get("ssh.keygen.before", "")
+    check("ssh.socket" not in before,
+          "and it does not order itself before ssh.socket (that cycle deletes "
+          "the socket, #120)", before)
     # ZERO IS THE PASS. Host keys baked into an image would be the same keys on
     # every machine installed from it -- a far worse defect than the one #118
     # is about. The unit above is what makes them per-machine, on first boot.
