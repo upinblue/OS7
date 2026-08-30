@@ -6433,3 +6433,19 @@ intervention.
 `check-image.py` now asserts that this unit's `Before=` does not name
 `ssh.socket`, and that both `ssh.service.wants` and `ssh.socket.wants` carry
 its symlink.
+
+**Confirmed in a shipped image**, OS7-1.0.0.163-amd64.iso, built after the
+change — the whole `check-image.py` run is green and the three ssh assertions
+read:
+
+```
+ok  the image carries OS/7's ssh host key unit — present
+ok  and ssh.service and ssh.socket both want it, so it will actually run — enabled
+ok  and it does not order itself before ssh.socket (that cycle deletes the
+    socket, #120) — Before=ssh.service sshd.service sshd@.service
+```
+
+Two measurements, deliberately both: the machine one says the socket listens
+after a boot, and this one says the ISO carries the ordering that makes it so.
+The first without the second would have proved a hand-edited unit; the second
+without the first would have proved a file.
