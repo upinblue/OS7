@@ -111,6 +111,7 @@ check_module Time Get-ChronyTracking Get-ChronySource Get-ChronySourceFile \
 # without the parser that handles it.
 check_module Systemd Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
 	Restart-SystemdUnit Set-SystemdUnitStartup Update-SystemdUnit Get-SystemdJournal \
+	Get-SystemdTimer New-SystemdTimer Remove-SystemdTimer \
 	Test-SystemdModule
 # Directory is the fifth generic layer, and one name in this list is the reason
 # the line exists: Connect-DirectoryServer. Everything else the module exports is
@@ -148,7 +149,7 @@ check_module Directory Connect-DirectoryServer Disconnect-DirectoryServer \
 # passing if they vanished.
 #
 # The update train is named for the same reason since 2026-08-27. It lives in
-# OS7.Update.ps1 — the FOURTEENTH and last dot-sourced file, and last
+# OS7.Update.ps1 — the FIFTEENTH and last dot-sourced file, and last
 # because it calls every helper above it — and Get-OS7Release is the half
 # of it an image without a repository can still be asked about, which makes it
 # the one that would fail quietly if the file were missing.
@@ -186,6 +187,8 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Get-OS7Remoting Enable-OS7Remoting Disable-OS7Remoting \
 	Get-OS7Service Start-OS7Service Stop-OS7Service Restart-OS7Service \
 	Set-OS7Service Get-OS7Log Get-OS7InstallLog \
+	Get-OS7ScheduledTask Enable-OS7ScheduledTask Disable-OS7ScheduledTask \
+	Start-OS7ScheduledTask Register-OS7ScheduledTask Unregister-OS7ScheduledTask \
 	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
 	Get-OS7ManagementStatus
 
@@ -207,7 +210,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 # module comes up looking healthy. Naming those cmdlets in the export list above
 # is the second half of this guard and is still owed.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
-	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.Management.ps1 \
+	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.ScheduledTask.ps1 OS7.Management.ps1 \
 	OS7.Directory.ps1 OS7.DirectoryObject.ps1 OS7.Domain.ps1 \
 	OS7.Update.ps1 \
 	OS7.format.ps1xml os7-endpoints.json; do

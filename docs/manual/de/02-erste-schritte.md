@@ -50,7 +50,7 @@ OS/7 zeigt einer **Person** drei Felder und einer **Maschine** vier:
 | | Beispiel | Wo es steht |
 |---|---|---|
 | kurz | `1.0.0 (development)` | Titelzeile, `PRETTY_NAME`, `/etc/issue`, Begrüßung, `Get-OS7Version` |
-| lang | `1.0.0.148` | Dataset-Namen, `IMAGE_VERSION`, ISO-Dateiname, `--version`, Bootmenü, Abschlussbildschirm von Setup |
+| lang | `1.0.0.159` | Dataset-Namen, `IMAGE_VERSION`, ISO-Dateiname, `--version`, Bootmenü, Abschlussbildschirm von Setup |
 
 Das ist **eine Anzeigeregel, keine zweite Nummer**. Überall, wo zwei Bauten
 auseinandergehalten werden müssen, steht die lange Form; überall, wo ein
@@ -105,7 +105,7 @@ Get-Help Update-OS7 -Full                  # die vollständige Hilfe
 Get-Help Restore-OS7 -Examples             # nur die Beispiele
 ```
 
-Die vollständige Liste aller 185 Befehle steht in **Anhang A**.
+Die vollständige Liste aller 194 Befehle steht in **Anhang A**.
 
 ## 2.4 Die Namensregeln
 

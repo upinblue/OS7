@@ -230,7 +230,7 @@ materials at `/usr/lib/os7/release.json`.
 
 ## PowerShell on the inside
 
-Six modules ship, 185 functions. `Zfs`, `Net`, `Time`, `Systemd` and `Directory` are
+Six modules ship, 194 functions. `Zfs`, `Net`, `Time`, `Systemd` and `Directory` are
 generic layers that know their subsystem and nothing about OS/7 — they would run on any
 Ubuntu host. `OS7` is the product layer on top of them, and reaches each subsystem only
 through its own layer; a check enforces that rather than a convention.

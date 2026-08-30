@@ -49,7 +49,7 @@ OS/7 shows a **person** three fields and a **machine** four:
 | | Example | Where it appears |
 |---|---|---|
 | short | `1.0.0 (development)` | title row, `PRETTY_NAME`, `/etc/issue`, the greeting, `Get-OS7Version` |
-| long | `1.0.0.148` | dataset names, `IMAGE_VERSION`, the ISO filename, `--version`, the boot menu, Setup's Complete screen |
+| long | `1.0.0.159` | dataset names, `IMAGE_VERSION`, the ISO filename, `--version`, the boot menu, Setup's Complete screen |
 
 This is a **display rule, not a second number**. Wherever two builds have to be
 told apart, the long form appears; wherever a human reads, the short one.
@@ -102,7 +102,7 @@ Get-Help Update-OS7 -Full                  # the full help
 Get-Help Restore-OS7 -Examples             # just the examples
 ```
 
-The complete list of all 185 commands is **Appendix A**.
+The complete list of all 194 commands is **Appendix A**.
 
 ## 2.4 The naming rules
 

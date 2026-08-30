@@ -118,7 +118,7 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 ./installer/testing/shoot-manual.py       # the administrator manual's pictures,
                                           #   taken from a machine: boot an
                                           #   installed disk with NO medium, log
-                                          #   in as a person does, type 41
+                                          #   in as a person does, type 47
                                           #   cmdlets, keep the screen's text AND
                                           #   the screen. --render redraws from
                                           #   the saved bytes with no VM. It is
@@ -162,6 +162,16 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 ./installer/testing/check-service-logic.py # Get-OS7Service's HEALTHY rule: ten
                                           #   unit states, the WORKING ones as
                                           #   carefully as the broken. No systemd
+./installer/testing/check-scheduledtask-logic.py # the scheduled-task DECISIONS
+                                          #   (the #113 fix, P9): the union that
+                                          #   keeps disabled timers listed, the
+                                          #   enable-without-start trap as
+                                          #   Healthy=$false (#115/#116), run-now
+                                          #   starting the SERVICE, Register's
+                                          #   validate-before-write and
+                                          #   Unregister's refusal of package
+                                          #   timers. 64 checks over recorded
+                                          #   systemd 259 output, no VM, seconds
 ./installer/testing/check-ssh-login.py    # what an SSH login ACTUALLY lands in,
                                           #   against a REAL sshd: interactive ->
                                           #   PowerShell (with the drop-in moved
@@ -236,7 +246,8 @@ pair reached by a road nothing checks.
 matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/` and `powershell/Directory/` are the generic layers — none
 knows anything about OS/7, and all five would run on any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is 95 of the 185 functions.
+`powershell/OS7/` is the product layer on top, and it is 101 of the 194 functions
+(95 of 185 until the scheduled-task surface landed on 2026-08-29).
 Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units and **P2-directory**
 about the directory; `check-layering.py` holds **all five** at baselines that may
@@ -610,16 +621,17 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             the os7-module .deb (hook 0022) and NOT by staging;
                             build.sh stages the tests/ fixtures alone
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four of
-                            the FOURTEEN files DOT-SOURCED by OS7.psm1, so a copy
+                            the FIFTEEN files DOT-SOURCED by OS7.psm1, so a copy
                             that took the .psm1 alone is a real failure mode -
-                            hook 0060 names all fourteen, and so does the .deb
+                            hook 0060 names all fifteen, and so does the .deb
                             content check since the 2026-08-28 merge. This line
                             said "four ... all five" while the file said FOURTEEN
-                            sixty lines below it
+                            sixty lines below it - and said FOURTEEN again when
+                            OS7.ScheduledTask.ps1 made it fifteen on 2026-08-29
   OS7.Home.ps1              where a home directory lives, and the migration for
                             machines installed before Setup passed -UserName
                             (#74). Dot-sourced too - it was the fifth of five
-                            when this table was written, and is one of fourteen
+                            when this table was written, and is one of fifteen
   OS7.Network.ps1           the network as an operator asks about it: Get-/Set-
                             OS7NetworkAdapter, Get-OS7NetworkConfiguration,
                             Test-OS7Network, Get-OS7Endpoint. Set- verifies by
@@ -649,9 +661,16 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
   OS7.Domain.ps1            the join, the logon policy and Kerberos tickets.
                             Domain users' homes are put OUTSIDE the boot
                             environment, which is #74's shape in a second place
+  OS7.ScheduledTask.ps1     the Task Scheduler question, answered over systemd
+                            timers (P9, the #113 fix): Get-/Enable-/Disable-/
+                            Start-/Register-/Unregister-OS7ScheduledTask.
+                            Healthy names the enable-without-start trap (#115),
+                            disabled tasks stay listed (#116), run-now starts
+                            the SERVICE, and Unregister refuses anything not
+                            named os7-task-* BEFORE touching systemd
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. LAST of the
-                            FOURTEEN dot-sourced files, and last because it
+                            FIFTEEN dot-sourced files, and last because it
                             calls every helper above it and PowerShell defines
                             functions as the script runs
 build/packages/             OS/7's own .debs (C7). Each is a control.in plus an

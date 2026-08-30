@@ -1,4 +1,4 @@
-# 9 Dienste, Protokolle und Fernzugriff
+# 9 Dienste, geplante Aufgaben, Protokolle und Fernzugriff
 
 ## 9.1 Dienste
 
@@ -69,7 +69,7 @@ so aus.
 Ob ein Dienst beim Systemstart hochkommt:
 
 ```powershell
-Set-OS7Service -Name os7-update-check.timer -StartupType Automatic
+Set-OS7Service -Name ssh.service -StartupType Automatic
 ```
 
 Zur Wahl stehen `Automatic`, `Manual`, `Disabled` und `Blocked`. `Blocked`
@@ -162,7 +162,135 @@ Disable-OS7Remoting
 > `-HostName`. Das ist PowerShells eigener Mechanismus und funktioniert auch
 > von Windows aus.
 
-## 9.5 Was nicht nachgebaut wurde
+## 9.5 Geplante Aufgaben
+
+Was unter Windows die Aufgabenplanung ist, sind hier **systemd-Timer** — und
+die sind mit Absicht keine Dienste. `Get-OS7Service` beantwortet „läuft dieses
+Programm"; `Get-OS7ScheduledTask` beantwortet „was wird laufen, und wann":
+
+```powershell
+Get-OS7ScheduledTask | Format-Table Name,NextRun,LastRun
+```
+
+![Alles, was nach Zeitplan läuft, mit dem nächsten und dem letzten Lauf.](images/54-scheduled-tasks.png)
+
+Die Liste enthält auch Aufgaben, die gerade abgeschaltet sind — eine Aufgabe,
+die Sie deaktiviert haben, hat nicht aufgehört zu existieren, und ein
+Inventar, das sie verliert, wäre ein Inventar, dem man nicht trauen kann.
+
+Drei dieser Zeitpläne gehören dem Produkt selbst: `sanoid.timer` nimmt die
+Sicherungs-Snapshots (Kapitel 12), `os7-backup-replicate.timer` kopiert sie
+auf das Sicherungsziel, und `os7-update-check.timer` ist die unbeaufsichtigte
+Update-Prüfung (Kapitel 6.7). Sie werden verwaltet wie jede andere Aufgabe —
+gehören aber dem Produkt, und das zählt bei `Unregister-` weiter unten.
+
+Eine Aufgabe im Ganzen:
+
+```powershell
+Get-OS7ScheduledTask sanoid.timer | Format-List
+```
+
+![Eine geplante Aufgabe im Detail — Zeitplan, nächster Lauf, letzter Lauf und dessen Ausgang.](images/55-task-detail.png)
+
+`LastRun` ist, wann der **Zeitplan** zuletzt ausgelöst hat; `LastResult` ist,
+wie dieser Lauf ausging. Startet man eine Aufgabe von Hand, bewegt sich
+`LastResult` und nicht `LastRun` — der Zeitplan hat nicht ausgelöst, und die
+beiden Antworten bleiben mit Absicht getrennt.
+
+### `Healthy`, und die Falle, die es benennt
+
+Ein Timer kann **aktiviert sein und trotzdem nie laufen**: systemds `enable`
+schärft den *nächsten Systemstart* und sonst nichts. Ein Timer in diesem
+Zustand ist aktiviert, inaktiv, und feuert bis zum Neustart der Maschine nicht
+— und kein Werkzeug auf der Maschine nennt das ein Problem.
+`Get-OS7ScheduledTask` tut es: `Healthy` ist `$false`, und `NextRun` ist leer.
+
+`Enable-OS7ScheduledTask` macht deshalb beides — es aktiviert die Aufgabe
+*und* schärft sie sofort:
+
+```powershell
+Enable-OS7ScheduledTask  os7-update-check.timer
+Disable-OS7ScheduledTask os7-update-check.timer
+```
+
+`Healthy` ist außerdem `$false` für eine Aufgabe, deren letzter Lauf
+fehlschlug. Wie überall sonst ist es `$null`, wenn die Details nicht abgerufen
+wurden — eine Prüfung, die nicht lief, darf nie wie eine bestandene aussehen.
+
+### Eine Aufgabe sofort ausführen
+
+```powershell
+Start-OS7ScheduledTask os7-update-check.timer
+```
+
+Das startet den **Dienst** der Aufgabe, wartet auf ihn und meldet, was
+geschehen ist — derselbe Lauf, den der Zeitplan erzeugt hätte, nur jetzt.
+
+### Eine eigene Aufgabe anlegen
+
+Ein wöchentlicher Pool-Scrub, sonntags um drei Uhr morgens — die Parameter
+passen nicht mehr auf eine Zeile, also werden sie gesplattet; das ist das
+Idiom für jeden Parametersatz, der einer Zeile entwachsen ist:
+
+```powershell
+$t = @{ Name='scrub'; Weekly=$true; DayOfWeek='Sunday' }
+```
+
+![Die Parameter der Aufgabe, in einer Hashtable gesammelt.](images/56-register-a.png)
+
+```powershell
+$t += @{ At='03:00'; Command='Start-ZpoolScrub rpool' }
+```
+
+![Zeitplan und Befehl kommen dazu.](images/57-register-b.png)
+
+```powershell
+Register-OS7ScheduledTask @t
+```
+
+![Die registrierte Aufgabe, scharf — NextRun hat einen Wert.](images/58-register.png)
+
+Die Aufgabe heißt `os7-task-scrub` — jede Aufgabe, die Sie registrieren, trägt
+das Präfix `os7-task-`, und daran ist sie in jeder Auflistung als Ihre zu
+erkennen. `-Command` führt PowerShell aus; für alles andere gibt es
+`-Execute`/`-Arguments` mit einem absoluten Pfad. `-Daily -At` und
+`-Weekly -DayOfWeek -At` decken die üblichen Zeitpläne ab; `-OnCalendar` nimmt
+einen rohen systemd-Kalenderausdruck für alles, was sie nicht sagen können
+(`'Mon..Fri 06:30'`, `'*-*-01 06:00:00'`). Der Zeitplan wird geprüft,
+**bevor** etwas geschrieben wird — einen Ausdruck, den systemd nicht parsen
+kann, lehnt der Befehl mit systemds eigener Fehlermeldung ab, statt ihn als
+Timer auf die Platte zu schreiben, der nie feuert.
+
+Zwei Schalter lohnen sich zu kennen: `-Persistent` holt Versäumtes nach (eine
+Maschine, die um drei aus war, führt den Auftrag beim Wiederanlauf aus), und
+`-RandomizedDelay` verteilt die Läufe einer Flotte über ein Zeitfenster, damit
+nicht tausend Maschinen denselben Auftrag in derselben Sekunde beginnen.
+
+> **Keine Geheimnisse in `-Command`.** Die Befehlszeile landet in einer für
+> alle lesbaren Unit-Datei und erscheint in systemds eigenen Werkzeugen. Eine
+> Aufgabe, die eine Anmeldung braucht, liest sie zur Laufzeit aus einer Datei,
+> die root gehört und die Rechte `0600` hat.
+
+### Eine Aufgabe entfernen
+
+```powershell
+Unregister-OS7ScheduledTask scrub -Confirm:$false
+```
+
+![Die Aufgabe wird angehalten, entschärft und entfernt.](images/59-unregister.png)
+
+`Unregister-` entfernt **nur** Aufgaben, die mit `Register-` angelegt wurden —
+`sanoid.timer` und die anderen Produkt-Zeitpläne lehnt es beim Namen ab. Die
+gehören Paketen, und die Unit-Datei eines Pakets zu löschen hieße, die
+Paketverwaltung an eine Datei glauben zu lassen, die nicht mehr da ist. Einen
+Produkt-Zeitplan, den man stilllegen will, schaltet man ab, statt ihn zu
+entfernen:
+
+```powershell
+Disable-OS7ScheduledTask sanoid.timer
+```
+
+## 9.6 Was nicht nachgebaut wurde
 
 OS/7 baut nichts nach, was PowerShell auf Linux schon kann. Es gibt kein
 `Get-OS7Process`, kein `Get-OS7FileHash`, kein `Restart-OS7Computer` und kein

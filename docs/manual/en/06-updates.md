@@ -133,13 +133,19 @@ start an update.
 
 OS/7 ships a timer that looks periodically for something new on the channel.
 
-The timer is `os7-update-check.timer`. Because `Get-OS7Service` only ever asks
-systemd for units of type *service*, a timer is inspected through the generic
-layer:
+The timer is `os7-update-check.timer`, and it is a *scheduled task* — the same
+distinction Windows makes between a service and a task in the Task Scheduler.
+Chapter 9.5 has the whole surface; the one command that matters here:
 
 ```powershell
-Get-SystemdUnit -Name os7-update-check.timer -Detailed
+Get-OS7ScheduledTask os7-update-check.timer
 ```
+
+![The unattended update check, as a scheduled task.](images/43-update-timer.png)
+
+`NextRun` is the answer to "will this fleet stay current without anyone
+typing anything": a date means yes, an empty field means the timer is not
+armed — and `Healthy` says so.
 
 The check has a fixed contract on its exit code, and that is what a monitoring
 system evaluates:
@@ -153,8 +159,8 @@ system evaluates:
 Turning it on and off:
 
 ```powershell
-Set-SystemdUnitStartup -Name os7-update-check.timer -Startup enabled
-Set-SystemdUnitStartup -Name os7-update-check.timer -Startup disabled
+Enable-OS7ScheduledTask  os7-update-check.timer
+Disable-OS7ScheduledTask os7-update-check.timer
 ```
 
 ## 6.8 What an update takes with it, and what it does not

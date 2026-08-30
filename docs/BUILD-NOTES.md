@@ -59,13 +59,13 @@ ordinary machines that have nothing to compare; `Get-OS7Service` pinning
 surface; and a captured terminal slice replayed at a different geometry than the
 guest believed it had.
 
-**#115 and #116 are CLAIMED (2026-08-29, the scheduled-task feature)**: the
-enable-without-start trap — `systemctl enable` on a timer arms the NEXT boot
-only, leaving a timer that is enabled, inactive, and never firing, with nothing
-reporting it — and the timer-listing traps: a timer that is neither enabled nor
-active is invisible to BOTH `list-timers --all` AND `list-units --all`, and
-`list-timers`' JSON `left`/`passed` fields are not the durations their names
-promise.
+**#115 and #116 were claimed and are now written** (the scheduled-task
+feature, 2026-08-29): the enable-without-start trap — `systemctl enable` on a
+timer arms the NEXT boot only, leaving a timer that is enabled, inactive, and
+never firing, with nothing reporting it — and the timer-listing traps: a timer
+that is neither enabled nor active is invisible to BOTH `list-timers --all`
+AND `list-units --all`, and `list-timers`' JSON `left`/`passed` fields are not
+the durations their names promise.
 
 Everything below is written. Numbers above 116 are free.
 
@@ -5969,12 +5969,30 @@ confirm it will.
 and looking at it does not.** A surface where the write succeeds and the read
 returns nothing is worse than one where both fail.
 
-Until it is widened, the timer is inspected through the generic layer, and the
-manual says so rather than pretending otherwise:
+~~Until it is widened, the timer is inspected through the generic layer, and the
+manual says so rather than pretending otherwise:~~
 
 ```powershell
 Get-SystemdUnit -Name os7-update-check.timer -Detailed
 ```
+
+**Fixed 2026-08-29, as a NOUN rather than a widening** — the open decision this
+entry left ("either `Get-OS7Service -Type`, or a separate noun for timers")
+resolved to the separate noun, recorded as POWERSHELL-SURFACE-PLAN P9. Windows
+itself keeps services.msc and taskschd.msc apart, and `Get-Service` does not
+list scheduled tasks either: `Get-OS7Service` stays deliberately
+services-only, and `Get-OS7ScheduledTask` (with `Enable-/Disable-/Start-/
+Register-/Unregister-`) is where timers live, over the Systemd layer's new
+`Get-/New-/Remove-SystemdTimer`. The workaround paragraph above is superseded:
+`Get-OS7ScheduledTask os7-update-check.timer` answers, and its `Healthy` names
+the armed question this entry said no cmdlet could ask (including the
+enable-without-start state, #115). Verified by `check-scheduledtask-logic.py`
+(64 checks, recorded fixtures), `Test-SystemdModule` (76, recorded real
+output), the same cmdlets run against real systemd 259 in an os7img container
+(register → run → trap → refusal → unregister — and a mask refused with the
+mask intact, a `%` surviving to the filesystem literally — all asked back),
+and typed at an installed machine for the manual. The manual's chapter-6
+workaround text was rewritten with it.
 
 ## #114 — a captured terminal slice must be replayed at the geometry the guest believed it had
 
@@ -6014,3 +6032,80 @@ not waiting for one, and the NEXT COMMAND was typed into it — `sudo pwsh
 eaten; the run simply never reached a prompt. That is #16 again, in its third
 costume: **never send a second thing before the first one's acknowledgement has
 actually arrived.**
+
+## #115 — `systemctl enable` on a timer arms the NEXT boot only, and nothing says so
+
+Measured on systemd 259 (259.5-0ubuntu3.4), in a container with systemd as
+PID 1, while building the scheduled-task surface. A freshly written timer unit,
+`daemon-reload`ed and then **enabled but not started**:
+
+```
+UnitFileState=enabled     ActiveState=inactive
+NextElapseUSecRealtime=   (empty)
+list-timers --all → "next": null
+```
+
+`enable` creates the `timers.target.wants` symlink, which is a statement about
+the **next boot**. Until then the timer is enabled, inactive, and **never
+fires** — and no tool on the machine reports a problem, because every
+individual answer is correct: the unit file IS enabled, the unit IS inactive,
+and an inactive timer having no next elapse is normal. The trap is the
+combination, and the combination is exactly what an administrator produces by
+running the one command whose name says "turn this on".
+
+One `systemctl start` later the same timer is `active/waiting` with a real
+`next`. So:
+
+* `Enable-OS7ScheduledTask` enables **and starts**, deliberately both — a verb
+  that did only what systemd's `enable` does would hand the operator this trap
+  with an OS/7 name on it.
+* `Get-OS7ScheduledTask`'s `Healthy` is `$false` for `enabled` + not `active`,
+  because that state means "armed for a boot that has not happened, firing
+  never until it does".
+* The generic layer deliberately does NOT fold the two: `New-SystemdTimer`
+  writes and verifies, and enabling/starting stay separate verbs there, so the
+  distinction remains visible to anything built on it.
+
+`Test-SystemdModule` replays the recorded state
+(`systemctl-show-timer-enabled-inactive.txt`, captured from exactly this trap);
+`check-scheduledtask-logic.py` holds the `Healthy` conclusion; and the
+container run confirmed the whole road: disable, raw `systemctl enable`, ask —
+`Healthy=$false`, `NextRun` unset, on real systemd.
+
+## #116 — a disabled timer is invisible to `list-timers --all` AND `list-units --all`, and `left`/`passed` in the JSON are not durations
+
+Two listing facts from the same measured session, both of which a
+Windows-shaped "list the scheduled tasks" surface trips over:
+
+**1. systemd does not load units nothing references.** A valid timer+service
+pair, present in `/etc/systemd/system` and `daemon-reload`ed but neither
+enabled nor active, appears in **neither** `systemctl list-timers --all` nor
+`systemctl list-units --all --type=timer`:
+
+```
+list-timers --all --output=json "os7-task-idle.timer"  →  []
+list-units  --all --type=timer  "os7-task-idle.timer"  →  []
+list-unit-files --type=timer    "os7-task-idle.timer"  →  [{"unit_file":"os7-task-idle.timer","state":"disabled",…}]
+systemctl show os7-task-idle.timer -p LoadState        →  LoadState=loaded   (on-demand)
+```
+
+`--all` reads as "everything" and means "everything loaded". A task registered
+`-Disabled` — or disabled by an operator who intends to re-enable it — would
+simply vanish from a listing built on either command, which is #113's shape
+arriving a second time. `Get-SystemdTimer` is therefore a **union** of
+`list-timers` (elapses) and `list-unit-files` (existence), with a point query
+falling through to `systemctl show`, whose on-demand loader answers for
+anything.
+
+**2. `list-timers --output=json` names two fields for durations and fills them
+with something else.** `next` and `last` are microseconds since the epoch and
+are real (`last` is `0`, not null, for never-fired). `left` came back **equal
+to `next`, byte for byte** — an absolute timestamp under a name that promises
+a countdown — and `passed` was equally unrelated to any elapsed time on the
+clock. Nothing in this repository reads either field; anything that starts to
+should measure first.
+
+Unlike journalctl's JSON (#113's session, point 2 of the Systemd module
+header), list-timers' numbers ARE numbers — so the two JSON emitters in one
+tool family disagree about whether a timestamp is a string, which is its own
+small argument for recorded fixtures over remembered shapes.

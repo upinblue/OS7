@@ -1,4 +1,4 @@
-# 9 Services, logs and remoting
+# 9 Services, scheduled tasks, logs and remoting
 
 ## 9.1 Services
 
@@ -156,7 +156,131 @@ Disable-OS7Remoting
 > OS/7 machine is SSH-based remoting, that is `-HostName`. It is PowerShell's
 > own mechanism and works from Windows too.
 
-## 9.5 What was not rebuilt
+## 9.5 Scheduled tasks
+
+What the Task Scheduler is on Windows, **systemd timers** are here — and they
+are deliberately not services. `Get-OS7Service` answers "is this program
+running"; `Get-OS7ScheduledTask` answers "what will run, and when":
+
+```powershell
+Get-OS7ScheduledTask | Format-Table Name,NextRun,LastRun
+```
+
+![Everything that runs on a schedule, with the next and the last run.](images/54-scheduled-tasks.png)
+
+The list includes tasks that are currently disabled — a task you have switched
+off has not ceased to exist, and an inventory that loses it would be an
+inventory you cannot trust.
+
+Three of these schedules are the product's own: `sanoid.timer` takes the
+backup snapshots (chapter 12), `os7-backup-replicate.timer` copies them to the
+backup target, and `os7-update-check.timer` is the unattended update check
+(chapter 6.7). They are managed like any other task — but they belong to the
+product, which matters for `Unregister-` below.
+
+One task in full:
+
+```powershell
+Get-OS7ScheduledTask sanoid.timer | Format-List
+```
+
+![One scheduled task in detail — schedule, next run, last run, and the outcome.](images/55-task-detail.png)
+
+`LastRun` is when the **schedule** last fired; `LastResult` is how that run
+ended. Starting a task by hand moves `LastResult` and not `LastRun` — the
+schedule did not fire, and the two answers are kept apart on purpose.
+
+### `Healthy`, and the trap it exists to name
+
+A timer can be **enabled and still never run**: systemd's `enable` arms the
+*next boot* and nothing else. A timer in that state is enabled, inactive, and
+will not fire until the machine restarts — and no tool on the machine calls
+that a problem. `Get-OS7ScheduledTask` does: `Healthy` is `$false` and
+`NextRun` is empty.
+
+`Enable-OS7ScheduledTask` therefore does both — it enables the task *and* arms
+it now:
+
+```powershell
+Enable-OS7ScheduledTask  os7-update-check.timer
+Disable-OS7ScheduledTask os7-update-check.timer
+```
+
+`Healthy` is also `$false` for a task whose last run failed. As everywhere
+else, it is `$null` when the details were not fetched — a check that did not
+run must never read as one that passed.
+
+### Running a task now
+
+```powershell
+Start-OS7ScheduledTask os7-update-check.timer
+```
+
+This starts the task's **service**, waits for it, and reports what happened —
+the same run the schedule would have produced, just now.
+
+### Creating your own task
+
+A weekly pool scrub, Sunday at three in the morning — the parameters no longer
+fit on one line, so they are splatted, which is the idiom for any parameter
+set that has outgrown a line:
+
+```powershell
+$t = @{ Name='scrub'; Weekly=$true; DayOfWeek='Sunday' }
+```
+
+![The task's parameters, collected in a hashtable.](images/56-register-a.png)
+
+```powershell
+$t += @{ At='03:00'; Command='Start-ZpoolScrub rpool' }
+```
+
+![The schedule and the command join them.](images/57-register-b.png)
+
+```powershell
+Register-OS7ScheduledTask @t
+```
+
+![The registered task, armed — NextRun has a value.](images/58-register.png)
+
+The task is named `os7-task-scrub` — every task you register carries the
+`os7-task-` prefix, which is what makes it recognisably yours in every
+listing. `-Command` runs PowerShell; for anything else there is
+`-Execute`/`-Arguments` with an absolute path. `-Daily -At` and
+`-Weekly -DayOfWeek -At` cover the common schedules; `-OnCalendar` takes a raw
+systemd calendar expression for everything they cannot say (`'Mon..Fri
+06:30'`, `'*-*-01 06:00:00'`). The schedule is validated **before** anything
+is written — a spec systemd cannot parse is refused with systemd's own error,
+not written to disk as a timer that never fires.
+
+Two switches are worth knowing: `-Persistent` catches up after downtime (a
+machine that was off at three runs the job when it returns), and
+`-RandomizedDelay` spreads a fleet's runs over a window, so a thousand
+machines do not start the same job in the same second.
+
+> **No secrets in `-Command`.** The command line lands in a world-readable
+> unit file and shows in systemd's own tooling. A task that needs a credential
+> reads it at run time from a root-owned file with mode `0600`.
+
+### Removing a task
+
+```powershell
+Unregister-OS7ScheduledTask scrub -Confirm:$false
+```
+
+![The task is stopped, disarmed and removed.](images/59-unregister.png)
+
+`Unregister-` removes **only** tasks that were created with `Register-` — it
+refuses `sanoid.timer` and the other product schedules by name. Those belong
+to packages, and deleting a package's unit file leaves the package manager
+believing in a file that is gone. A product schedule you want silenced is
+disabled, not removed:
+
+```powershell
+Disable-OS7ScheduledTask sanoid.timer
+```
+
+## 9.6 What was not rebuilt
 
 OS/7 rebuilds nothing PowerShell on Linux already does. There is no
 `Get-OS7Process`, no `Get-OS7FileHash`, no `Restart-OS7Computer` and no

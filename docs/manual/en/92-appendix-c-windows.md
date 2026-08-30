@@ -25,6 +25,18 @@ equivalence — where the concepts differ, it says so.
 > the same. A cmdlet carrying the Windows name and understanding a third of the
 > parameters turns a copied script into one that half-works.
 
+## Scheduled tasks
+
+| Windows | OS/7 |
+|---|---|
+| `Get-ScheduledTask`, `taskschd.msc` | `Get-OS7ScheduledTask` |
+| `Get-ScheduledTaskInfo` | `Get-OS7ScheduledTask <name>` — `NextRun`, `LastRun`, `LastResult` |
+| `Enable-ScheduledTask`, `Disable-ScheduledTask` | `Enable-OS7ScheduledTask`, `Disable-OS7ScheduledTask` |
+| `Start-ScheduledTask` | `Start-OS7ScheduledTask` |
+| `Register-ScheduledTask` | `Register-OS7ScheduledTask` |
+| `Unregister-ScheduledTask` | `Unregister-OS7ScheduledTask` |
+| `schtasks /create` | `Register-OS7ScheduledTask -Daily -At 03:00 -Command '…'` |
+
 ## Event log
 
 | Windows | OS/7 |

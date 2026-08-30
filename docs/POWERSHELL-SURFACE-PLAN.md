@@ -362,6 +362,49 @@ than an error. The directory's own design is
 [AD-PLAN.md](AD-PLAN.md); this decision is only where its layer boundary is
 recorded.
 
+### P9 — Timers are a noun, not a service type. Decided 2026-08-29.
+
+**`Get-OS7Service` stays deliberately services-only, and scheduled work gets its
+own noun: `Get-/Enable-/Disable-/Start-/Register-/Unregister-OS7ScheduledTask`,
+over the Systemd module's `Get-/New-/Remove-SystemdTimer`.**
+
+This resolves the decision BUILD-NOTES #113 left open — *"either
+`Get-OS7Service -Type`, or a separate noun for timers"* — and it resolves it the
+way Windows itself does: `Get-Service` does not list scheduled tasks, and
+services.msc and taskschd.msc are different tools because "is this program
+running" and "will this job run at three in the morning" are different
+questions. A `-Type` parameter would have answered #113's literal symptom and
+handed a Windows admin a `Get-OS7Service` whose objects are sometimes services
+and sometimes not.
+
+The noun carries the policy the generic layer deliberately does not:
+
+* **`Healthy` names the enable-without-start trap** (#115): `systemctl enable`
+  arms the next boot only, so `enabled` + `inactive` is a timer that never
+  fires and reports nothing. `Enable-OS7ScheduledTask` therefore enables AND
+  starts; the generic verbs stay separate so the distinction remains visible.
+* **The listing is a union** (#116): a disabled timer is invisible to
+  `list-timers --all` and `list-units --all` both, so `Get-SystemdTimer` merges
+  `list-unit-files` with `list-timers` and falls through to `systemctl show` —
+  a task registered `-Disabled` does not vanish from the inventory.
+* **Running a task now means starting the SERVICE** — starting the timer merely
+  arms the schedule, and a manual run moves `LastResult`, never `LastRun`
+  (measured; the schedule did not fire).
+* **`Unregister-` refuses anything not named `os7-task-*`**, by name and before
+  any systemd call: registered tasks are the operator's, `sanoid.timer` and
+  `os7-update-check.timer` are packages', and a package's schedule is disabled,
+  not deleted.
+* **A calendar spec is judged by `systemd-analyze calendar` before anything is
+  written** — the visudo pattern (A10): the parser that will read the file is
+  the one that validates it, and a spec systemd cannot parse would otherwise
+  become a timer that never fires and says nothing.
+
+What this deliberately does not do: no second snapshot schedule (the backup
+schedule IS sanoid's own timer, BACKUP-PLAN), no transient `systemd-run` jobs
+(`systemd-run` stays in P2-systemd's forbidden-token list), and no monotonic
+trigger authoring in v1 (`-OnCalendar` is the escape hatch; existing monotonic
+timers are still listed and their `OnStartupUSec=` shows in `Schedule`).
+
 ---
 
 ## 3. The surface
@@ -439,9 +482,11 @@ the browser still refuses.
 settings, and screen 3 collects both at install time with no runtime verb to
 match), `Get-/Set-OS7PowerPlan` (logind and GNOME set the same thing in two
 places and the winner is not the obvious one — the #85 shape),
-`Get-/Register-/Unregister-OS7ScheduledTask` over systemd timers,
 `Get-OS7PackageDrift` as a public verb for what `Get-OS7Version -CheckDrift`
-already computes privately.
+already computes privately. The scheduled-task group sat here until 2026-08-29;
+it was pulled forward by BUILD-NOTES #113 — the unattended update timer, the
+mechanism §6 of the release plan ships so nobody types `Update-OS7`, was
+invisible to the whole surface — and is built (P9, §3a).
 
 ### Not built — P4
 
@@ -465,12 +510,13 @@ The network group's READ half, in both layers. Nothing writes yet.
 | **Time** — `powershell/Time/`: `Get-ChronyTracking`, `Get-ChronySource`, `Get-/Set-ChronySourceFile`, `Sync-ChronyClock`, `Get-/Set-SystemTimeZone`, `Get-SystemClock` | **Done.** `Test-TimeModule`, 33 checks, green — against **recorded real `chronyc -c` output** in `powershell/Time/tests/fixtures/`, in both the synchronised and the unsynchronised state, plus a zone tree it builds. Run live against a real `chronyd -x`. |
 | **Time** — OS/7 layer: `Set-OS7TimeZone`, `Get-OS7Time`, `Get-/Set-OS7TimeSynchronization`, `Sync-OS7Time` | **Done.** `check-layering.py` gained a third rule (`P2-time`) and it holds at 0. |
 | **Remoting** — `Get-OS7Remoting`, `Enable-OS7Remoting`, `Disable-OS7Remoting`, plus the shipped drop-in `build/config/includes.chroot/etc/ssh/sshd_config.d/60-os7-powershell.conf` | **Done, and tested against a real sshd** — `installer/testing/check-ssh-login.py`, 15 checks. Two mechanisms, reported separately (see below). |
-| **Services and logs** — `powershell/Systemd/`: `Get-SystemdUnit`, `Start-/Stop-/Restart-SystemdUnit`, `Set-SystemdUnitStartup`, `Update-SystemdUnit`, `Get-SystemdJournal` | **Done.** `Test-SystemdModule`, 32 checks, against recorded real `systemctl`/`journalctl` output taken from a container running real systemd — including a journal MESSAGE that is a **byte array**. |
+| **Services and logs** — `powershell/Systemd/`: `Get-SystemdUnit`, `Start-/Stop-/Restart-SystemdUnit`, `Set-SystemdUnitStartup`, `Update-SystemdUnit`, `Get-SystemdJournal` — and, since 2026-08-29, `Get-/New-/Remove-SystemdTimer` | **Done.** `Test-SystemdModule`, 76 checks (32 until the timer surface landed), against recorded real `systemctl`/`journalctl` output taken from containers running real systemd — including a journal MESSAGE that is a **byte array** and the enabled-but-never-started timer state (#115). |
 | **Services and logs** — OS/7 layer: `Get-OS7Service`, `Start-/Stop-/Restart-/Set-OS7Service`, `Get-OS7Log`, `Get-OS7InstallLog` | **Done.** `installer/testing/check-service-logic.py`, 15 checks over ten unit states. `check-layering.py` gained a fourth rule, `P2-systemd`, at a baseline of **2** with both remaining sites named. |
+| **Scheduled tasks** — OS/7 layer: `Get-OS7ScheduledTask`, `Enable-/Disable-/Start-OS7ScheduledTask`, `Register-/Unregister-OS7ScheduledTask` (P9) | **Done 2026-08-29 — the fix for BUILD-NOTES #113.** `installer/testing/check-scheduledtask-logic.py`, 64 checks over the recorded systemd 259 fixtures, no VM; the same cmdlets run end to end against real systemd as PID 1 in an os7img container (register → run now → the #115 trap → the vendor refusal → unregister, every answer asked back from systemd); and typed at an installed machine for the manual. `Healthy` is `$false` for enabled-and-never-started (#115); disabled tasks stay listed (#116); `Unregister-` refuses non-`os7-task-*` names before any systemd call. P2-systemd still holds at 2. |
 | **Management plane** — `Get-OS7EntraStatus`, `Get-OS7IntuneEnrollment`, `Get-OS7ArcStatus`, `Get-OS7ManagementStatus` | **Done, READ only.** `installer/testing/check-management-logic.py`, 25 checks against a real image with systemd as PID 1. Registration (`Register-OS7Entra`, `Register-OS7Intune`, `Connect-OS7Arc`) is **not started**: it needs a tenant and credentials and cannot be checked here at all. |
 | The resolver, wireless scan/connect, proxy, hostname | **Not started.** `Get-NetResolver` is deliberately deferred: `resolvectl` needs dbus and could not be measured on the host that built this, and writing a parser for output nobody here has seen is the assertion this project does not make. |
 | **Directory** — `powershell/Directory/` and the OS7 layer above it: the admin session, discovery, `Test-OS7Directory`, the user/group/computer/OU surface, the domain join, logon policy, Kerberos tickets | **Done, and checked against a REAL DC** — `installer/testing/check-ad.py` against Samba 4.23.6 in a container, all green; `check-directory-logic.py` 15/15 with no DC and no VM; `Test-DirectoryModule` 40/40. `check-layering.py` gained a fifth rule, `P2-directory`, holding at its baseline of 1 (P8). **The join is code plus a container test: no OS/7 machine has ever joined a domain**, and a real Windows Server DC is owed (open question 7). |
-| Everything else in Tiers 1–3 — users, disks and encryption, firewall, inventory, certificates, the capstone, and all of Tier 3 | **Not started.** |
+| Everything else in Tiers 1–3 — users, disks and encryption, firewall, inventory, certificates, the capstone, and the rest of Tier 3 (locale, keyboard, power plan, package drift) | **Not started.** |
 
 `Set-OS7NetworkAdapter` **rolls back by default** (decided 2026-08-27). It
 writes, applies, then asks `ip` — and when no address appears it restores the
@@ -684,7 +730,10 @@ about rfkill's device list.
    module of P1 is where this would be resolved, and it is not built yet.
 4. **Which module owns systemd**, and whether `Get-OS7Service` is a curated view
    or a rename. P2 says a generic module; the shape of the OS/7 layer above it is
-   not designed.
+   not designed. *Overtaken in two steps: `powershell/Systemd/` and
+   `Get-OS7Service`-as-curated-view exist since §3a's services row, and the
+   half this question could not see — where TIMERS live — was decided
+   2026-08-29 as P9: a separate noun, not a `-Type` on `Get-OS7Service`.*
 5. **Where the secrets go for `Register-OS7Entra` and `Connect-OS7Arc`.** P7 says
    how they are handled in flight; nothing says where a service principal's
    credential rests on an unattended machine.

@@ -32,7 +32,7 @@ decides what, the commands that work, and the traps that cost the most.
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 | **Backup** | **Written and self-tested; NEVER RUN ON A MACHINE.** `powershell/OS7/OS7.Backup*.ps1` — 17 cmdlets over `sanoid` (snapshot policy and retention) and `syncoid` (`zfs send`/`receive` replication, local or over ssh), both GPL-3.0+ and both shelled out to rather than vendored. OS/7 owns which datasets, which targets, and the verification: `Get-OS7BackupStatus` asks ZFS on the source and, through the `Zfs` module over ssh (Z14), on the target — comparing snapshot **GUIDs**, because neither tool's exit code is evidence (BUILD-NOTES #73). `Assert-OS7DatasetSafe` keeps a snapshot policy away from `rpool/ROOT` and `bpool/BOOT`. `Test-OS7Backup` is **63 checks, green**, and `check-layering.py` still reports **0**. What has never happened: a snapshot taken, a stream sent, or a file restored by this code. [BACKUP-PLAN.md](BACKUP-PLAN.md), [SESSION-BACKUP.md](SESSION-BACKUP.md). |
-| **The PowerShell system surface** | **Five generic modules and 95 exported OS/7 functions as of 2026-08-28** (it was four and 58 on 2026-08-27), and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds **five** rules since the directory one landed), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/`, `powershell/Systemd/` and `powershell/Directory/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management/Directory/DirectoryObject/Domain.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Directory 40, Backup 63 — all green, all against RECORDED REAL output. The no-VM checks that go with them are listed in §2; `check-directory-logic.py` is the newest. |
+| **The PowerShell system surface** | **Five generic modules and 101 exported OS/7 functions as of 2026-08-29** (95 on 2026-08-28, four modules and 58 on 2026-08-27) — and since the manual and the scheduled-task feature, parts of it HAVE run on a booted machine (typed at one, which is what found #112–#113). [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds **five** rules since the directory one landed), P3 (the netplan renderer moves to PowerShell in two steps). `powershell/Net/`, `powershell/Time/`, `powershell/Systemd/` and `powershell/Directory/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/ScheduledTask/Management/Directory/DirectoryObject/Domain.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 68 (32 before the timer surface), Directory 40, Backup 63 — all green, all against RECORDED REAL output. The no-VM checks that go with them are listed in §2; `check-scheduledtask-logic.py` is the newest. |
 | **What that surface found** | **Entra sign-in cannot work on an OS/7 image as built today.** `/etc/authd/brokers.d` is EMPTY in the shipped ISO — authd installed, PAM wired to it, no broker to bridge to — so a sign-in fails as though the password were wrong. That is C8a measured on the artefact rather than reasoned about, and `Get-OS7EntraStatus` is the first thing on a machine that says so. Also: `Enter-PSSession` did not work at all (`sshd -T` listed only `sftp`); an interactive `ssh` DOES land in PowerShell and had never been tested until `check-ssh-login.py`. |
 | **Active Directory** | **Stage 1 is proven against a directory that answers; stage 2 has never run on a machine.** An administrator signs in to AD **from** an OS/7 machine with their own AD admin account and works as themselves — the machine is **not** a member of the domain and does not need to be. `powershell/Directory/` is the fifth generic layer (**36** functions, `Test-DirectoryModule` **51/51**—both numbers were 25 and 40 here and were already stale before the merge;—the module was asked) over `System.DirectoryServices.Protocols`, which ships *inside* pwsh 7.6.5 on Linux and needs **no new package on either architecture**; `OS7.Directory.ps1`, `OS7.DirectoryObject.ps1` and `OS7.Domain.ps1` are the product on top. `check-ad.py` drives all of it against a real **Samba 4.23.6** AD DC in a container (realm `OS7.TEST`) and reads every write back with `ldbsearch` **inside the DC** — a tool that shares no code with the client under test — and it is **all green**; `check-directory-logic.py` is the no-DC, no-VM half, **15/15**. What that leaves: **no OS/7 machine has ever joined a domain**, `adcli` is on no ISO built so far (so screen 9D is skipped on every medium that exists), **a real Windows Server DC is owed**, and **arm64 is unmeasured for all of it**. [AD-PLAN.md](AD-PLAN.md) is the authority. |
 | `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. Ported to `vmarch.py` on 2026-08-28 and still unrun — on either host. |
@@ -104,28 +104,37 @@ code with the client under test; and the stage-1 section runs a second time with
 `adcli`, `kinit`, `klist` and `sssctl` moved out of `PATH`, so "stage 1 needs
 none of stage 2's packages" is a measurement rather than an intention.
 
-**TWO CMDLET DEFECTS ARE OPEN SINCE 2026-08-29, and both were found by typing
+**ONE CMDLET DEFECT IS STILL OPEN of the two found on 2026-08-29 by typing
 the commands at a machine rather than by a check.** Writing the administrator
 manual ([docs/manual/](manual/README.md)) required every example to be run and
 photographed on an installed disk, and that is a use of this surface nothing
 here had made before.
 
-* **#112 — `Get-OS7BackupStatus` throws on an ordinary machine.** No
-  replication target means `$targets` is empty, `Select-Object -Last 1` is
+* **#112 — `Get-OS7BackupStatus` throws on an ordinary machine. STILL OPEN.**
+  No replication target means `$targets` is empty, `Select-Object -Last 1` is
   `$null`, and `Set-StrictMode` turns the property read into a terminating
   error. Replication is opt-in (B4), so this is *every* machine that has not
   opted in — and under `-SkipTargets` it is unconditional. The same shape one
   line above fires on a machine whose first snapshot has not run, so the first
   status a new installation is asked for is the one that cannot be given.
   `Test-OS7Backup` is 63 green assertions and covers neither state.
-* **#113 — the cmdlet surface cannot see a timer.** `Get-OS7Service` pins
-  `Type = 'service'`, so `os7-update-check.timer` is invisible — the mechanism
-  RELEASE-AND-UPDATE-PLAN §6 ships for *"on a managed fleet nobody types
-  `Update-OS7`"*. `Set-OS7Service -StartupType` reaches a type-agnostic helper,
-  so enabling the timer works and looking at it does not.
+* ~~**#113 — the cmdlet surface cannot see a timer.**~~ **FIXED 2026-08-29 as
+  a NOUN** — POWERSHELL-SURFACE-PLAN **P9**: `Get-OS7Service` stays
+  deliberately services-only (Windows' own services.msc/taskschd.msc split),
+  and `Get-/Enable-/Disable-/Start-/Register-/Unregister-OS7ScheduledTask`
+  is where timers live, over the Systemd layer's new
+  `Get-/New-/Remove-SystemdTimer`. `Get-OS7ScheduledTask
+  os7-update-check.timer` answers, and its `Healthy` names the
+  enable-without-start trap (#115) and keeps disabled tasks listed (#116).
+  Gates: `check-scheduledtask-logic.py` 64 checks, `Test-SystemdModule` 32→76
+  on newly recorded systemd 259 fixtures, the cmdlets run end to end against
+  real systemd as PID 1 in a container, `check-os7-repo.py` 123 with the file
+  that made the dot-source list FIFTEEN in the .deb (27 required paths, was
+  26; OS7.Update.ps1 stays last), and the machine evidence in
+  [SESSION-SCHEDULED-TASKS.md](SESSION-SCHEDULED-TASKS.md).
 
-[SESSION-ADMIN-MANUAL.md](SESSION-ADMIN-MANUAL.md) has the measurements, and
-#114 there is the harness lesson that cost three VM runs.
+[SESSION-ADMIN-MANUAL.md](SESSION-ADMIN-MANUAL.md) has the original
+measurements, and #114 there is the harness lesson that cost three VM runs.
 
 **What is owed, in order, and none of it is small:**
 
@@ -268,7 +277,8 @@ the machine gate applies full releases only — wired, not run); and P3 step 2
 The checklist that stood here was followed and it was right about all three
 things. The module list resolved toward main's (six modules), pkg_finish took
 the union, and the .deb content check was re-run rather than trusted:
-`make repo-amd64` reports `os7-module — 26 required paths present`, read back out
+`make repo-amd64` reports `os7-module — 26 required paths present` (27 since
+2026-08-29, when OS7.ScheduledTask.ps1 joined the list), read back out
 of the built package by `dpkg-deb -c`, and `check-os7-repo.py` is **123/123**.
 `check-installer-cmdlets.py` was the first thing run on the merged tree and
 passes across 157 cmdlets.
@@ -281,8 +291,9 @@ What the checklist did NOT anticipate, and what a second pass found:
   main's entire `build.sh` diff was adding Directory to the function
   update-train deleted. Two lists, one entry apart, no conflict between them.
 * **pkg_finish named three of the fourteen files `OS7.psm1` dot-sources.**
-  Each branch had added files the other could not see. All fourteen are named
-  now and the set is diffed against the `.psm1`'s own `foreach`, not `ls`.
+  Each branch had added files the other could not see. All of them are named
+  now — fourteen then, fifteen since OS7.ScheduledTask.ps1 (2026-08-29) — and
+  the set is diffed against the `.psm1`'s own `foreach`, not `ls`.
 * **BUILD-NOTES #108 was claimed twice** by two already-committed branches.
   main had it; the missing-journal note became **#109** and its references
   moved with it. The file's reservation convention only works between

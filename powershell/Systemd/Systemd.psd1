@@ -39,6 +39,13 @@
 		# daemon-reload, which makes systemd re-read unit files; confusing them
 		# applies a change to systemd and not to the program it configures.
 		'Update-SystemdUnit',
+		# Timers. Get- is a UNION of list-timers and list-unit-files, because a
+		# timer that is neither enabled nor active is in NEITHER list-timers
+		# NOR list-units (measured on systemd 259) — only the unit-files list
+		# and the on-demand loader can see it. New-/Remove- author the
+		# timer+service pair as ONE thing, validate every calendar spec with
+		# systemd-analyze BEFORE writing, and ask systemd back afterwards.
+		'Get-SystemdTimer', 'New-SystemdTimer', 'Remove-SystemdTimer',
 		# The journal, typed. Timestamp is a [datetime] decoded from
 		# MICROSECONDS, Priority is a number and a name, and Unit comes from
 		# `_SYSTEMD_UNIT` — the field journald adds and a sender cannot forge —
@@ -57,7 +64,7 @@
 			Tags         = @('systemd', 'systemctl', 'journalctl', 'Linux', 'OS7')
 			LicenseUri   = 'https://github.com/upinblue/os7/blob/main/LICENSE'
 			ProjectUri   = 'https://github.com/upinblue/os7'
-			ReleaseNotes = 'v0: units and the journal, read and write. Timers, sockets and unit-file authoring are not here.'
+			ReleaseNotes = 'v1: units, the journal, and timers - read, write, and authoring of timer unit pairs. Sockets and general unit-file authoring are not here.'
 		}
 	}
 }

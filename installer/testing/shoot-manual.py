@@ -203,13 +203,26 @@ SHOTS = [
     # -- updates
     ("40-get-release",           "Get-OS7Release"),
     ("41-test-update",           "Test-OS7Update"),
-    ("43-update-timer",          "Get-OS7Service -Name os7-update-check.timer -Detailed"),
+    # The #113 fix: the unattended update check is a TIMER, and the noun that
+    # can see one is Get-OS7ScheduledTask (P9). A bare name implies the detail
+    # lookup, and an object with more than four properties renders as a list.
+    ("43-update-timer",          "Get-OS7ScheduledTask os7-update-check.timer"),
 
     # -- services and logs
     ("50-services",              "Get-OS7Service -OS7Only -Detailed"),
     ("51-one-service",           "Get-OS7Service -Name ssh.service -Detailed | Format-List"),
     ("52-log",                   "Get-OS7Log -OS7Only -Tail 5"),
     ("53-install-log",           "Get-OS7InstallLog | Select -Skip 4 -First 8 Message"),
+
+    # -- scheduled tasks. The register command does not fit on one 58-column
+    # line, so it is splatted over two — which is also the idiom the manual
+    # teaches for any parameter set that has outgrown a line.
+    ("54-scheduled-tasks",       "Get-OS7ScheduledTask | Format-Table Name,NextRun,LastRun"),
+    ("55-task-detail",           "Get-OS7ScheduledTask sanoid.timer | Format-List"),
+    ("56-register-a",            "$t = @{ Name='scrub'; Weekly=$true; DayOfWeek='Sunday' }"),
+    ("57-register-b",            "$t += @{ At='03:00'; Command='Start-ZpoolScrub rpool' }"),
+    ("58-register",              "Register-OS7ScheduledTask @t"),
+    ("59-unregister",            "Unregister-OS7ScheduledTask scrub -Confirm:$false"),
 
     # -- network
     ("60-adapters",              "Get-OS7NetworkAdapter"),

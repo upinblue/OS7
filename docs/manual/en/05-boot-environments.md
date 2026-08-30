@@ -111,7 +111,7 @@ With no parameters this goes back to the previous environment — the one the
 running environment came from. `-BootEnvironment` names a specific one:
 
 ```powershell
-Restore-OS7 -BootEnvironment os7_1.0.0.148_202608281306
+Restore-OS7 -BootEnvironment os7_1.0.0.159_202608300312
 ```
 
 `Restore-OS7` switches, and nothing more. The user's data, the logs, the

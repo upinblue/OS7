@@ -138,13 +138,20 @@ in Ordnung", bevor man ein Update anstößt.
 OS/7 bringt einen Zeitgeber mit, der regelmäßig nachsieht, ob der Kanal etwas
 Neues hat:
 
-Der Zeitgeber heißt `os7-update-check.timer`. Weil `Get-OS7Service` systemd
-ausschließlich nach Units vom Typ *service* fragt, sieht man einen Zeitgeber
-über die generische Schicht an:
+Der Zeitgeber heißt `os7-update-check.timer`, und er ist eine *geplante
+Aufgabe* — dieselbe Unterscheidung, die Windows zwischen einem Dienst und
+einer Aufgabe in der Aufgabenplanung macht. Kapitel 9.5 zeigt die ganze
+Oberfläche; der eine Befehl, der hier zählt:
 
 ```powershell
-Get-SystemdUnit -Name os7-update-check.timer -Detailed
+Get-OS7ScheduledTask os7-update-check.timer
 ```
+
+![Die unbeaufsichtigte Update-Prüfung, als geplante Aufgabe.](images/43-update-timer.png)
+
+`NextRun` beantwortet die Frage „bleibt diese Flotte aktuell, ohne dass jemand
+etwas tippt": ein Datum heißt ja, ein leeres Feld heißt, der Zeitgeber ist
+nicht scharf — und `Healthy` sagt es dazu.
 
 Die Prüfung hat einen festen Vertrag über ihren Rückgabewert, und der ist
 genau das, was eine Überwachung auswertet:
@@ -155,11 +162,11 @@ genau das, was eine Überwachung auswertet:
 | `2` | ein Update wurde vorbereitet und wartet auf das Umschalten |
 | `1` | die Prüfung ist fehlgeschlagen |
 
-Ein- und ausschalten wie jeden anderen Dienst:
+Ein- und ausschalten:
 
 ```powershell
-Set-SystemdUnitStartup -Name os7-update-check.timer -Startup enabled
-Set-SystemdUnitStartup -Name os7-update-check.timer -Startup disabled
+Enable-OS7ScheduledTask  os7-update-check.timer
+Disable-OS7ScheduledTask os7-update-check.timer
 ```
 
 ## 6.8 Was ein Update mitnimmt und was nicht

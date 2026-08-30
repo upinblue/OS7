@@ -83,6 +83,14 @@
 		# one: is-active says active for a unit in a restart loop.
 		'Get-OS7Service', 'Start-OS7Service', 'Stop-OS7Service',
 		'Restart-OS7Service', 'Set-OS7Service', 'Get-OS7Log', 'Get-OS7InstallLog',
+		# Implemented - scheduled tasks, on the Systemd module's timer surface.
+		# Get-ScheduledTask does not exist on PowerShell for Linux either, and
+		# BUILD-NOTES #113 is what happens without this noun: the unattended
+		# update timer was invisible to the whole cmdlet surface. Enable- both
+		# enables AND starts, because systemd's enable alone arms the next boot
+		# and the timer never fires until then (measured).
+		'Get-OS7ScheduledTask', 'Enable-OS7ScheduledTask', 'Disable-OS7ScheduledTask',
+		'Start-OS7ScheduledTask', 'Register-OS7ScheduledTask', 'Unregister-OS7ScheduledTask',
 		# Implemented - the management plane, READ only. Get-OS7IntuneEnrollment's
 		# Enrolled field is deliberately $null: intune-agent exposes no status
 		# interface (measured), and a guess about compliance is worse than a gap.

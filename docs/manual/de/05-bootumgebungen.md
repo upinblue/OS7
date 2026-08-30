@@ -116,7 +116,7 @@ die laufende hervorgegangen ist. Mit `-BootEnvironment` benennt man eine
 bestimmte:
 
 ```powershell
-Restore-OS7 -BootEnvironment os7_1.0.0.148_202608281306
+Restore-OS7 -BootEnvironment os7_1.0.0.159_202608300312
 ```
 
 `Restore-OS7` schaltet um, mehr nicht. Die Daten des Benutzers, die

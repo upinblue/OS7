@@ -634,6 +634,7 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/OS7/OS7.Time.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Remoting.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Service.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.ScheduledTask.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Management.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Directory.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.DirectoryObject.ps1 \

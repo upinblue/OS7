@@ -2624,8 +2624,12 @@ function Restore-OS7 {
 # for the SRV lookup that finds a domain controller, which OS7.Network.ps1
 # defines sixth. So: after everything they depend on, and still before
 # OS7.Update.ps1, which stays last.
+#
+# OS7.ScheduledTask.ps1 sits after OS7.Service.ps1, whose Import-OS7SystemdLayer
+# and Test-OS7ServiceName it calls in every function — and still before
+# OS7.Update.ps1, which stays last.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1',
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -2683,6 +2687,12 @@ Export-ModuleMember -Function Get-OS7Version,
 	# `journalctl | grep` is a text pipeline over structure.
 	Get-OS7Service, Start-OS7Service, Stop-OS7Service, Restart-OS7Service,
 	Set-OS7Service, Get-OS7Log, Get-OS7InstallLog,
+	# Scheduled tasks — the Task Scheduler question, answered over systemd
+	# timers. BUILD-NOTES #113 is why this is its own noun: the unattended
+	# update check is a TIMER, and Get-OS7Service answers for services, the
+	# same split Windows makes between services.msc and taskschd.msc.
+	Get-OS7ScheduledTask, Enable-OS7ScheduledTask, Disable-OS7ScheduledTask,
+	Start-OS7ScheduledTask, Register-OS7ScheduledTask, Unregister-OS7ScheduledTask,
 	# The management plane - the reason this product exists, and therefore the
 	# group where an honest "cannot tell" matters most. Get-OS7EntraStatus
 	# reports the thing C8a leaves broken: brokers.d is empty on every image
