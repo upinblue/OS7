@@ -96,13 +96,19 @@ image, and these needed an installed machine:
   bind mount as 0777 and `cp -a` preserved it. **FIXED**, and the ISO is
   measured at 0 by two new `check-image.py` assertions that were red against
   1.0.0.159 before the fix existed.
-* **#118 — no installed machine can accept an SSH connection. STILL OPEN.**
-  `/etc/ssh/ssh_host_*` does not exist and `ssh.service` dies on every attempt
-  with `no hostkeys available`. `sshd-keygen.service` is enabled and its
-  condition (`ConditionFirstBoot=yes`) was never met, although `os7-setup`
-  correctly writes an empty machine-id and the ISO ships one. **Why the
-  installation's first boot did not count as a first boot is the open
-  question**, and the bench can reproduce it: install, snapshot, watch boot one.
+* ~~**#118 — no installed machine can accept an SSH connection. STILL OPEN.**~~
+  **FIXED 2026-08-30 — and the FIX caused #120, which is also fixed and
+  CONFIRMED IN A SHIPPED IMAGE.** The repair unit (`os7-sshd-keygen.service`)
+  first said `Before=ssh.service ssh.socket`, which closes an ordering cycle
+  through `sockets.target`, and systemd's way out of a cycle is to DELETE a
+  job — the socket's, so the machine listened on nothing and the unit's own
+  journal was empty (BUILD-NOTES #120). The fix is Ubuntu's own ordering
+  (`Before=` names the services alone, `WantedBy` carries the socket), measured
+  on a rebooted bench (socket active, zero cycle lines, ssh answering from
+  outside) AND read out of `OS7-1.0.0.163-amd64.iso` by three `check-image.py`
+  assertions that were built to fail on the cycle. Both measurements on
+  purpose: the machine one without the image one would have proved a
+  hand-edited unit.
 * **#112/#119 — FIXED**, see above.
 
 [SESSION-WORKBENCH.md](SESSION-WORKBENCH.md) is the measurement; the arm64 half
