@@ -90,13 +90,45 @@ if [ "${present}" -lt 10 ]; then
 	exit 1
 fi
 
-# unattended-upgrades is the unit the OOM killer actually took (#79). If it is
-# not in the image, the note this hook is named after no longer describes it.
-if [ ! -e /usr/lib/systemd/system/unattended-upgrades.service ] \
-	&& [ ! -e /lib/systemd/system/unattended-upgrades.service ]; then
-	echo "OS/7 hook 0070: unattended-upgrades.service is not in this image." >&2
+# unattended-upgrades is the unit the OOM killer actually took (#79), and there
+# are TWO different things to assert about it. They were one check until
+# 2026-08-30, and that check failed every arm64 build.
+#
+# The half that holds on both architectures: the generator must still NAME it.
+# If #79's own unit ever fell out of UNITS, this hook would be verifying a
+# generator that no longer does the thing the note is about, and every other
+# check in this file would still pass.
+if ! printf '%s\n' "${UNITS[@]}" | grep -qx 'unattended-upgrades.service'; then
+	echo "OS/7 hook 0070: unattended-upgrades.service is not in the generator's list." >&2
 	echo "OS/7 hook 0070: BUILD-NOTES #79 is about that unit; re-check the note." >&2
 	exit 1
+fi
+
+# The half that does NOT: that the unit is in the IMAGE. #79 was measured on the
+# amd64 setup medium, where unattended-upgrades arrives with the standard and
+# desktop sets. arm64 is server-only (DECISIONS), no package list names it, and
+# it is legitimately absent — exactly as cups and packagekit are, which the
+# floor check above already says out loud two paragraphs earlier.
+#
+# Requiring it on every architecture made hook 0070 fail every arm64 build from
+# 467f2ee (2026-08-26) onward. Nothing caught it for four days, because no arm64
+# ISO was built in them — the same reason #82 and #83 were only found when an
+# amd64 build was finally attempted.
+#
+# Masking a unit that is not installed is a no-op, so its absence costs nothing.
+# What would cost something is the amd64 medium losing it silently, and that
+# stays a refusal.
+QUIESCE_ARCH="$(dpkg --print-architecture)"
+if [ ! -e /usr/lib/systemd/system/unattended-upgrades.service ] \
+	&& [ ! -e /lib/systemd/system/unattended-upgrades.service ]; then
+	if [ "${QUIESCE_ARCH}" = "amd64" ]; then
+		echo "OS/7 hook 0070: unattended-upgrades.service is not in this amd64 image." >&2
+		echo "OS/7 hook 0070: #79 was measured on that medium and on that unit." >&2
+		exit 1
+	fi
+	echo "OS/7 hook 0070:   unattended-upgrades.service absent (${QUIESCE_ARCH} is server-only), masked by name regardless"
+else
+	echo "OS/7 hook 0070:   unattended-upgrades.service present, and named in the list (#79)"
 fi
 
 # ---------------------------------------------------------------------------
