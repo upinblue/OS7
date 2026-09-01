@@ -526,7 +526,16 @@ function Get-OS7ReleaseDescriptor {
 	$version = [string](Get-OS7ManifestField $IndexEntry 'version')
 	$path    = [string](Get-OS7ManifestField $IndexEntry 'manifest')
 	$want    = [string](Get-OS7ManifestField $IndexEntry 'manifest_sha256')
-	if (-not $path) { $path = "releases/$version/release.json" }
+	if (-not $path) {
+		# The builder always writes `manifest`; this reconstructs its layout
+		# for an entry that lost the field. The architecture joined the path
+		# when two of them started sharing one repository (RELEASE-PROCESS
+		# §7.3); an entry too old to name its architecture predates that
+		# layout, so it gets the flat one.
+		$entryArch = [string](Get-OS7ManifestField $IndexEntry 'architecture')
+		$path = if ($entryArch) { "releases/$version/$entryArch/release.json" }
+		else { "releases/$version/release.json" }
+	}
 
 	$file = [System.IO.Path]::Combine($WorkDir, "os7-release-$version.json")
 	if (-not (Copy-OS7RepoFile -BaseUri $BaseUri -Path $path -Destination $file)) {
@@ -604,9 +613,13 @@ function Get-OS7Release {
 		trust path and not a convenience.
 
 		`Applicable` is the property to read before `Update-OS7`: it is $false
-		for a release that is not newer than this machine, and for one that
-		would cross a Major — which C12 says this train must refuse rather than
-		attempt.
+		for a release that is not newer than this machine, for one that would
+		cross a Major — which C12 says this train must refuse rather than
+		attempt — and for one built for another architecture, which becomes
+		possible the moment one repository URL serves both (RELEASE-PROCESS.md
+		§7.3). Each reason is also its own property (`Newer`, `CrossesMajor`,
+		`ForeignArchitecture`, `Hotfix`), because "not applicable" for four
+		different reasons is four different conversations with the operator.
 
 	.PARAMETER Available
 		List what the channel offers. Present because §6 names the cmdlet
@@ -681,20 +694,32 @@ function Get-OS7Release {
 			$onBase = (-not $entryHotfixBase) -or
 				($mine -and (Compare-OS7Version -Left $entryHotfixBase -Right $mine) -eq 0)
 
+			# THE ARCHITECTURE IS COMPARED, not assumed. Harmless while every
+			# repository serves one architecture; wrong the moment one URL
+			# serves both (RELEASE-PROCESS.md §7.3): an amd64 machine would
+			# list an arm64 release as Applicable and Update-OS7 would fail
+			# late, inside apt, about packages rather than about the reason.
+			# Only a POSITIVE mismatch blocks — a side that does not state its
+			# architecture is today's single-arch world, not a refusal.
+			$entryArch = [string](Get-OS7ManifestField $entry 'architecture')
+			$myArch    = [string]$here.Architecture
+			$foreignArch = [bool]($entryArch -and $myArch -and $entryArch -ne $myArch)
+
 			[pscustomobject]@{
 				PSTypeName   = 'OS7.Release'
 				Version      = $version
 				Channel      = [string](Get-OS7ManifestField $index 'channel')
 				Released     = [string](Get-OS7ManifestField $entry 'released')
-				Architecture = [string](Get-OS7ManifestField $entry 'architecture')
+				Architecture = $entryArch
 				Suite        = [string](Get-OS7ManifestField $entry 'os7_suite')
 				Snapshot     = [string](Get-OS7ManifestField $entry 'archive_snapshot')
 				# Whether Update-OS7 would take it. Every half is said
-				# separately, because "not applicable" for three different
-				# reasons is three different conversations with the operator.
-				Applicable   = ($newer -and $major -eq $myMajor -and $onBase)
+				# separately, because "not applicable" for four different
+				# reasons is four different conversations with the operator.
+				Applicable   = ($newer -and $major -eq $myMajor -and $onBase -and -not $foreignArch)
 				Newer        = [bool]$newer
 				CrossesMajor = ($major -ne $myMajor)
+				ForeignArchitecture = $foreignArch
 				# §7: a hotfix moves the Build field alone and overlays exactly
 				# the base release it names. On any other machine it is listed
 				# and not applicable — the operator updates to the base first.
@@ -1611,7 +1636,16 @@ function Update-OS7 {
 		}
 
 		if ($Version) {
-			$target = $offered | Where-Object Version -eq $Version | Select-Object -First 1
+			# One version can be TWO entries when one repository serves both
+			# architectures (RELEASE-PROCESS §7.3). The machine's own comes
+			# first; the foreign one is kept as a fallback so the refusal
+			# below can name the real reason instead of "no such release".
+			$target = $offered |
+				Where-Object { $_.Version -eq $Version -and -not $_.ForeignArchitecture } |
+				Select-Object -First 1
+			if (-not $target) {
+				$target = $offered | Where-Object Version -eq $Version | Select-Object -First 1
+			}
 			if (-not $target) {
 				throw [System.InvalidOperationException]::new(
 					"the channel offers no release $Version. Get-OS7Release -Available lists " +
@@ -1650,6 +1684,18 @@ function Update-OS7 {
 			throw [System.InvalidOperationException]::new(
 				"$to is not newer than $from. This train moves forward only; to go back, " +
 				'use Restore-OS7.')
+		}
+
+		# One repository URL may serve both architectures (RELEASE-PROCESS.md
+		# §7.3). An explicit -Version reaches here past Applicable, so the
+		# mismatch is its own refusal — without it apt fails late, about
+		# unsatisfiable packages, on a machine that was told the release was
+		# for it.
+		if ($target.ForeignArchitecture) {
+			throw [System.InvalidOperationException]::new(
+				"$to is built for $($target.Architecture) and this machine is " +
+				"$((Get-OS7Version).Architecture). A release moves a machine within its " +
+				'own architecture; this is a different product.')
 		}
 
 		# §7: a hotfix overlays exactly the base release it names. Applying it
@@ -2023,7 +2069,24 @@ function Update-OS7 {
 					Write-OS7Step 'the OS/7 apt source was this run only; removed from the environment'
 				}
 				else {
-					[System.IO.File]::WriteAllText($os7SrcPath, $os7SrcBefore)
+					# WITH THE TARGET'S SUITE, not the one the machine followed
+					# before. The environment being written IS the target
+					# release: a 1.0.x machine moving to 1.1.0 must wake up on
+					# `os7-1.1`, and the file being put back is a conffile
+					# Set-OS7UpdateChannel wrote with `os7-1.0` — kept by
+					# --force-confold across every later upgrade, so nothing
+					# downstream would ever correct it (RELEASE-PROCESS.md
+					# §7.2). Rewritten only when the suites differ, so an
+					# ordinary same-suite update restores the file byte for
+					# byte.
+					$restored = $os7SrcBefore
+					if ($suite -and $restored -match '(?m)^Suites:\s*(\S+)\s*$' -and
+							$Matches[1] -ne $suite) {
+						$restored = $restored -replace '(?m)^Suites:\s*\S+\s*$', "Suites: $suite"
+						Write-OS7Step ("the machine's OS/7 apt source moves to suite " +
+							"$suite with this release")
+					}
+					[System.IO.File]::WriteAllText($os7SrcPath, $restored)
 					Write-OS7Step "restored the environment's own OS/7 apt source"
 				}
 			}

@@ -402,12 +402,20 @@ apt-get update -qq > /dev/null 2>&1
 cd /tmp
 apt-get download less > /dev/null 2>&1
 deb=$(ls less_*.deb)
+arch="${deb##*_}"; arch="${arch%.deb}"
 dpkg-deb -R "$deb" d
 sed -i 's/^Version: .*/&+os7hf1/' d/DEBIAN/control
 mkdir -p /repo/.hotfix
 rm -f /repo/.hotfix/*.deb
-dpkg-deb -b --root-owner-group d "/repo/.hotfix/${deb%.deb}+os7hf1.deb" > /dev/null
-dpkg-deb -f "/repo/.hotfix/${deb%.deb}+os7hf1.deb" Version
+# name_version_arch.deb, with +os7hf1 in the VERSION segment where it belongs.
+# apt-ftparchive --arch keys on the FILENAME's architecture segment (measured
+# 2026-09-01: a control field saying amd64 does not rescue a file whose name
+# says amd64+os7hf1), so the first spelling of this line — appending after the
+# arch — silently dropped the overlay out of every per-arch index, and the
+# builder's own read-back was what caught it.
+out="${deb%_*}+os7hf1_${arch}.deb"
+dpkg-deb -b --root-owner-group d "/repo/.hotfix/${out}" > /dev/null
+dpkg-deb -f "/repo/.hotfix/${out}" Version
 """
 
 
@@ -619,11 +627,16 @@ def main():
         print("      FAIL  the hotfix overlay package could not be prepared")
         sys.exit(1)
 
-    def build_more(ver, channel, extra_env=(), expect_fail=False, label=""):
+    def build_more(ver, channel, extra_env=(), expect_fail=False, label="",
+                   arch=None):
+        # `arch` overrides what the packages are LABELLED as, not where the
+        # builder runs: the container stays this host's platform, because
+        # dpkg-deb composes a foreign-architecture package without emulation
+        # and os7-setup — the one true compile — is not in the subset.
         got = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
                    "-v", f"{REPO}:/work", "-v", f"{repo_dir}:/out",
                    *source_env,
-                   "-e", f"OS7_VERSION={ver}", "-e", f"OS7_ARCH={args.arch}",
+                   "-e", f"OS7_VERSION={ver}", "-e", f"OS7_ARCH={arch or args.arch}",
                    "-e", "OS7_REPO_URI=file:///repo", "-e", "OS7_REPO_ENABLED=yes",
                    "-e", f"OS7_CHANNEL={channel}",
                    "-e", f"OS7_REPO_PACKAGES={subset}",
@@ -653,6 +666,16 @@ def main():
     build_more(v_hotfix, "stable", label="the hotfix",
                extra_env=("-e", f"OS7_HOTFIX_BASE={v_stable}",
                           "-e", f"OS7_HOTFIX_DEBS=/out/.hotfix/{hotfix_debs[0]}"))
+
+    # -- the OTHER architecture, into the SAME tree (RELEASE-PROCESS §7.3) ---
+    # This is the merge the release process needs: one tree serving both
+    # architectures from one URL. It runs BEFORE the probe on purpose — the
+    # probe then installs on this host's architecture from a tree whose
+    # indices, Release and arch:all packages the other architecture's run
+    # rewrote LAST, which is exactly the property a two-run tree has to hold.
+    other = "arm64" if args.arch == "amd64" else "amd64"
+    print(f"      merging the second architecture — OS/7 {version} ({other})")
+    build_more(version, "development", label=f"the {other} merge", arch=other)
 
     print(f"      installing from it in a clean {TEST_IMAGE}")
     got = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
@@ -700,8 +723,12 @@ def main():
     check(hf_entry.get("supersedes") == v_stable, "and that it supersedes it")
 
     # -- the hotfix descriptor, and the overlay it binds ---------------------
+    # The architecture is in the descriptor's PATH since RELEASE-PROCESS §7.3:
+    # two architectures at one version are two descriptors, not one file the
+    # second build overwrites.
     print("\n  the hotfix descriptor (§7)")
-    with open(os.path.join(repo_dir, "releases", v_hotfix, "release.json")) as fh:
+    with open(os.path.join(repo_dir, "releases", v_hotfix, args.arch,
+                           "release.json")) as fh:
         hf_desc = json.load(fh)
     hf_block = hf_desc.get("hotfix") or {}
     overlay = hf_block.get("packages") or []
@@ -720,6 +747,69 @@ def main():
     comp = {c.get("package"): c.get("degree") for c in hf_desc.get("components", [])}
     check(comp.get("less") == "re-host" and comp.get("os7-module") == "rebuild",
           "the components list carries the overlay at the re-host degree (C1)")
+
+    # -- one tree, two architectures (RELEASE-PROCESS §7.3) ------------------
+    print("\n  one tree, two architectures (§7.3)")
+    with open(os.path.join(repo_dir, "dists", "os7-1.0", "Release")) as fh:
+        release_file = fh.read()
+    check(any(l.strip() == "Architectures: amd64 arm64"
+              for l in release_file.splitlines()),
+          "the Release names BOTH architectures — apt refuses one it does not name",
+          next((l.strip() for l in release_file.splitlines()
+                if l.startswith("Architectures:")), "(no Architectures line)"))
+    check(os.path.exists(os.path.join(repo_dir, "releases", version, args.arch,
+                                      "release.json"))
+          and os.path.exists(os.path.join(repo_dir, "releases", version, other,
+                                          "release.json")),
+          "two descriptors at one version, each under its own architecture")
+
+    both = [r for r in dev_idx.get("releases", []) if r.get("version") == version]
+    check(len(both) == 2 and
+          {r.get("architecture") for r in both} == {"amd64", "arm64"},
+          "the index holds one entry per (version, architecture)",
+          ", ".join(sorted(str(r.get("architecture")) for r in both)))
+    check(all(r.get("manifest") ==
+              "releases/%s/%s/release.json" % (version, r.get("architecture"))
+              for r in both),
+          "and each entry names its own architecture's descriptor")
+    merged_entry = next((r for r in both if r.get("architecture") == other), {})
+    check(merged_entry.get("supersedes") is None,
+          "the merge run supersedes nothing — the other architecture's history "
+          "is another machine's story")
+
+    # THE HASHES ARE THE POOL'S, IN EVERY INDEX. Eight of the ten packages are
+    # arch:all, rebuilt under ONE filename by either run — so after the merge
+    # run replaced them, an index this run did NOT regenerate would record
+    # hashes of files that no longer exist, and apt on that architecture would
+    # refuse every install with a hash-sum mismatch.
+    all_deb = None
+    pool_o = os.path.join(repo_dir, "pool", "main", "o", "os7-release")
+    for name in sorted(os.listdir(pool_o) if os.path.isdir(pool_o) else []):
+        if name == f"os7-release_{version}_all.deb":
+            all_deb = os.path.join(pool_o, name)
+    if all_deb:
+        with open(all_deb, "rb") as fh:
+            pool_sha = hashlib.sha256(fh.read()).hexdigest()
+        stale = []
+        for a in ("amd64", "arm64"):
+            pk = os.path.join(repo_dir, "dists", "os7-1.0", "main",
+                              f"binary-{a}", "Packages")
+            recorded = ""
+            with open(pk) as fh:
+                for stanza in fh.read().split("\n\n"):
+                    if f"os7-release_{version}_all.deb" not in stanza:
+                        continue
+                    recorded = next((l.split(": ", 1)[1]
+                                     for l in stanza.splitlines()
+                                     if l.startswith("SHA256: ")), "")
+            if recorded != pool_sha:
+                stale.append(a)
+        check(not stale,
+              "every architecture's Packages records the pool file that is THERE "
+              "— the merge run regenerated both",
+              ("stale: " + ", ".join(stale)) if stale else pool_sha[:16] + "…")
+    else:
+        check(False, "os7-release_%s_all.deb is in the pool" % version)
 
     # -- what the builder refuses --------------------------------------------
     print("\n  what the builder refuses")

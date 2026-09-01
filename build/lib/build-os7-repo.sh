@@ -7,11 +7,19 @@
 # CURATION-AND-DELIVERY-PLAN.md C7 and §6.3-6.4. It produces, under <output-dir>:
 #
 #   keyring/os7-archive-keyring.gpg   the trust anchor, shipped by os7-release
-#   pool/main/o/<pkg>/<pkg>_<v>_<a>.deb
-#   dists/<suite>/main/binary-<arch>/Packages{,.gz}
-#   dists/<suite>/Release, Release.gpg, InRelease
-#   releases/<version>/release.json   the release DESCRIPTOR (C9)
+#   pool/main/o/<pkg>/<pkg>_<v>_<a>.deb        shared by every suite and arch
+#   dists/<suite>/main/binary-<arch>/Packages{,.gz}   one per architecture
+#   dists/<suite>/Release, Release.gpg, InRelease     naming EVERY architecture
+#   releases/<version>/<arch>/release.json    the release DESCRIPTOR (C9)
 #   index/<channel>.json{,.asc}       the release INDEX (§6.4)
+#
+# ONE TREE CARRIES BOTH ARCHITECTURES (RELEASE-PROCESS.md §7.3): run this once
+# per architecture INTO THE SAME OUTPUT DIRECTORY and the second run merges —
+# every binary-* index is regenerated from the shared pool (arch:all packages
+# are rebuilt under one filename by either run, so the other architecture's
+# Packages would otherwise record hashes of files this run just replaced), the
+# Release names the union of architectures, the descriptor lands under its own
+# arch, and the index holds one entry per (version, architecture).
 #
 # WHY BOTH A DESCRIPTOR AND AN INDEX, and why both are signed. §6.3: "A signed
 # package set with an unsigned index of WHICH set is current lets an attacker
@@ -165,7 +173,7 @@ POOL="${OUT_DIR}/pool/main/o"
 DISTS="${OUT_DIR}/dists/${OS7_SUITE}"
 KEYRING_DIR="${OUT_DIR}/keyring"
 mkdir -p "${POOL}" "${DISTS}/main/binary-${OS7_ARCH}" "${KEYRING_DIR}" \
-         "${OUT_DIR}/releases/${OS7_VERSION}" "${OUT_DIR}/index"
+         "${OUT_DIR}/releases/${OS7_VERSION}/${OS7_ARCH}" "${OUT_DIR}/index"
 
 echo ">>> OS/7 repository ${OS7_SUITE} — ${OS7_VERSION} (${OS7_CHANNEL}) / ${OS7_ARCH}"
 
@@ -176,9 +184,9 @@ echo ">>> OS/7 repository ${OS7_SUITE} — ${OS7_VERSION} (${OS7_CHANNEL}) / ${O
 # appear as a machine whose packages come from a snapshot its version number
 # does not name.
 if [[ -n "${OS7_HOTFIX_BASE}" ]]; then
-	BASE_DESCRIPTOR="${OUT_DIR}/releases/${OS7_HOTFIX_BASE}/release.json"
+	BASE_DESCRIPTOR="${OUT_DIR}/releases/${OS7_HOTFIX_BASE}/${OS7_ARCH}/release.json"
 	if [[ ! -r "${BASE_DESCRIPTOR}" ]]; then
-		echo "!!! hotfix base ${OS7_HOTFIX_BASE} is not in this repository:" >&2
+		echo "!!! hotfix base ${OS7_HOTFIX_BASE} (${OS7_ARCH}) is not in this repository:" >&2
 		echo "!!! ${BASE_DESCRIPTOR} does not exist" >&2
 		exit 1
 	fi
@@ -267,11 +275,31 @@ export OS7_HOTFIX_POOL_FILES OS7_HOTFIX_BASE
 
 # ---------------------------------------------------------------------------
 # 3. The indices apt reads.
+#
+# EVERY binary-* directory in the tree is regenerated, not only this run's.
+# The pool is shared between the per-arch runs and eight of the ten packages
+# are arch:all — rebuilt under ONE filename by either run — so after this run
+# replaced them, the other architecture's Packages would record hashes of
+# files that no longer exist. Regenerating both from the pool that is
+# actually there is what keeps a two-run tree installable on both sides; on
+# a single-arch tree the loop visits one directory and nothing changes.
+#
+# `--arch` keys on the FILENAME's `_<arch>.deb` segment, `_all.deb` included —
+# measured 2026-09-01 against resolute's apt-ftparchive, both ways: one deb of
+# each kind passes, and a package whose control says amd64 under a filename
+# whose arch segment says something else is DROPPED without a word. So the
+# scan restricts each index to its own architecture plus arch:all, and the
+# read-back below is what stands between a misnamed pool file and an index
+# that silently lost it. Without --arch, every index lists both architectures'
+# packages and apt on each machine reports the other half as unavailable.
 # ---------------------------------------------------------------------------
 BINDIR="${DISTS}/main/binary-${OS7_ARCH}"
 mkdir -p "${BINDIR}"
-( cd "${OUT_DIR}" && apt-ftparchive packages pool > "${BINDIR}/Packages" )
-gzip -9nkf "${BINDIR}/Packages"
+for bindir in "${DISTS}/main"/binary-*; do
+	a="${bindir##*binary-}"
+	( cd "${OUT_DIR}" && apt-ftparchive --arch "${a}" packages pool > "${bindir}/Packages" )
+	gzip -9nkf "${bindir}/Packages"
+done
 
 # EVERY PACKAGE BUILT THIS RUN IS IN THE INDEX — not "the counts match".
 #
@@ -289,7 +317,12 @@ for deb in "${BUILT_NAMES[@]}"; do
 		missing=1
 	fi
 done
-(( missing == 0 )) || { echo "!!! apt-ftparchive did not find the pool" >&2; exit 1; }
+(( missing == 0 )) || {
+	echo "!!! apt-ftparchive did not index them. Two known ways: the pool path" >&2
+	echo "!!! is wrong, or the FILENAME's _<arch>.deb segment does not say" >&2
+	echo "!!! ${OS7_ARCH} or all — --arch filters on the name, not the control." >&2
+	exit 1
+}
 echo "    Packages: ${PKG_COUNT} in the index, ${#BUILT_NAMES[@]} built this run"
 
 # ValidTime, IN SECONDS, and NOT ValidUntil.
@@ -303,13 +336,21 @@ echo "    Packages: ${PKG_COUNT} in the index, ${#BUILT_NAMES[@]} built this run
 # BUILD-NOTES #88. The check below is what would have caught it, and did.
 VALID_SECONDS=$(( OS7_REPO_VALID_DAYS * 86400 ))
 VALID_UNTIL="$(date -u -d "+${OS7_REPO_VALID_DAYS} days" +'%a, %d %b %Y %H:%M:%S UTC')"
+
+# The UNION of architectures in this tree, read from the directories that
+# exist rather than from this run's parameters — apt refuses to fetch for an
+# architecture the Release does not name, so a two-run tree with a one-arch
+# Release would break exactly the machine the second run was for.
+ARCHES="$(cd "${DISTS}/main" && ls -d binary-* | sed 's/^binary-//' | LC_ALL=C sort | tr '\n' ' ')"
+ARCHES="${ARCHES% }"
+
 ( cd "${OUT_DIR}" && apt-ftparchive \
 	-o "APT::FTPArchive::Release::Origin=${OS7_REPO_ORIGIN}" \
 	-o "APT::FTPArchive::Release::Label=${OS7_REPO_LABEL}" \
 	-o "APT::FTPArchive::Release::Suite=${OS7_SUITE}" \
 	-o "APT::FTPArchive::Release::Codename=${OS7_SUITE}" \
 	-o "APT::FTPArchive::Release::Version=${OS7_VERSION}" \
-	-o "APT::FTPArchive::Release::Architectures=${OS7_ARCH}" \
+	-o "APT::FTPArchive::Release::Architectures=${ARCHES}" \
 	-o "APT::FTPArchive::Release::Components=main" \
 	-o "APT::FTPArchive::Release::Description=OS/7 ${OS7_VERSION} (${OS7_CHANNEL})" \
 	-o "APT::FTPArchive::Release::ValidTime=${VALID_SECONDS}" \
@@ -318,7 +359,8 @@ VALID_UNTIL="$(date -u -d "+${OS7_REPO_VALID_DAYS} days" +'%a, %d %b %Y %H:%M:%S
 # READ IT BACK, and not because the option might be mistyped — because the
 # option ABOVE was, in its obvious spelling, and apt-ftparchive said nothing.
 # An unexpiring Release is the replay §6.3 names.
-for want in '^Valid-Until:' "^Origin: ${OS7_REPO_ORIGIN}\$" "^Suite: ${OS7_SUITE}\$"; do
+for want in '^Valid-Until:' "^Origin: ${OS7_REPO_ORIGIN}\$" "^Suite: ${OS7_SUITE}\$" \
+            "^Architectures: ${ARCHES}\$"; do
 	if ! grep -qE "${want}" "${DISTS}/Release"; then
 		echo "!!! the Release file does not match ${want}" >&2
 		sed -n '1,12p' "${DISTS}/Release" >&2
@@ -350,7 +392,11 @@ echo "    Release signed and verified, valid until ${VALID_UNTIL}"
 # were actually built — never from a running image, which is a materialisation
 # and not the thing itself.
 # ---------------------------------------------------------------------------
-DESCRIPTOR="${OUT_DIR}/releases/${OS7_VERSION}/release.json"
+# THE ARCHITECTURE IS IN THE PATH (RELEASE-PROCESS §7.3): two architectures at
+# one version are two descriptors, and the flat layout had them overwrite each
+# other. Builder-side only — a machine reads the path out of the signed index
+# entry and never composes it.
+DESCRIPTOR="${OUT_DIR}/releases/${OS7_VERSION}/${OS7_ARCH}/release.json"
 
 # Everything the two generators below read, exported once. They are handed
 # facts and compose no version string of their own — the same rule the hooks
@@ -502,7 +548,7 @@ sys.stdout.write("\n")
 PY
 
 DESCRIPTOR_SHA="$(sha256sum "${DESCRIPTOR}" | cut -d' ' -f1)"
-echo "    descriptor: releases/${OS7_VERSION}/release.json  sha256 ${DESCRIPTOR_SHA:0:16}…"
+echo "    descriptor: releases/${OS7_VERSION}/${OS7_ARCH}/release.json  sha256 ${DESCRIPTOR_SHA:0:16}…"
 
 INDEX="${OUT_DIR}/index/${OS7_CHANNEL}.json"
 NEW_INDEX="${INDEX}.new"
@@ -541,14 +587,15 @@ except (OSError, ValueError):
 with open(os.environ["OS7_DESCRIPTOR_PATH"], encoding="utf-8") as fh:
     descriptor = json.load(fh)
 
+arch = descriptor["architecture"]
 entry = {
     "version":          version,
     "released":         descriptor["released"],
-    "architecture":     descriptor["architecture"],
+    "architecture":     arch,
     "archive_snapshot": descriptor["base"]["archive_snapshot"],
     "os7_suite":        descriptor["os7_suite"],
     "metapackage":      descriptor["metapackage"],
-    "manifest":         "releases/%s/release.json" % version,
+    "manifest":         "releases/%s/%s/release.json" % (version, arch),
     "manifest_sha256":  os.environ["OS7_DESCRIPTOR_SHA"],
     "migrations":       descriptor["migrations"],
     # What this release sits on, when it is a hotfix (§7). In the ENTRY as
@@ -559,9 +606,16 @@ entry = {
     "supersedes":       None,
 }
 
-releases = [r for r in index.get("releases", []) if r.get("version") != version]
-if releases:
-    entry["supersedes"] = releases[0].get("version")
+# ONE ENTRY PER (version, architecture), not per version: the amd64 and arm64
+# builds of one release are two entries or the second run would silently
+# unlist the first architecture's (RELEASE-PROCESS §7.3). `supersedes` names
+# the newest release OF THE SAME ARCHITECTURE — the other architecture's
+# history is another machine's story.
+releases = [r for r in index.get("releases", [])
+            if not (r.get("version") == version and r.get("architecture") == arch)]
+same_arch = [r for r in releases if r.get("architecture") == arch]
+if same_arch:
+    entry["supersedes"] = same_arch[0].get("version")
 index["releases"] = [entry] + releases
 index["channel"] = os.environ["OS7_CHANNEL"]
 # The same expiry the Release file carries. An index that never goes stale is

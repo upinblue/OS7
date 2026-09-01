@@ -138,9 +138,12 @@ Hook 0075 runs mid-build and cannot see what live-build does to apt afterwards.
 
 ### 5. Cut the repository, unsigned
 
-Both architectures, into **one** tree. See §7.3: today `build-os7-repo.sh`
-produces a single-architecture tree and this step needs a merge that does not
-exist yet.
+Both architectures, into **one** tree — by running `build-os7-repo.sh` once
+per architecture **into the same output directory** (since 2026-09-01, §7.3).
+The second run merges: every `binary-*` index is regenerated from the shared
+pool, the `Release` names the union of architectures, each descriptor lands
+under `releases/<version>/<arch>/`, and the index holds one entry per
+(version, architecture). There is no separate merge tool to forget.
 
 ### 6. Sign, off the build machine
 
@@ -316,8 +319,10 @@ withdrawn release cannot be served forever by an attacker who kept a copy.
 
 ## 7. What must change before the first real publication
 
-Found by reading the code and by building, on 2026-08-30. None of it is
-speculative; all of it is unbuilt.
+Found by reading the code and by building, on 2026-08-30. §7.2 and §7.3 were
+**built and gated on 2026-09-01** — each fix's check is named where it is
+described, and what a no-VM check cannot say is said too: no machine has yet
+taken a real MINOR update, because no 1.1 has ever existed.
 
 ### 7.1 arm64 on the release host — measured, and one defect deep
 
@@ -351,32 +356,52 @@ What this does **not** establish: that the medium boots, installs, or survives
 virtualisation, so arm64's evidence stops at the artefact. That is the bar §2
 describes, and it is the bar that has to be printed on the download page.
 
-### 7.2 A MINOR bump changes the suite, and that path has never run
+### 7.2 A MINOR bump changes the suite — FIXED 2026-09-01
 
 `Update-OS7` takes the suite from the **target** release's signed index entry
 (`$target.Suite`), so 1.0.x → 1.1.0 writes `Suites: os7-1.1` into the clone and
-installs correctly. But at the end it **restores the environment's own OS/7 apt
-source**, and that file is a conffile `Set-OS7UpdateChannel` wrote with
+installs correctly. But at the end it **restored the environment's own OS/7 apt
+source verbatim**, and that file is a conffile `Set-OS7UpdateChannel` wrote with
 `os7-1.0`, kept across the upgrade by `--force-confold`. A machine that moved to
-1.1.0 therefore keeps `Suites: os7-1.0` permanently.
+1.1.0 therefore kept `Suites: os7-1.0` permanently — and nothing downstream
+would ever have corrected it.
 
-Read from the code, never executed — no 1.1 has ever existed. The fix is to
-rewrite the permanent source with the target's suite after a successful
-activation.
+**The fix is at the restore site, not after activation**: the environment being
+written IS the target release, so when the restored file's `Suites:` differs
+from the target's, that one line is rewritten — a same-suite update still
+restores the file byte for byte, a `-Stage`d 1.1 carries `os7-1.1` for the day
+it boots, and the RUNNING 1.0 environment's own copy is never touched.
+`check-update-logic.py` gates both halves ("the machine's permanent apt source
+across a suite change"). What it cannot say: no machine has taken a real MINOR
+update, because no 1.1 has ever existed.
 
-### 7.3 The repository is single-architecture in three places
+### 7.3 The repository was single-architecture in three places — FIXED 2026-09-01
 
-1. `build-os7-repo.sh` writes `APT::FTPArchive::Release::Architectures=${OS7_ARCH}`
-   and one `binary-<arch>/`. Two architectures need one `Release` naming both.
-2. `releases/<version>/release.json` has **no architecture in the path** while
-   carrying `"architecture"` in its contents. Two architectures at one version
-   overwrite each other. Proposed: `releases/<version>/<arch>/release.json` —
-   builder-side only, because the index entry carries the manifest path and the
-   machine reads it from there.
-3. `Get-OS7Release`'s `Applicable` is `$newer -and $major -eq $myMajor -and
-   $onBase`. **It never compares the release's architecture to the machine's.**
-   Harmless while every repository is single-architecture; wrong the moment one
-   URL serves both.
+1. ~~`build-os7-repo.sh` writes `APT::FTPArchive::Release::Architectures=${OS7_ARCH}`
+   and one `binary-<arch>/`.~~ Two per-arch runs into one output directory now
+   merge: every `binary-*` index in the tree is regenerated from the shared
+   pool on every run (eight of the ten packages are arch:all, rebuilt under
+   ONE filename by either run — an index the second run did not regenerate
+   would record hashes of files that run just replaced), `--arch` keeps each
+   index to its own architecture plus arch:all (measured: `--arch amd64`
+   includes `Architecture: all`), and the `Release` names the union, read
+   back from the directories that exist.
+2. ~~`releases/<version>/release.json` has no architecture in the path.~~ It is
+   `releases/<version>/<arch>/release.json` now — builder-side only, as
+   proposed: the machine reads the path out of the signed index entry.
+3. ~~`Get-OS7Release`'s `Applicable` never compares the release's architecture
+   to the machine's.~~ It does now — a POSITIVE mismatch (both sides state an
+   architecture and they differ) makes the release `ForeignArchitecture` and
+   not `Applicable`; `Update-OS7 -Version` prefers the machine's own twin when
+   one version is listed for both architectures, and refuses a foreign release
+   asked for by name with both architectures in the message.
+
+Gates: `check-os7-repo.py` ("one tree, two architectures" — the second-arch
+run happens before the install probe, so the probe installs from the tree the
+other architecture's run rewrote last, and the arch:all hash-consistency is
+asserted against the pool), and `check-update-logic.py` ("a release for
+another architecture" — listed, not applicable, not chosen, refused by name,
+and the twin-version preference).
 
 ---
 

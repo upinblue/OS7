@@ -257,6 +257,14 @@ if "-t" in a and a[a.index("-t") + 1] == "zfs":
         with open(os.path.join(target, "etc/os-release"), "w") as fh:
             fh.write('NAME="Ubuntu"\nID=ubuntu\nVERSION_ID="26.04"\n'
                      'IMAGE_ID="os7"\nVARIANT_ID="server"\n')
+        # The machine's own permanent OS/7 apt source, when the case under
+        # test needs the clone to have inherited one. /etc travels with the
+        # boot environment, so a real clone starts with the running system's
+        # copy — and the restore-with-the-target's-suite path (RELEASE-PROCESS
+        # §7.2) never runs on a machine that had no channel at all.
+        if os.environ.get("OS7_FAKE_MACHINE_SOURCES"):
+            with open(os.path.join(target, "etc/apt/sources.list.d/os7.sources"), "w") as fh:
+                fh.write(os.environ["OS7_FAKE_MACHINE_SOURCES"])
         # An environment that USES the TPM2 handler, when the check asks for
         # one. Assert-OS7Initramfs is conditional on this file existing, so
         # without it only the skip path is ever exercised — and the skip path
@@ -393,9 +401,32 @@ logcall()
 sys.exit(0)
 '''
 
+# `umount`, real underneath — with one look inside first. The tmpfs standing in
+# for the clone vanishes with the final unmount, so what the run left at
+# /etc/apt/sources.list.d/os7.sources has to be copied out NOW or the check
+# could only quote the module's own messages about it — the
+# diagnostic-depends-on-the-diagnosed shape BUILD-NOTES warns about twice.
+FAKE_UMOUNT = LOG_PREAMBLE + r'''
+import shutil, subprocess
+logcall()
+a = sys.argv[1:]
+root = os.environ.get("OS7_UPDATE_ROOT", "")
+out = os.environ.get("OS7_FAKE_SOURCES_OUT", "")
+if root and out and a and a[-1].rstrip("/") == root.rstrip("/"):
+    src = os.path.join(root, "etc/apt/sources.list.d/os7.sources")
+    try:
+        shutil.copyfile(src, out)
+    except FileNotFoundError:
+        # Deleted is an answer too; record it as absence.
+        try: os.remove(out)
+        except FileNotFoundError: pass
+sys.exit(subprocess.call(["/bin/umount"] + a))
+'''
+
 FAKES = {
     "zfs": FAKE_ZFS,
     "mount": FAKE_MOUNT,
+    "umount": FAKE_UMOUNT,
     "chroot": FAKE_CHROOT,
     "apt-get": FAKE_APT_GET,
     "apt-cache": FAKE_APT_CACHE,
@@ -474,30 +505,37 @@ def build_world(work):
 
 def build_repo(work, *, version=NEXT_VERSION, development=True, sign_with="os7",
                valid_days=30, extra=(), channel="development", channel_in_doc=None,
-               hotfix_base=None):
+               hotfix_base=None, suite=SUITE, architecture="amd64",
+               second_arch=None):
     """A real, really-signed repository. gpg and gpgv are not faked.
 
     `channel` names the index file AND the channel the documents claim;
     `channel_in_doc` overrides the claim alone, which is the mislabelled-index
     negative case. `hotfix_base` makes `version` a hotfix of that base — the
     §7 form — declared in the descriptor's hotfix block and restated in the
-    index entry, exactly as build-os7-repo.sh authors both."""
+    index entry, exactly as build-os7-repo.sh authors both. `suite` is the
+    releases' os7_suite (a MINOR release changes it, RELEASE-PROCESS §7.2) and
+    `architecture` what they are built for (§7.3 — one URL may serve both).
+    `second_arch` adds a TWIN of `version` for that architecture, which is
+    what a two-run build-os7-repo.sh tree holds — its descriptor under the
+    arch-qualified path, exactly as the builder writes them."""
     repo = os.path.join(work, "repo")
     for d in ("index", os.path.join("releases", version)):
         os.makedirs(os.path.join(repo, d), exist_ok=True)
 
     doc_channel = channel_in_doc if channel_in_doc is not None else channel
     entries = []
-    for v, dev in [(version, development)] + list(extra):
-        rdir = os.path.join(repo, "releases", v)
+
+    def emit(v, dev, arch, manifest_rel):
+        rdir = os.path.join(repo, os.path.dirname(manifest_rel.replace("/", os.sep)))
         os.makedirs(rdir, exist_ok=True)
         descriptor = {
             "version": v, "channel": doc_channel,
-            "released": "2026-08-27T00:00:00Z", "architecture": "amd64",
+            "released": "2026-08-27T00:00:00Z", "architecture": arch,
             "base": {"release": "26.04", "distribution": "resolute",
                      "archive_snapshot": "20260901T000000Z",
                      "archive_base": "https://snapshot.ubuntu.com/ubuntu"},
-            "os7_suite": SUITE,
+            "os7_suite": suite,
             "metapackage": {"os7-server": v, "os7-desktop": v},
             "components": [], "migrations": [],
             "signing": {"key": "DEADBEEF", "user_id": "test", "development": dev},
@@ -507,20 +545,26 @@ def build_repo(work, *, version=NEXT_VERSION, development=True, sign_with="os7",
                 {"package": "hello", "version": "2.10-99", "arch": "amd64",
                  "filename": "pool/main/h/hello/hello_2.10-99_amd64.deb",
                  "sha256": "0" * 64}]}
-        path = os.path.join(rdir, "release.json")
+        path = os.path.join(repo, manifest_rel.replace("/", os.sep))
         with open(path, "w", newline="\n") as fh:
             json.dump(descriptor, fh)
         digest = sh(["sha256sum", path]).stdout.split()[0]
         entries.append({
             "version": v, "released": "2026-08-27T00:00:00Z",
-            "architecture": "amd64", "archive_snapshot": "20260901T000000Z",
-            "os7_suite": SUITE,
+            "architecture": arch, "archive_snapshot": "20260901T000000Z",
+            "os7_suite": suite,
             "metapackage": {"os7-server": v, "os7-desktop": v},
-            "manifest": "releases/%s/release.json" % v,
+            "manifest": manifest_rel,
             "manifest_sha256": digest, "migrations": [],
             "hotfix_base": hotfix_base if v == version else None,
             "supersedes": None,
         })
+
+    for v, dev in [(version, development)] + list(extra):
+        emit(v, dev, architecture, "releases/%s/release.json" % v)
+    if second_arch:
+        emit(version, development, second_arch,
+             "releases/%s/%s/release.json" % (version, second_arch))
 
     entries.sort(key=lambda e: [int(x) for x in e["version"].split(".")], reverse=True)
     valid_until = sh(["date", "-u", "-d", "+%d days" % valid_days, "+%a, %d %b %Y %H:%M:%S UTC"]).stdout.strip()
@@ -835,6 +879,96 @@ def main():
     check(rc != 0 and "hotfix" in err,
           "and refused by name: it overlays a base this machine does not run",
           (err.strip().splitlines() or [""])[-1][:110])
+    build_repo(work)
+
+    # -- the suite moves with the release (RELEASE-PROCESS §7.2) --------------
+    # The permanent apt source is a conffile Set-OS7UpdateChannel wrote with
+    # the OLD suite, kept by --force-confold across every later upgrade — so if
+    # the restore step does not rewrite it, a machine that moved to 1.1.0
+    # follows os7-1.0 for ever and nothing downstream ever corrects it.
+    print("\n  the machine's permanent apt source across a suite change")
+    machine_src = ("# Written by Set-OS7UpdateChannel; the machine's own channel.\n"
+                   "Types: deb\nURIs: file://%s/repo\nSuites: %s\n"
+                   "Components: main\nArchitectures: amd64\n"
+                   "Signed-By: /usr/share/keyrings/os7-archive-keyring.gpg\n"
+                   "Enabled: yes\n" % (work, SUITE))
+    final = os.path.join(work, "final-os7.sources")
+
+    build_repo(work, version="1.1.0.0", suite="os7-1.1")
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment",
+                                 env_extra={"OS7_FAKE_CANDIDATE": "1.1.0.0",
+                                            "OS7_FAKE_MACHINE_SOURCES": machine_src,
+                                            "OS7_FAKE_SOURCES_OUT": final})
+    check(rc == 0, "a MINOR release (new suite) applies",
+          (err.strip().splitlines() or [""])[-1][:100])
+    text = open(final).read() if os.path.exists(final) else "(no file captured)"
+    check("Suites: os7-1.1" in text,
+          "the environment wakes up on the TARGET's suite", text.strip().splitlines()[-1][:80])
+    check("Suites: %s" % SUITE not in text,
+          "and not on the one the machine followed before")
+    check(("URIs: file://%s/repo" % work) in text and "Enabled: yes" in text,
+          "the rest of the file is the machine's own — only the suite moved")
+
+    build_repo(work)
+    if os.path.exists(final):
+        os.remove(final)
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment",
+                                 env_extra={"OS7_FAKE_MACHINE_SOURCES": machine_src,
+                                            "OS7_FAKE_SOURCES_OUT": final})
+    text = open(final).read() if os.path.exists(final) else "(no file captured)"
+    check(rc == 0 and text == machine_src,
+          "a same-suite update restores the file BYTE FOR BYTE",
+          "" if text == machine_src else text.strip().splitlines()[-1][:80])
+
+    # -- the architecture is compared, not assumed (RELEASE-PROCESS §7.3) -----
+    # Harmless while every repository serves one architecture; wrong the moment
+    # one URL serves both. The machine in this container says amd64.
+    print("\n  a release for another architecture")
+    build_repo(work, architecture="arm64")
+    got = sh(["pwsh", "-NoProfile", "-NonInteractive", "-c",
+              "Import-Module /work/powershell/OS7/OS7.psd1 -Force; "
+              "$r = @(Get-OS7Release -Available -Source 'file://%s/repo'); "
+              "ConvertTo-Json -InputObject @($r) -Depth 4 -Compress" % work])
+    listed = []
+    try:
+        listed = json.loads((got.stdout.strip().splitlines() or ["[]"])[-1])
+    except ValueError:
+        pass
+    entry = next((e for e in listed if e.get("Version") == NEXT_VERSION), {})
+    check(bool(entry), "it is LISTED — an operator can see it exists",
+          "%d release(s) listed" % len(listed))
+    check(entry.get("ForeignArchitecture") is True and entry.get("Applicable") is False,
+          "and says ForeignArchitecture, not Applicable",
+          "ForeignArchitecture=%s Applicable=%s" % (
+              entry.get("ForeignArchitecture"), entry.get("Applicable")))
+
+    rc, out, err, _ = run_update(work, bindir, "-AllowDevelopment")
+    last = (out.strip().splitlines() or [""])[-1]
+    check(rc == 0 and '"Applied":false' in last.replace(" ", ""),
+          "it is never CHOSEN by itself", last[:90])
+
+    rc, out, err, _ = run_update(work, bindir,
+                                 "-Version %s -Stage -AllowDevelopment" % NEXT_VERSION)
+    check(rc != 0 and "arm64" in err and "amd64" in err,
+          "and refused BY NAME, with both architectures in the message",
+          (err.strip().splitlines() or [""])[-1][:110])
+
+    # A TWO-RUN TREE: the same version listed for BOTH architectures, the
+    # foreign entry FIRST in the index — which is where a naive `-Version …
+    # | Select -First 1` lands. The machine's own twin must win, both when
+    # the train chooses and when the operator names the version.
+    build_repo(work, architecture="arm64", second_arch="amd64")
+    rc, out, err, _ = run_update(work, bindir, "-Stage -AllowDevelopment")
+    last = (out.strip().splitlines() or [""])[-1]
+    check(rc == 0 and NEXT_VERSION in last and '"Applied":true' in last.replace(" ", ""),
+          "with twins of one version, the train chooses the machine's own",
+          (err.strip().splitlines() or [""])[-1][:100])
+    rc, out, err, _ = run_update(work, bindir,
+                                 "-Version %s -Stage -AllowDevelopment" % NEXT_VERSION)
+    check(rc == 0,
+          "and -Version picks the machine's own twin, not the foreign one the "
+          "index lists first",
+          (err.strip().splitlines() or [""])[-1][:100])
     build_repo(work)
 
     # -- the initramfs assertion ---------------------------------------------
