@@ -350,10 +350,15 @@ function Invoke-NetCommand {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
+		# Reset, then read guarded: $LASTEXITCODE is rewritten only when the
+		# command COMPLETES through the pipeline (BUILD-NOTES #121). ExitCode
+		# comes back $null — not a stale earlier code — when it never did,
+		# and $null compares unequal to 0, so callers treat it as a failure.
+		$global:LASTEXITCODE = $null
 		$out = & $Command @Arguments 2> $errFile
 		return [pscustomobject]@{
 			StdOut   = ($out -join "`n")
-			ExitCode = $LASTEXITCODE
+			ExitCode = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 			StdErr   = ((Get-Content -Raw -ErrorAction SilentlyContinue $errFile) ?? '')
 		}
 	}

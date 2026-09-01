@@ -81,7 +81,7 @@ host that can run them, because that is the thing a single operator forgets.
 | Check | Host | What green means |
 |---|---|---|
 | `pwsh -c 'Import-Module ./powershell/*/…; Test-*Module'` | either | The six module self-tests against recorded real output. |
-| `./installer/testing/check-ps-traps.py` | either | The four PowerShell traps this repo has paid for. |
+| `./installer/testing/check-ps-traps.py` | either | The five PowerShell traps this repo has paid for. |
 | `check-layering.py` | either | The five layering rules, at baselines that may fall and may not rise. |
 | `check-update-logic.py` | either | The update train's decisions **and their order**. |
 | `check-os7-repo.py` | either | Install from a signed repository, then refuse it with the key swapped. |

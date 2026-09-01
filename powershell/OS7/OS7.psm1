@@ -132,9 +132,19 @@ function Invoke-OS7Native {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
+		# $LASTEXITCODE is rewritten only when a native command COMPLETES
+		# through the pipeline (BUILD-NOTES #121). Reset it, or a command that
+		# is found but cannot be started reads an EARLIER command's exit code
+		# as its own — 0 included, which is a verification step reporting
+		# success for a command that never ran.
+		$global:LASTEXITCODE = $null
 		$out = & $Command @Arguments 2> $errFile
-		$code = $LASTEXITCODE
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 		$err = (Get-Content -Raw -ErrorAction SilentlyContinue $errFile)
+		if ($null -eq $code) {
+			throw [System.Management.Automation.RuntimeException]::new(
+				"$line`nnever completed: $Command was found but could not be started`n$err")
+		}
 		if ($code -ne 0) {
 			throw [System.Management.Automation.RuntimeException]::new(
 				"$line`nexited $code`n$err")
@@ -2395,8 +2405,12 @@ function Set-OS7Theme {
 		}
 		else {
 			# The schema default, uncontaminated by any dconf database.
+			# Reset, then read guarded (BUILD-NOTES #121): $null lands in the
+			# skip branch, a stale 0 would apply a value nothing read.
+			$global:LASTEXITCODE = $null
 			$default = & env GSETTINGS_BACKEND=memory gsettings get $pair.Schema $pair.Key 2>$null
-			if ($LASTEXITCODE -ne 0 -or -not $default) {
+			$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+			if ($code -ne 0 -or -not $default) {
 				Write-OS7Step "skip: $($pair.Schema) $($pair.Key) - no schema default readable"
 				continue
 			}

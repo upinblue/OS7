@@ -87,18 +87,21 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   ORDER of them, against fake zfs,
                                           #   apt and chroot - with REAL mounts
                                           #   and REAL signatures. ~3 min, no VM
-./installer/testing/check-ps-traps.py     # FOUR PowerShell traps this repo has
-                                          #   paid for (#65, #91, #82, #112/#119),
-                                          #   asked of the parser. Seconds; needs
-                                          #   only pwsh. #82 is the import-scope
-                                          #   one: it went red on the tree whose
-                                          #   ISO build had just died of it, in
-                                          #   one second. #112/#119 is the
-                                          #   property read off a possibly-empty
-                                          #   pipeline, and on the day it was
-                                          #   added it found THREE sites in three
-                                          #   modules that the grep before it
-                                          #   had missed
+./installer/testing/check-ps-traps.py     # FIVE PowerShell traps this repo has
+                                          #   paid for (#65, #91, #82, #112/#119,
+                                          #   #121), asked of the parser. Seconds;
+                                          #   needs only pwsh. #82 is the
+                                          #   import-scope one: it went red on the
+                                          #   tree whose ISO build had just died
+                                          #   of it, in one second. #112/#119 is
+                                          #   the property read off a
+                                          #   possibly-empty pipeline, and on the
+                                          #   day it was added it found THREE
+                                          #   sites in three modules that the grep
+                                          #   before it had missed. #121 is the
+                                          #   bare $LASTEXITCODE read — a command
+                                          #   that never STARTED otherwise reads
+                                          #   as an earlier command's success
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
                                           #   install again BY KEYPRESS (walk)

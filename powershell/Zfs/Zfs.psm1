@@ -184,9 +184,21 @@ function Invoke-ZfsNative {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
+		# $LASTEXITCODE is rewritten only when a native command COMPLETES
+		# through the pipeline. A command that is found but cannot be started
+		# does not throw and does not set it (BUILD-NOTES #121), so an
+		# unguarded read is either a StrictMode error or — worse — a STALE
+		# code from an earlier command, read as this one's success.
+		$global:LASTEXITCODE = $null
 		$out = & $exe @argv 2> $errFile
-		$code = $LASTEXITCODE
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 		$err = (Get-Content -Raw -ErrorAction SilentlyContinue $errFile)
+		if ($null -eq $code) {
+			# Not -AllowFail's case: "no such dataset" is an answer, a command
+			# that never ran is not.
+			throw [System.Management.Automation.RuntimeException]::new(
+				"$line`nnever completed: $exe was found but could not be started`n$err")
+		}
 		if (-not $AllowFail -and $code -ne 0) {
 			throw [System.Management.Automation.RuntimeException]::new(
 				"$line`nexited $code`n$err")

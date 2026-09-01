@@ -6449,3 +6449,57 @@ Two measurements, deliberately both: the machine one says the socket listens
 after a boot, and this one says the ISO carries the ordering that makes it so.
 The first without the second would have proved a hand-edited unit; the second
 without the first would have proved a file.
+
+## #121 — `$LASTEXITCODE` is rewritten only when a native command COMPLETES, so a bare read is either a StrictMode error or an EARLIER command's code
+
+Found on 2026-09-01 by running `check-be-logic.py` on the x64 Windows host,
+where its fake `zfs` — an extensionless script — is a file PowerShell finds but
+cannot start. The error was:
+
+```
+Invoke-ZfsNative: The variable '$LASTEXITCODE' cannot be retrieved because it has not been set.
+```
+
+— a message about a variable, from the one function whose job is to report what
+a command did.
+
+**Both failure shapes were then measured in one pwsh 7.6.5 session** rather
+than reasoned about:
+
+1. A command that does not exist **throws** `CommandNotFoundException` — that
+   path is fine and was never the problem.
+2. A command that is **found but cannot be started** (the extensionless file on
+   PATH) does **not throw**: the pipeline continues with empty output and
+   `$LASTEXITCODE` is left exactly as it was. In a fresh session that is
+   *unset*, and the next read is a terminating StrictMode error. After any
+   earlier native call it is that call's code — so `& zfs list` returned
+   `ExitCode = 0` with empty output, which every caller reads as **"the command
+   succeeded and there are no datasets"**. A verification step that never ran,
+   reporting success, is the exact bug shape this repository keeps paying for.
+
+**The repo half-knew.** `Get-OS7PackageDrift` and `Get-OS7OsReleaseField` have
+carried the guarded read since 2026-08-26, with a comment measuring the same
+engine behaviour against a `.cmd` shim — but the six command RUNNERS
+(`Invoke-ZfsNative`, `Invoke-OS7Native`, `Invoke-TimeCommand`,
+`Invoke-NetCommand`, `Invoke-SystemdCommand`, `Invoke-DirectoryCommand`), whose
+entire output is an exit code, all read it bare, and so did `Move-OS7Home`'s
+copy-verification `diff` — the worst possible site for shape 2.
+
+**The idiom, now everywhere a native exit code is read:**
+
+```powershell
+$global:LASTEXITCODE = $null          # reset: a stale code cannot be read as this command's
+$out = & $exe @argv 2> $errFile
+$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+```
+
+`$null` then means **"never completed through the pipeline"** and is its own
+outcome: the throwing runners raise `"<line>` never completed: `<exe>` was
+found but could not be started" (with stderr attached), the non-judging runners
+return `ExitCode = $null` — which compares unequal to 0, so every existing
+caller already treats it as a failure rather than a success.
+
+**The mechanism is `check-ps-traps.py` class five**, because #112 already
+proved a note is not a fix: any `$LASTEXITCODE` read outside the guard, in any
+module file, fails the check. Baseline 0. On the day it was added it confirmed
+all eight sites fixed and found no ninth.

@@ -335,12 +335,18 @@ function Compare-OS7Tree {
 	# being read through, and a dangling one is an error rather than a
 	# difference.
 	Write-OS7Step "diff -r -q --no-dereference $Source $Destination"
+	# Reset, then read guarded (BUILD-NOTES #121): a diff that never ran must
+	# FAIL this verification — an unguarded read would hand it an earlier
+	# command's 0 and pass a copy nothing compared.
+	$global:LASTEXITCODE = $null
 	$out = & diff -r -q --no-dereference $Source $Destination 2>&1
-	if ($LASTEXITCODE -ne 0) {
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	if ($null -eq $code -or $code -ne 0) {
 		$lines = (@($out | Select-Object -First 10) -join "`n  ")
+		$how = if ($null -eq $code) { 'never completed' } else { "exited $code" }
 		throw [System.InvalidOperationException]::new(
-			"the contents of $Source and $Destination differ (diff exited " +
-			"$LASTEXITCODE):`n  $lines")
+			"the contents of $Source and $Destination differ (diff " +
+			"$how):`n  $lines")
 	}
 	Write-OS7Step 'verified every byte of every file'
 }

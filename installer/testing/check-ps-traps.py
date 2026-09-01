@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Four PowerShell traps this repository has paid for, as a mechanism rather than a note.
+Five PowerShell traps this repository has paid for, as a mechanism rather than a note.
 
     ./check-ps-traps.py            report, and fail if any of them got worse
 
-All four are the same kind of defect: code that reads correctly, parses
+All five are the same kind of defect: code that reads correctly, parses
 correctly, and means something else. None produces a warning; each was found by
 a machine doing the wrong thing.
 
@@ -57,7 +57,24 @@ correctly on 2026-08-29, recommended a two-step fix, and nothing changed until
 paragraph. The scan added it on the day of the fix and immediately found
 THREE more sites than the grep that preceded it, in three different modules.
 
-ALL FOUR BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
+#121 — A BARE `$LASTEXITCODE` READ IS EITHER A CRASH OR AN EARLIER COMMAND'S CODE.
+The engine rewrites it only when a native command COMPLETES through the
+pipeline. A command that is found but cannot be started does not throw and does
+not set it (measured 2026-09-01 against an extensionless file on PATH, and
+2026-08-26 against a .cmd shim): in a fresh session the next read is a
+terminating StrictMode error inside the function whose job was to report the
+failure, and after any earlier native call it is THAT call's exit code — 0
+included, so a verification step that never ran reports success. The idiom is
+reset-then-guarded-read:
+
+    $global:LASTEXITCODE = $null
+    $out = & $exe @argv 2> $errFile
+    $code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+
+Writes are the reset half and are allowed; a read under the Test-Path guard is
+the read half; any other read is a hit.
+
+ALL FIVE BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
 word for word: "a rule that is only written down erodes."
 
 It needs `pwsh` and nothing else — no container, no ZFS, no VM. The scan is
@@ -72,8 +89,10 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Measured by running this, not counted by eye. #65 was 2 and #91 was 4 before
-# 2026-08-27.
-BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0, "STRICTPROP": 0}
+# 2026-08-27; #121 was 8 before 2026-09-01, when all eight were fixed together
+# with the scan that counts them.
+BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0, "STRICTPROP": 0,
+            "BARELEC": 0}
 
 SCAN = r'''
 $root = $env:OS7_SCAN_ROOT
@@ -179,6 +198,39 @@ foreach ($file in $files) {
         Write-Output ("STRICTPROP`t{0}`t{1}`t{2}" -f $file.Name, $m.Extent.StartLineNumber, $text)
     }
 
+    # ---- #121 ---------------------------------------------------------
+    #
+    # $LASTEXITCODE is rewritten only when a native command COMPLETES through
+    # the pipeline. Read bare, it is a StrictMode terminating error when no
+    # native command has run yet, and an EARLIER command's code — 0 included —
+    # when one has. The idiom is reset-then-guarded-read; a WRITE is the reset
+    # half and a read under the Test-Path guard is the read half. Anything
+    # else that reads the variable is a hit.
+    $vars = $ast.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)
+    foreach ($v in $vars) {
+        if ($v.VariablePath.UserPath -notmatch '(?i)^(global:)?LASTEXITCODE$') { continue }
+        if ($v.Parent -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $v.Parent.Left -eq $v) { continue }
+        $p = $v.Parent
+        $guarded = $false
+        while ($p) {
+            if ($p -is [System.Management.Automation.Language.IfStatementAst]) {
+                foreach ($clause in $p.Clauses) {
+                    if ($clause.Item1.Extent.Text -match '(?i)Test-Path\s+Variable:\\?LASTEXITCODE') {
+                        $guarded = $true
+                    }
+                }
+                if ($guarded) { break }
+            }
+            $p = $p.Parent
+        }
+        if ($guarded) { continue }
+        $text = $v.Parent.Extent.Text -replace '\s+', ' '
+        if ($text.Length -gt 70) { $text = $text.Substring(0, 70) + '...' }
+        Write-Output ("BARELEC`t{0}`t{1}`t{2}" -f $file.Name, $v.Extent.StartLineNumber, $text)
+    }
+
     # ---- #82 ----------------------------------------------------------
     #
     # A command call OUTSIDE every function definition runs at IMPORT, and hook
@@ -230,7 +282,7 @@ def find_pwsh():
 
 
 def main():
-    print("\n### four PowerShell traps, asked of the parser rather than of a regex")
+    print("\n### five PowerShell traps, asked of the parser rather than of a regex")
 
     pwsh = find_pwsh()
     if not pwsh:
@@ -246,7 +298,7 @@ def main():
         sys.exit(1)
 
     found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "STRICTPROP": [],
-             "PARSE": []}
+             "BARELEC": [], "PARSE": []}
     files = 0
     for line in got.stdout.splitlines():
         parts = line.strip().split("\t")
@@ -286,10 +338,17 @@ def main():
     else:
         print("      (none)")
 
+    print("\n  #121 - a bare $LASTEXITCODE read: a crash, or an earlier command's code")
+    if found["BARELEC"]:
+        for name, line, text in found["BARELEC"]:
+            print("      %s:%s  %s" % (name, line, text))
+    else:
+        print("      (none)")
+
     bad = False
     print()
     for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82"),
-                       ("STRICTPROP", "#112/#119")):
+                       ("STRICTPROP", "#112/#119"), ("BARELEC", "#121")):
         n = len(found[key])
         base = BASELINE[key]
         if n > base:
@@ -308,10 +367,10 @@ def main():
         sys.exit(1)
     if bad:
         sys.exit(1)
-    print("\nAll four held: no local shadows a parameter, no array literal hides "
+    print("\nAll five held: no local shadows a parameter, no array literal hides "
           "an append, nothing outside a function calls a cmdlet the build "
-          "chroot cannot autoload, and no property is read off a pipeline that "
-          "may be empty.")
+          "chroot cannot autoload, no property is read off a pipeline that "
+          "may be empty, and no $LASTEXITCODE is read bare.")
 
 
 if __name__ == "__main__":
