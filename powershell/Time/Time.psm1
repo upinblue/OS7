@@ -669,7 +669,10 @@ function Test-TimeModule {
 		# --- the sources file -----------------------------------------------
 		$w = Set-ChronySource -Name os7 -Server 'time.windows.com', 'time.example.com' -Root $root
 		$text = [System.IO.File]::ReadAllText($w.Path)
-		Check ($w.Path -like '*etc/chrony/sources.d/os7.sources') `
+		# Compared with the separators normalised: the release gate runs this
+		# self-test on the x64 Windows host too, where Path.Combine joins with
+		# a backslash and the literal pattern can never match.
+		Check (($w.Path -replace '\\', '/') -like '*etc/chrony/sources.d/os7.sources') `
 			'sources.d: written to sources.d, NOT to chrony.conf' $w.Path
 		Check ($text -match 'server time\.windows\.com iburst') 'sources.d: the server line'
 		# chrony REQUIRES a trailing newline on every line, its own README says
