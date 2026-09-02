@@ -222,7 +222,17 @@ else
 				say "          modes: chmod succeeds and changes nothing. The file is"
 				say "          protected by the NTFS ACL of your profile directory rather"
 				say "          than by a mode. Confirm it in PowerShell with"
-				say "              (Get-Acl '${SB_CONF}').Access"
+				# A PowerShell hint must carry a WINDOWS path: printing the
+				# /mnt/c form into a PowerShell command is advice that cannot
+				# be followed, which is worse than no advice.
+				_winpath="${SB_CONF}"
+				case "${_winpath}" in
+					/mnt/?/*)
+						_drive="${_winpath:5:1}"
+						_winpath="${_drive^^}:${_winpath:6}"
+						_winpath="${_winpath//\//\\}" ;;
+				esac
+				say "              (Get-Acl '${_winpath}').Access"
 				say "          and expect SYSTEM, Administrators and you — nothing else." ;;
 			*)
 				say "          that is unexpected on a Linux filesystem, and this file"
