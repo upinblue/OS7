@@ -110,6 +110,24 @@ def read_conf(path):
     return conf
 
 
+def repo_host(conf):
+    """THE HOST FOR READING IS NOT THE HOST FOR PUBLISHING, and that cost an
+    afternoon. MEASURED 2026-09-02: a Storage Box sub-account has its own
+    virtual host — the main account's vhost answers a sub-account's credential
+    with 401, indistinguishably from a wrong password, which is exactly how it
+    looked. `u661569-sub2.your-storagebox.de` with the same credential answers
+    200 on the first try.
+
+    Derived from OS7_SB_HOST by replacing its first label rather than by
+    hardcoding your-storagebox.de, so a box on another domain still works.
+    OS7_SB_REPO_HOST in the config overrides it.
+    """
+    if conf.get("OS7_SB_REPO_HOST"):
+        return conf["OS7_SB_REPO_HOST"]
+    host, _, domain = conf["OS7_SB_HOST"].partition(".")
+    return f"{conf['OS7_SB_REPO_USER']}.{domain}" if domain else conf["OS7_SB_HOST"]
+
+
 def curl_code(host, path, user=None, password=None, timeout=25):
     """An HTTP status code, with the credential passed through curl's config on
     STDIN rather than in -u: an argument is visible in `ps` to every process on
@@ -130,24 +148,60 @@ def curl_code(host, path, user=None, password=None, timeout=25):
     return (r.stdout or "").strip() or "no-code"
 
 
-def apt_probe(conf, suite, keyring_b64, password, expect_ok, label):
-    """apt update in a CLEAN container against the real endpoint.
+def apt_probe(conf, suite, keyring_b64, password, base_path):
+    """apt update in a CLEAN container against the real endpoint, and a VERDICT
+    naming what actually happened rather than a boolean.
+
+    `apt-get update` EXITS 0 WHEN A SOURCE COULD NOT BE FETCHED AT ALL.
+    Measured 2026-09-02 in ubuntu:26.04, which ships no ca-certificates:
+
+        Err:1 https://…/repo os7-1.0 InRelease
+          SSL connection failed: certificate verify failed
+        W: Some index files failed to download. They have been ignored…
+        rc=0
+
+    So the exit code says nothing, and the first version of this function read
+    that nothing as success — with the right credential AND with a deliberately
+    wrong one, which is how a control that cannot fail looks. What matters is
+    which of `Get:`/`Hit:`/`Err:`/`Ign:` apt printed for the OS/7 InRelease, and
+    whether the failure was an authentication failure or a failure to arrive.
+    "Refused as it should be" and "never reached it" are different outcomes and
+    only one of them is evidence.
 
     Everything the container needs — the keyring bytes, the source, the
     credential — arrives on stdin inside the script it runs. No bind mount (a
     Windows bind mount is BUILD-NOTES #102 waiting to happen) and no argument
     carrying a secret.
+
+    Returns (verdict, version, detail) where verdict is one of:
+        fetched       the index was downloaded and verified
+        unauthorized  the server answered 401
+        tls           TLS verification failed — the test could not reach it
+        notfound      404: the path is wrong for this account's root
+        unfetched     something else stopped it; detail says what
     """
+    uri = f"https://{repo_host(conf)}{base_path}"
     script = f"""
 set -u
 export DEBIAN_FRONTEND=noninteractive
+
+# ca-certificates FIRST, from Ubuntu's own archive, because this image has
+# none and without it apt cannot complete a TLS handshake with anything. Only
+# then is Ubuntu's source removed — leaving it in place would let `apt update`
+# succeed on the strength of a mirror that has nothing to do with the test.
+apt-get update -qq >/dev/null 2>&1
+apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null 2>&1
+if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then echo "NO-CA-BUNDLE"; fi
+rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+
 install -d /usr/share/keyrings /etc/apt/auth.conf.d /etc/apt/sources.list.d
 echo '{keyring_b64}' | base64 -d > /usr/share/keyrings/os7-archive-keyring.gpg
 
 # The credential, in the file apt reads it from — mode 0600 from the start.
 umask 077
 cat > /etc/apt/auth.conf.d/os7.conf <<'AUTHEOF'
-machine {conf['OS7_SB_HOST']}
+machine {repo_host(conf)}
 login {conf['OS7_SB_REPO_USER']}
 password {password}
 AUTHEOF
@@ -155,57 +209,58 @@ umask 022
 
 cat > /etc/apt/sources.list.d/os7.sources <<'SRCEOF'
 Types: deb
-URIs: https://{conf['OS7_SB_HOST']}/repo
+URIs: {uri}
 Suites: {suite}
 Components: main
 Signed-By: /usr/share/keyrings/os7-archive-keyring.gpg
 Enabled: yes
 SRCEOF
 
-# ONLY the OS/7 source: Ubuntu's own would make `apt update` succeed on the
-# strength of a mirror that has nothing to do with what is under test.
-rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-
-if apt-get update -o Acquire::Retries=1 2>&1; then echo "APT-UPDATE-OK"; else echo "APT-UPDATE-FAILED"; fi
-apt-cache policy os7-base 2>/dev/null | sed -n '1,4p'
+echo "=== APT-UPDATE-BEGIN"
+apt-get update -o Acquire::Retries=1 2>&1
+echo "=== APT-UPDATE-END rc=$?"
 apt-cache show os7-base 2>/dev/null | sed -n 's/^Version: /VERSION /p' | head -1
+apt-cache policy 2>/dev/null | sed -n 's/^ *release /ORIGIN /p' | head -4
 """
-    r = subprocess.run(
-        ["docker", "run", "--rm", "-i", CONTAINER, "bash", "-s"],
-        input=script, capture_output=True, text=True, timeout=420,
-    )
+    try:
+        r = subprocess.run(
+            ["docker", "run", "--rm", "-i", CONTAINER, "bash", "-s"],
+            input=script, capture_output=True, text=True, timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        return "unfetched", None, "the container timed out"
     out = (r.stdout or "") + (r.stderr or "")
-    updated = "APT-UPDATE-OK" in out
+
+    if "NO-CA-BUNDLE" in out:
+        return "tls", None, "ca-certificates could not be installed in the container"
+
     version = None
     m = re.search(r"^VERSION (\S+)", out, re.M)
     if m:
         version = m.group(1)
 
-    if expect_ok:
-        if updated:
-            ok(f"{label}: apt update succeeded")
-        else:
-            bad(f"{label}: apt update FAILED", _first_apt_error(out))
-        if version:
-            ok(f"{label}: os7-base is visible", version)
-        else:
-            bad(f"{label}: os7-base not in the index",
-                "the source was read and holds no OS/7 packages")
-    else:
-        if updated:
-            bad(f"{label}: apt update SUCCEEDED and must not",
-                "the repository answers without the right credential, so the "
-                "successful run above proves nothing about authentication")
-        else:
-            ok(f"{label}: apt update refused, as it must")
-    return updated
+    # WHICH LINE apt printed for OUR source. Get:/Hit: mean it arrived;
+    # Err:/Ign: mean it did not, whatever the exit code was.
+    arrived = bool(re.search(r"^(Get|Hit):\d+\s+" + re.escape(uri), out, re.M))
+    errored = bool(re.search(r"^(Err|Ign):\d+\s+" + re.escape(uri), out, re.M))
 
-
-def _first_apt_error(out):
+    detail = ""
     for line in out.splitlines():
-        if line.startswith(("E:", "W:")) or "401" in line or "Unauthorized" in line:
-            return line.strip()[:160]
-    return (out.strip().splitlines() or ["(no output)"])[-1][:160]
+        s = line.strip()
+        if s.startswith(("E:", "W:", "Err:")) or "401" in s or "Unauthorized" in s \
+                or "certificate verify failed" in s:
+            detail = s[:170]
+            break
+
+    if "401" in out or "Unauthorized" in out:
+        return "unauthorized", version, detail
+    if "certificate verify failed" in out or "SSL connection failed" in out:
+        return "tls", version, detail
+    if "404" in out and errored:
+        return "notfound", version, detail
+    if arrived and not errored:
+        return "fetched", version, detail
+    return "unfetched", version, detail or "apt printed neither Get: nor Err: for the source"
 
 
 def main():
@@ -217,12 +272,13 @@ def main():
 
     conf_path = find_conf()
     conf = read_conf(conf_path)
-    host = conf["OS7_SB_HOST"]
+    host = repo_host(conf)
 
     print("\n### the Storage Box as a transport for OS/7's repository (RP2)\n")
     note(f"config {conf_path} (contents not printed)")
-    note(f"host   {host}")
-    note(f"user   {conf['OS7_SB_REPO_USER']}  (read-only sub-account)")
+    note(f"publish host {conf['OS7_SB_HOST']}")
+    note(f"read host    {host}   (a sub-account has its OWN vhost)")
+    note(f"read user    {conf['OS7_SB_REPO_USER']}  (read-only sub-account)")
     print()
 
     print("  1. the endpoint requires authentication")
@@ -247,15 +303,23 @@ def main():
     else:
         note(f"authenticated GET / -> HTTP {code}")
 
-    print("  3. the signed index is reachable by the path apt will use")
-    rel = f"/repo/dists/{args.suite}/InRelease"
-    code = curl_code(host, rel, conf["OS7_SB_REPO_USER"], conf["OS7_SB_REPO_PASSWORD"])
-    if code == "200":
-        ok(f"GET {rel}", "HTTP 200")
-    elif code == "404":
-        bad(f"GET {rel} is 404", "the repository has not been uploaded yet")
-    else:
-        bad(f"GET {rel}", f"HTTP {code}")
+    print("  3. the signed index is reachable, at one of the two possible roots")
+    # A sub-account's directory IS its root, so the repository is either under
+    # /repo (an account rooted at os7/) or at / (one rooted at os7/repo). Both
+    # are tried rather than assumed; a 404 on one is information, not a failure.
+    found = None
+    for base in ("", "/repo"):
+        rel = f"{base}/dists/{args.suite}/InRelease"
+        code = curl_code(host, rel, conf["OS7_SB_REPO_USER"], conf["OS7_SB_REPO_PASSWORD"])
+        if code == "200":
+            ok(f"GET {rel}", "HTTP 200")
+            found = base
+            break
+        note(f"GET {rel} -> HTTP {code}")
+    if found is None:
+        bad("the signed index is not readable at either root",
+            "401 means the credential; 404 at both means the tree is not "
+            "where this account can see it")
 
     if args.probe:
         _summary()
@@ -266,13 +330,59 @@ def main():
             "    make repo-amd64 && make repo-arm64")
     keyring_b64 = base64.b64encode(KEYRING_IN_TREE.read_bytes()).decode()
 
+    # WHICH URI. A sub-account is restricted to a directory and that directory
+    # is its ROOT, so the path depends on which account reads: the publishing
+    # account is rooted at os7/ and sees repo/, while an account restricted to
+    # os7/repo sees the repository AT its root and must not carry /repo in the
+    # URI at all. Measured, not chosen — sub1's own `ls` showed its root is
+    # os7/, and the read account's root is whatever the console was told.
     print("  4. apt, in a clean container, with the right credential")
-    apt_probe(conf, args.suite, keyring_b64,
-              conf["OS7_SB_REPO_PASSWORD"], True, "correct credential")
+    working_uri = None
+    for base in ("", "/repo"):
+        shown = base or "/"
+        verdict, version, detail = apt_probe(
+            conf, args.suite, keyring_b64, conf["OS7_SB_REPO_PASSWORD"], base)
+        if verdict == "fetched" and version:
+            ok(f"URI https://{host}{shown} — index fetched, "
+               f"verified, os7-base {version}")
+            working_uri = base
+            break
+        if verdict == "fetched":
+            bad(f"URI {shown}: index fetched but os7-base is not in it",
+                "the suite was read and holds no OS/7 packages")
+            working_uri = base
+            break
+        if verdict == "unauthorized":
+            bad(f"URI {shown}: 401 from the server", detail)
+        elif verdict == "tls":
+            bad(f"URI {shown}: TLS failed, so nothing was measured", detail)
+        elif verdict == "notfound":
+            note(f"URI {shown}: 404 — not this account's root, trying the next")
+        else:
+            bad(f"URI {shown}: not fetched", detail)
 
-    print("  5. THE CONTROL — apt with a wrong credential must fail")
-    apt_probe(conf, args.suite, keyring_b64,
-              conf["OS7_SB_REPO_PASSWORD"] + "-wrong", False, "wrong credential")
+    print("  5. THE CONTROL — a wrong credential must be REFUSED, not merely fail")
+    if working_uri is None:
+        bad("the control cannot run", "no URI fetched above, so a failure here "
+            "would prove nothing about authentication")
+    else:
+        verdict, _, detail = apt_probe(
+            conf, args.suite, keyring_b64,
+            conf["OS7_SB_REPO_PASSWORD"] + "-deliberately-wrong", working_uri)
+        if verdict == "unauthorized":
+            ok("wrong credential: the server answered 401", detail or "")
+        elif verdict == "fetched":
+            bad("wrong credential: the index was fetched ANYWAY",
+                "the repository answers without the right credential, so check 4 "
+                "proves nothing about authentication")
+        else:
+            bad(f"wrong credential: {verdict}, which is not a refusal", detail)
+
+    if working_uri is not None:
+        print()
+        note("the apt source for a machine is:")
+        note(f"    URIs: https://{host}{working_uri}")
+        note(f"    Suites: {args.suite}")
 
     _summary()
 

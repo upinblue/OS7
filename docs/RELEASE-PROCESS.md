@@ -263,8 +263,55 @@ That splits cleanly for the repository and not at all for the ISOs:
 
 | | Reader | Works? |
 |---|---|---|
-| `repo/` | apt on an OS/7 machine | **Yes** — apt does Basic auth out of `/etc/apt/auth.conf.d/`. A read-only sub-account restricted to `os7/repo` is exactly the shape; Hetzner's own note that a read-only box "allows HTTP GET requests only" describes apt's access pattern precisely. |
+| `repo/` | apt on an OS/7 machine | **Yes, MEASURED — see below.** |
 | `iso/` | a browser, from the download page | **No.** A public download link cannot carry a password. |
+
+### 4.1a RP2 — ANSWERED 2026-09-02, and the fact that decided it
+
+`installer/testing/check-storagebox.py`, against the real box, **5 checks, 0
+failed**: anonymous `GET /` refused with 401; the read-only credential answers
+200; `/dists/os7-1.0/InRelease` answers 200; **apt in a clean `ubuntu:26.04`
+fetched and verified the signed index and saw `os7-base 1.0.0.171`**; and the
+control — the same run with a deliberately wrong password — was answered 401.
+Without that last one the fourth proves nothing, because a repository that
+answers anonymously would look identical.
+
+So the apt source a machine gets is:
+
+```
+Types: deb
+URIs: https://u661569-sub2.your-storagebox.de
+Suites: os7-1.0
+Components: main
+Signed-By: /usr/share/keyrings/os7-archive-keyring.gpg
+```
+
+**A SUB-ACCOUNT HAS ITS OWN VIRTUAL HOST, and getting that wrong is
+indistinguishable from a wrong password.** The main account's vhost answers a
+sub-account's credential with **401** — not 403, not a redirect — so every probe
+against `u661569.your-storagebox.de` failed while the sub-account existed and
+the credential was correct. `u661569-sub2.your-storagebox.de` answered 200 with
+the same credential on the first attempt. Two consequences worth having in
+writing: the read host is derived from the sub-account and is **not**
+`OS7_SB_HOST`, and a 401 from a Storage Box is not evidence about the password.
+
+**And the sub-account's directory is its ROOT**, so `os7/repo` appears at `/`:
+`/dists/os7-1.0/InRelease` is 200 and `/repo/dists/os7-1.0/InRelease` is 404.
+The URI therefore carries no path at all, which is the good outcome — it names
+the read-only account and cannot reach anything else on the box.
+
+Two traps paid for on the way, both of the shape this repository keeps meeting:
+
+* **`apt-get update` exits 0 when a source could not be fetched at all.** An
+  unreachable source is a `W:`, not an `E:`. The first version of this check
+  read that as success with the right credential *and* with a wrong one — a
+  control that could not fail. The check now reads which of
+  `Get:`/`Hit:`/`Err:`/`Ign:` apt printed for the OS/7 source, and distinguishes
+  "refused" from "never arrived", because only one of those is evidence.
+* **`ubuntu:26.04` ships no `ca-certificates`**, so apt cannot complete a TLS
+  handshake with anything and never reaches authentication at all. The check
+  installs it from Ubuntu's archive first and removes Ubuntu's source only
+  afterwards, so the clean-room property survives.
 
 **OPEN — RP1: where the public ISO download is served from.** Constrained
 2026-09-01: **no self-run server.** That rules out the obvious answer (a small
@@ -447,7 +494,7 @@ and the twin-version preference).
 | # | Question |
 |---|---|
 | **RP1** | Where the public ISO download is served from (§4.1), given that a self-run server is ruled out. Blocks the anonymous half of the website, and nothing before the first `stable`. |
-| **RP2** | Whether apt actually reads a Hetzner WebDAV endpoint with Basic auth. Never tried. A ~20-minute test against a real box, and it must be done before anything depends on it. **Same test settles the Nextcloud `/public.php/webdav` question in §4.1, which is the one answer that would retire RP1 and RP3 together.** |
+| ~~RP2~~ | **ANSWERED 2026-09-02 (§4.1a): yes.** apt reads the box over WebDAV with Basic auth, index verified, and the wrong-credential control is refused — `check-storagebox.py`, 5/5 against the real server. The Nextcloud `/public.php/webdav` idea in §4.1 is now only about RP1 and RP3, not about whether the transport works. |
 | **RP3** | The credential's rotation path, if the repository stays on WebDAV (§4.2). |
 | **RP4** | Cadence. U5 proposes monthly `stable` plus out-of-band hotfixes; the number itself is a business decision and is still unmade. |
 | **RP5** | Support window per Major, and how long `attic/` keeps a withdrawn release. Both are needed before a customer asks, and neither is written anywhere. |
