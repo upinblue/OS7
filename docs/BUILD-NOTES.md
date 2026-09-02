@@ -6503,3 +6503,74 @@ caller already treats it as a failure rather than a success.
 proved a note is not a fix: any `$LASTEXITCODE` read outside the guard, in any
 module file, fails the check. Baseline 0. On the day it was added it confirmed
 all eight sites fixed and found no ninth.
+
+## #122 — a path Docker has bind-mounted comes back as "exists" to `mkdir` and "absent" to `stat`, and `exist_ok=True` does not save you
+
+Found on 2026-09-02 on the **x64 Windows host** (WSL2 + Docker Desktop) while
+cutting the 1.0.0.174 preview. It cost four attempts across three different
+tools before the pattern was visible, and the first diagnosis was wrong.
+
+The failure, three times, at three paths:
+
+```
+make repo-amd64
+  mkdir -p …/out/os7-repo …/out/os7-gnupg
+  mkdir: Already exists
+  make: *** [Makefile:212: repo-amd64] Error 1
+
+run-s5.py install
+  os.makedirs(self.dir, exist_ok=True)
+  FileExistsError: [Errno 17] File exists: '…/.vm/s5'
+
+run-s5.py install, next path
+  FileExistsError: [Errno 17] File exists: '…/.vm/s5/tpm'
+```
+
+Measured on `…/.vm/s5`, and this is the whole of it:
+
+```
+mkdir -p  …/.vm/s5            EEXIST
+stat      …/.vm/s5            ENOENT   (os error 2)
+Windows   Test-Path .vm\s5    False
+mkdir -p  …/.vm/zzz-probe     rc=0     (same parent, never bind-mounted)
+grep s5 /proc/mounts          nothing
+```
+
+**The path exists to the syscall that creates and does not exist to the syscall
+that looks**, Windows agrees it is not there, and it is not a mount entry. A
+sibling in the same directory that Docker has never touched works normally.
+
+**What the three affected paths have in common is that this repository
+bind-mounts them into containers** — `out/os7-repo` is `-v …/out/os7-repo:/out`
+in the Makefile's `BUILD_REPO`, and `.vm/s5` and `.vm/s5/tpm` are the bench and
+its swtpm state, mounted into `os7-vm:amd64`. That is the pattern; the mechanism
+below it is NOT established here and is not claimed.
+
+**`exist_ok=True` is no defence, and the reason is worth knowing.**
+`os.makedirs` swallows `FileExistsError` only if a following `path.isdir()`
+agrees the directory is there. Here `isdir()` says no, so the exception is
+re-raised — the flag is defeated by exactly the contradiction it looks like it
+should absorb. Every Python harness in `installer/testing/` uses that idiom.
+
+**The workaround is cheap: create the directory from WINDOWS.** PowerShell's
+`New-Item -ItemType Directory` succeeds, and WSL then sees it immediately and
+`mkdir -p` returns 0. `wsl --shutdown` would presumably drop whatever is cached,
+but it also stops Docker Desktop's distro and was not tried.
+
+**The first diagnosis was wrong and is recorded because it was plausible.**
+Ubuntu 26.04 ships **uutils** coreutils rather than GNU's, and `mkdir: Already
+exists` is uutils' wording — so the first conclusion was that uutils' `mkdir -p`
+is not idempotent over several operands on drvfs, and the Makefile was patched
+to split the call. The rerun refuted it: it failed again, and `gnumkdir` — GNU's,
+in the same image — fails at the same path. The patch was reverted. What made
+the wrong answer attractive is that the message names **no path at all**, so
+there was nothing in it to point at the one operand that was special.
+
+Two things follow for anything that builds here:
+
+* **`mkdir -p` is not reliably idempotent on `/mnt/c` for a path Docker has
+  mounted**, so a build step that assumes it can lose an hour to a message that
+  says a directory both exists and does not.
+* **"Already exists" for something that does not exist is the least helpful
+  message in this file**, and it is worth recognising on sight: check the
+  Windows side before believing either half of it.
