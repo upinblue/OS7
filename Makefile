@@ -77,7 +77,34 @@ SOURCE_FACTS = $(addprefix -e ,$(shell $(CURDIR)/scripts/os7-source-facts.sh $(C
 # Override with `make KEYDIR=/path/to/real/gnupghome …` to sign with a real
 # key; the container sees whatever directory is mounted here.
 KEYDIR   ?= $(OUT)/os7-gnupg
-KEY_ARGS  = -v $(KEYDIR):/os7-gnupg -e OS7_REPO_GNUPGHOME=/os7-gnupg
+
+# THE SUCCESSOR KEY, TRUSTED BEFORE IT IS USED (CURATION-AND-DELIVERY-PLAN
+# §6.3). A HOST path to the PUBLIC half of the release key, mounted read-only so
+# build/lib/os7-signing-key.sh can put it in the trust anchor beside the signer.
+#
+# This is load-bearing and its absence is invisible. apt verifies a repository
+# with the keyring the RUNNING system has — Update-OS7 writes `Signed-By:` into
+# the clone, and the clone is a copy of the environment that is running — so a
+# machine can only ever be moved to a release signed by a key it ALREADY trusts.
+# An ISO whose anchor holds one key can never be handed a second one; the only
+# route left is reinstallation. Set this before the first medium leaves the
+# building, or the decision is made by default and cannot be revisited.
+#
+#   make build-amd64 OS7_RELEASE_PUBKEY=/mnt/c/Users/<you>/.os7/os7-release-key.pub
+#
+# A HOST path outside this repository, and deliberately not a file in the tree:
+# a public git repository is the wrong place for a release key's public half too,
+# because then rotating the key looks like a code change. Empty means
+# "signer only", which is what every build did before this line existed.
+OS7_RELEASE_PUBKEY ?=
+
+KEY_ARGS  = -v $(KEYDIR):/os7-gnupg -e OS7_REPO_GNUPGHOME=/os7-gnupg $(TRUST_ARGS)
+ifneq ($(strip $(OS7_RELEASE_PUBKEY)),)
+TRUST_ARGS = -v $(OS7_RELEASE_PUBKEY):/os7-trust/release.pub:ro \
+             -e OS7_REPO_TRUST_PUBKEYS=/os7-trust/release.pub
+else
+TRUST_ARGS =
+endif
 
 .PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
         build-amd64-vm build-amd64-vm-reset repo-amd64 repo-arm64 \

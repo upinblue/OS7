@@ -117,9 +117,15 @@ background occurrence (§3.4). Commit. Do not commit again until step 7.
 ### 1–2. Build both media from that commit
 
 ```bash
+docker run --privileged --rm tonistiigi/binfmt --install arm64   # EVERY release
 make build-amd64      # x64 Windows, native, ~20 min
 make build-arm64      # emulated on the same box, ~50 min (see §7.1)
 ```
+
+The first line is not optional and not once-per-machine: the registration is
+lost on a Docker Desktop restart, and what fails afterwards says
+`exec format error` about a shell script (§7.1). Read its JSON back and require
+`linux/arm64` and `qemu-aarch64` in it.
 
 ### 3. Ask the artefacts what they are
 
@@ -260,19 +266,35 @@ That splits cleanly for the repository and not at all for the ISOs:
 | `repo/` | apt on an OS/7 machine | **Yes** — apt does Basic auth out of `/etc/apt/auth.conf.d/`. A read-only sub-account restricted to `os7/repo` is exactly the shape; Hetzner's own note that a read-only box "allows HTTP GET requests only" describes apt's access pattern precisely. |
 | `iso/` | a browser, from the download page | **No.** A public download link cannot carry a password. |
 
-**OPEN — RP1: where the public ISO download is served from.** Three candidates,
-none chosen:
+**OPEN — RP1: where the public ISO download is served from.** Constrained
+2026-09-01: **no self-run server.** That rules out the obvious answer (a small
+cloud instance with Caddy in front of the box) and leaves three that respect it.
 
-1. A small Hetzner Cloud server (CAX, ARM64, ~6 €/month, 20 TB traffic) running
-   Caddy in front of the Storage Box. It solves the ISOs *and* removes the apt
-   credential entirely, and a CAX builds arm64 natively — which is the other
-   thing this repository owes.
-2. Storage Share public links for the ISOs alone. No server, but the links are
-   per-file and manual, which is the kind of step that gets forgotten.
-3. Credentialed downloads on the site. Rejected here: a password on a public
+1. **Nothing, yet — the Storage Box covers the whole product while OS/7 is
+   `development` or `preview`.** No release has been published, so there is no
+   anonymous audience to serve. Named testers get their own read-only
+   sub-account; machines get the repo over WebDAV. This is not a workaround, it
+   is the honest shape for a product whose own `OS7_CHANNEL` says it is not
+   finished, and it defers RP1 to the first `stable` without blocking anything.
+2. **Storage Share (Hetzner's managed Nextcloud) for the ISOs, from the first
+   `stable` on.** Public share links, no server, and — measured on Hetzner's own
+   page — **unlimited external traffic**, which matters because the ISOs are the
+   only part of this product that moves real bandwidth. A *folder* share is one
+   link for all releases, not one per file, so publishing an ISO into the shared
+   folder needs no new link and no manual step per release.
+3. **Credentialed downloads on the site.** Rejected: a password on a public
    download page is not a control, it is a decoration.
 
-Until RP1 is answered, the repository half can proceed and the ISO half cannot.
+**Untested, and it would collapse both halves onto one product:** Nextcloud
+exposes a public share over WebDAV at `/public.php/webdav`, with the share token
+as the username and an empty password. If apt reads that, Storage Share serves
+the repository *and* the ISOs, and the "credential" is a public token rather
+than a secret — RP3 would disappear with it. This is a guess, not a measurement.
+It costs one container and one `apt update` to settle, and it should be settled
+before RP1 is answered, because a yes changes the answer.
+
+Until RP1 is answered, the repository half can proceed and the anonymous ISO
+half cannot.
 
 ### 4.2 The credential, if the repository stays on WebDAV
 
@@ -332,6 +354,21 @@ the qemu-aarch64 handler. Measured: debootstrap completes (BUILD-NOTES #12/#23's
 failure is specific to the *other* direction), the NativeAOT publish for
 `linux-arm64` succeeds, all nine OS/7 `.debs` build, hook 0022 installs them and
 the `dpkg-divert` of `/usr/lib/os-release` takes. ~50 minutes against ~5 native.
+
+**THE REGISTRATION DOES NOT SURVIVE A DOCKER DESKTOP RESTART, and its failure
+does not name itself.** Measured 2026-09-02: a day after a successful arm64 ISO
+build, `docker run --privileged --rm tonistiigi/binfmt` listed
+`linux/{amd64,amd64/v2,amd64/v3,386}` and emulator `python3.14` alone — no
+`linux/arm64`, no `qemu-aarch64`. `make repo-arm64` then died on
+
+```
+exec /work/build/lib/build-os7-repo.sh: exec format error
+```
+
+which reads like a corrupt script and is in fact a missing interpreter for the
+whole architecture. **Re-run the `--install arm64` line at the start of every
+release, before the first arm64 target**, and read its JSON back rather than
+assuming it took — the same rule as everywhere else here.
 
 The first run stopped at **hook 0070**, on a defect that has been in `main` since
 `467f2ee` (2026-08-26) and that four days of amd64 builds could not see: the hook
@@ -409,8 +446,8 @@ and the twin-version preference).
 
 | # | Question |
 |---|---|
-| **RP1** | Where the public ISO download is served from (§4.1). Blocks the website half of every release. |
-| **RP2** | Whether apt actually reads a Hetzner WebDAV endpoint with Basic auth. Never tried. A ~20-minute test against a real box, and it must be done before anything depends on it. |
+| **RP1** | Where the public ISO download is served from (§4.1), given that a self-run server is ruled out. Blocks the anonymous half of the website, and nothing before the first `stable`. |
+| **RP2** | Whether apt actually reads a Hetzner WebDAV endpoint with Basic auth. Never tried. A ~20-minute test against a real box, and it must be done before anything depends on it. **Same test settles the Nextcloud `/public.php/webdav` question in §4.1, which is the one answer that would retire RP1 and RP3 together.** |
 | **RP3** | The credential's rotation path, if the repository stays on WebDAV (§4.2). |
 | **RP4** | Cadence. U5 proposes monthly `stable` plus out-of-band hotfixes; the number itself is a business decision and is still unmade. |
 | **RP5** | Support window per Major, and how long `attic/` keeps a withdrawn release. Both are needed before a customer asks, and neither is written anywhere. |
