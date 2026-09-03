@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
-# OS/7 — the two credentials a release needs, set up once, on the operator's
-# machine and nowhere else.
+# OS/7 — the credentials a release needs, set up once, on the operator's machine
+# and nowhere else.
 #
 #   scripts/setup-release-credentials.sh
 #
@@ -10,6 +10,20 @@
 #   1. the release signing key            ~/.os7/gnupg-release      (secret half)
 #      its public half exported to        $OS7_DIR/os7-release-key.pub
 #   2. the Storage Box configuration      $OS7_DIR/storagebox.conf  (mode 0600)
+#   3. the os7.org webspace credential    $OS7_DIR/webspace.conf    (mode 0600)
+#
+# It is IDEMPOTENT: run it again and it reports what already exists and asks
+# only for what does not. That is how the third artefact was added without
+# anybody having to retype the first two.
+#
+# THREE IDENTITIES, THREE SCOPES, AND THAT IS THE DESIGN RATHER THAN CAUTION.
+# The Storage Box credential in (2) is the READ-ONLY sub-account whose password
+# ships in /etc/apt/auth.conf.d/ on every installed machine — if it could write,
+# one compromised endpoint could rewrite the repository every other machine
+# updates from. The webspace credential in (3) is a SECOND FTP user scoped to
+# /iso/, never the one that deploys the site: os7-web's publish-release.py makes
+# that argument in its own words. And (1) is only ever exported as a public half;
+# the secret never goes near a build (C7a).
 #
 # WHY A SCRIPT AND NOT A LIST OF COMMANDS. Both of these were attempted as
 # one-liners and both failed for reasons that had nothing to do with GnuPG:
@@ -57,10 +71,50 @@ KEY_UID="${OS7_RELEASE_KEY_UID:-OS/7 release signing key <release@os7.org>}"
 KEY_MAIL="${OS7_RELEASE_KEY_MAIL:-release@os7.org}"
 PUBKEY_OUT="${OS7_DIR}/os7-release-key.pub"
 SB_CONF="${OS7_DIR}/storagebox.conf"
+WEB_CONF="${OS7_DIR}/webspace.conf"
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n>>> %s\n' "$*"; }
 die()  { printf '\n!!! %s\n' "$*" >&2; exit 1; }
+
+# report_mode <file> — SAY WHAT THE MODE ACTUALLY IS, not what was asked for.
+#
+# MEASURED 2026-09-02: a config written under `umask 077` and then `chmod 0600`
+# came out 777, because /mnt/c is drvfs and carries no POSIX modes — chmod
+# returns success and changes nothing. What protects the file there is the NTFS
+# ACL of the profile directory (SYSTEM, Administrators and the user, with no
+# Users group), which is adequate. Claiming a mode that was not achieved is not.
+report_mode() {
+	local f="$1" mode winpath drive
+	mode="$(stat -c '%a' "${f}" 2>/dev/null || echo '?')"
+	if [[ "${mode}" == "600" ]]; then
+		say "    mode 600"
+		return 0
+	fi
+	say "    NOTE: the mode is ${mode}, not 600."
+	case "${f}" in
+		/mnt/*|/media/*|/cygdrive/*)
+			say "          ${f} is on a Windows mount, which carries no POSIX"
+			say "          modes: chmod succeeds and changes nothing. The file is"
+			say "          protected by the NTFS ACL of your profile directory rather"
+			say "          than by a mode. Confirm it in PowerShell with"
+			# A PowerShell hint must carry a WINDOWS path: printing the /mnt/c
+			# form into a PowerShell command is advice that cannot be followed,
+			# which is worse than no advice.
+			winpath="${f}"
+			case "${winpath}" in
+				/mnt/?/*)
+					drive="${winpath:5:1}"
+					winpath="${drive^^}:${winpath:6}"
+					winpath="${winpath//\//\\}" ;;
+			esac
+			say "              (Get-Acl '${winpath}').Access"
+			say "          and expect SYSTEM, Administrators and you — nothing else." ;;
+		*)
+			say "          that is unexpected on a Linux filesystem, and this file"
+			say "          holds a password. Fix it before anything reads it." ;;
+	esac
+}
 
 # ---------------------------------------------------------------------------
 # 0. The environment this needs, asked rather than assumed
@@ -204,41 +258,7 @@ else
 	unset SB_PW SB_PW2
 	chmod 0600 "${SB_CONF}" 2>/dev/null || true
 
-	# ASK WHAT THE MODE ACTUALLY IS, because on a Windows mount it will not be
-	# what was asked for and nothing says so. MEASURED 2026-09-02: drvfs carries
-	# no POSIX modes, so `umask 077` does not apply and `chmod 0600` returns
-	# success while changing nothing — the file came out 777. What protects it
-	# there is the NTFS ACL of the profile directory (SYSTEM, Administrators and
-	# the user, with no Users group), which is adequate. Claiming a mode that was
-	# not achieved is not.
-	SB_MODE="$(stat -c '%a' "${SB_CONF}" 2>/dev/null || echo '?')"
-	if [[ "${SB_MODE}" == "600" ]]; then
-		say "    mode 600"
-	else
-		say "    NOTE: the mode is ${SB_MODE}, not 600."
-		case "${SB_CONF}" in
-			/mnt/*|/media/*|/cygdrive/*)
-				say "          ${SB_CONF} is on a Windows mount, which carries no POSIX"
-				say "          modes: chmod succeeds and changes nothing. The file is"
-				say "          protected by the NTFS ACL of your profile directory rather"
-				say "          than by a mode. Confirm it in PowerShell with"
-				# A PowerShell hint must carry a WINDOWS path: printing the
-				# /mnt/c form into a PowerShell command is advice that cannot
-				# be followed, which is worse than no advice.
-				_winpath="${SB_CONF}"
-				case "${_winpath}" in
-					/mnt/?/*)
-						_drive="${_winpath:5:1}"
-						_winpath="${_drive^^}:${_winpath:6}"
-						_winpath="${_winpath//\//\\}" ;;
-				esac
-				say "              (Get-Acl '${_winpath}').Access"
-				say "          and expect SYSTEM, Administrators and you — nothing else." ;;
-			*)
-				say "          that is unexpected on a Linux filesystem, and this file"
-				say "          holds a password. Fix it before anything reads it." ;;
-		esac
-	fi
+	report_mode "${SB_CONF}"
 
 	# Read it back for SHAPE, never for content: a file that was written is not
 	# a file that parses, and the next thing to read it is a test that talks to
@@ -251,7 +271,60 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. What is still owed, said here so it is not discovered later
+# 4. The os7.org webspace — where the ISOs are downloaded FROM
+# ---------------------------------------------------------------------------
+step "the os7.org webspace (the public ISO download)"
+
+if [[ -f "${WEB_CONF}" ]]; then
+	say "    ${WEB_CONF} exists — leaving it alone"
+	grep -oE '^[A-Z0-9_]+' "${WEB_CONF}" 2>/dev/null | sed 's/^/        /'
+else
+	say "    ${WEB_CONF} does not exist yet."
+	say ""
+	say "    THIS IS NOT THE ACCOUNT THAT DEPLOYS THE SITE, and that is the point."
+	say "    os7-web's publish-release.py says so in its own words: the deploy"
+	say "    workflow's FTP secret is deliberately not reused, because that user"
+	say "    syncs site/ and must not be the one that can write 3 GB into /iso/."
+	say "    Create a SECOND FTP user in konsoleH, scoped to /iso/, and give it"
+	say "    here. The GitHub secret cannot be read back by anyone, including"
+	say "    this script — Actions secrets are one-way by design."
+	say ""
+	read -r -p "    webspace host             [www762.your-server.de] : " WEB_HOST
+	WEB_HOST="${WEB_HOST:-www762.your-server.de}"
+	read -r -p "    FTP user for /iso/                                : " WEB_USER
+	[[ -n "${WEB_USER}" ]] || die "no user given. Nothing written."
+	read -r -s -p "    password of ${WEB_USER}                        : " WEB_PW; echo
+	read -r -s -p "    again                                             : " WEB_PW2; echo
+	[[ "${WEB_PW}" == "${WEB_PW2}" ]] || die "the two passwords differ. Nothing written."
+	[[ -n "${WEB_PW}" ]] || die "an empty password. Nothing written."
+
+	( umask 077; cat > "${WEB_CONF}" <<-EOF
+		# OS/7 — the os7.org webspace, for uploading the installation images.
+		# Written by scripts/setup-release-credentials.sh.
+		# OUTSIDE both repositories on purpose: OS7 is public, os7-web is not
+		# the place for a credential either.
+		#
+		# The images go in /iso/ at the webspace root and are served publicly as
+		# https://os7.org/download/OS7-<version>-<arch>.iso via .htaccess.
+		# ONE release fits the 10 GB package and two do not, so the old images
+		# come off BEFORE the new ones go on.
+		OS7_WEB_HOST=${WEB_HOST}
+		OS7_WEB_ISO_USER=${WEB_USER}
+		OS7_WEB_ISO_PASSWORD=${WEB_PW}
+	EOF
+	) || die "cannot write ${WEB_CONF}"
+	unset WEB_PW WEB_PW2
+	chmod 0600 "${WEB_CONF}" 2>/dev/null || true
+	report_mode "${WEB_CONF}"
+
+	# shellcheck disable=SC1090
+	( set -a; . "${WEB_CONF}"; set +a
+	  [[ -n "${OS7_WEB_HOST:-}" && -n "${OS7_WEB_ISO_USER:-}" && -n "${OS7_WEB_ISO_PASSWORD:-}" ]] ) 		|| die "${WEB_CONF} was written and does not parse into the three fields."
+	say "    written and parses: ${WEB_CONF}"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. What is still owed, said here so it is not discovered later
 # ---------------------------------------------------------------------------
 step "done — and one thing is still owed"
 
