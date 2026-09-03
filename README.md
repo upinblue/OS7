@@ -24,11 +24,11 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 > not shipped, and this is a preview of it. The machine says so itself: a person sees
 > `OS/7 1.0.0 (preview)` in `PRETTY_NAME`, `/etc/issue`, the MOTD and every Setup screen.
 >
-> **The two architectures do not carry the same evidence.** x86-64 was installed and
-> driven on a machine for this release; arm64 was checked as an artefact and **never
-> booted**. Entra ID sign-in does not work yet — the broker is absent from the image —
-> no OS/7 machine has ever joined a domain, and the backup code has never run on a
-> machine. Please don't put this on hardware you care about.
+> **Both architectures install and boot** — arm64 as a server, x86-64 as a desktop with
+> GNOME, Edge, the Intune portal and VS Code. Entra ID sign-in does not work yet — the
+> broker is absent from the image — Secure Boot is untested on x86-64, no OS/7 machine
+> has ever joined a domain, and the backup code has never run on a machine. Please don't
+> put this on hardware you care about.
 >
 > What was measured for 1.0.0.175, and what was not, is listed in the
 > [release notes](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview).
