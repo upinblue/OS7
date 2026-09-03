@@ -9,11 +9,11 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m c[0m
 [32;1m               [0m[32;1m                                                   [0m[32;1m           [0m[32;1m e[0m
 [32;1m-----------    [0m [32;1m----                                              [0m [32;1m-------   [0m [32;1m-[0m
-Function        Get-OS7BackupCoverage                              1.0.0.161  O
-Function        Get-OS7BackupPolicy                                1.0.0.161  O
-Function        Get-OS7BackupStatus                                1.0.0.161  O
-Function        Get-OS7BackupTarget                                1.0.0.161  O
-Function        Get-OS7BootEnvironment                             1.0.0.161  O
+Function        Get-OS7BackupCoverage                              1.0.0.175  O
+Function        Get-OS7BackupPolicy                                1.0.0.175  O
+Function        Get-OS7BackupStatus                                1.0.0.175  O
+Function        Get-OS7BackupTarget                                1.0.0.175  O
+Function        Get-OS7BootEnvironment                             1.0.0.175  O
 
 [6n
 PS /home/os7admin> [?1h[6n

@@ -6,7 +6,7 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1m----                                              [0m [32;1m----------[0m
 bpool                                              /boot
 bpool/BOOT                                         
-bpool/BOOT/os7_1.0.0.161_202608301009              /boot
+bpool/BOOT/os7_1.0.0.175_202609030759              /boot
 rpool                                              /
 rpool/DATA                                         
 rpool/DATA/lib                                     
@@ -19,15 +19,15 @@ rpool/DATA/spool                                   /var/spool
 rpool/DATA/srv                                     /srv
 rpool/DATA/tmp                                     /var/tmp
 rpool/ROOT                                         
-rpool/ROOT/os7_1.0.0.161_202608301009              /
-rpool/ROOT/os7_1.0.0.161_202608301009/var          /var
-rpool/ROOT/os7_1.0.0.161_202608301009/var/cache    /var/cache
-rpool/ROOT/os7_1.0.0.161_202608301009/var/lib      /var/lib
-rpool/ROOT/os7_1.0.0.161_202608301009/var/lib/apt  /var/lib/apt
-rpool/ROOT/os7_1.0.0.161_202608301009/var/lib/dpkg /var/lib/dpkg
+rpool/ROOT/os7_1.0.0.175_202609030759              /
+rpool/ROOT/os7_1.0.0.175_202609030759/var          /var
+rpool/ROOT/os7_1.0.0.175_202609030759/var/cache    /var/cache
+rpool/ROOT/os7_1.0.0.175_202609030759/var/lib      /var/lib
+rpool/ROOT/os7_1.0.0.175_202609030759/var/lib/apt  /var/lib/apt
+rpool/ROOT/os7_1.0.0.175_202609030759/var/lib/dpkg /var/lib/dpkg
 rpool/USERDATA                                     
-rpool/USERDATA/os7admin_8caded3b                   /home/os7admin
-rpool/USERDATA/root_8caded3b                       /root
+rpool/USERDATA/os7admin_d5712bc8                   /home/os7admin
+rpool/USERDATA/root_d5712bc8                       /root
 
 [6n
 PS /home/os7admin> [?1h[6n

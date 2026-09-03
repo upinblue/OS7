@@ -10,7 +10,8 @@ ZFS boot environments so an update can be undone — on top of Ubuntu 26.04 LTS.
 [![Shell](https://img.shields.io/badge/shell-PowerShell%207.6-5391FE?logo=powershell&logoColor=white)](https://learn.microsoft.com/powershell/)
 [![Root](https://img.shields.io/badge/root-ZFS%20on%20LUKS2-0057ad)](installer/SETUP-PLAN.md)
 [![Arch](https://img.shields.io/badge/arch-x86--64%20%7C%20arm64-555555)](#system-requirements)
-[![Status](https://img.shields.io/badge/status-in%20development-ff6912)](#status)
+[![Status](https://img.shields.io/badge/status-preview-ff6912)](#status)
+[![Release](https://img.shields.io/badge/current-1.0.0.175%20preview-0057ad)](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Made by [up in blue GmbH](https://github.com/upinblue)
@@ -18,10 +19,19 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 </div>
 
 > [!WARNING]
-> **OS/7 is in active development and has not been released.** Both architectures
-> install and boot today: arm64 as a server, x86-64 as a desktop with GNOME, Edge,
-> Intune and VS Code. Entra ID sign-in does not work yet, and Secure Boot and rollback
-> are untested on x86-64. Please don't put this on hardware you care about.
+> **The current state is a PREVIEW: [1.0.0.175](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview),
+> published 2026-09-03.** It is the first state of OS/7 ever published — `1.0.0` has
+> not shipped, and this is a preview of it. The machine says so itself: a person sees
+> `OS/7 1.0.0 (preview)` in `PRETTY_NAME`, `/etc/issue`, the MOTD and every Setup screen.
+>
+> **The two architectures do not carry the same evidence.** x86-64 was installed and
+> driven on a machine for this release; arm64 was checked as an artefact and **never
+> booted**. Entra ID sign-in does not work yet — the broker is absent from the image —
+> no OS/7 machine has ever joined a domain, and the backup code has never run on a
+> machine. Please don't put this on hardware you care about.
+>
+> What was measured for 1.0.0.175, and what was not, is listed in the
+> [release notes](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview).
 > [What works](#status) is listed below.
 
 ---

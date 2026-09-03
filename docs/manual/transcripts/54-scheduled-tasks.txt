@@ -1,20 +1,20 @@
-e2scrub_all.timer              09/06/2026 03:10:39 08/30/2026 12:15:15
-fstrim.timer                   08/31/2026 00:08:06 08/30/2026 12:15:15
-fwupd-refresh.timer            08/30/2026 13:32:17 08/30/2026 12:15:15
-logrotate.timer                08/31/2026 00:26:06 08/30/2026 12:15:15
-man-db.timer                   08/31/2026 05:18:14 08/30/2026 12:15:15
-motd-news.timer                08/30/2026 15:09:24 08/30/2026 12:15:15
-os7-backup-replicate.timer     08/30/2026 13:09:06 08/30/2026 12:15:16
-os7-update-check.timer         08/31/2026 00:00:48 08/30/2026 12:15:16
-sanoid.timer                   08/30/2026 12:45:00 08/30/2026 12:30:15
+e2scrub_all.timer              09/06/2026 03:10:17
+fstrim.timer                   09/07/2026 00:56:44
+fwupd-refresh.timer            09/03/2026 11:51:51
+logrotate.timer                09/04/2026 00:20:44
+man-db.timer                   09/04/2026 02:23:23
+motd-news.timer                09/03/2026 20:40:43
+os7-backup-replicate.timer     09/03/2026 11:09:07
+os7-update-check.timer         09/04/2026 00:27:23
+sanoid.timer                   09/03/2026 10:15:00
 snapd.snap-repair.timer
-sysstat-collect.timer          08/30/2026 12:40:00
-sysstat-rotate.timer           08/31/2026 00:00:00
-sysstat-summary.timer          08/31/2026 00:07:00
-systemd-tmpfiles-clean.timer   08/30/2026 12:48:22
+sysstat-collect.timer          09/03/2026 10:10:00
+sysstat-rotate.timer           09/04/2026 00:00:00
+sysstat-summary.timer          09/04/2026 00:07:00
+systemd-tmpfiles-clean.timer   09/03/2026 10:20:30
 ua-timer.timer
-update-notifier-download.timer 08/30/2026 12:38:28
-update-notifier-motd.timer     09/12/2026 18:23:48 08/30/2026 12:15:28
+update-notifier-download.timer 09/03/2026 10:10:54
+update-notifier-motd.timer     09/10/2026 19:21:09
 zfs-scrub-monthly@.timer
 zfs-scrub-weekly@.timer
 zfs-trim-monthly@.timer

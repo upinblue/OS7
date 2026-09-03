@@ -5,7 +5,7 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [31;1m[0m[36;1mLine |[0m
 [31;1m[0m[36;1m[36;1m 417 | [0m         [36;1mthrow [System.InvalidOperationException]::new([0m
 [31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
-[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mno release index for channel 'development' at file:///usr/lib/os7/repo.[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mno release index for channel 'preview' at file:///usr/lib/os7/repo.[0m
 [31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mEither the channel is wrong or this machine is pointed at something that[0m
 [31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mis not an OS/7 repository — see Set-OS7UpdateChannel.[0m
 [6n

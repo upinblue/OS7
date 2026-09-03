@@ -4,10 +4,10 @@ PS /home/os7admin> [?1h[6n([6n[24;81H[24;80H(T[6n[24;82H[24;80H(Te[6n[
 [?1l
 [32;1mName  [0m[32;1m Host                     [0m[32;1m Port[0m[32;1m Reachable[0m[32;1m Detail[0m
 [32;1m----  [0m [32;1m----                     [0m [32;1m----[0m [32;1m---------[0m [32;1m------                         [0m
-Entra  login.microsoftonline.com  443      True connected in 43 ms             
-Graph  graph.microsoft.com        443      True connected in 28 ms             
+Entra  login.microsoftonline.com  443      True connected in 31 ms             
+Graph  graph.microsoft.com        443      True connected in 24 ms             
 Intune manage.microsoft.com       443     False One or more errors occurred. (…
-Arc    management.azure.com       443      True connected in 24 ms             
+Arc    management.azure.com       443      True connected in 87 ms             
 
 [6n
 PS /home/os7admin> [?1h[6n

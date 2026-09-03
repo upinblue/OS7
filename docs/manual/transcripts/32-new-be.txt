@@ -1,16 +1,16 @@
 T/demo/var/cache
-ZFS-STEP clone rpool/ROOT/os7_1.0.0.161_202608301009/var/lib@demo -> rpool/ROOT/
+ZFS-STEP clone rpool/ROOT/os7_1.0.0.175_202609030759/var/lib@demo -> rpool/ROOT/
 demo/var/lib
-ZFS-STEP clone rpool/ROOT/os7_1.0.0.161_202608301009/var/lib/apt@demo -> rpool/R
+ZFS-STEP clone rpool/ROOT/os7_1.0.0.175_202609030759/var/lib/apt@demo -> rpool/R
 OOT/demo/var/lib/apt
-ZFS-STEP clone rpool/ROOT/os7_1.0.0.161_202608301009/var/lib/dpkg@demo -> rpool/
+ZFS-STEP clone rpool/ROOT/os7_1.0.0.175_202609030759/var/lib/dpkg@demo -> rpool/
 ROOT/demo/var/lib/dpkg
-ZFS-STEP clone bpool/BOOT/os7_1.0.0.161_202608301009@demo -> bpool/BOOT/demo
+ZFS-STEP clone bpool/BOOT/os7_1.0.0.175_202609030759@demo -> bpool/BOOT/demo
 OS7-STEP boot environment demo created, inactive
 
 Name        : demo
 Release     :
-Created     : 08/30/2026 12:34:28
+Created     : 09/03/2026 10:07:08
 Active      : False
 Running     : False
 Menu        : False
@@ -18,7 +18,7 @@ Complete    : True
 RootDataset : rpool/ROOT/demo
 BootDataset : bpool/BOOT/demo
 Used        : 32768
-Origin      : rpool/ROOT/os7_1.0.0.161_202608301009@demo
+Origin      : rpool/ROOT/os7_1.0.0.175_202609030759@demo
 
 
 PS /home/os7admin>

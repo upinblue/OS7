@@ -1,13 +1,13 @@
-Name        : os7_1.0.0.161_202608301009
-Release     : 1.0.0.161
-Created     : 08/30/2026 12:09:30
+Name        : os7_1.0.0.175_202609030759
+Release     : 1.0.0.175
+Created     : 09/03/2026 09:59:29
 Active      : True
 Running     : True
 Menu        : True
 Complete    : True
-RootDataset : rpool/ROOT/os7_1.0.0.161_202608301009
-BootDataset : bpool/BOOT/os7_1.0.0.161_202608301009
-Used        : 4821336064
+RootDataset : rpool/ROOT/os7_1.0.0.175_202609030759
+BootDataset : bpool/BOOT/os7_1.0.0.175_202609030759
+Used        : 4833701888
 Origin      :
 
 

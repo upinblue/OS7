@@ -9,8 +9,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0mstatic
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1506
-[32;1mActiveSince  : [0m08/30/2026 10:33:29
+[32;1mMainPid      : [0m6657
+[32;1mActiveSince  : [0m09/03/2026 08:06:05
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0mnotify
 [32;1mHealthy      : [0mTrue
@@ -22,8 +22,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1206
-[32;1mActiveSince  : [0m08/30/2026 10:33:28
+[32;1mMainPid      : [0m6363
+[32;1mActiveSince  : [0m09/03/2026 08:06:04
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0mnotify
 [32;1mHealthy      : [0mTrue
@@ -48,7 +48,7 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m0
+[32;1mMainPid      : [0m6403
 [32;1mActiveSince  : [0m
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
@@ -76,6 +76,19 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mRestartCount : [0m0
 [32;1mMainPid      : [0m0
 [32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0moneshot
+[32;1mHealthy      : [0mTrue
+
+[32;1mName         : [0mos7-sshd-keygen.service
+[32;1mDescription  : [0mOS/7 SSH host key generation
+[32;1mActiveState  : [0mactive
+[32;1mSubState     : [0mexited
+[32;1mStartupType  : [0mdisabled
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m6370
+[32;1mActiveSince  : [0m09/03/2026 08:06:04
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -145,6 +158,19 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
 
+[32;1mName         : [0msshd@os7-sshd-keygen.service
+[32;1mDescription  : [0mOpenBSD Secure Shell server per-connection daemon
+[32;1mActiveState  : [0minactive
+[32;1mSubState     : [0mdead
+[32;1mStartupType  : [0mstatic
+[32;1mResult       : [0msuccess
+[32;1mRestartCount : [0m0
+[32;1mMainPid      : [0m0
+[32;1mActiveSince  : [0m
+[32;1mIsOS7        : [0mTrue
+[32;1mServiceType  : [0mexec
+[32;1mHealthy      : [0mTrue
+
 [32;1mName         : [0msshd@sshd-keygen.service
 [32;1mDescription  : [0mOpenBSD Secure Shell server per-connection daemon
 [32;1mActiveState  : [0minactive
@@ -165,8 +191,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m638
-[32;1mActiveSince  : [0m08/30/2026 10:33:25
+[32;1mMainPid      : [0m645
+[32;1mActiveSince  : [0m09/03/2026 08:05:53
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0mnotify-reload
 [32;1mHealthy      : [0mTrue
@@ -178,8 +204,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m801
-[32;1mActiveSince  : [0m08/30/2026 10:33:26
+[32;1mMainPid      : [0m795
+[32;1mActiveSince  : [0m09/03/2026 08:05:54
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -191,8 +217,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m799
-[32;1mActiveSince  : [0m08/30/2026 10:33:26
+[32;1mMainPid      : [0m792
+[32;1mActiveSince  : [0m09/03/2026 08:05:54
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -204,8 +230,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m899
-[32;1mActiveSince  : [0m08/30/2026 10:33:26
+[32;1mMainPid      : [0m891
+[32;1mActiveSince  : [0m09/03/2026 08:05:54
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -217,8 +243,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1222
-[32;1mActiveSince  : [0m08/30/2026 10:33:28
+[32;1mMainPid      : [0m6379
+[32;1mActiveSince  : [0m09/03/2026 08:06:04
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -230,8 +256,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m900
-[32;1mActiveSince  : [0m08/30/2026 10:33:26
+[32;1mMainPid      : [0m892
+[32;1mActiveSince  : [0m09/03/2026 08:05:54
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0moneshot
 [32;1mHealthy      : [0mTrue
@@ -243,8 +269,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mStartupType  : [0menabled
 [32;1mResult       : [0msuccess
 [32;1mRestartCount : [0m0
-[32;1mMainPid      : [0m1223
-[32;1mActiveSince  : [0m08/30/2026 10:33:28
+[32;1mMainPid      : [0m6381
+[32;1mActiveSince  : [0m09/03/2026 08:06:04
 [32;1mIsOS7        : [0mTrue
 [32;1mServiceType  : [0msimple
 [32;1mHealthy      : [0mTrue

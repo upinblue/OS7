@@ -1,24 +1,24 @@
-[  OK  ] Reached target getty.target - Login Prompts.
-[  OK  ] Started cups.service - CUPS Scheduler.
-[  OK  ] Reached target printer.target - Printer Support.
-[  OK  ] Started snapd.service - Snap Daemon.
+[  OK  ] Started authd.service - authd daemon service.
          Starting systemd-timedated.service - Time & Date Service...
 [  OK  ] Started systemd-timedated.service - Time & Date Service.
 [  OK  ] Finished snapd.seeded.service - Wait until snapd is fully seeded.
-[  OK  ] Finished systemd-networkd-wait-onl…ce - Wait for Network to be Online.
-[  OK  ] Reached target network-online.target - Network is Online.
-[  OK  ] Started update-notifier-download.t…hat failed at package install time.
-[  OK  ] Started update-notifier-motd.timer… a new version of Ubuntu available.
-[  OK  ] Reached target timers.target - Timer Units.
-[  OK  ] Started cups-browsed.service - Mak…te CUPS printers available locally.
+[  OK  ] Finished os7-backup-firstboot.serv… OS/7 first-boot backup enablement.
 [  OK  ] Reached target multi-user.target - Multi-User System.
 
-OS/7 1.0.0 (development) os7-s5 ttyS0
+OS/7 1.0.0 (preview) os7-s5 ttyS0
 
 os7-s5 login: os7admin
 Password:
-OS/7 1.0.0 (development)
-kernel 7.0.0-30-generic (x86_64), boot environment os7_1.0.0.161_202608301009
+OS/7 1.0.0 (preview)
+kernel 7.0.0-30-generic (x86_64), boot environment os7_1.0.0.175_202609030759
+
+
+The programs included with the Ubuntu system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Ubuntu comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
+applicable law.
 
 
 PS /home/os7admin>

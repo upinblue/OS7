@@ -5,7 +5,7 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 
 [32;1mInstalled      : [0mTrue
 [32;1mVersion        : [0m1.2607.4-resolute
-[32;1mBinaries       : [0m{intune-agent, intune-portal, intune-daemon}
+[32;1mBinaries       : [0m{intune-portal, intune-agent, intune-daemon}
 [32;1mPamConfigured  : [0mTrue
 [32;1mDaemonState    : [0minactive
 [32;1mDaemonHealthy  : [0mTrue

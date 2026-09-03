@@ -5,10 +5,10 @@ CommandType     Name                                               Version    S
                                                                               c
                                                                               e
 -----------     ----                                               -------    -
-Function        Get-OS7BootEnvironment                             1.0.0.161  O
-Function        New-OS7BootEnvironment                             1.0.0.161  O
-Function        Remove-OS7BootEnvironment                          1.0.0.161  O
-Function        Set-OS7BootEnvironment                             1.0.0.161  O
+Function        Get-OS7BootEnvironment                             1.0.0.175  O
+Function        New-OS7BootEnvironment                             1.0.0.175  O
+Function        Remove-OS7BootEnvironment                          1.0.0.175  O
+Function        Set-OS7BootEnvironment                             1.0.0.175  O
 
 
 PS /home/os7admin>

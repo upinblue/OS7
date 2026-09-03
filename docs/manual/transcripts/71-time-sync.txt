@@ -1,24 +1,24 @@
-OffsetSeconds      : 3.068E-06
+OffsetSeconds      : 0.00403131
 LeapStatus         : Normal
 WithinKerberosSkew : True
 MaxSkewSeconds     : 300
 Servers            : {1.ntp.ubuntu.com, 2.ntp.ubuntu.com, 3.ntp.ubuntu.com, 4.n
                      tp.ubuntu.com…}
-Sources            : {@{Mode=Server; State=Selected; Name=185.125.190.122; Stra
-                     tum=2; PollInterval=6; Reachability=37; LastReceived=63; O
-                     ffsetSeconds=-6.0196E-05; MeasuredOffsetSeconds=0.00359067
-                     5; EstimatedErrorSeconds=0.020002019}, @{Mode=Server; Stat
-                     e=Excluded; Name=185.125.190.123; Stratum=2; PollInterval=
-                     6; Reachability=37; LastReceived=61; OffsetSeconds=-0.0045
-                     44703; MeasuredOffsetSeconds=-0.004544703; EstimatedErrorS
-                     econds=0.019060012}, @{Mode=Server; State=Excluded; Name=9
-                     1.189.91.112; Stratum=2; PollInterval=6; Reachability=37;
-                     LastReceived=61; OffsetSeconds=0.002757828; MeasuredOffset
-                     Seconds=0.002757828; EstimatedErrorSeconds=0.079845622}, @
-                     {Mode=Server; State=Excluded; Name=91.189.91.113; Stratum=
-                     2; PollInterval=6; Reachability=37; LastReceived=62; Offse
-                     tSeconds=0.002829003; MeasuredOffsetSeconds=0.002829003; E
-                     stimatedErrorSeconds=0.080254242}…}
+Sources            : {@{Mode=Server; State=Combined; Name=185.125.190.122; Stra
+                     tum=2; PollInterval=6; Reachability=77; LastReceived=9; Of
+                     fsetSeconds=-0.002846244; MeasuredOffsetSeconds=-0.0028462
+                     44; EstimatedErrorSeconds=0.018977067}, @{Mode=Server; Sta
+                     te=Selected; Name=185.125.190.123; Stratum=2; PollInterval
+                     =6; Reachability=77; LastReceived=9; OffsetSeconds=0.00130
+                     1053; MeasuredOffsetSeconds=-0.002862041; EstimatedErrorSe
+                     conds=0.020148702}, @{Mode=Server; State=Excluded; Name=91
+                     .189.91.112; Stratum=2; PollInterval=6; Reachability=77; L
+                     astReceived=10; OffsetSeconds=0.004718847; MeasuredOffsetS
+                     econds=0.000577501; EstimatedErrorSeconds=0.081106454}, @{
+                     Mode=Server; State=Excluded; Name=91.189.91.113; Stratum=2
+                     ; PollInterval=6; Reachability=77; LastReceived=8; OffsetS
+                     econds=0.005198855; MeasuredOffsetSeconds=0.005198855; Est
+                     imatedErrorSeconds=0.082753278}…}
 
 
 PS /home/os7admin>

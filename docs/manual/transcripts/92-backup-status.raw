@@ -6,17 +6,16 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [32;1mEnabled                   : [0mTrue
 [32;1mScheduleFileInstalled     : [0mTrue
 [32;1mSources                   : [0m{@{Dataset=rpool/USERDATA; Exists=True; Datasets=2;
-                             Snapshots=8; Newest=08/30/2026 12:30:16; AgeMinute
-                            s=6; Oldest=}, @{Dataset=rpool/DATA/srv; Exists=Tru
-                            e; Datasets=1; Snapshots=4; Newest=08/30/2026 12:30
-                            :16; AgeMinutes=6; Oldest=}}
+                             Snapshots=0; Newest=; AgeMinutes=; Oldest=}, @{Dat
+                            aset=rpool/DATA/srv; Exists=True; Datasets=1; Snaps
+                            hots=0; Newest=; AgeMinutes=; Oldest=}}
 [32;1mTargets                   : [0m
 [32;1mUncovered                 : [0m{}
-[32;1mNewestLocalSnapshot       : [0m08/30/2026 12:30:16
-[32;1mMinutesSinceLocalSnapshot : [0m6
+[32;1mNewestLocalSnapshot       : [0m
+[32;1mMinutesSinceLocalSnapshot : [0m
 [32;1mNewestReplication         : [0m
 [32;1mHoursSinceReplication     : [0m
-[32;1mCheckedAt                 : [0m08/30/2026 12:36:11
+[32;1mCheckedAt                 : [0m09/03/2026 10:09:03
 
 [6n
 PS /home/os7admin> [?1h[6n

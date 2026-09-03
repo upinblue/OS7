@@ -1,5 +1,3 @@
-             its options are --interactive, --socket-path, --help, --version),
-            and no enrolled machine has ever been available to learn the on-dis
             k state from. Enrolment is visible in the Intune portal, not here.;
              Detail=installed and wired; intune-daemon.service is inactive}
 Arc       : @{Installed=False; Version=; StagedPackage=System.Object[]; StagedI
@@ -9,12 +7,14 @@ Arc       : @{Installed=False; Version=; StagedPackage=System.Object[]; StagedI
             liberate — its postinst needs a running systemd}
 Reachable : False
 Endpoints : {@{Name=Entra; Host=login.microsoftonline.com; Port=443; Reachable=
-            True; Detail=connected in 37 ms; Verified=}, @{Name=Graph; Host=gra
-            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 37
-            ms; Verified=}, @{Name=Intune; Host=manage.microsoft.com; Port=443;
-             Reachable=False; Detail=One or more errors occurred. (Name or serv
-            ice not known); Verified=}, @{Name=Arc; Host=management.azure.com;
-            Port=443; Reachable=True; Detail=connected in 26 ms; Verified=}}
+            False; Detail=One or more errors occurred. (Name or service not kno
+            wn); Verified=}, @{Name=Graph; Host=graph.microsoft.com; Port=443;
+            Reachable=False; Detail=One or more errors occurred. (Name or servi
+            ce not known); Verified=}, @{Name=Intune; Host=manage.microsoft.com
+            ; Port=443; Reachable=False; Detail=One or more errors occurred. (N
+            ame or service not known); Verified=}, @{Name=Arc; Host=management.
+            azure.com; Port=443; Reachable=True; Detail=connected in 106 ms; Ve
+            rified=}}
 Summary   : authd is installed and PAM is wired to it, but /etc/authd/brokers.d
              is empty — there is no Entra broker for it to talk to, so a sign-i
             n will fail as though the password were wrong. See C8a: authd-msent

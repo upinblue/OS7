@@ -4,8 +4,8 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [?1l
 [32;1mName        : [0msanoid.timer
 [32;1mDescription : [0mRun Sanoid Every 15 Minutes
-[32;1mNextRun     : [0m08/30/2026 12:45:00
-[32;1mLastRun     : [0m08/30/2026 12:30:15
+[32;1mNextRun     : [0m09/03/2026 10:15:00
+[32;1mLastRun     : [0m
 [32;1mLastResult  : [0msuccess
 [32;1mActivates   : [0msanoid.service
 [32;1mStartupType : [0menabled

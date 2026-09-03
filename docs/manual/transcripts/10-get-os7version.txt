@@ -1,7 +1,5 @@
-OS/7 1.0.0 (development)
+OS/7 1.0.0 (preview)
 Ubuntu 26.04 base, Server, amd64
-This release was not built from a clean source tree,
-so this number does not identify the source it came from.
 
 
 

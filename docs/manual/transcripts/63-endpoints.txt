@@ -1,9 +1,9 @@
 Name   Host                      Port Reachable Detail
 ----   ----                      ---- --------- ------
-Entra  login.microsoftonline.com  443      True connected in 43 ms
-Graph  graph.microsoft.com        443      True connected in 28 ms
+Entra  login.microsoftonline.com  443      True connected in 31 ms
+Graph  graph.microsoft.com        443      True connected in 24 ms
 Intune manage.microsoft.com       443     False One or more errors occurred. (…
-Arc    management.azure.com       443      True connected in 24 ms
+Arc    management.azure.com       443      True connected in 87 ms
 
 
 PS /home/os7admin>
