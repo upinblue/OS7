@@ -633,13 +633,48 @@ function New-OS7ADUser {
 	$null = New-DirectoryEntry -Session $activeSession.DirectorySession `
 		-DistinguishedName $targetDn -ObjectClass @('user') -Attribute $attributes -Confirm:$false
 
-	if ($Password) {
-		$null = Set-DirectoryPassword -Session $activeSession.DirectorySession `
-			-DistinguishedName $targetDn -NewPassword $Password -Confirm:$false
+	# THE ACCOUNT IS CREATED DISABLED AND WITHOUT A PASSWORD, so a failure at the
+	# password or enable step leaves a half-built account behind — and because the
+	# read-back below never runs, the operator sees only the error and not the
+	# stub. Measured 2026-09-06: a password the domain's policy refused left a
+	# disabled, passwordless 't.os7created' on the DC. So the two steps that can
+	# fail on server policy are wound back: either the account exists as asked, or
+	# it does not exist. The error is re-thrown naming the step, over the now-
+	# translated message from the Directory layer.
+	try {
+		if ($Password) {
+			$null = Set-DirectoryPassword -Session $activeSession.DirectorySession `
+				-DistinguishedName $targetDn -NewPassword $Password -Confirm:$false
+		}
+		if ($Enabled) {
+			$null = Set-DirectoryEntry -Session $activeSession.DirectorySession `
+				-DistinguishedName $targetDn -Name 'userAccountControl' -Value '512' -Confirm:$false
+		}
 	}
-	if ($Enabled) {
-		$null = Set-DirectoryEntry -Session $activeSession.DirectorySession `
-			-DistinguishedName $targetDn -Name 'userAccountControl' -Value '512' -Confirm:$false
+	catch {
+		$reason = $_.Exception.Message
+		# Name the step only when it is unambiguous. With both requested, an extra
+		# read would be needed to tell which failed, and guessing would be the
+		# kind of invented detail this repository does not ship.
+		$step = if ($Password -and $Enabled) { 'setting the password or enabling the account' }
+		elseif ($Password) { 'setting the password' }
+		else { 'enabling the account' }
+		# Wind back the stub. Remove-DirectoryEntry is best-effort: if even the
+		# delete fails, say so rather than swallow it, so the operator knows a
+		# disabled stub is there to clean up.
+		$removed = $true
+		try {
+			$null = Remove-DirectoryEntry -Session $activeSession.DirectorySession `
+				-DistinguishedName $targetDn -Confirm:$false
+		}
+		catch { $removed = $false }
+		$tail = if ($removed) {
+			'and the half-created account was removed'
+		}
+		else {
+			"and the half-created, DISABLED account '$targetDn' could NOT be removed and remains"
+		}
+		throw "Creating '$Name' failed while $step ($reason) $tail."
 	}
 
 	# READ IT BACK. The point is not that the server accepted three requests;

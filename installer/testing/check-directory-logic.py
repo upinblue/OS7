@@ -125,6 +125,19 @@ function T {{
         $script:__sent.Add($req)
 
         $type = $req.GetType().Name
+
+        # A MODELLED SERVER REFUSAL. A password step against a DN under
+        # OU=ThrowPolicy throws the way Windows Server 2025 did on 2026-09-06 for
+        # a password its policy refused: LDAP 53 with the Win32 code 0000052D in
+        # the message. The add before it and the rollback delete after it are
+        # still recorded, so a test can prove New-OS7ADUser both translates the
+        # error and winds the stub back.
+        if ($type -eq 'ModifyRequest' -and $req.DistinguishedName -like '*ThrowPolicy*' -and
+            $req.Modifications[0].Name -eq 'unicodePwd') {{
+            throw [System.DirectoryServices.Protocols.LdapException]::new(
+                53, 'The server cannot handle directory requests. 0000052D: SvcErr: DSID-031A12C5, problem 5003 (WILL_NOT_PERFORM), data 0')
+        }}
+
         if ($type -eq 'SearchRequest') {{
             $filter = $req.Filter
             $rows = [System.Collections.Generic.List[object]]::new()
@@ -349,6 +362,38 @@ T 'the session object never carries the password into JSON' {{
     $json = $adminSession | ConvertTo-Json -Depth 8
     if ($json.Contains('hunter2hunter2')) {{ throw 'THE PASSWORD IS IN THE SESSION OBJECT' }}
     'clean'
+}}
+
+T 'a refused write is TRANSLATED, not surfaced as "the server cannot handle requests"' {{
+    # The fake throws LDAP 53 / 0000052D for a unicodePwd write under ThrowPolicy.
+    Clear-Sent
+    $threw = $null
+    try {{
+        Set-DirectoryPassword -Session $session -DistinguishedName 'CN=x,OU=ThrowPolicy,DC=os7,DC=test' `
+            -NewPassword (ConvertTo-SecureString 'Passw0rd!' -AsPlainText -Force) -Confirm:$false | Out-Null
+    }} catch {{ $threw = $_.Exception.Message }}
+    if (-not $threw) {{ throw 'the write did not fail' }}
+    if ($threw -like '*cannot handle directory requests*') {{ throw "not translated: $threw" }}
+    if ($threw -notlike '*password policy*') {{ throw "wrong translation: $threw" }}
+    'password policy, in words'
+}}
+
+T 'New-OS7ADUser winds back the disabled stub when the password step is refused' {{
+    Clear-Sent
+    $threw = $null
+    try {{
+        New-OS7ADUser -Name 't.rollback' -Path 'OU=ThrowPolicy,DC=os7,DC=test' `
+            -Password (ConvertTo-SecureString 'Passw0rd!' -AsPlainText -Force) -Enabled `
+            -Session $adminSession -Confirm:$false | Out-Null
+    }} catch {{ $threw = $_.Exception.Message }}
+    if (-not $threw) {{ throw 'it did not throw' }}
+    if ($threw -notlike '*password policy*') {{ throw "message not translated: $threw" }}
+    if ($threw -notlike '*removed*') {{ throw "did not report the rollback: $threw" }}
+    $adds = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'AddRequest' }}
+    $deletes = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'DeleteRequest' -and $_.DistinguishedName -like '*t.rollback*' }}
+    if (@($adds).Count -ne 1) {{ throw "expected the account to be created once, saw $(@($adds).Count)" }}
+    if (@($deletes).Count -ne 1) {{ throw "expected one rollback delete, saw $(@($deletes).Count)" }}
+    'translated, and the stub deleted'
 }}
 
 $results | ConvertTo-Json -Depth 6 -Compress -AsArray

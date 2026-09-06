@@ -205,50 +205,74 @@ function Invoke-DirectoryRequest {
 		[Parameter(Mandatory)]$Request
 	)
 
-	if ($script:DirectoryRequestOverride) {
-		return & $script:DirectoryRequestOverride $Connection $Request
-	}
+	try {
+		if ($script:DirectoryRequestOverride) {
+			return & $script:DirectoryRequestOverride $Connection $Request
+		}
 
-	$response = $Connection.SendRequest($Request)
+		$response = $Connection.SendRequest($Request)
 
-	$rows = [System.Collections.Generic.List[object]]::new()
-	$referrals = [System.Collections.Generic.List[string]]::new()
-	$cookie = $null
-	$responseValue = $null
+		$rows = [System.Collections.Generic.List[object]]::new()
+		$referrals = [System.Collections.Generic.List[string]]::new()
+		$cookie = $null
+		$responseValue = $null
 
-	if ($response -is [System.DirectoryServices.Protocols.ExtendedResponse]) {
-		$responseValue = $response.ResponseValue
-	}
+		if ($response -is [System.DirectoryServices.Protocols.ExtendedResponse]) {
+			$responseValue = $response.ResponseValue
+		}
 
-	if ($response -is [System.DirectoryServices.Protocols.SearchResponse]) {
-		foreach ($entry in $response.Entries) {
-			$attributes = [ordered]@{}
-			foreach ($name in $entry.Attributes.AttributeNames) {
-				$attribute = $entry.Attributes[$name]
-				if ($script:DirectoryBinaryAttributes -contains $name) {
-					$attributes[$name] = $attribute.GetValues([byte[]])
+		if ($response -is [System.DirectoryServices.Protocols.SearchResponse]) {
+			foreach ($entry in $response.Entries) {
+				$attributes = [ordered]@{}
+				foreach ($name in $entry.Attributes.AttributeNames) {
+					$attribute = $entry.Attributes[$name]
+					if ($script:DirectoryBinaryAttributes -contains $name) {
+						$attributes[$name] = $attribute.GetValues([byte[]])
+					}
+					else {
+						$attributes[$name] = $attribute.GetValues([string])
+					}
 				}
-				else {
-					$attributes[$name] = $attribute.GetValues([string])
+				$rows.Add([pscustomobject]@{ Dn = $entry.DistinguishedName; Attributes = $attributes })
+			}
+			foreach ($uri in $response.References) {
+				foreach ($one in $uri.Reference) { $referrals.Add([string]$one) }
+			}
+			foreach ($control in $response.Controls) {
+				if ($control -is [System.DirectoryServices.Protocols.PageResultResponseControl]) {
+					$cookie = $control.Cookie
 				}
 			}
-			$rows.Add([pscustomobject]@{ Dn = $entry.DistinguishedName; Attributes = $attributes })
 		}
-		foreach ($uri in $response.References) {
-			foreach ($one in $uri.Reference) { $referrals.Add([string]$one) }
-		}
-		foreach ($control in $response.Controls) {
-			if ($control -is [System.DirectoryServices.Protocols.PageResultResponseControl]) {
-				$cookie = $control.Cookie
-			}
+
+		return [pscustomobject]@{
+			Rows          = $rows
+			Referrals     = $referrals
+			Cookie        = $cookie
+			ResponseValue = $responseValue
 		}
 	}
-
-	return [pscustomobject]@{
-		Rows          = $rows
-		Referrals     = $referrals
-		Cookie        = $cookie
-		ResponseValue = $responseValue
+	catch {
+		# THE ONE PLACE A DIRECTORY ERROR BECOMES A SENTENCE. This is the single
+		# chokepoint every add, modify, delete and search passes through, so
+		# translating here means no write can surface .NET's generic "The server
+		# cannot handle directory requests" to an operator — which is exactly what
+		# New-OS7ADUser did on 2026-09-06 for a password the domain's policy had
+		# refused. It does NOT break the promise above that this function
+		# transcribes the RESPONSE rather than judging it: a failure is not a
+		# response, and letting a misleading wrapper message through would be
+		# abdication, not transcription. The bind path (Connect-DirectoryServer)
+		# already does the same for Bind(), which does not come through here. An
+		# error this cannot name is re-thrown UNCHANGED, so nothing is hidden.
+		$meaning = Get-DirectoryErrorMeaning -Exception $_.Exception
+		if ($meaning.Meaning) {
+			$parts = @()
+			if ($meaning.Code) { $parts += "LDAP $($meaning.Code)" }
+			if ($meaning.SubCode) { $parts += "code $($meaning.SubCode)" }
+			$suffix = if ($parts.Count) { ' (' + ($parts -join ', ') + ')' } else { '' }
+			throw "The directory refused the request: $($meaning.Meaning)$suffix."
+		}
+		throw
 	}
 }
 
@@ -657,6 +681,26 @@ $script:DirectoryBindSubCodes = @{
 	'775' = 'the account is locked out'
 }
 
+# THE OTHER SUB-CODE, AND IT DOES NOT LIVE WHERE THE FIRST ONE DOES. A bind
+# refusal (LDAP 49) carries its reason as "... data <3-4 hex> ..."; an OPERATION
+# refusal (add, modify, delete — LDAP 53/50/68) carries it as the leading Win32
+# code of the server's error message: "0000052D: SvcErr: DSID-..., problem 5003
+# (WILL_NOT_PERFORM), data 0". Measured 2026-09-06 against Windows Server 2025:
+# New-OS7ADUser with a password that contained a token of the account's
+# displayName came back as .NET's generic "The server cannot handle directory
+# requests" — a sentence about the server, for a problem with the password.
+#
+# 0x52D is the one this repository has OBSERVED. 0x5 and 0x2071 are the other two
+# operation codes an administrator hits first (no rights; a value that is already
+# there), documented Win32/AD codes rather than measured here. Everything else
+# falls through to Meaning = $null, which keeps the raw server message rather than
+# inventing a sentence — "cannot tell" is not "clean".
+$script:DirectoryOperationCodes = @{
+	'0000052d' = "the domain's password policy refused this password (its length, complexity, or history)"
+	'00000005' = 'the signed-in account does not have rights to do this'
+	'00002071' = 'a value being added is already present (for a group, the member is already in it)'
+}
+
 function Get-DirectoryLdapException {
 	<#
 	.SYNOPSIS
@@ -679,7 +723,12 @@ function Get-DirectoryLdapException {
 
 	$current = $Exception
 	for ($depth = 0; $depth -lt 8 -and $null -ne $current; $depth++) {
+		# A BIND failure throws LdapException (carries .ErrorCode); an OPERATION
+		# failure throws DirectoryOperationException (carries .Response.ResultCode
+		# and the Win32 sub-code in .Message). Both are what the meaning function
+		# has to read, and neither is the other's subclass.
 		if ($current -is [System.DirectoryServices.Protocols.LdapException]) { return $current }
+		if ($current -is [System.DirectoryServices.Protocols.DirectoryOperationException]) { return $current }
 		# Set-StrictMode makes a missing property an ERROR, not $null, and
 		# callers pass synthetic objects that have no InnerException at all.
 		if (-not $current.PSObject.Properties['InnerException']) { break }
@@ -712,18 +761,49 @@ function Get-DirectoryErrorMeaning {
 
 	$code = $null
 	$message = ''
+	# LdapException carries .ErrorCode; DirectoryOperationException carries
+	# .Response.ResultCode (an enum whose int IS the LDAP result code). Read
+	# whichever exists — an operation failure has no .ErrorCode at all.
 	if ($ldap.PSObject.Properties['ErrorCode']) { $code = $ldap.ErrorCode }
+	elseif ($ldap.PSObject.Properties['Response'] -and $ldap.Response -and
+		$ldap.Response.PSObject.Properties['ResultCode']) {
+		$code = [int]$ldap.Response.ResultCode
+	}
 	if ($ldap.PSObject.Properties['Message']) { $message = [string]$ldap.Message }
 	if ($ldap.PSObject.Properties['ServerErrorMessage'] -and $ldap.ServerErrorMessage) {
 		$message = $message + ' ' + [string]$ldap.ServerErrorMessage
 	}
+	# The operation sub-code lives in the RESPONSE's error message, which .NET
+	# usually folds into .Message but not always. Read both so the Win32 code is
+	# found wherever it landed.
+	if ($ldap.PSObject.Properties['Response'] -and $ldap.Response -and
+		$ldap.Response.PSObject.Properties['ErrorMessage'] -and $ldap.Response.ErrorMessage) {
+		$message = $message + ' ' + [string]$ldap.Response.ErrorMessage
+	}
 
 	$subCode = $null
-	$match = [regex]::Match($message, 'data\s+([0-9a-fA-F]{3,4})')
-	if ($match.Success) { $subCode = $match.Groups[1].Value.ToLowerInvariant() }
-
 	$meaning = $null
-	if ($subCode -and $script:DirectoryBindSubCodes.ContainsKey($subCode)) {
+	# A bind refusal spells its reason "data <3-4 hex>"; try that first.
+	$match = [regex]::Match($message, 'data\s+([0-9a-fA-F]{3,4})\b')
+	if ($match.Success) { $subCode = $match.Groups[1].Value.ToLowerInvariant() }
+	# An operation refusal spells it as the leading 8-hex Win32 code, e.g.
+	# "0000052D:". The \b before it keeps it off the DSID token, which is 8 hex
+	# followed by a comma, not a colon.
+	if (-not ($subCode -and $script:DirectoryBindSubCodes.ContainsKey($subCode))) {
+		$opMatch = [regex]::Match($message, '\b([0-9A-Fa-f]{8}):')
+		if ($opMatch.Success) {
+			$opCode = $opMatch.Groups[1].Value.ToLowerInvariant()
+			if ($script:DirectoryOperationCodes.ContainsKey($opCode)) {
+				$subCode = $opCode
+				$meaning = $script:DirectoryOperationCodes[$opCode]
+			}
+		}
+	}
+
+	if ($meaning) {
+		# already resolved from the operation-code table above
+	}
+	elseif ($subCode -and $script:DirectoryBindSubCodes.ContainsKey($subCode)) {
 		$meaning = $script:DirectoryBindSubCodes[$subCode]
 	}
 	elseif ($code -eq 49) {
@@ -1999,6 +2079,27 @@ function Test-DirectoryModule {
 	$notSupported = Get-DirectoryErrorMeaning -Exception ([pscustomobject]@{ ErrorCode = 92; Message = '' })
 	Assert-DirectoryCase 'ldap 92 names the platform, which is what rc 92 means here' `
 		($notSupported.Meaning -like '*platform*')
+
+	# --- operation errors: the sub-code is the leading Win32 code, not "data N" ---
+	# Measured 2026-09-06: an operation refusal spells its reason as an 8-hex code
+	# at the start of the server message, where a bind refusal uses "data <hex>".
+	$passwordPolicy = Get-DirectoryErrorMeaning -Exception ([pscustomobject]@{
+			Message = 'The server cannot handle directory requests. 0000052D: SvcErr: DSID-031A12C5, problem 5003 (WILL_NOT_PERFORM), data 0'
+		})
+	Assert-DirectoryCase 'a 0x52D operation error is the password policy, not the generic .NET message' `
+		($passwordPolicy.SubCode -eq '0000052d' -and $passwordPolicy.Meaning -like '*password policy*') `
+		"got subcode $($passwordPolicy.SubCode), meaning $($passwordPolicy.Meaning)"
+	$accessDenied = Get-DirectoryErrorMeaning -Exception ([pscustomobject]@{
+			Message = 'The user has insufficient access rights. 00000005: SecErr: DSID-03150F94, problem 4003 (INSUFF_ACCESS_RIGHTS), data 0'
+		})
+	Assert-DirectoryCase 'a 0x5 operation error names rights, not "the server cannot handle requests"' `
+		($accessDenied.Meaning -like '*rights*')
+	$noBogusSubCode = Get-DirectoryErrorMeaning -Exception ([pscustomobject]@{
+			Message = 'foo DSID-031A12C5, problem 5003 (WILL_NOT_PERFORM), data 0'
+		})
+	Assert-DirectoryCase 'the DSID token is not read as a code, and "data 0" invents no meaning' `
+		($null -eq $noBogusSubCode.Meaning) `
+		"got meaning $($noBogusSubCode.Meaning)"
 
 	# The wrapper case, which is how a real catch block receives it. Found by
 	# a real DC and a deliberately wrong password: the handler that was meant
