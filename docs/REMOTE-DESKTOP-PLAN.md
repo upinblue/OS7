@@ -40,8 +40,18 @@ OS/7-branded greeter and its per-user password prompt reached the client over RD
 photographed (M-R29, M-R33, M-R14); the client's real IP arrived at PAM on the greeter path as
 `rhost` (M-R34); mstsc from the Windows host reached the same daemon (M-R30).
 
-**No cmdlet exists yet.** There is no `OS7.RemoteDesktop.ps1`, no `grd.conf` written by OS/7, no
-group, no PAM profile, no test. Everything from §3 onward is a proposal. **The feature is
+**v1 OF THE CMDLET SURFACE IS BUILT, AND IT HAS RUN ON A MACHINE (2026-09-07).**
+`powershell/OS7/OS7.RemoteDesktop.ps1` implements the eight v1 verbs of §5;
+`installer/testing/check-remotedesktop-logic.py` holds the decisions with no daemon and no VM.
+On the GUI bench, `Enable-OS7RemoteDesktop -AllowAnySource` issued a hostname-SAN certificate,
+generated a machine credential it did not print, brought the daemon up listening on 3389, and
+`Test-OS7RemoteDesktop` returned every check green — including the two that only a connection can
+answer: the daemon serves the certificate on disk, and a client offering anything but NLA is
+refused (`RDP_NEG_FAILURE 5`). A real RDP client (FreeRDP 3.31) then authenticated with the
+generated credential, and was refused with a wrong one. `Disable-` returned the machine to nothing
+listening, unit disabled, `enabled=false`. **What is still NOT built:** the group, the PAM
+profile and the session verbs — they are deferred behind the owed measurements, not forgotten
+(§5, O-R2/O-R3). **The feature is
 amd64-GUI only:** gnome-remote-desktop ships only on the amd64 GUI product, transitively behind
 `ubuntu-desktop-minimal`; the headless installer purges it (M-R19) and arm64 never had it. There
 the remote path stays `Enable-OS7Remoting` (ssh / `Enter-PSSession`), and `Get-OS7RemoteDesktop`
@@ -363,7 +373,7 @@ names appear only in an opt-in `OS7.Compat.Windows`). Cmdlets follow the `Enable
 skeleton: `[CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]`, one gate, validate with
 the parser that will read it, return `Get-` at the end.
 
-**v1 (to build):**
+**v1 — BUILT 2026-09-07 (`powershell/OS7/OS7.RemoteDesktop.ps1`), and exercised against the real daemon on the GUI bench:**
 
 | Cmdlet | Does | Key output / behaviour |
 |---|---|---|
@@ -626,6 +636,27 @@ installer change is ever needed — **none is in v1** (R15).
 
 ---
 
+## 13a. What building v1 measured, 2026-09-07
+
+Five things the implementation learned that the plan above did not know. Two became
+BUILD-NOTES entries; one answers an owed measurement; two are new facts about the daemon.
+
+| # | Fact | How |
+|---|---|---|
+| **M-R37** | **O-R13 is answered, and the safe route loses.** The README's stdin form for `set-credentials` left the username EMPTY on the real machine while returning 0 — M-R25 reproduced on a booted OS/7 machine, not just in a container. The two-argument form worked. `Set-OS7RdpCredentialValue` therefore tries stdin FIRST, reads the daemon back, and falls back to the argument form, reporting which one worked; the secret is briefly in `argv` on that path and RL1's plaintext note now has a second exposure beside it. A daemon version that fixes the stdin form will make the fallback dead code, and the readback is what will show it. | `Enable-` on the bench, `OS7-STEP the stdin route left the credential unset (M-R25); using the argument form` |
+| **M-R38** | **`grdctl --system status` prints `Username: (hidden)` when a credential is set and `(empty)` when not** — so a cmdlet can confirm a credential took WITHOUT `--show-credentials` and therefore without the secret crossing a stream. This is what makes P7 and the readback compatible, and it is the mechanism the whole credential path rests on. | `grdctl` before and after, bench and container |
+| **M-R39** | **A never-started unit is in no systemd list**, so `Get-SystemdUnit` returned zero rows for `gnome-remote-desktop.service` on a machine where RDP had never been enabled, and "is it running" came back `$null` where `$false` was the truth. BUILD-NOTES **#124**; it is #116's shape in a third place. | `Get-OS7RemoteDesktop` on a fresh bench |
+| **M-R40** | **The daemon binds ONE dual-stack socket.** The kernel's listener list has an IPv6 wildcard entry and no IPv4 one, while an IPv4 client connects perfectly well (measured: FreeRDP over IPv4 to exactly this listener). A cmdlet reporting the two families from the socket list alone says "no IPv4" about a machine that serves IPv4. `Get-OS7RemoteDesktop` reports `ListeningDualStack` for this. | `ss`, `GetActiveTcpListeners`, a real client |
+| **M-R41** | **`[System.IO.Directory]` has no `SetUnixFileMode`** — `File`'s overload is `chmod(2)` and takes a directory. The symmetric-looking spelling is a run-time `MethodInvocationException` that no parser check can see. BUILD-NOTES **#123**. | .NET reflection in `os7img:175` |
+
+And the end-to-end run, which is the thing the plan's §1 could not claim before: `Enable-` →
+`Test-OS7RemoteDesktop` all green → FreeRDP 3.31 authenticated with the generated credential
+(`Authentication only, exit status 1`) → a wrong password refused at NLA
+(`SEC_E_MESSAGE_ALTERED`, `client authentication failure` in the machine's journal) → `Disable-`
+→ nothing listening, unit `disabled`/`inactive`, `enabled=false`.
+
+---
+
 ## 14. Measurements owed before locking
 
 The `O-R` prefix marks these owed, distinct from the measured `M-R` above.
@@ -641,7 +672,7 @@ The `O-R` prefix marks these owed, distinct from the measured `M-R` above.
 * **O-R9** (§9) — **mstsc** against 50.2 end to end: cert-warning wording, the insecure-connection dialog without `use redirection server name:i:1`, NLA order. → fourth `os7lab.py` port + manual mstsc.
 * **O-R10** (RL10) — arm64 entirely: there is no arm64 GUI ISO. → build one.
 * **O-R11 / O-R12** — whether `gnome-classic.desktop` carries `X-GDM-CanRunHeadless=true` (→ `check-image.py`), and whether g-s-d reports OFFLINE on a networkd machine (LP #2141992; → bench).
-* **O-R13** (R4) — the credential-setting invocation that sets username+password reliably **and** keeps the secret off argv (M-R6/M-R25), plus a readback confirming it took without capturing plaintext. → bench.
+* ~~**O-R13** (R4) — the credential-setting invocation~~ **ANSWERED 2026-09-07 (M-R37/M-R38)**: the stdin form silently fails on 50.2, the argument form works, and `(hidden)`/`(empty)` in plain `status` is the readback that confirms without revealing. v1 tries stdin, reads back, falls back. What REMAINS owed is narrower: a route that keeps the secret off `argv` on this daemon version at all — there may not be one, in which case RL1 gains a second sentence.
 * **O-R14** (R3, §9) — on the ISO squashfs, `gnome-remote-desktop.service` is **not** in `graphical.target.wants` and reads `disabled` (the falsifiable form of default-OFF). → `check-image.py`.
 * **O-R15** (R5) — which session a **completed** RDP login lands in (gnome-classic expected, AccountsService precedence) and whether its terminal reaches PowerShell (#86 control). → bench, after O-R2.
 * **O-R16** (§5) — multi-monitor / virtual-monitor (NEWS 49.rc), dynamic resolution on resize, and **German-keyboard scancode fidelity** over RDP. → bench + manual mstsc.

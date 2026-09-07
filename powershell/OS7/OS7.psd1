@@ -77,6 +77,15 @@
 		# can change the answer per user, so the file says what somebody wrote
 		# and sshd says what it resolved.
 		'Get-OS7Remoting', 'Enable-OS7Remoting', 'Disable-OS7Remoting',
+		# Implemented - Remote Desktop (docs/REMOTE-DESKTOP-PLAN.md), amd64 GUI
+		# only. The daemon requires NLA against a MACHINE-WIDE credential before
+		# any screen exists, and the person then signs in at OS/7's own login
+		# screen delivered over RDP. Enable- refuses without a source scope,
+		# because v1 has no per-user allow-list and no lockout yet.
+		'Get-OS7RemoteDesktop', 'Enable-OS7RemoteDesktop', 'Disable-OS7RemoteDesktop',
+		'Set-OS7RemoteDesktopCredential',
+		'New-OS7RemoteDesktopCertificate', 'Get-OS7RemoteDesktopCertificate',
+		'Set-OS7RemoteDesktopCertificate', 'Test-OS7RemoteDesktop',
 		# Implemented - services and the log, on the Systemd module. Get-Service
 		# does not exist on PowerShell for Linux (measured), so this is the verb
 		# an admin reaches for and does not find. Healthy is four questions, not

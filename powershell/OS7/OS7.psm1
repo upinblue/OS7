@@ -2680,8 +2680,13 @@ function Restore-OS7 {
 # OS7.ScheduledTask.ps1 sits after OS7.Service.ps1, whose Import-OS7SystemdLayer
 # and Test-OS7ServiceName it calls in every function — and still before
 # OS7.Update.ps1, which stays last.
+#
+# OS7.RemoteDesktop.ps1 sits beside them for the same reason: it calls
+# Import-OS7SystemdLayer for the unit state and the restart grdctl has no verb
+# for, and Invoke-OS7Native for openssl and chown — so after Service, and
+# still before OS7.Update.ps1, which stays last.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.Management.ps1',
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -2734,6 +2739,15 @@ Export-ModuleMember -Function Get-OS7Version,
 	# that makes an interactive ssh land in PowerShell, and the sshd SUBSYSTEM
 	# that Enter-PSSession needs. A machine can have either without the other.
 	Get-OS7Remoting, Enable-OS7Remoting, Disable-OS7Remoting,
+	# Remote Desktop (docs/REMOTE-DESKTOP-PLAN.md). RDP to the machine's own
+	# login screen, over the daemon the amd64 GUI image already ships. Two
+	# logins: a machine-wide credential at the door, then the person's own
+	# account at the greeter. The per-user allow-list and the session verbs
+	# are deliberately NOT here — their enforcement is an owed measurement.
+	Get-OS7RemoteDesktop, Enable-OS7RemoteDesktop, Disable-OS7RemoteDesktop,
+	Set-OS7RemoteDesktopCredential, New-OS7RemoteDesktopCertificate,
+	Get-OS7RemoteDesktopCertificate, Set-OS7RemoteDesktopCertificate,
+	Test-OS7RemoteDesktop,
 	# Services and the log. Get-OS7Log is the clearest argument for why this
 	# product's shell is PowerShell: a journal is already structured, and
 	# `journalctl | grep` is a text pipeline over structure.

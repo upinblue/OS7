@@ -6574,3 +6574,92 @@ Two things follow for anything that builds here:
 * **"Already exists" for something that does not exist is the least helpful
   message in this file**, and it is worth recognising on sight: check the
   Windows side before believing either half of it.
+
+---
+
+## #123 — `[System.IO.Directory]` has no `SetUnixFileMode`, and the spelling that reads more correct is the one that throws
+
+Found on 2026-09-07 while implementing `OS7.RemoteDesktop.ps1`, by
+`installer/testing/check-remotedesktop-logic.py` running the certificate
+generation on a real Linux filesystem. It had been written correctly, then
+"corrected" into the defect during review, which is the part worth keeping.
+
+The code creates `/etc/os7/remote-desktop`, sets its mode, and then generates a
+private key inside it. The first version used `[System.IO.File]::SetUnixFileMode`
+on the directory. That looks wrong — a directory is not a file — so it was
+changed to `[System.IO.Directory]::SetUnixFileMode`, which reads better and does
+not exist:
+
+```
+Method invocation failed because [System.IO.Directory] does not contain
+a method named 'SetUnixFileMode'.
+```
+
+Asked of .NET in `os7img:175` rather than of intuition:
+
+```
+Directory has SetUnixFileMode:   False
+File::SetUnixFileMode on a DIRECTORY:
+    ok -> OtherExecute, OtherRead, GroupExecute, GroupRead, UserExecute, UserWrite, UserRead
+Directory.CreateDirectory(path, mode) overload:   True
+```
+
+`File.SetUnixFileMode` **is** `chmod(2)` and takes any path, directory included.
+`Directory` has only the `CreateDirectory(path, unixCreateMode)` overload, for
+the create-with-mode case. So the pair is asymmetric, and the symmetric-looking
+spelling is a `MethodInvocationException` at run time — not at parse time, which
+is why `check-ps-traps.py` cannot see it and only running the code can.
+
+**What made it cheap:** the failure was inside a `try`/`catch` that tolerated a
+`chown` failing in a container, so it produced no key and no error — the check
+reported "a key was generated to inspect: FAIL" and nothing else. Recording the
+swallowed exception in the result (`$r.key_generation_error`) turned one
+useless assertion into the message above. A `catch` that discards is a
+diagnostic that has been switched off.
+
+**The rule:** a .NET method that PowerShell resolves at run time is not checked
+by anything until it runs. Where one is used for a filesystem or platform
+operation, the check that covers it has to execute it on the platform, and the
+catch around it has to keep the exception.
+
+---
+
+## #124 — a systemd unit that has never been started is in NO list, so "is it running" comes back EMPTY rather than "no"
+
+Found on 2026-09-07 on a booted OS/7 machine, by reading
+`Get-OS7RemoteDesktop` on an installation where Remote Desktop had never been
+turned on. `Running` printed as blank where `False` was the truth.
+
+```
+Running is null:            True
+RunningReason:              (empty)
+Get-SystemdUnit returned:   0        # for gnome-remote-desktop.service
+```
+
+The unit file is on disk the whole time. systemd lists **loaded** units, and a
+unit that is disabled and has never been started is not loaded — so it is in
+neither `list-units` nor the default `Get-SystemdUnit` answer, and the cmdlet
+above it, written as `if ($unit) { $running = … }`, left its variable at the
+`$null` it was initialised to.
+
+**This is BUILD-NOTES #116 arriving in a third place.** The timer surface
+already had to merge `list-unit-files` with `list-timers` because a timer that
+is neither enabled nor active is invisible to both; the same fact about systemd
+reaches any cmdlet that asks "is this unit running" about a unit nobody has
+started yet, which for an opt-in feature is *every machine that has not opted
+in*.
+
+It matters because of the convention it breaks. `$null` means "could not be
+asked" everywhere in this surface (P6), and a machine reporting "cannot tell"
+about a daemon that is certainly not running sends an operator to look for a
+broken systemd. The three cases are now kept apart in `Get-OS7RemoteDesktop`:
+
+| what happened | answer |
+|---|---|
+| systemd threw | `$null` — it could not be asked |
+| no rows, and the unit file is on disk | `$false`, with the reason saying the unit has never been loaded |
+| no rows, and no unit file | `$null` — the question is about a machine this cmdlet does not understand |
+
+**The rule:** "systemd did not list it" is not "it is not there". Before writing
+`$null` for a unit, ask whether the unit file exists — the answer that is
+missing from the list is usually the answer the operator wants.

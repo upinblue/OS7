@@ -60,7 +60,7 @@ here either — this file points, they rule.
 | What OS/7 exposes as cmdlets, what it deliberately does not, how the layers are cut, decisions P1–P7 | [docs/POWERSHELL-SURFACE-PLAN.md](docs/POWERSHELL-SURFACE-PLAN.md) |
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
 | Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. The admin session is proven against a real domain controller; the join has never run on a machine |
-| Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **a concept, not yet decided** (every `Rn` is *Proposed*). The mechanism was measured end to end up to OS/7's login screen delivered over RDP from a real client (M-R33); **no cmdlet exists yet**, and v1 has stated security gaps |
+| Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **the decisions are still *Proposed*; v1 of the surface is BUILT and has run on a machine.** `Enable-`/`Test-`/`Disable-OS7RemoteDesktop` were exercised against the real daemon and a real RDP client on the GUI bench (§13a). The group, the PAM allow-list and the session verbs are deliberately NOT built — v1 has no per-user allow-list and no lockout, which is why `Enable-` demands a source scope |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -210,6 +210,19 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   Unregister's refusal of package
                                           #   timers. 64 checks over recorded
                                           #   systemd 259 output, no VM, seconds
+./installer/testing/check-remotedesktop-logic.py # the Remote Desktop DECISIONS
+                                          #   against a fake daemon: Enable's
+                                          #   cert->key->credential->enable
+                                          #   order (M-R28), the refusal to
+                                          #   open the port with no source
+                                          #   scope, that grdctl exiting 0
+                                          #   having done nothing is CAUGHT
+                                          #   (M-R25), $null-never-$false, and
+                                          #   that no stream of Enable- carries
+                                          #   the machine credential. Seconds,
+                                          #   no VM; --container os7img:<tag>
+                                          #   adds the private key's mode on a
+                                          #   real Linux filesystem
 ./installer/testing/check-ssh-login.py    # what an SSH login ACTUALLY lands in,
                                           #   against a REAL sshd: interactive ->
                                           #   PowerShell (with the drop-in moved
