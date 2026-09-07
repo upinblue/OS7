@@ -1154,6 +1154,36 @@ internal static class Program
                   $"network at {net}, bootloader at {boot}, domain at {domain}, "
                   + $"log at {keep}");
 
+            // THE JOIN'S ONE RETRY, and it is asserted here because it has no
+            // other symptom: wrong in one direction and a machine that reaches
+            // its domain controller through NAT is never joined at all; wrong in
+            // the other and every failed join is attempted twice, creating a
+            // second computer account's worth of noise in somebody's directory.
+            //
+            // The condition is deliberately the CMDLET'S REMEDY and not adcli's
+            // Kerberos error — see `DomainStep.SaysToUseLdapPassword`. So the
+            // first case below carries the message `Join-DirectoryRealm`
+            // actually produces, and the second carries a failure that is not
+            // this one and must not be retried.
+            var joinPlan = new DomainPlan { Join = true, Realm = "corp.example.com" };
+            var natFailure = new StepException(
+                "Setup cannot join this computer to a domain.", "pwsh",
+                "adcli got as far as creating the computer account for 'corp.example.com' and "
+                + "then could not set its password through the Kerberos set-password service: "
+                + "\"Message stream modified\". ... Retry with -UseLdapPassword, which sets the "
+                + "password with an LDAP modify over the connection adcli has already sealed.");
+            var otherFailure = new StepException(
+                "Setup cannot join this computer to a domain.", "pwsh",
+                "adcli could not join 'corp.example.com' (exit 4): "
+                + "Couldn't authenticate as: Administrator: Preauthentication failed");
+            Check(DomainStep.SaysToUseLdapPassword(natFailure, joinPlan),
+                  "domain: a join told to use -UseLdapPassword retries with it");
+            Check(!DomainStep.SaysToUseLdapPassword(otherFailure, joinPlan),
+                  "domain: a wrong password is NOT retried over LDAP");
+            Check(!DomainStep.SaysToUseLdapPassword(
+                      natFailure, new DomainPlan { UseLdapPassword = true }),
+                  "domain: and it is never retried twice");
+
             // THE REDACTION, CHECKED AGAINST THE THING IT CLAIMS TO CHECK.
             // `Log.LiveOnly` is a promise about a file on somebody's disk, and
             // the only way to test a promise about text is to read the text.

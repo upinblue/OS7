@@ -367,8 +367,12 @@ created, and the machine leaving again
 set-password path fails with "Message stream modified" and an LDAP modify of
 `unicodePwd` works. This line said "never run on a machine, green in a
 container" — the container part was never true either: `check-ad.py` performs no
-join at all, so Stage 2 had run nowhere. **Screen 9D has still never drawn** and
-cannot pass the new switch, and arm64 is unmeasured. **A9 is now achieved**:
+join at all, so Stage 2 had run nowhere. **Screen 9D has still never drawn on a
+machine**, and arm64 is unmeasured — but it CAN pass the new switch since
+2026-09-07: `DomainStep` retries once when the cmdlet's own failure message
+names it, there is deliberately no screen field (nobody at a text-mode installer
+knows whether this machine reaches the DC through NAT), and `--self-test`
+asserts that it retries when told, not on a wrong password, and never twice. **A9 is now achieved**:
 `New-OS7Storage` creates `rpool/DATA/lib/os7-domain-homes` for
 `/var/lib/os7/domain-homes` and a firstboot migration moves existing machines,
 content carried across rather than hidden under the new mount. The mount is the

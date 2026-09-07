@@ -112,6 +112,31 @@ internal sealed class DomainPlan
     [JsonIgnore]
     public bool UsesOneTimePassword => string.IsNullOrWhiteSpace(JoinAccount);
 
+    /// <summary>
+    /// Set the computer account's password with an LDAP modify instead of
+    /// through the Kerberos set-password service — `Join-OS7Domain`'s
+    /// `-UseLdapPassword`.
+    ///
+    /// WHY IT EXISTS: adcli's default path is kpasswd (RFC 3244), and that
+    /// exchange is integrity-protected over the network addresses each end sees.
+    /// A machine that reaches its domain controller through NAT therefore fails
+    /// at the password step with "Message stream modified" — a sentence about a
+    /// byte stream, for a join whose only problem is the road it took. Measured
+    /// 2026-09-07 against Windows Server 2025 (docs/SESSION-AD-JOIN.md).
+    ///
+    /// AND THERE IS NO SCREEN FIELD FOR IT, deliberately. Nobody standing in
+    /// front of a text-mode installer knows whether this machine reaches that
+    /// domain controller through NAT; a field whose question cannot be answered
+    /// where it is asked is worse than no field, because a wrong answer is
+    /// indistinguishable from a considered one. So screen 9D never asks:
+    /// `DomainStep` makes the ordinary attempt, and when the CMDLET'S OWN
+    /// failure message names this switch it sets this and tries once more. What
+    /// the flag is for is `--unattend`, where a fleet that already knows its
+    /// network can skip the failed first attempt — and the record, because
+    /// `DomainStep` writes it back so the plan says which road the join took.
+    /// </summary>
+    public bool UseLdapPassword { get; set; }
+
     /// <summary>Whether screen 9D's F4 reached a domain controller, and what it
     /// saw. Recorded rather than required, exactly like
     /// <see cref="NetworkPlan.Verified"/>: a machine may legitimately be built

@@ -73,8 +73,38 @@ that the computer account has already been created by the failed attempt, becaus
 the object before it sets the password — measured: `CN=OS7-GUI` was in the directory, enabled,
 with SPNs, after a join that had reported failure.
 
-`-UseLdapPassword` is **not reachable from the installer.** Screen 9D calls `Join-OS7Domain`
-and has no field for it, so a machine that needs it cannot be joined during setup. Open.
+`-UseLdapPassword` was **not reachable from the installer** — screen 9D calls `Join-OS7Domain`
+and had no way to pass it, so a machine that needed it could not be joined during setup.
+**Fixed 2026-09-07**, and the interesting part is what was deliberately NOT built:
+
+- **No screen field.** Nobody standing in front of a text-mode installer knows whether this
+  machine reaches that domain controller through NAT. A field whose question cannot be answered
+  where it is asked is worse than no field, because a wrong answer is indistinguishable from a
+  considered one.
+- **The retry is the cmdlet's instruction, not the installer's guess.** `DomainStep` catches the
+  failure and retries once when the message contains `-UseLdapPassword` — the remedy the module
+  named — rather than pattern-matching adcli's "Message stream modified" for itself. The
+  diagnosis stays in one place; two copies of one rule is BUILD-NOTES #66.
+- **`DomainPlan.UseLdapPassword`** is serialised, so `--unattend` can request it up front and the
+  finished plan records which road the join took (`joined …, computer password set over LDAP`).
+- **The keyfile is written again before the retry.** The join script's own `finally` deletes it
+  the moment the first attempt ends, so a retry without that reads an empty password and blames
+  the credential. Found by reading that `finally`, not by running into it.
+- **The switch is written inline in the command line and not in a helper**, because
+  `check-installer-cmdlets.py` can only attribute a `-Name` it finds in the same expression as
+  the cmdlet. Measured on this change: the call reported `4 parameter(s)` with the switch in a
+  helper and `5 parameter(s)` with it inline — so before the move, the new parameter was
+  validated by nothing. The two older helpers (`-OrganizationalUnit`, `-UserName`) are still
+  unchecked for the same reason, which is now named rather than left to be found.
+
+`--self-test` asserts the three branches with the real message text: it retries when told, it
+does **not** retry a wrong password (`Preauthentication failed`), and it never retries twice.
+Built and run in `os7-build:amd64`: no compile errors, and the only self-test failures are the
+ten image files that are absent outside an OS/7 image.
+
+What is still owed: **screen 9D has never drawn on a machine.** The retry path in particular has
+never been executed by an installer — it is asserted by `--self-test` and by the cmdlet-binding
+check, and the gate for the whole screen is `run-phase3.py`.
 
 ## The defect: a parameter that never bound, in the one path that had never run
 

@@ -299,72 +299,50 @@ internal sealed class DomainStep : IStep
 
         try
         {
-            if (!x.DryRun)
+            WriteKeyFile(x, d);
+
+            try
             {
-                // NO TRAILING NEWLINE, and it is the same trap `LuksStep` names:
-                // whatever reads this file reads it verbatim, so a byte that was
-                // never part of the password is a password that is not the one
-                // that was typed. The script below reads the file whole and
-                // hands the cmdlet what it asks for, which is a securestring.
-                File.WriteAllBytes(KeyFile, Encoding.UTF8.GetBytes(d.Password!));
-                File.SetUnixFileMode(KeyFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                x.Exec("pwsh", "-NoProfile", "-NonInteractive", "-Command",
+                       BuildScript(x, d, d.UseLdapPassword));
             }
+            catch (StepException ex) when (SaysToUseLdapPassword(ex, d))
+            {
+                // THE RETRY IS THE CMDLET'S INSTRUCTION AND NOT THIS FILE'S
+                // GUESS. `Join-OS7Domain` fails at the password step with
+                // "Message stream modified" when this machine reaches the domain
+                // controller through NAT, and its own message names
+                // `-UseLdapPassword` as the way past it — so the condition above
+                // is "the module told us to", never a Kerberos error this file
+                // pattern-matched for itself. The diagnosis stays in one place
+                // (docs/SESSION-AD-JOIN.md) and the installer merely obeys it,
+                // once.
+                //
+                // AN INSTALL IS ONE SHOT, which is why this is automatic. There
+                // is no screen field to answer instead: see
+                // `DomainPlan.UseLdapPassword` for why asking would be worse
+                // than trying.
+                //
+                // THE COMPUTER ACCOUNT ALREADY EXISTS BY NOW — adcli creates the
+                // object before it sets the password, and the cmdlet's message
+                // says so. The second attempt therefore finds it and resets its
+                // password, which is measured to work; what it must not do is
+                // run a third time, so the flag it sets is also the guard.
+                Log.Warn($"domain: the first attempt could not set the computer password "
+                         + $"through Kerberos — {ex.Output.ReplaceLineEndings(" | ")}");
+                Log.Warn("domain: retrying once with -UseLdapPassword, which is what "
+                         + "Join-OS7Domain's own failure message asked for");
+                d.UseLdapPassword = true;
 
-            // OUT TO POWERSHELL, and §6.3 is the reason — the same reason
-            // `PoolsAndDatasetsStep` calls `New-OS7Storage` rather than running
-            // `zpool` itself. This command line IS the contract between the
-            // installer and the module, so EVERY NAME IN IT IS THE CMDLET'S OWN:
-            // `Join-OS7Domain` binds its parameters before `adcli` is ever
-            // started, and a name this file invented rather than read out of the
-            // `param` block fails every join at binding, on a machine that is
-            // otherwise finished, with an error about a parameter instead of
-            // about a domain.
-            //
-            //   -TargetRoot      where the system being joined is mounted. The
-            //                    keytab and sssd.conf go under it; the process
-            //                    itself runs OUT HERE, on the live system, where
-            //                    DNS and the clock are the ones screen 9 tested.
-            //   -Domain          the DNS domain name, lower case.
-            //   -ComputerName    the account in the directory, at most 15 chars.
-            //   -OrganizationalUnit  a DN, or the argument is absent.
-            //   -UserName        the account authorising the join — or
-            //                    -OneTimePassword instead, which says the
-            //                    computer account already exists and the
-            //                    password is its one-time one. One of the two is
-            //                    always passed: with neither, `adcli` is given
-            //                    no way to authenticate at all.
-            //   -Password        a securestring, built here out of the keyfile.
-            //
-            // THE SECRET IS A PATH ON THIS COMMAND LINE AND NEVER A VALUE, which
-            // is what makes `Executor.Exec` logging it in full safe, and what
-            // keeps it out of `ps` on a machine somebody may be watching over
-            // the operator's shoulder. `$secret` is built inside the pwsh
-            // process, and the keyfile is removed TWICE — by the script's own
-            // `finally` as soon as the join is over, and again by this method's,
-            // because a pwsh that never started never runs the first one.
-            string script =
-                "Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; " +
-                $"$secret = [System.IO.File]::ReadAllText('{KeyFile}') " +
-                "| ConvertTo-SecureString -AsPlainText -Force; " +
-                "try { Join-OS7Domain " +
-                $"-TargetRoot '{_t.Root}' " +
-                $"-Domain '{d.Realm}' " +
-                $"-ComputerName '{d.ComputerName}' " +
-                OrganizationalUnitArgument(d) +
-                JoinAccountArgument(d) +
-                "-Password $secret " +
-                (x.DryRun ? "-WhatIf" : "-Confirm:$false") +
-                " } finally { Remove-Item -LiteralPath " +
-                $"'{KeyFile}' -Force -ErrorAction SilentlyContinue }}";
-
-            // `Executor.Exec` and not a runner of this file's own: it already
-            // starts the process without a shell, logs the command line, keeps
-            // the last of stderr and turns a non-zero exit into the
-            // `StepException` the caller above is catching. What it does not do
-            // is echo the module's progress lines one at a time the way
-            // `PoolsAndDatasetsStep`'s private runner does — worth having, and
-            // not worth a second process runner in this file to get.
-            x.Exec("pwsh", "-NoProfile", "-NonInteractive", "-Command", script);
+                // THE SCRIPT'S OWN `finally` HAS ALREADY REMOVED THE KEYFILE, so
+                // the second attempt has nothing to read unless it is written
+                // again. Found by reading that `finally`; a retry without this is
+                // a join that fails on an empty password and blames the
+                // credential.
+                WriteKeyFile(x, d);
+                x.Exec("pwsh", "-NoProfile", "-NonInteractive", "-Command",
+                       BuildScript(x, d, true));
+            }
         }
         finally
         {
@@ -388,12 +366,120 @@ internal sealed class DomainStep : IStep
             // Written after both, it would overwrite the only record that the
             // machine has a computer account it cannot use.
             d.Joined = true;
-            d.JoinedDetail = $"joined {d.Realm} as {d.ComputerName}";
+            d.JoinedDetail = $"joined {d.Realm} as {d.ComputerName}"
+                             + (d.UseLdapPassword
+                                 ? ", computer password set over LDAP"
+                                 : "");
             Log.Info($"domain: {d.JoinedDetail}");
         }
 
         ProveUsable(x, d);
     }
+
+    /// <summary>
+    /// The keyfile, written fresh. Called twice when the join is retried,
+    /// because the script's own `finally` removes it the moment the first
+    /// attempt is over.
+    ///
+    /// NO TRAILING NEWLINE, and it is the same trap `LuksStep` names: whatever
+    /// reads this file reads it verbatim, so a byte that was never part of the
+    /// password is a password that is not the one that was typed. The script
+    /// reads the file whole and hands the cmdlet what it asks for, which is a
+    /// securestring.
+    /// </summary>
+    private static void WriteKeyFile(Executor x, DomainPlan d)
+    {
+        if (x.DryRun) return;
+        File.WriteAllBytes(KeyFile, Encoding.UTF8.GetBytes(d.Password!));
+        File.SetUnixFileMode(KeyFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
+
+    /// <summary>
+    /// Whether the cmdlet's own failure asked for `-UseLdapPassword`, and it has
+    /// not been used yet.
+    ///
+    /// IT LOOKS FOR THE SWITCH NAME AND NOT FOR THE KERBEROS ERROR. `adcli`
+    /// reports "Message stream modified"; deciding what that means is
+    /// `Join-DirectoryRealm`'s job and it does it in one place, translating the
+    /// failure into a sentence that names the remedy. Matching the remedy here
+    /// means the installer cannot disagree with the module about when to retry —
+    /// two copies of one rule is BUILD-NOTES #66, and this is the cheap way not
+    /// to have them.
+    /// </summary>
+    /// <remarks>`internal` rather than `private` so that `--self-test` asserts
+    /// it, the way `DomainPlan.IsValidDomainName` is reachable for the same
+    /// reason. The retry is the only branch in this file with no other symptom:
+    /// get it wrong in one direction and a machine behind NAT is never joined,
+    /// wrong in the other and every failed join is attempted twice.</remarks>
+    internal static bool SaysToUseLdapPassword(StepException ex, DomainPlan d) =>
+        !d.UseLdapPassword
+        && ex.Output.Contains("-UseLdapPassword", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The `Join-OS7Domain` command line, built once per attempt.
+    ///
+    /// OUT TO POWERSHELL, and §6.3 is the reason — the same reason
+    /// `PoolsAndDatasetsStep` calls `New-OS7Storage` rather than running `zpool`
+    /// itself. This command line IS the contract between the installer and the
+    /// module, so EVERY NAME IN IT IS THE CMDLET'S OWN: `Join-OS7Domain` binds
+    /// its parameters before `adcli` is ever started, and a name this file
+    /// invented rather than read out of the `param` block fails every join at
+    /// binding, on a machine that is otherwise finished, with an error about a
+    /// parameter instead of about a domain. `check-installer-cmdlets.py` is what
+    /// holds that, by reading these literals and asking PowerShell what binds.
+    ///
+    ///   -TargetRoot      where the system being joined is mounted. The keytab
+    ///                    and sssd.conf go under it; the process itself runs OUT
+    ///                    HERE, on the live system, where DNS and the clock are
+    ///                    the ones screen 9 tested.
+    ///   -Domain          the DNS domain name, lower case.
+    ///   -ComputerName    the account in the directory, at most 15 chars.
+    ///   -OrganizationalUnit  a DN, or the argument is absent.
+    ///   -UserName        the account authorising the join — or
+    ///                    -OneTimePassword instead, which says the computer
+    ///                    account already exists and the password is its
+    ///                    one-time one. One of the two is always passed: with
+    ///                    neither, `adcli` is given no way to authenticate at
+    ///                    all.
+    ///   -Password        a securestring, built here out of the keyfile.
+    ///   -UseLdapPassword set the computer password with an LDAP modify instead
+    ///                    of through kpasswd, which is what a machine behind NAT
+    ///                    needs. Absent unless asked for or retried; see
+    ///                    `DomainPlan.UseLdapPassword`.
+    ///
+    /// THE SECRET IS A PATH ON THIS COMMAND LINE AND NEVER A VALUE, which is
+    /// what makes `Executor.Exec` logging it in full safe, and what keeps it out
+    /// of `ps` on a machine somebody may be watching over the operator's
+    /// shoulder. `$secret` is built inside the pwsh process, and the keyfile is
+    /// removed TWICE — by the script's own `finally` as soon as the attempt is
+    /// over, and again by the caller's, because a pwsh that never started never
+    /// runs the first one. That first removal is also why a retry has to write
+    /// the file again.
+    /// </summary>
+    private string BuildScript(Executor x, DomainPlan d, bool useLdapPassword) =>
+        "Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; " +
+        $"$secret = [System.IO.File]::ReadAllText('{KeyFile}') " +
+        "| ConvertTo-SecureString -AsPlainText -Force; " +
+        "try { Join-OS7Domain " +
+        $"-TargetRoot '{_t.Root}' " +
+        $"-Domain '{d.Realm}' " +
+        $"-ComputerName '{d.ComputerName}' " +
+        OrganizationalUnitArgument(d) +
+        JoinAccountArgument(d) +
+        // INLINE AND NOT IN A HELPER, and that is about the CHECK rather than
+        // about style. check-installer-cmdlets.py reads these literals and asks
+        // PowerShell which parameters bind, but it can only attribute a
+        // `-Name` it finds in the same expression as the cmdlet — a literal
+        // returned from another method is invisible to it. Measured on this
+        // very change: the call reported "4 parameter(s)", none of them the
+        // three the helpers emit. So a parameter added here goes where the
+        // check can see it. (The two helpers above predate this and are still
+        // unchecked; named rather than quietly left.)
+        (useLdapPassword ? "-UseLdapPassword " : "") +
+        "-Password $secret " +
+        (x.DryRun ? "-WhatIf" : "-Confirm:$false") +
+        " } finally { Remove-Item -LiteralPath " +
+        $"'{KeyFile}' -Force -ErrorAction SilentlyContinue }}";
 
     /// <summary>`-OrganizationalUnit '<dn>' `, or nothing. Absent rather than
     /// empty: an empty DN is a real value to a directory and means something
