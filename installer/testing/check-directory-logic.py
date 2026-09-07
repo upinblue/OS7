@@ -159,10 +159,27 @@ function T {{
                         'userAccountControl' = @('66048')
                         'memberOf'           = @('CN=OS7FixtureGroup,CN=Users,DC=os7,DC=test')
                         'distinguishedName'  = @('CN=Ada Lovelace,CN=Users,DC=os7,DC=test')
+                        # S-1-5-21-1-2-3-1105 in its binary form, and
+                        # primaryGroupID 513 beside it: the two attributes
+                        # Get-OS7ADPrincipalGroupMembership needs to work out the
+                        # primary group that memberOf does not carry.
+                        #
+                        # THE LEADING COMMA IS LOAD-BEARING. @([byte[]]@(1,2,3))
+                        # ENUMERATES the array into three separate byte values,
+                        # so the fake handed out a SID of one byte and the SID
+                        # decoded to $null -- which read exactly like a DC that
+                        # does not send objectSid. The comma makes it one value
+                        # that happens to be an array, which is the shape the
+                        # real binary-attribute path returns. This is the same
+                        # trap Directory.psm1's own self-test names for values
+                        # being WRITTEN.
+                        'objectSid'          = (, [byte[]]@(1, 5, 0, 0, 0, 0, 0, 5,
+                                21, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 81, 4, 0, 0))
+                        'primaryGroupID'     = @('513')
                     }}
                 }})
             }}
-            elseif ($filter -like '*OS7FixtureGroup*') {{
+            elseif ($filter -like '*OS7FixtureGroup*' -or $req.DistinguishedName -like '*OS7FixtureGroup*') {{
                 $rows.Add([pscustomobject]@{{
                     Dn = 'CN=OS7FixtureGroup,CN=Users,DC=os7,DC=test'
                     Attributes = [ordered]@{{
@@ -186,6 +203,65 @@ function T {{
                     $cookie = [byte[]]@()
                 }}
             }}
+            elseif ($filter -like '*organizationalUnit*') {{
+                # An OU, and its CHILD COUNT is what Remove-OS7ADOrganizationalUnit
+                # refuses on. OU=Full has one child, OU=Empty has none.
+                $which = if ($filter -like '*Full*' -or $req.DistinguishedName -like '*Full*') {{ 'Full' }} else {{ 'Empty' }}
+                $rows.Add([pscustomobject]@{{
+                    Dn = "OU=$which,DC=os7,DC=test"
+                    Attributes = [ordered]@{{
+                        'ou' = @($which)
+                        'distinguishedName' = @("OU=$which,DC=os7,DC=test")
+                    }}
+                }})
+            }}
+            elseif ($req.DistinguishedName -like 'OU=Full*') {{
+                # the OneLevel child probe
+                $rows.Add([pscustomobject]@{{ Dn = 'CN=in the way,OU=Full,DC=os7,DC=test'; Attributes = [ordered]@{{}} }})
+            }}
+            elseif ($req.DistinguishedName -like 'OU=Empty*') {{ }}
+            elseif ($filter -like '*1.2.840.113556.1.4.1941*') {{
+                # The recursive membership rule, asked in the PRINCIPAL direction.
+                $rows.Add([pscustomobject]@{{
+                    Dn = 'CN=Nested,CN=Users,DC=os7,DC=test'
+                    Attributes = [ordered]@{{ 'sAMAccountName' = @('Nested'); 'groupType' = @('-2147483646') }}
+                }})
+            }}
+            elseif ($filter -like '*objectSid=S-1-5-21-1-2-3-513*') {{
+                # The PRIMARY GROUP, resolved by SID rather than read from memberOf.
+                $rows.Add([pscustomobject]@{{
+                    Dn = 'CN=Domain Users,CN=Users,DC=os7,DC=test'
+                    Attributes = [ordered]@{{ 'sAMAccountName' = @('Domain Users'); 'groupType' = @('-2147483646') }}
+                }})
+            }}
+            elseif ($filter -like '*OS7FIXTUREPC*' -or $req.DistinguishedName -like '*OS7FIXTUREPC*') {{
+                # A COMPUTER, and DELIBERATELY WITHOUT memberOf. That attribute is
+                # not in $script:OS7AdComputerAttributes, so OS7.AD.Computer has no
+                # MemberOf property at all -- which is what made
+                # Get-OS7ADPrincipalGroupMembership throw a PowerShell property
+                # error for a machine account on 2026-09-07. Its primary group is
+                # 515 (Domain Computers), not 513.
+                $rows.Add([pscustomobject]@{{
+                    Dn = 'CN=OS7FIXTUREPC,CN=Computers,DC=os7,DC=test'
+                    Attributes = [ordered]@{{
+                        'sAMAccountName'    = @('OS7FIXTUREPC$')
+                        'objectClass'       = @('top', 'person', 'organizationalPerson', 'user', 'computer')
+                        'primaryGroupID'    = @('515')
+                        'objectSid'         = (, [byte[]]@(1, 5, 0, 0, 0, 0, 0, 5,
+                                21, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 4, 0, 0))
+                        'distinguishedName' = @('CN=OS7FIXTUREPC,CN=Computers,DC=os7,DC=test')
+                    }}
+                }})
+            }}
+            elseif ($filter -like '*objectSid=S-1-5-21-1-2-3-515*') {{
+                $rows.Add([pscustomobject]@{{
+                    Dn = 'CN=Domain Computers,CN=Users,DC=os7,DC=test'
+                    Attributes = [ordered]@{{
+                        'sAMAccountName' = @('Domain Computers'); 'groupType' = @('-2147483646')
+                    }}
+                }})
+            }}
+            elseif ($filter -like '*primaryGroupID*' -or $req.Attributes -contains 'primaryGroupID') {{ }}
             elseif ($filter -like '*NOTHINGMATCHES*') {{ }}
             else {{
                 throw "the fake was asked something nobody modelled: $filter"
@@ -362,6 +438,157 @@ T 'the session object never carries the password into JSON' {{
     $json = $adminSession | ConvertTo-Json -Depth 8
     if ($json.Contains('hunter2hunter2')) {{ throw 'THE PASSWORD IS IN THE SESSION OBJECT' }}
     'clean'
+}}
+
+T 'an OU is created with an OU= relative name, never CN=' {{
+    Clear-Sent
+    $null = New-OS7ADOrganizationalUnit -Name 'NewOne' -Path 'DC=os7,DC=test' `
+        -Session $adminSession -Confirm:$false
+    $add = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'AddRequest' }} | Select-Object -First 1
+    if (-not $add) {{ throw 'no add was sent' }}
+    if ($add.DistinguishedName -notlike 'OU=NewOne,*') {{
+        throw "the schema refuses this name: $($add.DistinguishedName)"
+    }}
+    $classes = @($add.Attributes | Where-Object {{ $_.Name -eq 'objectClass' }})
+    $add.DistinguishedName
+}}
+
+T 'removing an OU that still holds objects is REFUSED, with the count' {{
+    Clear-Sent
+    $threw = $null
+    try {{
+        Remove-OS7ADOrganizationalUnit -Identity 'OU=Full,DC=os7,DC=test' `
+            -Session $adminSession -Confirm:$false | Out-Null
+    }} catch {{ $threw = $_.Exception.Message }}
+    if (-not $threw) {{ throw 'it deleted a populated OU' }}
+    if ($threw -notlike '*1 object*') {{ throw "the refusal does not count them: $threw" }}
+    $deletes = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'DeleteRequest' }}
+    if (@($deletes).Count -ne 0) {{ throw 'a delete was sent anyway' }}
+    'refused before the delete'
+}}
+
+T 'and an EMPTY OU is deleted' {{
+    Clear-Sent
+    $null = Remove-OS7ADOrganizationalUnit -Identity 'OU=Empty,DC=os7,DC=test' `
+        -Session $adminSession -Confirm:$false
+    $deletes = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'DeleteRequest' }}
+    if (@($deletes).Count -ne 1) {{ throw "sent $(@($deletes).Count) deletes" }}
+    'deleted'
+}}
+
+T 'the OU child probe is OneLevel, so it asks about leaf-ness and not the subtree' {{
+    Clear-Sent
+    try {{
+        Remove-OS7ADOrganizationalUnit -Identity 'OU=Full,DC=os7,DC=test' `
+            -Session $adminSession -Confirm:$false | Out-Null
+    }} catch {{ }}
+    $probe = @(Get-Sent) | Where-Object {{
+        $_.GetType().Name -eq 'SearchRequest' -and $_.DistinguishedName -like 'OU=Full*'
+    }} | Select-Object -First 1
+    if (-not $probe) {{ throw 'no child probe was sent' }}
+    if ("$($probe.Scope)" -ne 'OneLevel') {{ throw "scope was $($probe.Scope)" }}
+    'OneLevel'
+}}
+
+T 'a principal membership includes the PRIMARY group, which memberOf never lists' {{
+    Clear-Sent
+    $groups = @(Get-OS7ADPrincipalGroupMembership -Identity os7fixture1 -Session $adminSession)
+    $names = ($groups | ForEach-Object {{ $_.Name }} | Sort-Object) -join ', '
+    if ($names -notlike '*Domain Users*') {{
+        throw "the primary group is missing, which is how a fresh account reads as groupless: $names"
+    }}
+    if ($names -notlike '*OS7FixtureGroup*') {{ throw "memberOf was not read: $names" }}
+    $names
+}}
+
+T 'a COMPUTER''s membership works, though OS7.AD.Computer has no MemberOf property' {{
+    # The regression this guards: reaching into $principal.MemberOf threw a
+    # property error for a machine account, in a cmdlet about groups.
+    $groups = @(Get-OS7ADPrincipalGroupMembership -Identity OS7FIXTUREPC -Session $adminSession)
+    $names = ($groups | ForEach-Object {{ $_.Name }}) -join ', '
+    if ($names -notlike '*Domain Computers*') {{
+        throw "a machine's primary group is 515 and was not resolved: $names"
+    }}
+    $names
+}}
+
+T 'and -ExcludePrimaryGroup asks the raw memberOf question instead' {{
+    $groups = @(Get-OS7ADPrincipalGroupMembership -Identity os7fixture1 `
+            -ExcludePrimaryGroup -Session $adminSession)
+    $names = ($groups | ForEach-Object {{ $_.Name }}) -join ', '
+    if ($names -like '*Domain Users*') {{ throw "the primary group is still there: $names" }}
+    $names
+}}
+
+T 'a RECURSIVE principal membership uses the directory''s own matching rule' {{
+    Clear-Sent
+    $null = Get-OS7ADPrincipalGroupMembership -Identity os7fixture1 -Recursive -Session $adminSession
+    $search = @(Get-Sent) | Where-Object {{
+        $_.GetType().Name -eq 'SearchRequest' -and $_.Filter -like '*1.2.840.113556.1.4.1941*'
+    }} | Select-Object -First 1
+    if (-not $search) {{ throw 'the nesting was walked in PowerShell instead of by the DC' }}
+    if ($search.Filter -notlike '*member:*') {{ throw "wrong direction: $($search.Filter)" }}
+    'member: 1941, asked of the DC'
+}}
+
+T 'account expiry: -Never writes 0, and a date writes a FILETIME' {{
+    Clear-Sent
+    $null = Set-OS7ADAccountExpiration -Identity os7fixture1 -Never -Session $adminSession -Confirm:$false
+    $mod = @(Get-Sent) | Where-Object {{
+        $_.GetType().Name -eq 'ModifyRequest' -and $_.Modifications[0].Name -eq 'accountExpires'
+    }} | Select-Object -First 1
+    if (-not $mod) {{ throw 'nothing was written' }}
+    if ("$($mod.Modifications[0][0])" -ne '0') {{ throw "wrote $($mod.Modifications[0][0]) for never" }}
+
+    Clear-Sent
+    $when = [datetime]::SpecifyKind([datetime]'2026-12-31T18:00:00', [System.DateTimeKind]::Utc)
+    $null = Set-OS7ADAccountExpiration -Identity os7fixture1 -DateTime $when -Session $adminSession -Confirm:$false
+    $mod2 = @(Get-Sent) | Where-Object {{
+        $_.GetType().Name -eq 'ModifyRequest' -and $_.Modifications[0].Name -eq 'accountExpires'
+    }} | Select-Object -First 1
+    $written = [int64]"$($mod2.Modifications[0][0])"
+    $expected = $when.ToFileTimeUtc()
+    if ($written -ne $expected) {{ throw "wrote $written, expected $expected" }}
+    # And the round trip: what was written must read back as the same instant,
+    # which is what catches a local/UTC confusion that is invisible in one
+    # direction. ConvertFrom-DirectoryFileTime is the read side.
+    $back = ConvertFrom-DirectoryFileTime -Value "$written"
+    if ($back.ToUniversalTime() -ne $when.ToUniversalTime()) {{
+        throw "round trip moved the instant: $($back.ToUniversalTime()) vs $($when.ToUniversalTime())"
+    }}
+    "0 for never, $written for the date, round trip exact"
+}}
+
+T 'deleting by an ambiguous identity refuses and names the candidates' {{
+    Clear-Sent
+    $threw = $null
+    try {{ Remove-OS7ADGroup -Identity NOTHINGMATCHES -Session $adminSession -Confirm:$false | Out-Null }}
+    catch {{ $threw = $_.Exception.Message }}
+    if ($threw -notlike '*No group matched*') {{ throw "wrong refusal: $threw" }}
+    $deletes = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'DeleteRequest' }}
+    if (@($deletes).Count -ne 0) {{ throw 'a delete was sent for an unresolved identity' }}
+    'nothing matched, nothing deleted'
+}}
+
+T 'Remove-OS7ADUser resolves an identity to ONE dn before deleting' {{
+    Clear-Sent
+    $null = Remove-OS7ADUser -Identity os7fixture1 -Session $adminSession -Confirm:$false
+    $delete = @(Get-Sent) | Where-Object {{ $_.GetType().Name -eq 'DeleteRequest' }} | Select-Object -First 1
+    if (-not $delete) {{ throw 'nothing was deleted' }}
+    if ($delete.DistinguishedName -ne 'CN=Ada Lovelace,CN=Users,DC=os7,DC=test') {{
+        throw "deleted $($delete.DistinguishedName)"
+    }}
+    $delete.DistinguishedName
+}}
+
+T 'Set-OS7ADGroup clears an attribute when asked with an empty string' {{
+    Clear-Sent
+    $null = Set-OS7ADGroup -Identity OS7FixtureGroup -Description '' -Session $adminSession -Confirm:$false
+    $mod = @(Get-Sent) | Where-Object {{
+        $_.GetType().Name -eq 'ModifyRequest' -and $_.Modifications[0].Name -eq 'description'
+    }} | Select-Object -First 1
+    if (-not $mod) {{ throw 'an empty string was treated as "no change asked for"' }}
+    'empty means clear, not ignore'
 }}
 
 T 'a refused write is TRANSLATED, not surfaced as "the server cannot handle requests"' {{

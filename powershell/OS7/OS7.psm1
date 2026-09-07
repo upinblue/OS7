@@ -2761,12 +2761,17 @@ Export-ModuleMember -Function Get-OS7Version,
 	# Active Directory objects. Search-OS7AD and Get-/Set-OS7ADObject are the
 	# deliberate way out: anything this surface does not name is one raw LDAP
 	# call away rather than a dead end.
-	Get-OS7ADUser, New-OS7ADUser, Set-OS7ADUser,
-	Get-OS7ADGroup, New-OS7ADGroup, Get-OS7ADGroupMember,
+	Get-OS7ADUser, New-OS7ADUser, Set-OS7ADUser, Remove-OS7ADUser,
+	Get-OS7ADGroup, New-OS7ADGroup, Set-OS7ADGroup, Remove-OS7ADGroup,
+	# Get-OS7ADPrincipalGroupMembership is the INVERSE of Get-OS7ADGroupMember,
+	# and it resolves the primary group that memberOf does not carry.
+	Get-OS7ADGroupMember, Get-OS7ADPrincipalGroupMembership,
 	Add-OS7ADGroupMember, Remove-OS7ADGroupMember,
-	Get-OS7ADComputer, Get-OS7ADOrganizationalUnit,
+	Get-OS7ADComputer,
+	Get-OS7ADOrganizationalUnit, New-OS7ADOrganizationalUnit,
+	Set-OS7ADOrganizationalUnit, Remove-OS7ADOrganizationalUnit,
 	Enable-OS7ADAccount, Disable-OS7ADAccount, Unlock-OS7ADAccount,
-	Reset-OS7ADAccountPassword,
+	Reset-OS7ADAccountPassword, Set-OS7ADAccountExpiration,
 	Move-OS7ADObject, Rename-OS7ADObject,
 	Search-OS7AD, Get-OS7ADObject, Set-OS7ADObject, Remove-OS7ADObject,
 	# The domain JOIN, which is a different feature with a different cost: five

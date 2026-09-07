@@ -284,8 +284,9 @@ pair reached by a road nothing checks.
 matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/` and `powershell/Directory/` are the generic layers — none
 knows anything about OS/7, and all five would run on any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is 101 of the 194 functions
-(95 of 185 until the scheduled-task surface landed on 2026-08-29).
+`powershell/OS7/` is the product layer on top, and it is 109 of the 202 functions
+(101 of 194 until eight AD cmdlets landed on 2026-09-07; 95 of 185 until the
+scheduled-task surface landed on 2026-08-29).
 Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units and **P2-directory**
 about the directory; `check-layering.py` holds **all five** at baselines that may

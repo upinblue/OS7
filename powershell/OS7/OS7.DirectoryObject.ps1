@@ -446,6 +446,134 @@ function Get-OS7ADGroupMember {
 	}
 }
 
+function Get-OS7ADPrincipalGroupMembership {
+	<#
+	.SYNOPSIS
+		The groups an account is in — the inverse of Get-OS7ADGroupMember.
+
+	.DESCRIPTION
+		"What can this person reach" is asked far more often than "who is in
+		this group", and the two are not the same query: this one starts at the
+		account.
+
+		THE PRIMARY GROUP IS NOT IN memberOf, AND THAT IS AD, NOT A BUG HERE.
+		Every account has a primary group — Domain Users for a person, Domain
+		Computers for a machine — recorded as a RID in primaryGroupID and
+		DELIBERATELY absent from memberOf. A membership list built from memberOf
+		alone therefore omits the one group almost every account is in, which
+		reads as "this user is in no groups" for a fresh account. So the primary
+		group is resolved separately, from the account's own SID with the RID
+		replaced, and included. -ExcludePrimaryGroup asks for the raw memberOf
+		view instead.
+
+		-Recursive uses the directory's matching rule 1.2.840.113556.1.4.1941 on
+		`member`, which is the same rule Get-OS7ADGroupMember uses in the other
+		direction: the domain controller walks the nesting, because it is the one
+		that walks it when it decides access. The primary group is added to that
+		result too, but its own nesting is not walked — a primary group is a
+		direct membership by construction.
+
+	.EXAMPLE
+		Get-OS7ADPrincipalGroupMembership -Identity p-schmidt
+
+	.EXAMPLE
+		Get-OS7ADPrincipalGroupMembership -Identity p-schmidt -Recursive | Select-Object Name
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		[switch]$Recursive,
+		[switch]$ExcludePrimaryGroup,
+		[string]$SearchBase,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+	$base = Get-OS7AdSearchBase -Session $activeSession -SearchBase $SearchBase
+
+	# A COMPUTER IS AN ACCOUNT TOO, and its groups are as ordinary a question as
+	# a person's. Get-OS7ADUser's filter carries (objectCategory=person), so a
+	# machine matches nothing there and has to be looked for as what it is.
+	$found = @(Get-OS7ADUser -Identity $Identity -SearchBase $base -Session $activeSession)
+	if ($found.Count -eq 0) {
+		$found = @(Get-OS7ADComputer -Identity $Identity -SearchBase $base -Session $activeSession)
+	}
+	if ($found.Count -eq 0) { throw "No user or computer matched '$Identity'." }
+	if ($found.Count -gt 1) {
+		throw "'$Identity' matched $($found.Count) accounts. Name one by distinguished name."
+	}
+	$principalDn = $found[0].DistinguishedName
+
+	# ASK THE DIRECTORY FOR THE ACCOUNT'S OWN ATTRIBUTES, and do not reach into
+	# the object a converter produced. OS7.AD.Computer carries no MemberOf at all
+	# — memberOf is not in $script:OS7AdComputerAttributes — so $principal.MemberOf
+	# was a PowerShell property error for a machine account under Set-StrictMode:
+	# an error about a property, in a cmdlet about groups. Measured 2026-09-07
+	# against the test DC's own computer object. One read, three attributes, and
+	# no assumption about which shape the account came back as.
+	$row = Get-OS7ADObject -DistinguishedName $principalDn `
+		-Property @('memberOf', 'primaryGroupID', 'objectSid') -Session $activeSession
+	if (-not $row) {
+		throw ("'$principalDn' was found and then could not be read back, so its group " +
+			'memberships are unknown and this is not reporting an empty list for them.')
+	}
+	$memberOf = @(Get-DirectoryAttributeValues -Attributes $row.Attributes -Name 'memberOf')
+	$primaryRid = ConvertTo-DirectoryInt64 -Value (
+		Get-DirectoryAttributeScalar -Attributes $row.Attributes -Name 'primaryGroupID')
+	$principalSid = ConvertFrom-DirectorySid -Bytes (
+		Get-DirectoryAttributeScalar -Attributes $row.Attributes -Name 'objectSid')
+
+	# Emit each group once. A recursive answer and a primary group can name the
+	# same group, and a duplicate row in a membership list is a fact nobody
+	# measured.
+	$seen = [System.Collections.Generic.HashSet[string]]::new(
+		[System.StringComparer]::InvariantCultureIgnoreCase)
+
+	if ($Recursive) {
+		$escapedDn = ConvertTo-DirectoryFilterValue -Value $principalDn
+		$rows = @(Search-Directory -Session $activeSession.DirectorySession -SearchBase $base `
+				-Filter "(&(objectClass=group)(member:1.2.840.113556.1.4.1941:=$escapedDn))" `
+				-Property $script:OS7AdGroupAttributes)
+		foreach ($groupRow in $rows) {
+			if ($seen.Add($groupRow.Dn)) { ConvertTo-OS7AdGroup -Row $groupRow }
+		}
+	}
+	else {
+		# THE GROUP DN IS THE SEARCH BASE AND NOT PART OF A FILTER, so nothing
+		# here is escaped — RFC 4515 escaping belongs to filter values, and a
+		# base handed through it would be a DN the server does not have. Same
+		# rule as Get-OS7ADGroupMember's direct branch.
+		foreach ($groupDn in $memberOf) {
+			$rows = @(Search-Directory -Session $activeSession.DirectorySession `
+					-SearchBase $groupDn -Filter '(objectClass=group)' -Scope Base `
+					-Property $script:OS7AdGroupAttributes)
+			foreach ($groupRow in $rows) {
+				if ($seen.Add($groupRow.Dn)) { ConvertTo-OS7AdGroup -Row $groupRow }
+			}
+		}
+	}
+
+	if ($ExcludePrimaryGroup) { return }
+
+	# The primary group's SID is the account's own SID with the last RID swapped
+	# for primaryGroupID. Read from the account rather than assumed to be 513:
+	# it is settable, and on a machine account it is 515, not 513.
+	if ($null -eq $primaryRid -or -not $principalSid) { return }
+
+	$domainSid = $principalSid -replace '-\d+$', ''
+	$primarySid = "$domainSid-$primaryRid"
+	$escapedSid = ConvertTo-DirectoryFilterValue -Value $primarySid
+	# AD accepts a SID in its string form in a filter, which is what makes this
+	# one search rather than a decode of every group's objectSid.
+	$primaryRows = @(Search-Directory -Session $activeSession.DirectorySession -SearchBase $base `
+			-Filter "(&(objectClass=group)(objectSid=$escapedSid))" `
+			-Property $script:OS7AdGroupAttributes)
+	foreach ($primaryRow in $primaryRows) {
+		if ($seen.Add($primaryRow.Dn)) { ConvertTo-OS7AdGroup -Row $primaryRow }
+	}
+}
+
 function Get-OS7ADComputer {
 	<#
 	.SYNOPSIS
@@ -773,6 +901,217 @@ function New-OS7ADGroup {
 	return (Get-OS7ADGroup -Identity $Name -Session $activeSession)
 }
 
+function Set-OS7ADGroup {
+	<#
+	.SYNOPSIS
+		Change a group's description, mail address or display name.
+
+	.DESCRIPTION
+		THE GROUP'S SCOPE AND TYPE ARE DELIBERATELY NOT HERE. groupType looks
+		like an attribute this could set, and Active Directory enforces rules on
+		which transitions are legal — a global group cannot become domain local
+		in one step, and neither can change while it is a member of a group whose
+		scope forbids it. AD refuses an illegal transition with an operational
+		error that names none of that. Rather than offer a parameter that works
+		for some groups and fails opaquely for others, this leaves groupType to
+		Set-OS7ADObject, where the operator is plainly writing a raw attribute.
+
+		-Attribute is the same escape hatch Set-OS7ADUser carries, for the
+		attributes this does not name.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		[string]$Description,
+		[string]$Mail,
+		[string]$DisplayName,
+		[hashtable]$Attribute,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$found = @(Get-OS7ADGroup -Identity $Identity -Session $activeSession)
+	if ($found.Count -eq 0) { throw "No group matched '$Identity'." }
+	if ($found.Count -gt 1) {
+		throw "'$Identity' matched $($found.Count) groups. Name one by distinguished name."
+	}
+	$targetDn = $found[0].DistinguishedName
+
+	# ContainsKey and not truthiness: an empty string is how an attribute is
+	# CLEARED, and `if ($Description)` would silently ignore that request.
+	$changes = @{}
+	if ($PSBoundParameters.ContainsKey('Description')) { $changes['description'] = $Description }
+	if ($PSBoundParameters.ContainsKey('Mail')) { $changes['mail'] = $Mail }
+	if ($PSBoundParameters.ContainsKey('DisplayName')) { $changes['displayName'] = $DisplayName }
+	if ($Attribute) { foreach ($key in $Attribute.Keys) { $changes[$key] = $Attribute[$key] } }
+
+	if ($changes.Count -eq 0) { return $found[0] }
+	if (-not $PSCmdlet.ShouldProcess($targetDn, "set $($changes.Keys -join ', ')")) {
+		return $found[0]
+	}
+
+	foreach ($key in $changes.Keys) {
+		$null = Set-DirectoryEntry -Session $activeSession.DirectorySession `
+			-DistinguishedName $targetDn -Name $key -Value $changes[$key] `
+			-Operation Replace -Confirm:$false
+	}
+
+	return (Get-OS7ADGroup -Identity $targetDn -Session $activeSession)
+}
+
+function New-OS7ADOrganizationalUnit {
+	<#
+	.SYNOPSIS
+		Create an organisational unit.
+
+	.DESCRIPTION
+		AN OU'S RDN IS `OU=`, NOT `CN=`, and that is the whole reason this is a
+		separate cmdlet rather than a note in New-OS7ADGroup's help: an
+		organizationalUnit created with a CN= relative name is refused by the
+		schema, and the error is about naming attributes rather than about the
+		thing the operator got wrong.
+
+		NOT PROTECTED FROM ACCIDENTAL DELETION, AND THAT DIFFERS FROM WINDOWS.
+		Microsoft's New-ADOrganizationalUnit defaults -ProtectedFromAccidentalDeletion
+		to $true, which is not an attribute but a DENY access-control entry on
+		the OU's security descriptor. Writing one means composing and writing
+		nTSecurityDescriptor over LDAP, which this surface does not do anywhere
+		yet. So an OU created here is deletable, an administrator used to Windows
+		will expect otherwise, and saying so is better than a parameter that
+		accepts $true and does nothing.
+
+	.EXAMPLE
+		New-OS7ADOrganizationalUnit -Name Workstations -Path 'DC=corp,DC=example,DC=com'
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Name,
+		[Parameter(Mandatory)][string]$Path,
+		[string]$Description,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$targetDn = 'OU=' + (ConvertTo-DirectoryDnValue -Value $Name) + ',' + $Path
+	if (-not $PSCmdlet.ShouldProcess($targetDn, 'create organisational unit')) { return $null }
+
+	$attributes = @{ ou = $Name }
+	if ($Description) { $attributes['description'] = $Description }
+
+	$null = New-DirectoryEntry -Session $activeSession.DirectorySession `
+		-DistinguishedName $targetDn -ObjectClass @('organizationalUnit') `
+		-Attribute $attributes -Confirm:$false
+
+	# READ IT BACK BY DISTINGUISHED NAME. By -Name would match every OU with
+	# that name anywhere in the domain, which is legal and common — Workstations
+	# under two different sites — so the read-back has to name the one created.
+	return (Get-OS7ADOrganizationalUnit -Identity $targetDn -Session $activeSession)
+}
+
+function Set-OS7ADOrganizationalUnit {
+	<#
+	.SYNOPSIS
+		Change an organisational unit's description.
+
+	.DESCRIPTION
+		Renaming an OU is Rename-OS7ADObject and moving one is Move-OS7ADObject,
+		because both are ModifyDN operations and not attribute writes — the same
+		split every other object type here has.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		[string]$Description,
+		[hashtable]$Attribute,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$found = @(Get-OS7ADOrganizationalUnit -Identity $Identity -Session $activeSession)
+	if ($found.Count -eq 0) { throw "No organisational unit matched '$Identity'." }
+	if ($found.Count -gt 1) {
+		throw ("'$Identity' matched $($found.Count) organisational units. Name one by " +
+			'distinguished name — the same name under two parents is legal.')
+	}
+	$targetDn = $found[0].DistinguishedName
+
+	$changes = @{}
+	if ($PSBoundParameters.ContainsKey('Description')) { $changes['description'] = $Description }
+	if ($Attribute) { foreach ($key in $Attribute.Keys) { $changes[$key] = $Attribute[$key] } }
+
+	if ($changes.Count -eq 0) { return $found[0] }
+	if (-not $PSCmdlet.ShouldProcess($targetDn, "set $($changes.Keys -join ', ')")) {
+		return $found[0]
+	}
+
+	foreach ($key in $changes.Keys) {
+		$null = Set-DirectoryEntry -Session $activeSession.DirectorySession `
+			-DistinguishedName $targetDn -Name $key -Value $changes[$key] `
+			-Operation Replace -Confirm:$false
+	}
+
+	return (Get-OS7ADOrganizationalUnit -Identity $targetDn -Session $activeSession)
+}
+
+function Remove-OS7ADOrganizationalUnit {
+	<#
+	.SYNOPSIS
+		Delete an organisational unit, refusing while anything is still in it.
+
+	.DESCRIPTION
+		LDAP WILL NOT DELETE A NON-LEAF OBJECT, and what it says about that is
+		notAllowedOnNonLeaf (LDAP 66) — a sentence about the protocol, for an OU
+		that has three computers in it. So this COUNTS the children first and
+		refuses with the number, naming what has to happen before the delete can.
+
+		THERE IS NO -Recursive HERE ON PURPOSE. Windows deletes a populated OU
+		with the tree-delete control (1.2.840.113556.1.4.805), which the
+		Directory layer does not send and which deletes a subtree with one
+		request and no second thought. An operator who means that can empty the
+		OU, or reach for Search-OS7AD and Remove-OS7ADObject and see each object
+		go. A one-word switch that silently removes a hundred accounts is not a
+		surface this repository wants to hand out.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$found = @(Get-OS7ADOrganizationalUnit -Identity $Identity -Session $activeSession)
+	if ($found.Count -eq 0) { throw "No organisational unit matched '$Identity'." }
+	if ($found.Count -gt 1) {
+		throw ("'$Identity' matched $($found.Count) organisational units. Name one by " +
+			'distinguished name.')
+	}
+	$targetDn = $found[0].DistinguishedName
+
+	# OneLevel and not Subtree: the question is whether this OU is a leaf, which
+	# is what LDAP refuses on. A Subtree search would also return the OU itself.
+	$children = @(Search-Directory -Session $activeSession.DirectorySession `
+			-SearchBase $targetDn -Filter '(objectClass=*)' -Scope OneLevel `
+			-Property @('distinguishedName'))
+	if ($children.Count -gt 0) {
+		throw ("'$targetDn' still contains $($children.Count) object(s), and LDAP does not " +
+			'delete an object that is not a leaf. Move or remove them first; ' +
+			'Search-OS7AD -SearchBase that DN lists them.')
+	}
+
+	if (-not $PSCmdlet.ShouldProcess($targetDn, 'delete organisational unit')) { return $null }
+
+	return (Remove-DirectoryEntry -Session $activeSession.DirectorySession `
+			-DistinguishedName $targetDn -Confirm:$false)
+}
+
 function Add-OS7ADGroupMember {
 	<#
 	.SYNOPSIS
@@ -1066,6 +1405,88 @@ function Reset-OS7ADAccountPassword {
 	return (Get-OS7ADUser -Identity $targetDn -Session $activeSession)
 }
 
+function Set-OS7ADAccountExpiration {
+	<#
+	.SYNOPSIS
+		Set or clear the date an account stops working.
+
+	.DESCRIPTION
+		The counterpart to Get-OS7ADUser's AccountExpires, which this surface
+		could read and not write. What it is for is the account that should stop
+		working on its own: a contractor, a temporary, an intern.
+
+		"NEVER" IS TWO DIFFERENT VALUES AND NEITHER OF THEM IS A DATE. AD writes
+		accountExpires as a FILETIME, and treats BOTH 0 and 0x7FFFFFFFFFFFFFFF as
+		"does not expire" — ConvertFrom-DirectoryFileTime already returns $null
+		for both, which is why the read side never showed a date in 1601.
+		-Never writes 0, the value the Windows tools write.
+
+		THE INSTANT IS WRITTEN AS GIVEN, and Active Directory expires the account
+		AT it, not at the end of that day. Microsoft's own console adds a day
+		behind the operator's back, so "expires 31 March" set there and read here
+		is 1 April. This does not do that: a DateTime means that moment. A
+		DateTime with no zone is taken as local time and converted, because
+		FILETIME is UTC and a naive cast would move the expiry by the offset.
+
+	.EXAMPLE
+		Set-OS7ADAccountExpiration -Identity t-mueller -DateTime '2026-12-31 18:00'
+
+	.EXAMPLE
+		Set-OS7ADAccountExpiration -Identity t-mueller -Never
+	#>
+	[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'At')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		[Parameter(Mandatory, ParameterSetName = 'At', Position = 1)][datetime]$DateTime,
+		[Parameter(Mandatory, ParameterSetName = 'Never')][switch]$Never,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$found = @(Get-OS7ADUser -Identity $Identity -Session $activeSession)
+	if ($found.Count -eq 0) {
+		$found = @(Get-OS7ADComputer -Identity $Identity -Session $activeSession)
+	}
+	if ($found.Count -eq 0) { throw "No user or computer matched '$Identity'." }
+	if ($found.Count -gt 1) {
+		throw "'$Identity' matched $($found.Count) accounts. Name one by distinguished name."
+	}
+	$targetDn = $found[0].DistinguishedName
+
+	$value = '0'
+	$what = 'clear the expiry date'
+	if (-not $Never) {
+		# ToFileTimeUtc on an Unspecified DateTime treats it as LOCAL, which is
+		# what an operator typing a date means; ToUniversalTime first would
+		# double-convert a value that is already Utc. Kind decides, explicitly.
+		$instant = $DateTime
+		if ($instant.Kind -eq [System.DateTimeKind]::Unspecified) {
+			$instant = [datetime]::SpecifyKind($instant, [System.DateTimeKind]::Local)
+		}
+		$value = [string]$instant.ToFileTimeUtc()
+		$what = "expire at $($instant.ToUniversalTime().ToString('u'))"
+	}
+
+	if (-not $PSCmdlet.ShouldProcess($targetDn, $what)) { return $found[0] }
+
+	$null = Set-DirectoryEntry -Session $activeSession.DirectorySession `
+		-DistinguishedName $targetDn -Name 'accountExpires' -Value $value `
+		-Operation Replace -Confirm:$false
+
+	# READ BACK THE KIND OF OBJECT THAT WAS FOUND — the #74-shaped trap
+	# Set-OS7AdAccountDisabledBit records: a computer read back through
+	# Get-OS7ADUser matches nothing, and the cmdlet would return nothing after
+	# the write had gone through.
+	if ($found[0].PSTypeNames -contains 'OS7.AD.Computer') {
+		$escapedDn = ConvertTo-DirectoryFilterValue -Value $targetDn
+		return (Get-OS7ADComputer -Filter "(&(objectClass=computer)(distinguishedName=$escapedDn))" `
+				-Session $activeSession)
+	}
+	return (Get-OS7ADUser -Identity $targetDn -Session $activeSession)
+}
+
 function Move-OS7ADObject {
 	<#
 	.SYNOPSIS
@@ -1176,4 +1597,95 @@ function Remove-OS7ADObject {
 
 	return (Remove-DirectoryEntry -Session $activeSession.DirectorySession `
 			-DistinguishedName $DistinguishedName -Confirm:$false)
+}
+
+function Resolve-OS7AdDeletionTarget {
+	<#
+	.SYNOPSIS
+		Internal. The one distinguished name an identity names, or a refusal.
+
+	.DESCRIPTION
+		DELETION IS THE OPERATION THAT MUST NOT GUESS. Remove-OS7ADObject takes a
+		distinguished name because a DN is unambiguous; the by-identity cmdlets
+		that call this take what an operator types, which is not. A name that
+		matches two accounts is refused with both DNs, rather than the first one
+		being deleted — a Windows admin's habit of typing a bare name is exactly
+		how the wrong object goes.
+	#>
+	param(
+		[Parameter(Mandatory)]$Found,
+		[Parameter(Mandatory)][string]$Identity,
+		[Parameter(Mandatory)][string]$Kind
+	)
+
+	# NOT $matches: that is an automatic variable PowerShell fills from -match,
+	# and reusing an automatic name is BUILD-NOTES #65's class of defect.
+	$candidates = @($Found)
+	if ($candidates.Count -eq 0) { throw "No $Kind matched '$Identity'." }
+	if ($candidates.Count -gt 1) {
+		$names = ($candidates | ForEach-Object { $_.DistinguishedName }) -join '; '
+		throw ("'$Identity' matched $($candidates.Count) ${Kind}s and nothing was deleted. " +
+			"Name one by distinguished name: $names")
+	}
+	return $candidates[0].DistinguishedName
+}
+
+function Remove-OS7ADUser {
+	<#
+	.SYNOPSIS
+		Delete a user account, named the way an operator names one.
+
+	.DESCRIPTION
+		Remove-OS7ADObject needs a distinguished name. This takes a
+		sAMAccountName, a userPrincipalName or a DN, resolves it to exactly one
+		account, and refuses when it is more than one.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$targetDn = Resolve-OS7AdDeletionTarget -Identity $Identity -Kind 'user' `
+		-Found @(Get-OS7ADUser -Identity $Identity -Session $activeSession)
+
+	if (-not $PSCmdlet.ShouldProcess($targetDn, 'delete user')) { return $null }
+
+	return (Remove-DirectoryEntry -Session $activeSession.DirectorySession `
+			-DistinguishedName $targetDn -Confirm:$false)
+}
+
+function Remove-OS7ADGroup {
+	<#
+	.SYNOPSIS
+		Delete a group, named the way an operator names one.
+
+	.DESCRIPTION
+		THE MEMBERS ARE NOT DELETED AND THEIR ACCESS IS. Deleting a group removes
+		the membership from every account in it, which is a change to what those
+		people can reach and is invisible in the accounts themselves. The member
+		count is reported in the confirmation for that reason.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Identity,
+		$Session
+	)
+
+	Import-OS7DirectoryLayer
+	$activeSession = Resolve-OS7AdminSession -Session $Session
+
+	$found = @(Get-OS7ADGroup -Identity $Identity -Session $activeSession)
+	$targetDn = Resolve-OS7AdDeletionTarget -Identity $Identity -Kind 'group' -Found $found
+
+	$count = $found[0].MemberCount
+	if (-not $PSCmdlet.ShouldProcess($targetDn, "delete group and the membership of its $count member(s)")) {
+		return $null
+	}
+
+	return (Remove-DirectoryEntry -Session $activeSession.DirectorySession `
+			-DistinguishedName $targetDn -Confirm:$false)
 }

@@ -102,8 +102,42 @@ What this says about OS/7:
    `displayName` tokens the same way, and `check-ad.py`'s fixtures set no `displayName`. This
    is the argument for a `check-ad.py` stage against Windows, or for keeping this DC.
 
-Not fixed in this session: it is a bug report with a reproduction, and the fix touches
-`Directory.psm1`'s error mapping and `New-OS7ADUser`'s step reporting.
+**Fixed 2026-09-07** (commit "A directory operation refusal (0x52D) becomes a sentence"):
+`Get-DirectoryErrorMeaning` reads the operation sub-code as well as the bind one;
+`Invoke-DirectoryRequest` — the single chokepoint every write and search passes through —
+translates any failure it can name and re-throws unchanged the ones it cannot; and
+`New-OS7ADUser` winds the disabled stub back rather than leaving it. Re-measured against this
+DC afterwards: the message is now *"the domain's password policy refused this password (its
+length, complexity, or history) (LDAP 53, code 0000052d)"*, no stub is left behind, and a
+policy-clean password still creates an account that signs in.
+
+## Eight cmdlets added, 2026-09-07, and measured here
+
+The surface had gaps that this session's own testing walked into — the OU the test users live
+in had to be created with Windows tooling, because OS/7 could read OUs and not make one.
+Added and driven against this DC (`os7dc/os7-side-new-cmdlets.ps1`, output beside it):
+
+| cmdlet | what it settles | measured here |
+|---|---|---|
+| `New-/Set-/Remove-OS7ADOrganizationalUnit` | an OU's RDN is `OU=`, not `CN=`; a populated OU is refused with the child count rather than LDAP 66 | nested OU created, described, non-empty delete refused, child then parent deleted |
+| `Get-OS7ADPrincipalGroupMembership` | the inverse membership question, and the **primary group AD keeps out of `memberOf`** | `t.admin` → Domain Admins + OS7-Testers + **Domain Users**; `-Recursive` adds Administrators and the RODC group; the DC's computer object → Domain Controllers |
+| `Set-OS7ADGroup`, `Remove-OS7ADUser`, `Remove-OS7ADGroup` | `Set-`/`Remove-` by identity, which only users and DNs had | set and cleared description/mail/displayName; both deletes by `sAMAccountName`; an unmatched name refuses without deleting |
+| `Set-OS7ADAccountExpiration` | `accountExpires` was readable and not writable | `2026-12-31 18:00Z` → FILETIME 134432136000000000, read back to the same instant; `-Never` → raw `0`, read back `$null` |
+
+Two decisions are recorded as deliberately absent rather than half-built: an OU created here is
+**not** protected from accidental deletion (that is a DENY ACE on `nTSecurityDescriptor`, and
+this surface writes no ACLs anywhere yet, so a Windows admin's expectation is documented instead
+of faked), and `Remove-OS7ADOrganizationalUnit` has **no `-Recursive`** (Windows uses the
+tree-delete control, which the Directory layer does not send; a one-word switch that removes a
+hundred accounts is not a surface to hand out).
+
+**A second defect, found by running it:** `Get-OS7ADPrincipalGroupMembership` threw *"The
+property 'MemberOf' cannot be found on this object"* for a **computer** — `memberOf` is not in
+`$script:OS7AdComputerAttributes`, so `OS7.AD.Computer` has no such property, and the cmdlet had
+reached into the shape a converter produced. It now asks the directory for `memberOf`,
+`primaryGroupID` and `objectSid` in one read and assumes nothing about the object's shape.
+`check-directory-logic.py` gained a computer fixture deliberately lacking `memberOf` to hold it,
+along with twelve other cases for the new cmdlets (28 in total, all green, no DC required).
 
 ## What this does not say
 
