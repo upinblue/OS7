@@ -60,6 +60,7 @@ here either — this file points, they rule.
 | What OS/7 exposes as cmdlets, what it deliberately does not, how the layers are cut, decisions P1–P7 | [docs/POWERSHELL-SURFACE-PLAN.md](docs/POWERSHELL-SURFACE-PLAN.md) |
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
 | Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. The admin session is proven against a real domain controller; the join has never run on a machine |
+| Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **a concept, not yet decided** (every `Rn` is *Proposed*). The mechanism was measured end to end up to OS/7's login screen delivered over RDP from a real client (M-R33); **no cmdlet exists yet**, and v1 has stated security gaps |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
