@@ -6945,3 +6945,48 @@ if ($null -ne $after) { $still = @($after | Where-Object { … }) }
 
 and read the count as `@($still).Count` if there is any doubt left. The three
 faces of this now cost this repository four separate debugging sessions.
+
+---
+
+## #130 — `return ,$collection` and `return $collection` are each wrong for one caller, and a CMDLET has a third option
+
+Found on 2026-09-07 in this module's own self-test, which reported the
+contradiction in one line:
+
+```
+FAIL  a session that vanished between list and show is SKIPPED   [ids=[10,c1] count=1]
+```
+
+Two sessions in the collection, and `.Count` of one. `Get-SystemdSession` ended
+with `return ,$out` — the comma that AD-PLAN **AL9** recommends for protecting an
+empty result from being unrolled into nothing. It does protect it, and it makes a
+NON-empty result a nested collection: the caller's `@(Get-SystemdSession)` sees
+one object (the list), while `Get-SystemdSession | ForEach-Object` still
+enumerates two. A cmdlet whose `.Count` and whose pipeline disagree is worse than
+either failure alone, because every quick check of it passes.
+
+The two spellings, and what each breaks:
+
+| | empty result | two results |
+|---|---|---|
+| `return $collection` | unrolls to **nothing**; `$x` is `$null` and `$x.Count` throws | two objects, correct |
+| `return ,$collection` | one empty collection, correct | **one** object that is a collection |
+
+AL9 records this as a dilemma with no safe spelling, and for a private helper
+that is true. **For a cmdlet it is not**, because a cmdlet has a caller contract
+the helper does not: emit the objects and let the caller write `@(...)`.
+
+```powershell
+return $out          # emits 0, 1 or many objects
+```
+
+`@(Get-SystemdSession)` is then an empty array for none and a two-element array
+for two, which is what every other `Get-` in these modules already does and what
+a PowerShell user expects. The rule is not "always use the comma" or "never" — it
+is that a function returning a collection must decide which contract it offers,
+and a cmdlet's is the pipeline's.
+
+This is the fourth face of the empty-collection family in this repository (#92
+the unroll on return, #112/#119 the property read off an empty pipeline, #129 the
+`if` used as an expression, and this). They share a cause: PowerShell has no way
+to say "a collection of zero things" through a pipeline.

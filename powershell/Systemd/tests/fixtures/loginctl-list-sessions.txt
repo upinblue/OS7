@@ -1,0 +1,6 @@
+ 1  1000 os7admin    -     6850  user          ttyS0 no -
+10  1000 os7admin    -     10010 user          -     no -
+17  1000 os7admin    -     11853 user          -     no -
+ 2  1000 os7admin    -     7008  manager       -     no -
+ 3 60578 gdm-greeter -     7207  manager-early -     no -
+c1 60578 gdm-greeter seat0 7179  greeter       tty1  no -

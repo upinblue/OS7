@@ -78,10 +78,13 @@ def not_checked(what, why):
 DRIVER = r"""
 param(
     [Parameter(Mandatory)][string]$OS7Manifest,
-    [Parameter(Mandatory)][string]$Lab
+    [Parameter(Mandatory)][string]$Lab,
+    [string]$SystemdManifest,
+    [string]$SystemdFixtures
 )
 $ErrorActionPreference = 'Stop'
 Import-Module $OS7Manifest -Force
+if ($SystemdManifest) { Import-Module $SystemdManifest -Force }
 
 # A certificate the loader can really parse. Generated with openssl when there
 # is one, because a canned blob would go stale against the parser that reads it.
@@ -419,6 +422,54 @@ $results = [ordered]@{}
     $none = Get-OS7LockoutEffective
     $r.lock_absent = ((-not $none.Preauth) -and (-not $none.AuthFail))
 
+    # --- 15. which sessions are Remote Desktop's -----------------------------
+    # Fed the RECORDED loginctl output of a machine that had all four kinds at
+    # once: an RDP login, an ssh login, the console, and the login screen's own
+    # session. Getting this filter wrong is a cmdlet that offers to end an
+    # administrator's ssh session as though it were somebody's desktop.
+    if ($SystemdFixtures -and (Get-Module Systemd)) {
+        & (Get-Module Systemd) {
+            param($fxdir)
+            # IN $script: STATE, not captured from this scope: the override is
+            # invoked later, from Invoke-SystemdCommand, when this scriptblock's
+            # scope is gone - BUILD-NOTES #96's shape, and it presents as
+            # "$fxdir cannot be retrieved".
+            $script:__rdFxDir = $fxdir
+            $script:SystemdCommandOverride = {
+                param($cmd, $a)
+                $rd = { param($f) Get-Content -Raw -LiteralPath (Join-Path $script:__rdFxDir $f) }
+                if ($a -contains 'list-sessions') {
+                    return [pscustomobject]@{ StdOut = (& $rd 'loginctl-list-sessions.txt'); ExitCode = 0; StdErr = '' }
+                }
+                if ($a -contains 'show-session') {
+                    $map = @{
+                        '10' = 'loginctl-show-rdp.txt'; 'c1' = 'loginctl-show-greeter.txt'
+                        '17' = 'loginctl-show-ssh.txt'; '1'  = 'loginctl-show-console.txt'
+                        '2'  = 'loginctl-show-manager.txt'
+                    }
+                    $id = $a[-1]
+                    if ($map.ContainsKey($id)) {
+                        return [pscustomobject]@{ StdOut = (& $rd $map[$id]); ExitCode = 0; StdErr = '' }
+                    }
+                    return [pscustomobject]@{ StdOut = ''; ExitCode = 1; StdErr = 'gone' }
+                }
+                return [pscustomobject]@{ StdOut = ''; ExitCode = 0; StdErr = '' }
+            }
+        } $SystemdFixtures
+
+        $rdp = @(Get-OS7RemoteDesktopSession)
+        $r.sess_count = $rdp.Count
+        $r.sess_ids = @($rdp | ForEach-Object { $_.Id })
+        $r.sess_client = if ($rdp.Count) { $rdp[0].ClientAddress } else { $null }
+        $r.sess_user = if ($rdp.Count) { $rdp[0].UserName } else { $null }
+        $refused = $false
+        try { Stop-OS7RemoteDesktopSession -Id '17' -Confirm:$false | Out-Null }
+        catch { $refused = $true; $r.sess_refusal = $_.Exception.Message }
+        $r.sess_refused_ssh = $refused
+        $r.sess_filter_by_user = @(Get-OS7RemoteDesktopSession -UserName 'nobody').Count
+        & (Get-Module Systemd) { $script:SystemdCommandOverride = $null }
+    }
+
     $r | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $out -Encoding utf8
 } $Lab $certPath $keyPath (Join-Path $Lab 'result.json') $haveOpenssl
 
@@ -441,9 +492,12 @@ def run_native(pwsh):
         with open(drv, "w", encoding="utf-8") as f:
             f.write(DRIVER)
         manifest = os.path.join(REPO, "powershell", "OS7", "OS7.psd1")
+        systemd = os.path.join(REPO, "powershell", "Systemd", "Systemd.psd1")
+        sfx = os.path.join(REPO, "powershell", "Systemd", "tests", "fixtures")
         p = subprocess.run(
             [pwsh, "-NoProfile", "-NonInteractive", "-File", drv,
-             "-OS7Manifest", manifest, "-Lab", lab],
+             "-OS7Manifest", manifest, "-Lab", lab,
+             "-SystemdManifest", systemd, "-SystemdFixtures", sfx],
             capture_output=True, text=True, encoding="utf-8", errors="replace")
         out = os.path.join(lab, "result.json")
         if not os.path.exists(out):
@@ -470,6 +524,8 @@ def run_container(image):
             "--entrypoint", "", image,
             "/usr/bin/pwsh", "-NoProfile", "-NonInteractive", "-File", "/lab/driver.ps1",
             "-OS7Manifest", "/work/powershell/OS7/OS7.psd1", "-Lab", "/lab",
+            "-SystemdManifest", "/work/powershell/Systemd/Systemd.psd1",
+            "-SystemdFixtures", "/work/powershell/Systemd/tests/fixtures",
         ]
         env = dict(os.environ, MSYS_NO_PATHCONV="1", MSYS2_ARG_CONV_EXCL="*")
         p = subprocess.run(cmd, capture_output=True, text=True, env=env,
@@ -614,6 +670,26 @@ def assert_logic(r, unix_expected, stderr=""):
           "removing it takes every line back out")
     check(r.get("policy_service_intact", 0) >= 2,
           "and leaves the service's own stack behind", f"{r.get('policy_service_intact')} lines")
+
+    print("\n### which sessions are Remote Desktop's (§5)\n")
+    if "sess_count" not in r:
+        not_checked("the session filter", "the Systemd module or its fixtures were not available")
+    else:
+        check(r.get("sess_count") == 1,
+              "exactly ONE of the four session kinds is a Remote Desktop session",
+              "ids=" + ",".join(r.get("sess_ids") or []))
+        check((r.get("sess_ids") or []) == ["10"],
+              "and it is the wayland+remote+user one, not the ssh login or the greeter")
+        check(r.get("sess_client") == "172.17.0.3",
+              "the client's address is carried through", str(r.get("sess_client")))
+        check(r.get("sess_user") == "os7admin", "so is who it is", str(r.get("sess_user")))
+        check(r.get("sess_refused_ssh") is True,
+              "Stop- REFUSES an ssh session by id, before asking logind anything")
+        check("not a Remote Desktop session" in (r.get("sess_refusal") or ""),
+              "and the refusal says why", (r.get("sess_refusal") or "")[:60])
+        check(r.get("sess_filter_by_user") == 0,
+              "-UserName that matches nobody is an empty collection, not everything")
+
 
     print("\n### the account lockout: order is the whole property (R10, #125)\n")
     check(r.get("lock_pre_priority") == "1100",

@@ -51,6 +51,12 @@
 		# `_SYSTEMD_UNIT` — the field journald adds and a sender cannot forge —
 		# never from `UNIT`, which the sender supplies.
 		'Get-SystemdJournal',
+		# Sessions. `loginctl` is on check-layering.py's P2-systemd token
+		# list, so anything that wants to know who is signed in comes through
+		# here. Read as a TABLE and not as JSON: `list-sessions
+		# --output=json` accepts the option, prints the table and exits 0
+		# (measured on systemd 259).
+		'Get-SystemdSession', 'Stop-SystemdSession',
 		# The self-test: recorded real systemctl and journalctl output,
 		# including a MESSAGE that is a byte array rather than a string.
 		'Test-SystemdModule'

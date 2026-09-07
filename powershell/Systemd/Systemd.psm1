@@ -1060,6 +1060,270 @@ function Get-SystemdJournal {
 # The self-test
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Sessions — logind, as objects
+#
+# `loginctl` is the third program this module owns, and it is here rather than
+# in powershell/OS7 for the reason check-layering.py's P2-systemd rule states:
+# `loginctl` is on its token list, so a cmdlet that wants to know who is signed
+# in has to come through here.
+#
+# THREE THINGS ABOUT loginctl THAT systemctl DOES NOT DO, all measured on
+# systemd 259 (OS7-1.0.0.163-amd64, 2026-09-07), and each of them decides code
+# below:
+#
+#   * `--output=json` IS ACCEPTED AND IGNORED. `loginctl list-sessions
+#     --output=json` prints the ordinary table, with the header and the
+#     "6 sessions listed." footer, and exits 0. A parser written against the
+#     JSON that systemctl's sibling commands emit would parse a table and find
+#     nothing, with no error anywhere. So the listing is read as a TABLE, and
+#     only for the session ids — every field that matters comes from
+#     `show-session`.
+#
+#   * `--timestamp=unix` IS NOT A loginctl OPTION AT ALL. `systemctl` has it and
+#     this module already relies on it (a localised timestamp is a parser that
+#     works where it was written and fails on a German desktop). loginctl exits
+#     1 with "unrecognized option". So `Timestamp` cannot be made
+#     locale-independent, and this module does not pretend otherwise: `Since` is
+#     a [datetime] when the string could be parsed and `$null` when it could
+#     not, with the raw text kept beside it in `SinceText`.
+#
+#   * KEYS ARE ABSENT RATHER THAN EMPTY. A remote session has no `TTY=` and no
+#     `Seat=` line at all; a local one has both. Reading a missing key as an
+#     empty string is the difference between "this session has no seat" and
+#     "this session's seat is the empty string", and only the first is true.
+# ---------------------------------------------------------------------------
+
+function ConvertFrom-SystemdSessionShow {
+	<#
+	.SYNOPSIS
+		Internal. `loginctl show-session` output as a typed object.
+
+	.DESCRIPTION
+		The booleans are logind's own `yes`/`no`, which are STRINGS and are
+		truthy either way in PowerShell — `if ('no')` is true. Converting them
+		is most of what this function is for.
+	#>
+	param([Parameter(Mandatory)][string]$Text)
+
+	$d = @{}
+	foreach ($line in ($Text -split "`n")) {
+		$i = $line.IndexOf('=')
+		if ($i -lt 1) { continue }
+		$d[$line.Substring(0, $i)] = $line.Substring($i + 1).TrimEnd()
+	}
+	if (-not $d.ContainsKey('Id')) { return $null }
+
+	$yn = {
+		param($v)
+		if ($null -eq $v) { return $null }
+		return ($v -eq 'yes')
+	}
+	# An absent key is $null, never ''. See the header.
+	$get = { param($k) if ($d.ContainsKey($k)) { $d[$k] } else { $null } }
+
+	$sinceText = & $get 'Timestamp'
+	$since = $null
+	if ($sinceText) {
+		# The one format loginctl is known to emit, parsed with the INVARIANT
+		# culture so the host's locale cannot change the answer. A failure is
+		# $null and the raw text survives in SinceText; it is never guessed at.
+		[datetime]$parsed = [datetime]::MinValue
+		$styles = [System.Globalization.DateTimeStyles]::AssumeLocal
+		$inv = [System.Globalization.CultureInfo]::InvariantCulture
+		foreach ($fmt in @('ddd yyyy-MM-dd HH:mm:ss zzz', 'ddd yyyy-MM-dd HH:mm:ss')) {
+			# The zone is an abbreviation (CEST), which no format string parses,
+			# so the attempt that succeeds is the one without it.
+			$stripped = ($sinceText -replace '\s+[A-Z]{2,5}$', '')
+			if ([datetime]::TryParseExact($stripped, $fmt, $inv, $styles, [ref]$parsed)) {
+				$since = $parsed
+				break
+			}
+		}
+	}
+
+	return [pscustomobject]@{
+		PSTypeName = 'Systemd.Session'
+		Id         = $d['Id']
+		Name       = & $get 'Name'
+		Uid        = ConvertTo-SystemdInt (& $get 'User')
+		Seat       = & $get 'Seat'
+		TTY        = & $get 'TTY'
+		VTNr       = ConvertTo-SystemdInt (& $get 'VTNr')
+		# The pair that separates a login over the network from one at the
+		# machine: Remote is logind's own verdict, RemoteHost is who.
+		Remote     = & $yn (& $get 'Remote')
+		RemoteHost = & $get 'RemoteHost'
+		RemoteUser = & $get 'RemoteUser'
+		# `wayland`, `tty`, `x11` or `unspecified`.
+		Type       = & $get 'Type'
+		# `user`, `greeter`, `manager`, `manager-early`, `background`.
+		Class      = & $get 'Class'
+		# The PAM service the session was opened through — `gdm-authd`, `sshd`,
+		# `login`. It is how a graphical login is told from an ssh one.
+		Service    = & $get 'Service'
+		Desktop    = & $get 'Desktop'
+		Scope      = & $get 'Scope'
+		Leader     = ConvertTo-SystemdInt (& $get 'Leader')
+		State      = & $get 'State'
+		Active     = & $yn (& $get 'Active')
+		IdleHint   = & $yn (& $get 'IdleHint')
+		LockedHint = & $yn (& $get 'LockedHint')
+		Since      = $since
+		SinceText  = $sinceText
+	}
+}
+
+function Get-SystemdSession {
+	<#
+	.SYNOPSIS
+		Who is signed in to this machine, and how.
+
+	.DESCRIPTION
+		logind's sessions as objects. `Remote`, `Type`, `Class` and `Service`
+		are what make the list answerable: a login over the network has
+		`Remote = $true` and a `RemoteHost`, a graphical one has
+		`Type = 'wayland'`, and a person's session is `Class = 'user'` while the
+		login screen's own is `Class = 'greeter'`.
+
+		THE LISTING IS READ AS A TABLE AND NOT AS JSON, and that is measured
+		rather than preferred: `loginctl list-sessions --output=json` ACCEPTS
+		the option, prints the ordinary table and exits 0 (systemd 259). Only
+		the session ids are taken from it; every field comes from
+		`show-session`, which is one call per session — sessions are counted in
+		single figures, unlike units, so there is no `-Detailed` switch to make
+		this a choice.
+
+		`Since` is `$null` when the timestamp could not be parsed rather than a
+		guess, because `loginctl` has no `--timestamp=unix` (measured; systemctl
+		does) and the string it prints carries a zone abbreviation no format
+		parses. `SinceText` keeps what logind actually said.
+
+	.PARAMETER Id
+		One session.
+
+	.PARAMETER User
+		Only this account's sessions.
+
+	.PARAMETER Remote
+		Only sessions opened over the network.
+
+	.PARAMETER Class
+		`user`, `greeter`, `manager` — logind's own word.
+
+	.EXAMPLE
+		Get-SystemdSession | Format-Table Id, Name, Remote, RemoteHost, Type, Class
+
+	.EXAMPLE
+		Get-SystemdSession -Remote -Class user
+	#>
+	[CmdletBinding()]
+	param(
+		[string]$Id,
+		[string]$User,
+		[switch]$Remote,
+		[string]$Class
+	)
+
+	$ids = @()
+	if ($Id) { $ids = @($Id) }
+	else {
+		$r = Invoke-SystemdCommand -Command 'loginctl' -Arguments @('list-sessions', '--no-legend')
+		if ($r.ExitCode -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"loginctl list-sessions exited $($r.ExitCode): $($r.StdErr)")
+		}
+		foreach ($line in ($r.StdOut -split "`n")) {
+			$t = $line.Trim()
+			if (-not $t) { continue }
+			# The first column is the session id. It is not always numeric —
+			# the seat sessions are `c1`, `c2` — so it is taken as a string.
+			$ids += ($t -split '\s+')[0]
+		}
+	}
+
+	$out = [System.Collections.Generic.List[object]]::new()
+	foreach ($sid in $ids) {
+		$s = Invoke-SystemdCommand -Command 'loginctl' -Arguments @('show-session', $sid)
+		# A session can END between being listed and being asked about, and that
+		# is an ordinary race rather than an error: skip it.
+		if ($s.ExitCode -ne 0) { continue }
+		$obj = ConvertFrom-SystemdSessionShow -Text $s.StdOut
+		if (-not $obj) { continue }
+		if ($User -and $obj.Name -ne $User) { continue }
+		if ($Remote -and $obj.Remote -ne $true) { continue }
+		if ($Class -and $obj.Class -ne $Class) { continue }
+		$out.Add($obj)
+	}
+	# EMITTED, NOT WRAPPED IN `,`. AD-PLAN's AL9 is the trap on both sides:
+	# `return $collection` unrolls, so an EMPTY one becomes nothing; `return
+	# ,$collection` protects the empty case and makes a NON-empty one a nested
+	# collection, where `@(Get-SystemdSession).Count` is 1 for two sessions
+	# while piping it still yields two. Measured here, in this module's own
+	# self-test, which reported `ids=[10,c1] count=1`.
+	#
+	# For a CMDLET the dilemma has an answer that a helper function does not
+	# have: emit the objects and let the caller write `@(...)`. Nothing then
+	# becomes an empty array and two things become two, which is the contract
+	# every other Get- in this module already keeps.
+	return $out
+}
+
+function Stop-SystemdSession {
+	<#
+	.SYNOPSIS
+		End a session: everything running in it is stopped.
+
+	.DESCRIPTION
+		`loginctl terminate-session`, and it is spelled `Stop-` rather than
+		`Disconnect-` because that is what logind can do. THERE IS NO
+		DISCONNECT-BUT-KEEP in logind's vocabulary: a session is running or it
+		is gone. A verb promising the other thing would end somebody's work
+		while claiming not to.
+
+		`-Force` uses `kill-session` with SIGKILL instead, for a session whose
+		processes will not go.
+
+		IT ASKS logind AFTERWARDS. `terminate-session` returns 0 for a request
+		that was accepted, and a session whose processes ignore SIGTERM is still
+		there afterwards — the same distinction `Start-SystemdUnit` draws
+		between a job and a unit.
+
+	.PARAMETER Id
+		The session to end.
+
+	.PARAMETER Force
+		SIGKILL rather than SIGTERM.
+
+	.EXAMPLE
+		Stop-SystemdSession -Id 12
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Id,
+		[switch]$Force
+	)
+
+	if (-not $PSCmdlet.ShouldProcess("session $Id", 'end this session and everything running in it')) {
+		return Get-SystemdSession -Id $Id
+	}
+
+	$argv = if ($Force) { @('kill-session', '--signal=SIGKILL', $Id) } else { @('terminate-session', $Id) }
+	$r = Invoke-SystemdCommand -Command 'loginctl' -Arguments $argv
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"loginctl $($argv[0]) exited $($r.ExitCode): $($r.StdErr)")
+	}
+
+	# Asked of logind, never of the exit code.
+	$still = @(Get-SystemdSession -Id $Id)
+	if ($still.Count -and $still[0].State -ne 'closing') {
+		Write-Warning "session $Id is still $($still[0].State); its processes have not gone yet"
+	}
+	return $still
+}
+
 function Test-SystemdModule {
 	<#
 	.SYNOPSIS
@@ -1504,6 +1768,69 @@ function Test-SystemdModule {
 		finally { $script:SystemdCommandOverride = $null }
 	}
 
+	# --- sessions, against recorded loginctl output ------------------------
+	try {
+		$sfx = { param($f) Get-Content -Raw -LiteralPath (Join-Path $FixturePath $f) }
+
+		$rdp = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-rdp.txt')
+		Check ($rdp.Remote -eq $true) 'a remote session reads Remote as a BOOLEAN' "$($rdp.Remote)"
+		Check ($rdp.RemoteHost -eq '172.17.0.3') 'and carries the client address' $rdp.RemoteHost
+		Check ($rdp.Type -eq 'wayland' -and $rdp.Class -eq 'user') 'a graphical user session is typed as one'
+		Check ($rdp.Service -eq 'gdm-authd') 'the PAM service it was opened through is kept' $rdp.Service
+		# The whole point of the absent-key rule: a remote session has NO TTY
+		# line, and '' would claim it has a TTY whose name is empty.
+		Check ($null -eq $rdp.TTY) 'an ABSENT key is $null, not an empty string'
+		Check ($null -eq $rdp.Seat) 'and so is Seat on a session with no seat'
+		Check ($rdp.Since -is [datetime]) 'the localised timestamp parsed' "$($rdp.Since)"
+		Check ($rdp.SinceText -like '*2026*') 'and the raw text is kept beside it' $rdp.SinceText
+
+		$con = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-console.txt')
+		Check ($con.Remote -eq $false) 'a console session reads Remote $false — not the string "no"'
+		Check ($con.TTY -eq 'ttyS0') 'and its TTY is present' $con.TTY
+		Check ($con.Service -eq 'login') 'opened through login, not gdm' $con.Service
+
+		$gre = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-greeter.txt')
+		Check ($gre.Class -eq 'greeter') "the login screen's own session is a greeter, not a user" $gre.Class
+		Check ($gre.Seat -eq 'seat0') 'and it has a seat' $gre.Seat
+
+		$ssh = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-ssh.txt')
+		Check ($ssh.Remote -eq $true -and $ssh.Type -eq 'tty') 'an ssh session is remote AND a tty'
+		Check ($ssh.Service -eq 'sshd') 'which is what tells it from a remote GRAPHICAL one' $ssh.Service
+
+		# Get-SystemdSession over a fake loginctl: the listing is a TABLE,
+		# because --output=json is accepted and ignored (measured).
+		$script:SystemdCommandOverride = {
+			param($cmd, $a)
+			if ($a -contains 'list-sessions') {
+				return [pscustomobject]@{ StdOut = (& $sfx 'loginctl-list-sessions.txt'); ExitCode = 0; StdErr = '' }
+			}
+			if ($a -contains 'show-session') {
+				$id = $a[-1]
+				$map = @{ '10' = 'loginctl-show-rdp.txt'; 'c1' = 'loginctl-show-greeter.txt' }
+				if ($map.ContainsKey($id)) {
+                    return [pscustomobject]@{ StdOut = (& $sfx $map[$id]); ExitCode = 0; StdErr = '' }
+				}
+				# Every other id: gone between being listed and being asked,
+				# which is an ordinary race and must be skipped, not thrown on.
+				return [pscustomobject]@{ StdOut = ''; ExitCode = 1; StdErr = 'No session ' + $id }
+			}
+			return [pscustomobject]@{ StdOut = ''; ExitCode = 0; StdErr = '' }
+		}
+		$all = @(Get-SystemdSession)
+		Check ($all.Count -eq 2) 'a session that vanished between list and show is SKIPPED, not fatal' "ids=[$(@($all | ForEach-Object { $_.Id }) -join ',')]"
+		$remote = @(Get-SystemdSession -Remote)
+		Check ($remote.Count -eq 1 -and $remote[0].Id -eq '10') '-Remote returns only the network login'
+		$greeters = @(Get-SystemdSession -Class greeter)
+		Check ($greeters.Count -eq 1 -and $greeters[0].Class -eq 'greeter') '-Class filters on logind''s own word'
+		$none = @(Get-SystemdSession -User 'nobody-at-all')
+		Check ($none.Count -eq 0) 'an empty result is an empty COLLECTION, not $null (BUILD-NOTES #92)'
+	}
+	catch {
+		Check $false 'the session section ran to the end' `
+			"$($_.Exception.Message) @ line $($_.InvocationInfo.ScriptLineNumber)"
+	}
+	finally { $script:SystemdCommandOverride = $null }
+
 	$pass = $script:__sdPass
 	$fail = @($script:__sdFail)
 	[Console]::Error.WriteLine("`nSystemd self-test: $pass passed, $($fail.Count) failed")
@@ -1519,4 +1846,5 @@ Export-ModuleMember -Function @(
 	'Set-SystemdUnitStartup', 'Update-SystemdUnit',
 	'Get-SystemdTimer', 'New-SystemdTimer', 'Remove-SystemdTimer',
 	'Get-SystemdJournal',
+	'Get-SystemdSession', 'Stop-SystemdSession',
 	'Test-SystemdModule')

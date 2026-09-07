@@ -806,6 +806,58 @@ and it is why the default lock is ten minutes rather than an hour.
 
 ---
 
+## 13d. The session verbs, built 2026-09-07 — and the layer they needed first
+
+§5 deferred `Get-/Disconnect-OS7RemoteDesktopSession` because they need a logind verb the
+Systemd module did not export, and `loginctl` is on check-layering.py's P2-systemd token
+list. That verb exists now.
+
+### R19 — `Get-SystemdSession` and `Stop-SystemdSession` are the generic layer; the product decides WHICH sessions are Remote Desktop's. Proposed 2026-09-07.
+
+`powershell/Systemd/` gains the two verbs and five recorded fixtures taken from a machine
+that had all four session kinds at once. Three things about `loginctl` decided their shape,
+each measured on systemd 259:
+
+| # | Fact | Consequence |
+|---|---|---|
+| **M-R56** | **`loginctl list-sessions --output=json` ACCEPTS the option, prints the ordinary table and exits 0.** Unlike `systemctl`'s siblings. | The listing is parsed as a table and only for the ids; every field comes from `show-session`. A parser written against JSON would have found nothing, with no error. |
+| **M-R57** | **`loginctl` has no `--timestamp=unix`** — it exits 1 with "unrecognized option". `systemctl` has it, and this module already depends on it because a localised timestamp is a parser that works where it was written. | `Since` is a `[datetime]` when the string parsed and `$null` when it did not, with the raw text kept in `SinceText`. Nothing is guessed. |
+| **M-R58** | **Keys are ABSENT rather than empty.** A remote session has no `TTY=` and no `Seat=` line at all. | An absent key is `$null`, never `''` — the difference between "no seat" and "a seat whose name is empty". |
+
+**M-R59 — the four session kinds, and why the filter takes all three fields.** Measured on
+one machine at one moment:
+
+```
+RDP        Remote=yes  Type=wayland  Class=user     Service=gdm-authd
+ssh        Remote=yes  Type=tty      Class=user     Service=sshd
+console    Remote=no   Type=tty      Class=user     Service=login
+greeter    Remote=no   Type=wayland  Class=greeter  Service=gdm-launch-environment
+```
+
+`Remote` alone catches the ssh login; `wayland` alone catches the login screen's own
+session. `Get-OS7RemoteDesktopSession` requires all three, and
+`Stop-OS7RemoteDesktopSession` refuses an id that is not on that list **before asking
+logind anything** — the shape `Unregister-OS7ScheduledTask` uses to refuse a package's
+timer.
+
+**M-R60 — it works on a machine.** With a real RDP session open,
+`Get-OS7RemoteDesktopSession` returned exactly it (`os7admin from 172.17.0.3`),
+`Stop-OS7RemoteDesktopSession` ended it (`before: 1`, `after: 0`), and **the ssh session
+and the console session both survived** — the property that makes the cmdlet safe to hand
+an operator.
+
+### R20 — there is no `Disconnect-`, and that is logind's limit rather than a choice. Proposed 2026-09-07.
+
+Windows separates *disconnecting* a session — the client goes, the programs keep running,
+the person reconnects — from *logging it off*. **logind has one verb, `terminate-session`,
+and it is the second one.** A `Disconnect-OS7RemoteDesktopSession` would have to end
+somebody's session while its name promised the opposite, which is the near-miss alias P1
+exists to forbid. The cmdlet is `Stop-`, and the thing Windows' disconnect does happens on
+its own: closing the client leaves the session running and reconnecting returns to it.
+Appendix C says so rather than leaving an administrator to find out.
+
+---
+
 ## 14. Measurements owed before locking
 
 The `O-R` prefix marks these owed, distinct from the measured `M-R` above.

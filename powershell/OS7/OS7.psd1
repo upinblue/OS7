@@ -91,6 +91,11 @@
 		# allowed without being in it, which Get- reports as a Reason.
 		'Get-OS7RemoteDesktopUser', 'Add-OS7RemoteDesktopUser',
 		'Remove-OS7RemoteDesktopUser',
+		# Who is connected, over the Systemd layer's session verbs. There is
+		# deliberately no Disconnect-: logind has one verb and it ENDS the
+		# session, so a cmdlet named for Windows' disconnect would lose the
+		# person's work while its name promised the opposite.
+		'Get-OS7RemoteDesktopSession', 'Stop-OS7RemoteDesktopSession',
 		# Implemented - the account lockout (Windows' Account lockout policy).
 		# ACCOUNT-WIDE and named so: it lives in common-auth and reaches ssh, the
 		# text console, sudo and both login screens, because the local and the

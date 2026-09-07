@@ -2765,6 +2765,7 @@ Export-ModuleMember -Function Get-OS7Version,
 	Get-OS7RemoteDesktopCertificate, Set-OS7RemoteDesktopCertificate,
 	Test-OS7RemoteDesktop,
 	Get-OS7RemoteDesktopUser, Add-OS7RemoteDesktopUser, Remove-OS7RemoteDesktopUser,
+	Get-OS7RemoteDesktopSession, Stop-OS7RemoteDesktopSession,
 	# The account lockout. ACCOUNT-WIDE, not Remote-Desktop-scoped: it reaches
 	Get-OS7AccountLockout, Set-OS7AccountLockout, Unlock-OS7Account,
 	# Services and the log. Get-OS7Log is the clearest argument for why this

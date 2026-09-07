@@ -1538,6 +1538,16 @@ function Test-OS7RemoteDesktop {
 		if ($leaked.Count) { "IT HAS, in $($leaked -join ', ') - an operator can be locked out of this machine" }
 		else { 'login, sshd, su, sudo and common-auth are untouched' })
 
+	# Who is connected RIGHT NOW. Not a pass/fail about health - a count, and
+	# $null only when logind could not be asked, because zero connected is the
+	# ordinary state of a working machine and must not read as a problem.
+	$sess = $null
+	try { $sess = @(Get-OS7RemoteDesktopSession) } catch { }
+	& $add 'remote desktop sessions' $(if ($null -eq $sess) { $null } else { $true }) $(
+		if ($null -eq $sess) { 'logind could not be asked' }
+		elseif (-not $sess.Count) { 'nobody is connected' }
+		else { "$($sess.Count) connected: " + (@($sess | ForEach-Object { "$($_.UserName) from $($_.ClientAddress)" }) -join ', ') })
+
 	$allowed = @(Get-OS7RemoteDesktopUser)
 	& $add 'somebody may sign in' ($allowed.Count -gt 0) $(
 		if ($allowed.Count) { "$($allowed.Count): $(@($allowed | ForEach-Object { $_.Name + ' (' + $_.Reason + ')' }) -join ', ')" }
@@ -1979,4 +1989,175 @@ function Remove-OS7RemoteDesktopUser {
 		Write-OS7Step "$Name is an ADMINISTRATOR (a member of sudo) and may still sign in over Remote Desktop. Removing that is a different decision."
 	}
 	return Get-OS7RemoteDesktopUser
+}
+
+# ---------------------------------------------------------------------------
+# Who is connected over Remote Desktop
+#
+# docs/REMOTE-DESKTOP-PLAN.md §5 deferred these behind a Systemd-module verb
+# that did not exist: `loginctl` is on check-layering.py's P2-systemd token
+# list, so this file may not ask logind anything itself. `Get-SystemdSession`
+# is that verb, and this is the product policy on top of it.
+#
+# WHAT OS/7 KNOWS HERE, and it is the whole reason this is not a pass-through:
+# WHICH sessions are Remote Desktop's. logind reports six sessions on an idle
+# machine and only one of them is a person connected over RDP. The three fields
+# that say so were measured on a booted machine, on both sides:
+#
+#     RDP        Remote=yes  Type=wayland  Class=user   Service=gdm-authd
+#     ssh        Remote=yes  Type=tty      Class=user   Service=sshd
+#     console    Remote=no   Type=tty      Class=user   Service=login
+#     greeter    Remote=no   Type=wayland  Class=greeter
+#
+# Remote alone would catch ssh; wayland alone would catch the login screen's own
+# session. It takes all three, and getting that wrong is a cmdlet that offers to
+# end an administrator's ssh session as though it were an RDP one.
+# ---------------------------------------------------------------------------
+
+function Get-OS7RemoteDesktopSession {
+	<#
+	.SYNOPSIS
+		Who is signed in over Remote Desktop right now.
+
+	.DESCRIPTION
+		Windows' `qwinsta` / `quser`, and the same question: which people have a
+		desktop on this machine that they reached over the network.
+
+		A SESSION HERE IS A GRAPHICAL, REMOTE, PERSON'S session — all three, and
+		each excludes something real: an ssh login is remote but not graphical,
+		the login screen's own session is graphical but nobody's, and a console
+		login is a person's desktop that nobody reached over a wire. The
+		filter is `Remote` + `Type = wayland` + `Class = user`, measured on a
+		machine that had all four kinds at once.
+
+		`ClientAddress` is where they connected from, and it IS available for a
+		completed session — which corrects an earlier reading of this surface.
+		A session that is merely being ATTEMPTED, and a refused one, leave no
+		address anywhere OS/7 can read; that gap is real and belongs to the
+		daemon's own log, not here.
+
+		`Idle` is logind's hint and not a measurement of the person: a desktop
+		with a clock on it is never idle by that definition.
+
+	.PARAMETER UserName
+		Only this account's sessions.
+
+	.EXAMPLE
+		Get-OS7RemoteDesktopSession | Format-Table UserName, ClientAddress, State, Since
+
+	.EXAMPLE
+		Get-OS7RemoteDesktopSession -UserName alice
+	#>
+	[CmdletBinding()]
+	param([string]$UserName)
+
+	Import-OS7SystemdLayer
+
+	$sessions = @()
+	try { $sessions = @(Get-SystemdSession -Remote -Class user) }
+	catch {
+		throw [System.InvalidOperationException]::new(
+			"logind could not be asked which sessions exist: $($_.Exception.Message)")
+	}
+
+	$out = [System.Collections.Generic.List[object]]::new()
+	foreach ($s in $sessions) {
+		# Graphical, remote and a person's. See the header for what each of the
+		# three excludes.
+		if ($s.Type -ne 'wayland') { continue }
+		if ($UserName -and $s.Name -ne $UserName) { continue }
+		$out.Add([pscustomobject]@{
+				PSTypeName    = 'OS7.RemoteDesktopSession'
+				Id            = $s.Id
+				UserName      = $s.Name
+				Uid           = $s.Uid
+				ClientAddress = $s.RemoteHost
+				State         = $s.State
+				Active        = $s.Active
+				Idle          = $s.IdleHint
+				Locked        = $s.LockedHint
+				Since         = $s.Since
+				SinceText     = $s.SinceText
+				# The PAM service it came through. Kept because it is what
+				# proves this is the graphical login path and not something
+				# else that happens to be remote.
+				Service       = $s.Service
+				Scope         = $s.Scope
+			})
+	}
+	# Emitted, not wrapped: `@(Get-OS7RemoteDesktopSession).Count` is then 0 for
+	# none and 2 for two. AD-PLAN AL9, and this module's Systemd layer paid for
+	# the other spelling.
+	return $out
+}
+
+function Stop-OS7RemoteDesktopSession {
+	<#
+	.SYNOPSIS
+		Sign a Remote Desktop user out, ending everything they had open.
+
+	.DESCRIPTION
+		Windows' `logoff` / `Invoke-RDUserLogoff`. It ends the session: the
+		desktop, the programs in it and anything unsaved.
+
+		THERE IS DELIBERATELY NO `Disconnect-`, AND THAT IS A LIMIT OF LOGIND
+		RATHER THAN A CHOICE. Windows draws a line between *disconnecting* a
+		session — the client goes away, the programs keep running, the person
+		reconnects to them — and *logging it off*. logind has one verb,
+		`terminate-session`, and it is the second one. A `Disconnect-` here
+		would have to end the session while its name promised the opposite,
+		which is exactly the near-miss alias P1 exists to forbid.
+
+		The thing Windows' disconnect does happens on its own: closing the RDP
+		client leaves the session running, and reconnecting returns to it. This
+		cmdlet is for the case where somebody wants it GONE.
+
+		IT REFUSES A SESSION THAT IS NOT A REMOTE DESKTOP ONE, by id, before
+		asking logind anything. `Get-OS7RemoteDesktopSession` is the list it
+		will act on, and an ssh session or the console's own is not on it — the
+		same shape as `Unregister-OS7ScheduledTask` refusing a package's timer.
+
+	.PARAMETER Id
+		The session id, from `Get-OS7RemoteDesktopSession`.
+
+	.PARAMETER Force
+		SIGKILL rather than SIGTERM, for a session whose processes will not go.
+
+	.EXAMPLE
+		Stop-OS7RemoteDesktopSession -Id 12
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Id,
+		[switch]$Force
+	)
+
+	$mine = @(Get-OS7RemoteDesktopSession | Where-Object { $_.Id -eq $Id })
+	if (-not $mine.Count) {
+		throw [System.ArgumentException]::new(
+			"session '$Id' is not a Remote Desktop session on this machine. " +
+			'Get-OS7RemoteDesktopSession lists the ones this cmdlet will act on; ' +
+			'an ssh login or the console is not one of them.')
+	}
+
+	$who = $mine[0].UserName
+	$from = $mine[0].ClientAddress
+	if (-not $PSCmdlet.ShouldProcess("session $Id ($who from $from)",
+			'sign this user out and end everything they have open')) {
+		return Get-OS7RemoteDesktopSession
+	}
+
+	Import-OS7SystemdLayer
+	$null = Stop-SystemdSession -Id $Id -Force:$Force -Confirm:$false
+
+	# Asked of logind afterwards, never of the exit code (P5). A session whose
+	# processes ignore SIGTERM is still there, and `terminate-session` returns 0
+	# for the request having been accepted.
+	$still = @(Get-OS7RemoteDesktopSession | Where-Object { $_.Id -eq $Id })
+	if ($still.Count -and $still[0].State -ne 'closing') {
+		Write-OS7Step "session $Id is still $($still[0].State): its processes have not gone. -Force sends SIGKILL."
+	}
+	else { Write-OS7Step "$who is signed out" }
+
+	return Get-OS7RemoteDesktopSession
 }

@@ -109,7 +109,8 @@ check_module Time Get-ChronyTracking Get-ChronySource Get-ChronySourceFile \
 # the case that turns the message column into System.Object[] if the parser
 # assumes a string. Naming the module here is what stops an image shipping
 # without the parser that handles it.
-check_module Systemd Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
+check_module Systemd Get-SystemdSession Stop-SystemdSession \
+	Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
 	Restart-SystemdUnit Set-SystemdUnitStartup Update-SystemdUnit Get-SystemdJournal \
 	Get-SystemdTimer New-SystemdTimer Remove-SystemdTimer \
 	Test-SystemdModule
@@ -195,6 +196,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Test-OS7RemoteDesktop \
 	Get-OS7RemoteDesktopUser Add-OS7RemoteDesktopUser Remove-OS7RemoteDesktopUser \
 	Get-OS7AccountLockout Set-OS7AccountLockout Unlock-OS7Account \
+	Get-OS7RemoteDesktopSession Stop-OS7RemoteDesktopSession \
 	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
 	Get-OS7ManagementStatus
 
