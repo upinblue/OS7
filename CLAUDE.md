@@ -15,7 +15,7 @@ on 2026-08-25:
 | host | builds | tests |
 |---|---|---|
 | **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness, on the arm64 branch of `installer/testing/vmarch.py` — `qemu-system-aarch64 -machine virt,accel=hvf` as a HOST process, byte-identical to the pre-port construction (`check-vm-arch.py` holds it) |
-| **x64 Windows + Docker Desktop** | `make build-amd64` — through WSL's make; native, ~20 min ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py`, the container checks — **and `run-s5.py` since 2026-08-28**: vmarch.py's amd64 branch runs `qemu-system-x86_64 -machine q35,accel=kvm` with OVMF INSIDE the `os7-vm:amd64` container, serial over the docker client's stdio ([SESSION-VM-HARNESS-PORT.md](docs/SESSION-VM-HARNESS-PORT.md)). The other harnesses are ported and UNRUN on this host |
+| **x64 Windows + Docker Desktop** | `make build-amd64` — through WSL's make; native, ~20 min ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py`, the container checks — **and `run-s5.py` since 2026-08-28**: vmarch.py's amd64 branch runs `qemu-system-x86_64 -machine q35,accel=kvm` with OVMF INSIDE the `os7-vm:amd64` container, serial over the docker client's stdio ([SESSION-VM-HARNESS-PORT.md](docs/SESSION-VM-HARNESS-PORT.md)). **`run-phase3.py install` and `walk` since 2026-09-07** — both PASS, and screen 9D drew for the first time; its `boot` phase **cannot** run here, because an installed amd64 machine has no `console=` and the phase watches the serial line (#132, [SESSION-PHASE3-ON-AMD64.md](docs/SESSION-PHASE3-ON-AMD64.md)). The remaining harnesses are ported and UNRUN on this host |
 
 **The x86_64 port exists since 2026-08-28 and `run-s5.py all` has passed on
 it IN FULL** — install, boot (which measured #69 for the first time, see
@@ -588,15 +588,16 @@ the ones a fresh session hits first.
   called `os7`.** `New-OS7Storage`'s `-UserName` defaulted to `os7` and
   `os7-setup` never passed it, so the machine this repo has booted has an empty
   dataset at `/home/os7` and the real home inside the boot environment — where
-  `Restore-OS7` rolls it back and no snapshot policy may follow. **Fixed in code
-  2026-08-26 and NOT YET VERIFIED**: the fix changes the storage step and the
-  account step of the only path that produces a machine that boots, so it needs
-  `run-phase3.py all`, which is STILL UNRUN. It went through the vmarch.py port
-  with the rest (it reaches QEMU through `vmscreen`), so it is no longer
-  Mac-only - it has simply never been executed on either host since the fix.
-  Nothing in `installer/testing/`
-  looked at `/home` — which is why an installer that passed `run-phase3.py all`
-  still had it — and checks 9 and 10 are now what stop that recurring.
+  `Restore-OS7` rolls it back and no snapshot policy may follow. Fixed in code
+  2026-08-26 and **VERIFIED ON A MACHINE 2026-09-07**: `run-phase3.py install`
+  and `walk` both passed on the x64 Windows host, and the installed machine
+  reads `rpool/USERDATA/os7admin_0f855748 → /home/os7admin` — a dataset of its
+  own, not a directory in the boot environment
+  ([SESSION-PHASE3-ON-AMD64.md](docs/SESSION-PHASE3-ON-AMD64.md)). Nothing in
+  `installer/testing/` had looked at `/home` — which is why an installer that
+  passed `run-phase3.py all` still had the bug — and checks 9 and 10 are what
+  stop that recurring. They were read off the screen rather than reported by the
+  harness, because `boot` cannot see an installed amd64 machine at all (#132).
 - **#78 — `useradd -m` does NOTHING when the home directory already exists.**
   It warns, **exits 0**, copies no `/etc/skel` and changes no ownership
   (measured on this image's `passwd`). Since #74's fix the home is always there

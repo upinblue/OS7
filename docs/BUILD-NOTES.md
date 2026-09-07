@@ -6990,3 +6990,105 @@ This is the fourth face of the empty-collection family in this repository (#92
 the unroll on return, #112/#119 the property read off an empty pipeline, #129 the
 `if` used as an expression, and this). They share a cause: PowerShell has no way
 to say "a collection of zero things" through a pipeline.
+
+---
+
+## #131 — a git worktree made by Windows git cannot be built from WSL
+
+Found 2026-09-07, needing a reproducible build while another session edited the
+working tree. A `git worktree` at HEAD is the right answer to that, and #43
+already says how to build in one:
+
+> Build through the **Makefile**, which asks git on the host
+> (`scripts/os7-source-facts.sh`) and hands the three facts in.
+
+**On this host "the host" is two things.** Windows git created the worktree and
+wrote a Windows path into its `.git` file:
+
+```
+gitdir: C:/Users/BastianWirth/source/repos/OS7/.git/worktrees/os7-phase3-build
+```
+
+WSL git cannot follow `C:/…`. So `make build-amd64`, run through WSL's make,
+got nothing out of `os7-source-facts.sh`, handed no facts to the container, and
+`build.sh` refused:
+
+```
+!!! that path is outside this container. Build through the Makefile,
+!!! refusing to build an ISO whose version identifies nothing.
+```
+
+That refusal is #43's own guard and it worked exactly as intended — the
+alternative is the `1.0.0.0` ISO that made #43 necessary. The fix is one line:
+rewrite the pointer to the WSL form.
+
+```sh
+printf 'gitdir: /mnt/c/Users/…/OS7/.git/worktrees/<name>\n' > <worktree>/.git
+```
+
+**AND THE FIX HAS A REVERSE SIDE THAT BREAKS A CHECK.** With the WSL path in
+place, **Windows** git can no longer read the worktree, and anything run from
+PowerShell that asks git about it gets nothing. `check-image.py` reported
+
+```
+FAIL  the 0 authored includes.chroot files carry git's modes
+```
+
+Zero expected files — and the check is right to fail on that rather than pass,
+because `bool(want) and not wrong` refuses an empty expectation. Restoring the
+Windows pointer gave 12 files and a green run. So the pointer is a mode switch:
+the WSL form to build, the Windows form for everything driven from PowerShell.
+A worktree used from both sides needs it changed twice, which is worth knowing
+before an afternoon is spent on it.
+
+**The rule:** on a host where two gits disagree about what a path is, a
+worktree's `.git` file is a per-tool setting rather than a fact. Prefer the main
+checkout where possible, and when a worktree is genuinely needed — a build that
+must be reproducible while somebody edits the tree — set the pointer for the
+tool that is about to run and set it back afterwards.
+
+---
+
+## #132 — an installed amd64 machine has no serial console, so `run-phase3.py boot` cannot see it
+
+Found 2026-09-07, the first time `run-phase3.py` ran on the x64 Windows host.
+`install` passed and `walk` passed; `boot` timed out after 600 s with **398
+bytes** of serial output, ending at
+
+```
+BdsDxe: starting Boot0002 "OS/7" from HD(1,GPT,…)/\EFI\OS7\shimx64.efi
+```
+
+**The machine was fine.** Opened as an `os7lab` bench and photographed, it
+showed GRUB's branded menu, kernel messages, `Please unlock disk os7_root:`,
+and after the passphrase a login prompt, the right boot environment in the
+MOTD, and a PowerShell prompt. `/proc/cmdline` says why none of it was on the
+wire:
+
+```
+BOOT_IMAGE=/BOOT/os7_…@/vmlinuz-7.0.0-30-generic root=ZFS=rpool/ROOT/os7_… ro
+boot=zfs crashkernel=2G-4G:320M,…
+```
+
+**No `console=` at all.** The live medium gets `console=ttyS0` because the
+harness puts it on the direct-boot command line; the installed system inherits
+nothing, so it speaks to tty0 only. On arm64 the serial port is the primary
+console, the same harness sees everything, and this stayed invisible until the
+vmarch.py port was actually exercised on amd64.
+
+It is not a regression: `install`, which uses the same Setup, passed in the
+same run.
+
+**The trap is the shape, not the parameter.** A harness that observes a machine
+through one channel is asserting something about that channel as much as about
+the machine, and "nothing arrived" is indistinguishable from "nothing happened".
+600 seconds of silence read exactly like a machine that does not boot, and the
+only thing that separated them was looking at the screen.
+
+Two fixes, deliberately not chosen here: Setup could write a console onto every
+installed command line — defensible for a server product, and a D-level
+decision because it changes what the console IS on every machine — or the boot
+phase could observe the screen on amd64 as `walk` already does, which also
+needs a command channel for its ten assertions and would make the phase a
+different shape per architecture. docs/SESSION-PHASE3-ON-AMD64.md carries the
+measurements.

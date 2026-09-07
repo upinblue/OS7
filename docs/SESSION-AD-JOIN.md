@@ -102,9 +102,12 @@ does **not** retry a wrong password (`Preauthentication failed`), and it never r
 Built and run in `os7-build:amd64`: no compile errors, and the only self-test failures are the
 ten image files that are absent outside an OS/7 image.
 
-What is still owed: **screen 9D has never drawn on a machine.** The retry path in particular has
-never been executed by an installer — it is asserted by `--self-test` and by the cmdlet-binding
-check, and the gate for the whole screen is `run-phase3.py`.
+What is still owed: **the retry path has never been executed by an installer.** It is asserted
+by `--self-test` and by the cmdlet-binding check. Screen 9D itself drew on a machine on
+2026-09-07 — `run-phase3.py walk` passed and reported *"screen 9D is the domain form, and it will
+not join"* ([SESSION-PHASE3-ON-AMD64.md](SESSION-PHASE3-ON-AMD64.md)) — but the walk leaves the
+field blank by design, so what ran was `DomainStep`'s "not joining" branch, step 15 of 18. A join
+driven by the installer is still owed, and only that would exercise the retry.
 
 ## The defect: a parameter that never bound, in the one path that had never run
 
