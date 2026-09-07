@@ -133,13 +133,63 @@ clean tree has been proven to stay quiet and never proven to speak:
    `default_realm = LOCALHOST.LOCALDOMAIN`. It already sets `rdns = false`. A stock file naming
    a realm that does not exist is arguably worse than no file: a bare `kinit` reports "Cannot
    find KDC for realm LOCALHOST.LOCALDOMAIN", which sends an operator hunting for a KDC.
-4. **A9 — "domain users' homes go outside the boot environment" — is not achieved.**
-   `/var/lib/os7/domain-homes` resolves to `rpool/ROOT/<be>`. `New-OS7Storage` creates no
-   dataset for it and `$script:OS7DomainHomeRoot` is the only place the path is named. The
-   sssd document is right and the layout it depends on does not exist, so `Restore-OS7` rolls
-   domain homes back with the operating system today. The fix is a storage-layout decision
-   (D10 / SETUP-PLAN) plus a migration, the same two halves BUILD-NOTES #74 needed. **Open, and
-   not decided here.**
+4. **A9 — "domain users' homes go outside the boot environment" — was not achieved.**
+   `/var/lib/os7/domain-homes` resolved to `rpool/ROOT/<be>`. `New-OS7Storage` created no
+   dataset for it and `$script:OS7DomainHomeRoot` was the only place the path was named. The
+   sssd document was right and the layout it depended on did not exist, so `Restore-OS7` rolled
+   domain homes back with the operating system. **Fixed the same day** — see below.
+
+## A9, fixed: a dataset for the domain-home root
+
+Both halves BUILD-NOTES #74 needed. `New-OS7Storage` creates
+`rpool/DATA/lib/os7-domain-homes` mounted at `/var/lib/os7/domain-homes`, beside `var/log` and
+`lib/authd`; proven by a dry run, which describes rather than touches a device:
+
+```
+OS7-STEP would create rpool/DATA/lib/os7-domain-homes mountpoint=/var/lib/os7/domain-homes
+```
+
+`run-phase2.py`'s `WANT_DATASETS` names it too — that list is a transcription of §4.4's plan
+rather than of the code, so dropping the line fails there rather than passing quietly.
+
+**The mount is the domain-home root and NOT `/var/lib/os7`.** The migration record
+`Update-OS7` writes under `/var/lib/os7/migrations/<version>/` is *required* to roll back with
+the release, so that a machine which has rolled back genuinely has not run them — the
+migrations README's own argument, from C10. A dataset at `/var/lib/os7` would make that record
+survive a rollback and the machine would claim to have run migrations it had not. One level
+down satisfies A9 and leaves C10 alone. Verified on the machine: after the migration,
+`/var/lib/os7` itself is still `rpool/ROOT/<be>`.
+
+For machines already installed, the firstboot migration `70-domain-home-dataset`. It is
+`firstboot` and not `chroot`, against the README's default home for layout changes, for one
+reason: a dataset created inside the assembled boot environment mounts at the *chroot's*
+path, and the homes to be carried across are on the running machine.
+
+**Mounting a dataset over a populated directory hides what is there** (BUILD-NOTES #78's
+shape: nothing fails, nothing warns). So it copies the content in first, moves the old
+directory *aside* rather than burying it, and removes that only after the dataset is mounted
+and the entries counted on the other side. Measured on the `domain-joined` snapshot with two
+real domain homes staged as pam_mkhomedir leaves them:
+
+| | |
+|---|---|
+| paths before / after | 11 / 11 |
+| ownership and mode | `t.user1:domain users 700` before and after, a `644` file likewise |
+| content | both canaries and a nested file intact |
+| nothing hidden | unmounting the dataset shows the directory beneath it **empty** |
+| the homes now live on | `rpool/DATA/lib/os7-domain-homes`, while `/` is `rpool/ROOT/<be>` |
+| run twice | second run reports "already present and mounted", exit 0, 11 paths |
+
+The first run of it found one defect in itself, which is why running a migration beats reading
+one: `zfs set mountpoint` moves the mount and does **not** remove the directory it used to
+mount on, so an empty `/var/lib/os7/.domain-homes-migrating` was left behind. It now `rmdir`s
+that — and `rmdir`, not `rm -rf`, so that anything unexpectedly inside it is left for a person
+to look at rather than deleted.
+
+What is NOT proven: an actual `Restore-OS7` cycle with a domain home present. The dataset being
+a child of `rpool/DATA` rather than of `rpool/ROOT/<be>` is what makes it structurally
+impossible to clone into the next environment, which is the same argument D10 relies on for
+`/var/log`.
 
 ## A finding about leaving, not joining
 

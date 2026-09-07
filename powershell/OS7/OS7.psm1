@@ -945,6 +945,22 @@ function New-OS7Storage {
 	& $mk 'rpool/DATA/lib/networkmanager' ([ordered]@{ mountpoint = '/var/lib/NetworkManager' })
 	& $mk 'rpool/DATA/lib/authd'          ([ordered]@{ mountpoint = '/var/lib/authd' })
 	& $mk 'rpool/DATA/lib/azcmagent'      ([ordered]@{ mountpoint = '/var/opt/azcmagent' })
+	# DOMAIN USERS' HOMES, and AD-PLAN A9 is this one line. sssd is told
+	# fallback_homedir = /var/lib/os7/domain-homes/%u, and until 2026-09-07 that
+	# path had no dataset — so it resolved to rpool/ROOT/<be> and Restore-OS7
+	# rolled every domain user's home back with the operating system. The
+	# document was right and the layout it depended on did not exist. Measured
+	# on an installed machine after a real join (docs/SESSION-AD-JOIN.md).
+	#
+	# THE MOUNT IS THE DOMAIN-HOME ROOT AND NOT /var/lib/os7, deliberately.
+	# /var/lib/os7 must stay inside the boot environment: the migration record
+	# Update-OS7 writes under /var/lib/os7/migrations/<version>/ relies on
+	# rolling back with the release, so that a machine which has rolled back
+	# genuinely has not run them (the migrations README's own argument, C10). A
+	# dataset one level down satisfies A9 and leaves that intact — the same
+	# shape as /var/lib/authd and /var/lib/snapd, which are datasets under a
+	# /var/lib that lives in the BE.
+	& $mk 'rpool/DATA/lib/os7-domain-homes' ([ordered]@{ mountpoint = '/var/lib/os7/domain-homes' })
 
 	# USERDATA is a SIBLING of ROOT, not a child. This is the decision the whole
 	# layout exists for: rolling back a bad release must not roll back the

@@ -93,6 +93,9 @@ WANT_DATASETS = [
     "rpool/DATA/log", "rpool/DATA/spool", "rpool/DATA/tmp", "rpool/DATA/srv",
     "rpool/DATA/snapd", "rpool/DATA/lib/networkmanager", "rpool/DATA/lib/authd",
     "rpool/DATA/lib/azcmagent",
+    # AD-PLAN A9: domain users' homes must survive a boot-environment rollback,
+    # and until 2026-09-07 the path sssd is given had no dataset at all.
+    "rpool/DATA/lib/os7-domain-homes",
     "bpool/BOOT",
 ]
 

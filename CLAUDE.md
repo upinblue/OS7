@@ -368,9 +368,12 @@ set-password path fails with "Message stream modified" and an LDAP modify of
 `unicodePwd` works. This line said "never run on a machine, green in a
 container" — the container part was never true either: `check-ad.py` performs no
 join at all, so Stage 2 had run nowhere. **Screen 9D has still never drawn** and
-cannot pass the new switch, arm64 is unmeasured, and A9's promise that domain
-homes live outside the boot environment is NOT achieved (they resolve to
-`rpool/ROOT/<be>`). [docs/AD-PLAN.md](docs/AD-PLAN.md).
+cannot pass the new switch, and arm64 is unmeasured. **A9 is now achieved**:
+`New-OS7Storage` creates `rpool/DATA/lib/os7-domain-homes` for
+`/var/lib/os7/domain-homes` and a firstboot migration moves existing machines,
+content carried across rather than hidden under the new mount. The mount is the
+domain-home root and NOT `/var/lib/os7`, because C10's migration record has to
+keep rolling back with the release. [docs/AD-PLAN.md](docs/AD-PLAN.md).
 
 **The netplan document is generated in two languages and that is temporary.**
 `NetworkPlan.ToNetplanYaml` (C#, what `os7-setup` writes) and

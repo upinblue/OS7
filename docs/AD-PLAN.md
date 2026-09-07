@@ -179,7 +179,7 @@ The road a fleet should take is a **pre-created computer account with a one-time
 password**, so no domain administrator credential is typed into a text-mode
 installer at all.
 
-### A9 — domain users' homes go outside the boot environment. **NOT ACHIEVED.**
+### A9 — domain users' homes go outside the boot environment. **Achieved 2026-09-07.**
 
 `sssd.conf` is generated with `fallback_homedir = /var/lib/os7/domain-homes/%u`.
 Without it, `pam_mkhomedir` — which is already in this image's `common-session`
@@ -187,24 +187,49 @@ Without it, `pam_mkhomedir` — which is already in this image's `common-session
 with the operating system. That is BUILD-NOTES #74 in a second location, and
 this repository has already paid for it once.
 
-**AND THE PATH IS INSIDE THE BOOT ENVIRONMENT ANYWAY.** Measured 2026-09-07 on
-an installed machine, after a real join created a real domain user's home:
+**THE PATH WAS INSIDE THE BOOT ENVIRONMENT UNTIL 2026-09-07.** Measured on an
+installed machine, after a real join created a real domain user's home:
 
     /var/lib/os7/domain-homes  ->  rpool/ROOT/os7_1.0.0.163_202608301351
 
-`New-OS7Storage` creates no dataset for it, and `$script:OS7DomainHomeRoot` in
-`OS7.Domain.ps1` is the only place the path is named anywhere in the product. So
-the sssd document is correct and the layout it depends on does not exist: a
-`Restore-OS7` today rolls back every domain user's home directory along with the
-operating system, which is the exact outcome this decision was written to
-prevent. The line moved the homes out of `/home` and not out of the boot
-environment.
+`New-OS7Storage` created no dataset for it, and `$script:OS7DomainHomeRoot` in
+`OS7.Domain.ps1` was the only place the path was named anywhere in the product.
+So the sssd document was correct and the layout it depended on did not exist: a
+`Restore-OS7` rolled every domain user's home back along with the operating
+system, which is the exact outcome this decision was written to prevent. The
+line had moved the homes out of `/home` and not out of the boot environment.
 
-Fixing it is a storage-layout decision and therefore D10's and SETUP-PLAN's, not
-this document's: a dataset under `rpool/DATA` mounted at `/var/lib/os7`
-(alongside `var/log`, `var/spool`, `var/tmp`) would do it, and it has to be
-created by `New-OS7Storage` at install time for new machines and by a migration
-for existing ones — the same two halves BUILD-NOTES #74 needed. **Open.**
+**Fixed, in the two halves BUILD-NOTES #74 needed:**
+
+| half | where |
+|---|---|
+| new machines | `New-OS7Storage` creates `rpool/DATA/lib/os7-domain-homes` mounted at `/var/lib/os7/domain-homes`, beside `var/log`, `var/spool` and `lib/authd`. `run-phase2.py`'s `WANT_DATASETS` — a transcription of §4.4's plan, not of the code — names it, so dropping it fails there |
+| machines already installed | the firstboot migration `70-domain-home-dataset`, authored in `build/packages/os7-release/migrations.d/firstboot/` and shipped under each release |
+
+**THE MOUNT IS THE DOMAIN-HOME ROOT AND NOT `/var/lib/os7`**, and that is not
+tidiness. The migration record `Update-OS7` writes under
+`/var/lib/os7/migrations/<version>/` is *required* to roll back with the
+release, so that a machine which has rolled back has genuinely not run them —
+the migrations README's own argument, from C10. A dataset at `/var/lib/os7`
+would make that record survive a rollback and the machine would then claim to
+have run migrations it has not. One level down satisfies A9 and leaves C10
+untouched, which is the same shape as `/var/lib/authd` and `/var/lib/snapd`:
+datasets under a `/var/lib` that lives in the boot environment.
+
+**Why the migration is `firstboot` and not `chroot`**, when the README says a
+dataset layout change belongs in chroot: the mountpoint. A dataset created from
+inside the assembled boot environment mounts at the *chroot's*
+`/var/lib/os7/domain-homes`, which is a different directory from the running
+machine's — and the homes that have to be carried across live on the running
+machine. It needs the real mount namespace, which only the booted system has.
+
+**Mounting a dataset over a populated directory hides what is there** —
+BUILD-NOTES #78's shape, where nothing fails and nothing warns. So the migration
+copies the content in first, moves the old directory *aside* rather than burying
+it, and removes it only after the dataset is mounted and the entries have been
+counted on the other side. Measured on the `domain-joined` bench snapshot with
+two real domain homes: 11 paths in, 11 out, ownership and modes preserved, and
+unmounting the dataset afterwards shows the directory beneath it **empty**.
 
 ### A10 — a sudoers rule is checked by `visudo` before it counts.
 
@@ -257,7 +282,7 @@ than asserted.
 | | |
 |---|---|
 | **AL1** | ~~No OS/7 machine has ever joined a domain.~~ **Superseded 2026-09-07: a machine has, against Windows Server 2025** ([SESSION-AD-JOIN.md](SESSION-AD-JOIN.md)). What remains true is narrower and worth keeping: **screen 9D has never drawn**, so the INSTALLER's path to the join is still unexercised, and `-UseLdapPassword` — which the join needed — is not reachable from it. This row also used to say "`check-ad.py` joins a *container* to a *Samba* domain": **it does not, and never did.** That harness contains no `Join-DirectoryRealm`, no `adcli`, no keytab; its own header sentence claiming "join a realm" was wrong too. Stage 2 had never run anywhere, against anything, until it ran against Windows. |
-| **AL2** | **A boot-environment rollback rolls back the machine account, the sssd cache AND every domain user's home together**, and the reasoning this row used to give was wrong in the operator's favour. It said `/etc/krb5.keytab` is inside the boot environment while sssd's cache under `/var/lib/sss` "sits outside it (D10)". Measured on an installed machine 2026-09-07: `/var`, `/var/lib`, `/var/lib/sss` and `/var/lib/os7` are all backed by `rpool/ROOT/<be>`. The datasets outside the boot environment are `rpool/DATA/{log,spool,tmp,srv,lib/authd,lib/snapd,lib/networkmanager}` and `rpool/USERDATA/*` — and none of them is the one A9 depends on. An AD machine password rotates every 30 days by default: roll back, and the machine holds a credential the domain controller has moved past, authenticates nobody, and reports nothing. `Repair-OS7Domain` renews it and `Test-OS7Domain` notices. Whether the *layout* should change is still open, and now has a second reason to. |
+| **AL2** | **A boot-environment rollback rolls back the machine account and the sssd cache**, and the reasoning this row used to give was wrong in the operator's favour. It said `/etc/krb5.keytab` is inside the boot environment while sssd's cache under `/var/lib/sss` "sits outside it (D10)". Measured on an installed machine 2026-09-07: `/var`, `/var/lib`, `/var/lib/sss` and `/var/lib/os7` are all backed by `rpool/ROOT/<be>`. **Domain users' HOMES are no longer among them** — A9 was fixed the same day and they are on `rpool/DATA/lib/os7-domain-homes` — but the keytab and the cache still are. An AD machine password rotates every 30 days by default: roll back, and the machine holds a credential the domain controller has moved past, authenticates nobody, and reports nothing. `Repair-OS7Domain` renews it and `Test-OS7Domain` notices. Whether the keytab's own layout should change is still open. |
 | **AL3** | **Samba is not Windows Server.** Not reproduced here: LDAP channel binding and signing enforcement, Windows password-policy plumbing and its error sub-codes, `msDS-*` constructed attributes, Windows LAPS, cross-forest referrals. A green `check-ad.py` is the gate for the protocol only. |
 | **AL4** | **Certificate trust is machine-wide and cannot be scoped to a session** (M-A6, M-A10). `Add-OS7DirectoryTrust` installs a CA into the system store and reads back that it took. There is no per-call option and no way to build one on this platform. |
 | **AL5** | **Kerberos single sign-on needs two configuration files OS/7 does not write.** M-A9: the ambient-ticket path works only with `rdns = false` in `krb5.conf` and `SASL_NOCANON on` in `ldap.conf`. This row used to say "neither file exists on an OS/7 image": **`/etc/krb5.conf` does exist** — measured 2026-09-07 — because `krb5-user` ships MIT's example file, complete with `ATHENA.MIT.EDU`, `stanford.edu` and `default_realm = LOCALHOST.LOCALDOMAIN`. It happens to set `rdns = false` already. A stock file naming a realm that does not exist is arguably worse than no file: `kinit` with no principal reports "Cannot find KDC for realm LOCALHOST.LOCALDOMAIN", which sends an operator looking for a KDC rather than for a missing configuration. The join does not need it (adcli writes its own snippet to a temp dir), so nothing is broken today. |
