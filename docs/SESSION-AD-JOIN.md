@@ -96,11 +96,25 @@ function that had never been executed, which is the whole argument of this sessi
 Fixed, and verified with a control that gives the fix something to prove: sssd was
 **deliberately disabled** before the join, and after it reads `enabled` / `active`.
 
-**The check gap this leaves.** `check-installer-cmdlets.py` catches exactly this class — a
-caller naming a parameter the callee does not have — but only for what the C# installer types.
-Nothing checks PowerShell-to-PowerShell calls the same way. A sixth rule in
-`check-ps-traps.py`, resolving OS/7's own cmdlet calls against `Get-Command`, would have caught
-this in a second. Not built; recommended.
+**The check gap this leaves — now closed.** `check-installer-cmdlets.py` catches exactly this
+class, a caller naming a parameter the callee does not have, but only for what the C# installer
+types (#108). Nothing looked at PowerShell calling PowerShell, which is 194 functions calling
+each other. `check-ps-traps.py` has a sixth rule for it (**#127**): for every call to a function
+the tree DEFINES, each `-Parameter` must resolve to one that function declares, allowing
+PowerShell's own unambiguous-prefix rule and the common parameters, and skipping a call that
+splats or a callee with a `dynamicparam` block — in each of those the source does not carry the
+answer.
+
+It was **verified in both directions**, because a scan that has only ever been pointed at a
+clean tree has been proven to stay quiet and never proven to speak:
+
+- the real defect was re-introduced into a throwaway copy of `powershell/`, and the rule named
+  it: `OS7.Domain.ps1:208  Set-SystemdUnitStartup -Enabled  (no such parameter)`, exit 1;
+- the same call written as `-Start Enabled` — a legal unambiguous prefix — was **not** reported,
+  which is the false-positive case that would get the rule deleted.
+
+`OS7_SCAN_ROOT` is honoured if already set, which is what makes that possible; the scan reports
+0 across all 22 files today.
 
 ## AD-PLAN was wrong in three places, and one decision is not achieved
 
@@ -138,11 +152,34 @@ getent passwd 1856801103     -> t.user1:*:1856801103:...
 ```
 
 sssd's responders are socket-activated, so a lookup starts one on demand and it answers from
-`cache_os7test.local.ldb`, which `Remove-OS7Domain` leaves in place. A machine that has left the
-domain therefore still resolves domain identities in both directions, which is how a file owned
-by a departed account keeps showing that account's name. `sss_cache -E` or removing the cache
-database would settle it. Whether leaving a domain SHOULD invalidate the cache is a decision
-about what "leave" means, so it is reported rather than changed.
+`cache_os7test.local.ldb`, which `Remove-OS7Domain` left in place. A machine that had left the
+domain therefore still resolved domain identities in both directions, which is how a file owned
+by a departed account keeps showing that account's name.
+
+**Fixed the same day.** `Remove-DirectoryRealm` now asks `sss_cache -E` **before** it deletes
+`sssd.conf` — the order is load-bearing, because sss_cache reads that file to learn which
+domains exist — and then removes **that domain's** cache databases by name
+(`cache_<domain>.ldb`, `timestamps_<domain>.ldb`, `ccache_<REALM>`). Only that domain's: a host
+can have more than one configured, and wiping the directory would take another realm's
+identities with it. Every path deleted is reported in the returned object, so "left the domain"
+is checkable rather than a sentence. Invalidation is best-effort and its absence is reported
+(`CacheDetail`) rather than passed off as success.
+
+Re-measured on the `domain-joined` snapshot, which is the machine that produced the finding:
+
+| | before the fix | after |
+|---|---|---|
+| `getent passwd t.user1` | resolved | empty |
+| `getent passwd 1856801103` | resolved | empty |
+| `id -nu 1856801103` | `t.user1` | `no such user` |
+| `/var/lib/sss/db` | four files | `config.ldb` only |
+
+That run also shows the reporting working in the operator's favour by accident: the bench's
+DNS pointing is set at runtime and does not survive a snapshot restore, so `adcli` could not
+reach the domain controller and `ComputerAccountRemoved` came back **False** with the reason.
+The local state was still cleaned — which is right, a machine must be able to leave a domain it
+cannot reach — and the account was left in the directory for an operator to remove, said out
+loud instead of silently.
 
 ## What this does not say
 

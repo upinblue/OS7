@@ -6749,3 +6749,111 @@ looks perfectly ordinary.
 three of them in this repository do not have one where it was assumed
 (`/etc/pam.d` here, `grd.conf`'s GKeyFile, and a PAM `access.conf` origin list).
 Put the marker on a line of its own, or identify the line by its content.
+
+---
+
+## #127 — a parameter the callee does not have, in the one call nobody had run
+
+Found 2026-09-07 by executing `Join-OS7Domain` for the first time. It called
+
+```powershell
+Set-SystemdUnitStartup -Name 'sssd' -Enabled -Confirm:$false
+```
+
+and that cmdlet takes `-Startup` with a `ValidateSet` of
+`Enabled`/`Disabled`/`Masked`. There is no `-Enabled`. PowerShell reports it at
+INVOCATION, not at parse time, so the file imports, the module loads, every
+other function works, and the defect exists only on the line nobody has
+executed.
+
+**What made it survive was the handling around it.** The call sits inside a
+`try` whose `catch` writes one line:
+
+```
+OS7-STEP sssd could not be started here: A parameter cannot be found that matches parameter name 'Enabled'.
+```
+
+That is one line among five in a successful join, it does not change the exit
+status, and the returned object still says `Joined = True`. And the machine
+looked right anyway, because this image ships `sssd` enabled already — so the
+step that did nothing was indistinguishable from the step that worked. On an
+image where sssd is not pre-enabled, the join would have left it un-enabled and
+the machine would have dropped out of the domain at the next boot, weeks later,
+with nothing to connect it to the join.
+
+Every other caller of that cmdlet in the repository was correct:
+`OS7.ScheduledTask.ps1` three times, `OS7.Service.ps1` once, all `-Startup`.
+The wrong one was in the only function that had never been executed.
+
+**Why no existing check caught it.** `check-installer-cmdlets.py` exists for
+exactly this class — it reads the C# for what `os7-setup` will type and asks
+PowerShell what will bind, and it found `-Root`/`-PasswordFile` against a
+cmdlet with `-TargetRoot`/`-Password` (#108). But its scope is the installer's
+calls into PowerShell. Nothing looked at PowerShell calling PowerShell, which
+is 194 functions calling each other.
+
+**The rule, now mechanised:** `check-ps-traps.py`'s sixth scan. For every call
+to a function the tree itself DEFINES, every `-Parameter` named in the call must
+resolve to a parameter that function declares — allowing PowerShell's own
+unambiguous-prefix rule (`-Start` for `-Startup`) and the common parameters. A
+call that splats is skipped, because its keys are not knowable from the source,
+and so is a callee with a `dynamicparam` block. Baseline 0.
+
+The scan was verified against the defect rather than trusted: the `-Enabled`
+call was re-introduced into a throwaway copy of the tree and the rule found it,
+naming file, line, callee and the parameter that does not exist.
+
+---
+
+## #128 — a password typed through a remote-desktop client is typed on the SERVER's keyboard layout, and a wrong one looks exactly like a rejected one
+
+Found on 2026-09-07, after it had already been written into a plan as a product
+defect and pushed to a public repository. That is the part worth keeping: the
+measurement was real, the reasoning was careful, and the conclusion was wrong.
+
+**The claim that was published.** A local account could sign in at the physical
+console GDM greeter and was rejected at the same greeter delivered over RDP.
+Both were measured going through the same PAM service (`gdm-authd`), the greeter
+logged `authd: Broker selected local` and `Sorry, that didn't work`, and
+`pam_unix(gdm-authd:auth): authentication failure` named the right user with the
+client's IP. The password field was photographed showing **exactly fifteen dots
+for a fifteen-character password**, which was taken as proof that the password
+had arrived intact. A defect was written up: "the authd local broker rejects a
+password the same account and the same PAM service accept at the console".
+
+**What was actually happening.** The password was `os7-s5-password`. The machine
+is installed with `XKBLAYOUT="de"` and the greeter has no GSettings input source,
+so it uses that. The test client was FreeRDP driven by `xdotool` into an Xvfb
+whose X keymap is US. **RDP carries SCANCODES, not characters**: the hyphen key
+of a US layout is `ß` on a German one. Fifteen keystrokes went in and fifteen
+dots appeared, and two of the characters underneath were not the ones typed.
+
+The whole thing collapsed in one test: the same account, the same client, the
+same everything, with the password changed to `alfabravo7` — letters and a digit
+only, no punctuation, no `y` or `z` (which German and US also swap). The login
+completed and the desktop came up over RDP, and `loginctl` showed
+
+```
+session 12: Name=os7admin Remote=yes RemoteHost=172.17.0.3
+            Service=gdm-authd Type=wayland Class=user State=active
+```
+
+**Why the dot count was not the check it looked like.** A password field shows
+one dot per keystroke and says nothing about which character each produced. It
+answers "did the keystrokes arrive", which was never in doubt, and reads as
+though it answers "did the password arrive", which was the question.
+
+**The rules this leaves.**
+
+1. **A credential used in an automated test across a keyboard boundary must be
+   layout-invariant** — ASCII letters excluding `y` and `z`, and digits. Where a
+   test must use a realistic password, the layouts on both sides have to be
+   pinned and asserted, not assumed.
+2. **Before writing up a rejected authentication as a defect of the
+   authenticator, prove the credential arrived.** Type it into a field that
+   echoes, or authenticate the same string through a path that shares nothing
+   with the one under test.
+3. **A product defect published is worse than a defect not found**, because it
+   is repeated. This one reached `docs/REMOTE-DESKTOP-PLAN.md` as RL14, HANDOFF
+   and a commit message before it was disproved, and the correction had to be
+   pushed to the same places.

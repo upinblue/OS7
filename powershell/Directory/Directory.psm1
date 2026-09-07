@@ -1749,7 +1749,39 @@ function New-DirectorySssdConfiguration {
 function Remove-DirectoryRealm {
 	<#
 	.SYNOPSIS
-		Leave a realm: delete the computer account and remove the keytab.
+		Leave a realm: delete the computer account, the keytab, and the cached
+		identities the realm put on this host.
+
+	.DESCRIPTION
+		DELETING THE CONFIGURATION DOES NOT STOP DOMAIN ACCOUNTS RESOLVING, and
+		that was measured rather than reasoned about. On 2026-09-07, with
+		sssd.conf and the keytab gone, `sssd.service` inactive and NO sssd
+		process running at all, this still answered:
+
+		    getent passwd t.user1     -> t.user1:*:1856801103:...
+		    getent passwd 1856801103  -> t.user1:*:1856801103:...
+
+		sssd's responders are socket-activated, so a lookup starts one on demand
+		and it answers out of the cache database. Both directions matter: the
+		second is how a file owned by a departed account keeps displaying that
+		account's name after the machine has left the domain it came from.
+
+		SO THE CACHE FOR THAT DOMAIN GOES TOO, and only that domain's. A host
+		can have more than one configured, and wiping the directory would take
+		another realm's identities with it. The files are named after the domain
+		(`cache_<domain>.ldb`, `timestamps_<domain>.ldb`) plus the realm's
+		credential cache, so the removal can be exact.
+
+		ORDER IS LOAD-BEARING: `sss_cache -E` is asked FIRST, while sssd.conf
+		still exists, because it needs the configuration to know what to
+		invalidate. It is best-effort — a host whose sssd never ran has nothing
+		to invalidate and that is not a failure — and the files are removed
+		afterwards regardless, because invalidation marks entries stale while
+		removal is what makes them gone.
+
+		WHAT IS REPORTED IS WHAT WAS REMOVED. Every path this deleted is in the
+		returned object, so "left the domain" is a claim the caller can check
+		rather than a sentence.
 	#>
 	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 	param(
@@ -1757,7 +1789,8 @@ function Remove-DirectoryRealm {
 		[string]$UserName,
 		[securestring]$Password,
 		[string]$KeytabPath = '/etc/krb5.keytab',
-		[string]$SssdConfPath = '/etc/sssd/sssd.conf'
+		[string]$SssdConfPath = '/etc/sssd/sssd.conf',
+		[string]$CacheDirectory = '/var/lib/sss/db'
 	)
 
 	if (-not (Test-DirectoryTool -Name 'adcli')) { throw 'adcli is not installed.' }
@@ -1771,8 +1804,40 @@ function Remove-DirectoryRealm {
 	$result = Invoke-DirectoryCommand -Command 'adcli' -Arguments $arguments -StandardInput $plain
 	$plain = $null
 
+	# BEFORE sssd.conf is deleted: sss_cache reads it to learn the domains.
+	$invalidated = $false
+	$invalidateDetail = $null
+	if (Test-DirectoryTool -Name 'sss_cache') {
+		$cacheResult = Invoke-DirectoryCommand -Command 'sss_cache' -Arguments @('-E')
+		$invalidated = ($cacheResult.ExitCode -eq 0)
+		if (-not $invalidated) {
+			$invalidateDetail = ("sss_cache -E exited $($cacheResult.ExitCode): " +
+				([string]$cacheResult.StdErr).Trim())
+		}
+	}
+	else {
+		$invalidateDetail = 'sss_cache is not installed, so nothing was invalidated by name.'
+	}
+
 	foreach ($path in @($KeytabPath, $SssdConfPath)) {
 		if ([System.IO.File]::Exists($path)) { Remove-Item -LiteralPath $path -Force }
+	}
+
+	# This domain's cache databases, named for it. A realm's credential cache is
+	# keyed by the realm, which is the domain upper-cased.
+	$removedCaches = [System.Collections.Generic.List[string]]::new()
+	if ($CacheDirectory -and [System.IO.Directory]::Exists($CacheDirectory)) {
+		$candidates = @(
+			(Join-Path $CacheDirectory "cache_$Domain.ldb"),
+			(Join-Path $CacheDirectory "timestamps_$Domain.ldb"),
+			(Join-Path $CacheDirectory ('ccache_' + $Domain.ToUpperInvariant()))
+		)
+		foreach ($path in $candidates) {
+			if ([System.IO.File]::Exists($path)) {
+				Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+				if (-not [System.IO.File]::Exists($path)) { $removedCaches.Add($path) }
+			}
+		}
 	}
 
 	return [pscustomobject]@{
@@ -1781,6 +1846,9 @@ function Remove-DirectoryRealm {
 		ComputerAccountRemoved = ($result.ExitCode -eq 0)
 		Detail            = $result.StdErr.Trim()
 		KeytabRemoved     = (-not [System.IO.File]::Exists($KeytabPath))
+		CacheInvalidated  = $invalidated
+		CacheRemoved      = $removedCaches.ToArray()
+		CacheDetail       = $invalidateDetail
 	}
 }
 

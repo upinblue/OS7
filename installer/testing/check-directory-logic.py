@@ -444,16 +444,30 @@ T 'with no session at all, the refusal names the cmdlet that fixes it' {{
 # true. The command override means it is never executed; only its existence
 # matters. Both spellings are written because this check has to run on the Mac,
 # on Linux and on the Windows box.
-$stubDir = Join-Path ([System.IO.Path]::GetTempPath()) ('os7-adcli-stub-' + [guid]::NewGuid().ToString('N'))
-$null = New-Item -ItemType Directory -Path $stubDir
-if ($IsWindows) {{
-    Set-Content -Path (Join-Path $stubDir 'adcli.cmd') -Value '@echo off'
+#
+# TWO stub directories, because one of the cases below is about a tool being
+# ABSENT and must not simulate that. $stubDir has adcli and sss_cache;
+# $stubDirNoCache has adcli only, so "sss_cache is not installed" is a real
+# state of a real PATH rather than a flag passed to the code.
+function New-ToolStub {{
+    param([string]$Directory, [string[]]$Tool)
+    $null = New-Item -ItemType Directory -Path $Directory -Force
+    foreach ($one in $Tool) {{
+        if ($IsWindows) {{
+            Set-Content -Path (Join-Path $Directory "$one.cmd") -Value '@echo off'
+        }}
+        else {{
+            $path = Join-Path $Directory $one
+            Set-Content -Path $path -Value "#!/bin/sh`nexit 0"
+            & chmod '+x' $path
+        }}
+    }}
 }}
-else {{
-    $stubPath = Join-Path $stubDir 'adcli'
-    Set-Content -Path $stubPath -Value "#!/bin/sh`nexit 0"
-    & chmod '+x' $stubPath
-}}
+$stubRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('os7-stub-' + [guid]::NewGuid().ToString('N'))
+$stubDir = Join-Path $stubRoot 'with-cache'
+$stubDirNoCache = Join-Path $stubRoot 'without-cache'
+New-ToolStub -Directory $stubDir -Tool @('adcli', 'sss_cache')
+New-ToolStub -Directory $stubDirNoCache -Tool @('adcli')
 $savedPath = $env:PATH
 $env:PATH = $stubDir + [System.IO.Path]::PathSeparator + $env:PATH
 
@@ -574,10 +588,84 @@ T 'the join renders sssd.conf BEFORE it joins, so a refused allow list joins not
     'refused, about the allow list, before adcli ran at all'
 }}
 
+T 'leaving a realm invalidates the cache BEFORE it deletes sssd.conf' {{
+    # ORDER IS THE WHOLE POINT: sss_cache reads sssd.conf to learn which
+    # domains exist, so asking it after the delete asks it nothing. The fake
+    # records the order of commands and the existence of the file at the time.
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) ('os7-leave-' + [guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $work
+    $null = New-Item -ItemType Directory -Path (Join-Path $work 'db')
+    $keytab = Join-Path $work 'krb5.keytab'
+    $sssdConf = Join-Path $work 'sssd.conf'
+    Set-Content -LiteralPath $keytab -Value 'not really a keytab'
+    Set-Content -LiteralPath $sssdConf -Value '[sssd]'
+    # This domain's cache files, and ANOTHER domain's, which must survive.
+    foreach ($leaf in 'cache_os7.test.ldb', 'timestamps_os7.test.ldb', 'ccache_OS7.TEST',
+        'cache_other.test.ldb', 'ccache_OTHER.TEST') {{
+        Set-Content -LiteralPath (Join-Path $work "db/$leaf") -Value 'x'
+    }}
+    & (Get-Module Directory) {{
+        $script:__cmd.Clear()
+        $script:DirectoryCommandOverride = {{
+            param($command, $arguments, $stdin)
+            # Record WHETHER sssd.conf still existed when each command ran.
+            $script:__cmd.Add([pscustomobject]@{{
+                Command = $command; Arguments = $arguments
+                SssdConfThere = [System.IO.File]::Exists($env:OS7_LEAVE_SSSDCONF)
+            }})
+            [pscustomobject]@{{ ExitCode = 0; StdOut = ''; StdErr = '' }}
+        }}
+    }}
+    $env:OS7_LEAVE_SSSDCONF = $sssdConf
+    $left = Remove-DirectoryRealm -Domain 'os7.test' -UserName 'admin' `
+        -Password (ConvertTo-SecureString 'hunter2hunter2' -AsPlainText -Force) `
+        -KeytabPath $keytab -SssdConfPath $sssdConf `
+        -CacheDirectory (Join-Path $work 'db') -Confirm:$false
+    Remove-Item Env:\OS7_LEAVE_SSSDCONF
+
+    $ran = @((Get-Module Directory).Invoke({{ $script:__cmd }}))
+    $cacheCall = $ran | Where-Object {{ $_.Command -eq 'sss_cache' }} | Select-Object -First 1
+    if (-not $cacheCall) {{ throw 'sss_cache was never asked to invalidate anything' }}
+    if (-not $cacheCall.SssdConfThere) {{
+        throw 'sss_cache ran AFTER sssd.conf was deleted, so it had no domains to invalidate'
+    }}
+    if (($cacheCall.Arguments -join ' ') -ne '-E') {{ throw "sss_cache args: $($cacheCall.Arguments -join ' ')" }}
+    if (-not $left.CacheInvalidated) {{ throw 'it did not report the invalidation' }}
+
+    # This domain's three files gone, the other domain's two untouched.
+    $stillThere = @(Get-ChildItem (Join-Path $work 'db') | ForEach-Object {{ $_.Name }} | Sort-Object)
+    if ($stillThere -join ',' -ne 'cache_other.test.ldb,ccache_OTHER.TEST') {{
+        throw "wrong files left behind: $($stillThere -join ', ')"
+    }}
+    if (@($left.CacheRemoved).Count -ne 3) {{ throw "reported $(@($left.CacheRemoved).Count) removals" }}
+    if (-not $left.KeytabRemoved) {{ throw 'the keytab survived' }}
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    'invalidated first, this domain''s three caches removed, the other domain''s kept'
+}}
+
+T 'and with no sss_cache installed it still removes the files, and says so' {{
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) ('os7-leave2-' + [guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path (Join-Path $work 'db')
+    $keytab = Join-Path $work 'krb5.keytab'
+    Set-Content -LiteralPath $keytab -Value 'x'
+    Set-Content -LiteralPath (Join-Path $work 'db/cache_os7.test.ldb') -Value 'x'
+    # PATH without a sss_cache stub: the absence is real, not a parameter.
+    $env:PATH = $stubDirNoCache + [System.IO.Path]::PathSeparator + $savedPath
+    $left = Remove-DirectoryRealm -Domain 'os7.test' -KeytabPath $keytab `
+        -SssdConfPath (Join-Path $work 'sssd.conf') `
+        -CacheDirectory (Join-Path $work 'db') -Confirm:$false
+    $env:PATH = $stubDir + [System.IO.Path]::PathSeparator + $savedPath
+    if ($left.CacheInvalidated) {{ throw 'it claimed to invalidate with no sss_cache present' }}
+    if ($left.CacheDetail -notlike '*not installed*') {{ throw "unhelpful: $($left.CacheDetail)" }}
+    if (@($left.CacheRemoved).Count -ne 1) {{ throw 'the cache file was not removed' }}
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    'no sss_cache, files still gone, and the gap reported'
+}}
+
 T 'the command seam and PATH are put back, so later cases are unaffected' {{
     & (Get-Module Directory) {{ $script:DirectoryCommandOverride = $null }}
     $env:PATH = $savedPath
-    Remove-Item $stubDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $stubRoot -Recurse -Force -ErrorAction SilentlyContinue
     if (Get-Command adcli -CommandType Application -ErrorAction SilentlyContinue) {{
         throw 'the stub is still on PATH'
     }}

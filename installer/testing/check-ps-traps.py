@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Five PowerShell traps this repository has paid for, as a mechanism rather than a note.
+Six PowerShell traps this repository has paid for, as a mechanism rather than a note.
 
     ./check-ps-traps.py            report, and fail if any of them got worse
 
-All five are the same kind of defect: code that reads correctly, parses
+All six are the same kind of defect: code that reads correctly, parses
 correctly, and means something else. None produces a warning; each was found by
 a machine doing the wrong thing.
 
@@ -74,7 +74,24 @@ reset-then-guarded-read:
 Writes are the reset half and are allowed; a read under the Test-Path guard is
 the read half; any other read is a hit.
 
-ALL FIVE BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
+#127 — A PARAMETER THE CALLEE DOES NOT HAVE, IN A CALL NOBODY HAS RUN.
+PowerShell resolves parameter names at INVOCATION. So a file parses, the module
+imports, every other function works, and `Set-SystemdUnitStartup -Name sssd
+-Enabled` — on a cmdlet whose parameter is `-Startup` — is a defect that exists
+only on the line nobody has executed. Found 2026-09-07 by running
+`Join-OS7Domain` for the first time, where it sat inside a try/catch that turned
+the binding error into one warning line among five in an otherwise successful
+join, on an image that happened to ship sssd enabled already, so the step that
+did nothing was indistinguishable from the step that worked. Every other caller
+of that cmdlet was correct; the wrong one was in the only function never
+executed. `check-installer-cmdlets.py` catches this class for what the C#
+installer types (#108) and nothing looked at PowerShell calling PowerShell,
+which is 194 functions calling each other. This scan checks only calls to
+functions the tree DEFINES, allows PowerShell's own unambiguous-prefix rule and
+the common parameters, and skips a call that splats or a callee with a
+dynamicparam block — in each of those the source does not carry the answer.
+
+ALL SIX BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
 word for word: "a rule that is only written down erodes."
 
 It needs `pwsh` and nothing else — no container, no ZFS, no VM. The scan is
@@ -92,7 +109,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # 2026-08-27; #121 was 8 before 2026-09-01, when all eight were fixed together
 # with the scan that counts them.
 BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0, "STRICTPROP": 0,
-            "BARELEC": 0}
+            "BARELEC": 0, "BADPARAM": 0}
 
 SCAN = r'''
 $root = $env:OS7_SCAN_ROOT
@@ -103,7 +120,15 @@ $files = Get-ChildItem -LiteralPath $root -Recurse -Include *.psm1,*.ps1 |
 # scope to one of these is ordinary - it is in the module being loaded, not
 # looked up in the archive. Collected by the parser, so a rename cannot make
 # this list stale the way a hand-written one would.
+#
+# THE SAME PASS SERVES #127, which needs one thing more: the PARAMETERS each of
+# those functions declares. A callee whose parameters cannot be known from the
+# source is recorded as unknown and never reported against - a `dynamicparam`
+# block, or a function with no parameter list at all.
 $defined = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::InvariantCultureIgnoreCase)
+$calleeParams = @{}
+$calleeUnknown = [System.Collections.Generic.HashSet[string]]::new(
     [System.StringComparer]::InvariantCultureIgnoreCase)
 foreach ($file in $files) {
     $pre = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -111,8 +136,35 @@ foreach ($file in $files) {
     foreach ($f in $pre.FindAll(
         { param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
         [void]$defined.Add($f.Name)
+
+        # Both spellings: `function f { param($a) }` and `function f ($a) {}`.
+        $declared = $null
+        if ($f.Body.ParamBlock) { $declared = $f.Body.ParamBlock.Parameters }
+        elseif ($f.Parameters) { $declared = $f.Parameters }
+        if ($null -eq $declared -or $f.Body.DynamicParamBlock) {
+            [void]$calleeUnknown.Add($f.Name)
+            continue
+        }
+        if (-not $calleeParams.ContainsKey($f.Name)) {
+            $calleeParams[$f.Name] = [System.Collections.Generic.HashSet[string]]::new(
+                [System.StringComparer]::InvariantCultureIgnoreCase)
+        }
+        foreach ($p in $declared) {
+            [void]$calleeParams[$f.Name].Add($p.Name.VariablePath.UserPath)
+        }
     }
 }
+
+# The common parameters exist on anything with [CmdletBinding()], and -WhatIf
+# and -Confirm on anything with SupportsShouldProcess. They are allowed
+# unconditionally: this rule is for a parameter that does not exist at all,
+# which is what was measured, and not for the narrower question of whether a
+# particular callee supports ShouldProcess.
+$commonParams = [System.Collections.Generic.HashSet[string]]::new(
+    [string[]]@('Verbose', 'Debug', 'ErrorAction', 'WarningAction', 'InformationAction',
+        'ProgressAction', 'ErrorVariable', 'WarningVariable', 'InformationVariable',
+        'OutVariable', 'OutBuffer', 'PipelineVariable', 'WhatIf', 'Confirm'),
+    [System.StringComparer]::InvariantCultureIgnoreCase)
 
 foreach ($file in $files) {
     $errors = $null
@@ -268,6 +320,55 @@ foreach ($file in $files) {
         Write-Output ("IMPORTSCOPE`t{0}`t{1}`t{2}`t{3}" -f `
             $file.Name, $c.Extent.StartLineNumber, $name, $module)
     }
+
+    # ---- #127 ---------------------------------------------------------
+    #
+    # A parameter the callee does not have. PowerShell reports it at
+    # INVOCATION, so the file parses, the module imports, and the defect lives
+    # only on the line nobody has run: Join-OS7Domain called
+    # `Set-SystemdUnitStartup -Enabled` on a cmdlet whose parameter is
+    # `-Startup`, inside a try/catch that turned the binding error into one
+    # warning line, on an image where sssd was already enabled.
+    #
+    # ONLY CALLS TO FUNCTIONS THIS TREE DEFINES are checked. Resolving external
+    # cmdlets would need every module loaded and would break on a servicing
+    # update, reporting it as a client defect - the same argument
+    # check-directory-logic.py makes about faking .NET types.
+    #
+    # THREE THINGS ARE DELIBERATELY NOT REPORTED, because in each the source
+    # does not carry the answer and a guess would be a false positive:
+    #   * a call that SPLATS - the keys live in a hashtable built elsewhere;
+    #   * a callee with a dynamicparam block;
+    #   * an unambiguous PREFIX, which PowerShell itself accepts (-Start for
+    #     -Startup), so the rule accepts it too.
+    foreach ($c in $commands) {
+        $callee = $c.GetCommandName()
+        if (-not $callee) { continue }
+        if ($calleeUnknown.Contains($callee)) { continue }
+        if (-not $calleeParams.ContainsKey($callee)) { continue }
+
+        $splatted = $false
+        foreach ($e in $c.CommandElements) {
+            if ($e -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $e.Splatted) { $splatted = $true; break }
+        }
+        if ($splatted) { continue }
+
+        $known = $calleeParams[$callee]
+        foreach ($e in $c.CommandElements) {
+            if ($e -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+            $pname = $e.ParameterName
+            if (-not $pname) { continue }
+            if ($commonParams.Contains($pname)) { continue }
+            if ($known.Contains($pname)) { continue }
+            $prefixOf = @($known | Where-Object {
+                $_.StartsWith($pname, [System.StringComparison]::InvariantCultureIgnoreCase) })
+            if ($prefixOf.Count -eq 1) { continue }
+            $verdict = if ($prefixOf.Count -gt 1) { 'ambiguous prefix' } else { 'no such parameter' }
+            Write-Output ("BADPARAM`t{0}`t{1}`t{2}`t{3}`t{4}" -f `
+                $file.Name, $e.Extent.StartLineNumber, $callee, $pname, $verdict)
+        }
+    }
 }
 Write-Output ("FILES`t{0}" -f $files.Count)
 '''
@@ -282,7 +383,7 @@ def find_pwsh():
 
 
 def main():
-    print("\n### five PowerShell traps, asked of the parser rather than of a regex")
+    print("\n### six PowerShell traps, asked of the parser rather than of a regex")
 
     pwsh = find_pwsh()
     if not pwsh:
@@ -290,7 +391,18 @@ def main():
         sys.exit(2)
 
     env = dict(os.environ)
-    env["OS7_SCAN_ROOT"] = os.path.join(REPO, "powershell")
+    # OS7_SCAN_ROOT IS HONOURED IF IT IS ALREADY SET, and that is what makes
+    # this check checkable. A scan that can only ever be pointed at a clean tree
+    # can be verified to report nothing and never verified to report something —
+    # which is the shape of a diagnostic that agrees with the code instead of
+    # checking it. To prove a rule fires: copy powershell/ somewhere, plant the
+    # defect in the copy, and
+    #
+    #     OS7_SCAN_ROOT=/tmp/copy/powershell ./check-ps-traps.py
+    #
+    # Each rule here was confirmed against a planted instance that way.
+    env["OS7_SCAN_ROOT"] = os.environ.get(
+        "OS7_SCAN_ROOT", os.path.join(REPO, "powershell"))
     got = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", SCAN],
                          capture_output=True, text=True, env=env)
     if got.returncode != 0:
@@ -298,7 +410,7 @@ def main():
         sys.exit(1)
 
     found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "STRICTPROP": [],
-             "BARELEC": [], "PARSE": []}
+             "BARELEC": [], "BADPARAM": [], "PARSE": []}
     files = 0
     for line in got.stdout.splitlines():
         parts = line.strip().split("\t")
@@ -345,10 +457,18 @@ def main():
     else:
         print("      (none)")
 
+    print("\n  #127 - a parameter the callee does not have, reported only when it runs")
+    if found["BADPARAM"]:
+        for name, line, callee, param, verdict in found["BADPARAM"]:
+            print("      %s:%s  %s -%s  (%s)" % (name, line, callee, param, verdict))
+    else:
+        print("      (none)")
+
     bad = False
     print()
     for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82"),
-                       ("STRICTPROP", "#112/#119"), ("BARELEC", "#121")):
+                       ("STRICTPROP", "#112/#119"), ("BARELEC", "#121"),
+                       ("BADPARAM", "#127")):
         n = len(found[key])
         base = BASELINE[key]
         if n > base:
@@ -367,10 +487,11 @@ def main():
         sys.exit(1)
     if bad:
         sys.exit(1)
-    print("\nAll five held: no local shadows a parameter, no array literal hides "
+    print("\nAll six held: no local shadows a parameter, no array literal hides "
           "an append, nothing outside a function calls a cmdlet the build "
           "chroot cannot autoload, no property is read off a pipeline that "
-          "may be empty, and no $LASTEXITCODE is read bare.")
+          "may be empty, no $LASTEXITCODE is read bare, and no call names a "
+          "parameter its callee does not have.")
 
 
 if __name__ == "__main__":

@@ -88,10 +88,10 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   ORDER of them, against fake zfs,
                                           #   apt and chroot - with REAL mounts
                                           #   and REAL signatures. ~3 min, no VM
-./installer/testing/check-ps-traps.py     # FIVE PowerShell traps this repo has
+./installer/testing/check-ps-traps.py     # SIX PowerShell traps this repo has
                                           #   paid for (#65, #91, #82, #112/#119,
-                                          #   #121), asked of the parser. Seconds;
-                                          #   needs only pwsh. #82 is the
+                                          #   #121, #127), asked of the parser.
+                                          #   Seconds; needs only pwsh. #82 is the
                                           #   import-scope one: it went red on the
                                           #   tree whose ISO build had just died
                                           #   of it, in one second. #112/#119 is
@@ -102,7 +102,18 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   before it had missed. #121 is the
                                           #   bare $LASTEXITCODE read — a command
                                           #   that never STARTED otherwise reads
-                                          #   as an earlier command's success
+                                          #   as an earlier command's success.
+                                          #   #127 is a call naming a parameter its
+                                          #   callee does not have: PowerShell
+                                          #   resolves those at INVOCATION, so it
+                                          #   lives only on the line nobody ran —
+                                          #   the join called -Enabled on a cmdlet
+                                          #   whose parameter is -Startup, inside a
+                                          #   catch that made it one warning line.
+                                          #   OS7_SCAN_ROOT redirects the scan, so
+                                          #   each rule can be proven to FIRE
+                                          #   against a planted defect and not only
+                                          #   to stay quiet on a clean tree
 ./installer/testing/run-phase1.py all     # walk os7-setup in a VM and check it
 ./installer/testing/run-phase3.py all     # install, BOOT THE DISK ALONE, then
                                           #   install again BY KEYPRESS (walk)
@@ -187,7 +198,12 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   with the join tooling moved out
                                           #   of PATH
 ./installer/testing/check-directory-logic.py # the Directory DECISIONS, no DC,
-                                          #   no VM: 15 checks, seconds
+                                          #   no VM: 36 checks, seconds. Two fakes,
+                                          #   not one — the LDAP connection and the
+                                          #   COMMAND runner, so the join's adcli
+                                          #   arguments and the leave's cache
+                                          #   removal are checked with no realm
+                                          #   anywhere
 ./installer/testing/check-installer-cmdlets.py # does os7-setup call cmdlets
                                           #   that EXIST, with parameters they
                                           #   HAVE. Reads the C# for what will
