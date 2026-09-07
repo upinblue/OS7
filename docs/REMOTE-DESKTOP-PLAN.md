@@ -57,9 +57,10 @@ amd64-GUI only:** gnome-remote-desktop ships only on the amd64 GUI product, tran
 the remote path stays `Enable-OS7Remoting` (ssh / `Enter-PSSession`), and `Get-OS7RemoteDesktop`
 reports `Supported=$false` rather than pretend.
 
-**One completed second login is still owed, and v1 has real security gaps.** M-R33 photographed
-the greeter over RDP, but the run did not land a per-user password, so a *completed* local login
-is unproven (M-R34, O-R2) — the verdict claims the path to the greeter, not a signed-in desktop.
+**The whole path is proven since 2026-09-07, and v1 still has real security gaps.** A local
+account signs in over RDP and reaches the OS/7 desktop; `loginctl` records a remote wayland
+user session carrying the client's address (M-R50/M-R51). The claim that this did not work was
+withdrawn — it was a keyboard-layout fault in the test harness, not a defect (RL14, BUILD-NOTES #128).
 And a deployer must weigh (see R3) no per-user allow-list, no lockout at either stage, no
 attributable log for a refused NLA attempt, and one shared machine secret that today rests in
 plaintext (RL1/RL4/RL5/RL8). The plan makes an operator source scope a precondition of exposing
@@ -691,16 +692,45 @@ question: whether a lockout belongs in `common-auth` through `pam-auth-update` -
 would make it account-wide, ssh and the text console included, and is a product decision
 rather than a Remote Desktop one.
 
-### RL14 - the second login stage does not work on this image, and it is not this feature's doing
+### RL14 - WITHDRAWN 2026-09-07. There is no such defect, and this is what it cost
 
-**A local account cannot complete a sign-in over RDP on `OS7-1.0.0.163-amd64`**, and the
-allow-list is not why. The greeter delivered over RDP runs the authd protocol, selects the
-`local` broker, and rejects a password that the SAME account, the SAME password and the
-SAME PAM service accept at the physical console minutes earlier - measured both ways, with
-the typed password verified character by character in a screenshot. So `Enable-`,
-`Test-`, the allow-list and the certificate path are all exercised end to end, and the
-one thing that remains unproven over RDP is a completed personal login. **O-R2's remaining
-half is now this defect**, not the PAM question it was opened for.
+**This section previously claimed a product defect that does not exist.** It said a
+local account could not complete a sign-in over RDP on `OS7-1.0.0.163-amd64`, because the
+remote greeter's authd `local` broker rejected a password the same account and the same
+PAM service accepted at the physical console. The measurement was real, the reasoning was
+careful, and **the conclusion was wrong**. It was published here, in HANDOFF.md and in a
+commit message before it was disproved.
+
+**M-R50 - the sign-in over RDP works, end to end.** Same machine, same account, same
+client, password changed to one containing no punctuation: the login completes and the
+OS/7 desktop is delivered over RDP. `loginctl` records it as what it is:
+
+```
+session 12: Name=os7admin Remote=yes RemoteHost=172.17.0.3
+            Service=gdm-authd Type=wayland Class=user State=active
+```
+
+**What was really happening.** The machine is installed `XKBLAYOUT="de"` and the greeter
+has no GSettings input source, so it uses that. **RDP carries scancodes, not characters**:
+the test password `os7-s5-password` was typed through an Xvfb with a US keymap, and the
+hyphen key of a US layout is `ß` on a German one. Fifteen keystrokes went in and fifteen
+dots appeared in the password field, which was mistaken for proof that the password had
+arrived. BUILD-NOTES **#128** is the write-up and the rules it leaves.
+
+**M-R51 amends M-R35, and narrows the audit gap.** M-R35 reported `RemoteHost=0.0.0.0`
+and concluded the client address is not available from logind. That was measured on the
+GREETER session. **A completed USER session carries the real client address**
+(`RemoteHost=172.17.0.3`), so a successful Remote Desktop sign-in IS attributable from
+`loginctl` alone. RL5 stands only for the REFUSED case, which still leaves no address
+anywhere OS/7 can read.
+
+**O-R2 is answered in full.** The service is `gdm-authd`, the local account falls through
+to `pam_unix`, the login completes, and the session is a remote wayland user session.
+
+**What this leaves as a real limitation, and it is a different one:** a test that types a
+credential across a keyboard boundary is measuring the boundary as much as the product.
+The bench's own default password contains hyphens, so any future RDP login test must use a
+layout-invariant credential or pin both layouts and assert them.
 
 ---
 

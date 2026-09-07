@@ -86,6 +86,15 @@ VMDIR = os.path.join(REPO, ".vm")
 # be told otherwise through the environment; these are the defaults because
 # they are what is on the disks this repository already has.
 USER = os.environ.get("OS7LAB_USER", "os7admin")
+# THIS PASSWORD CONTAINS HYPHENS AND IS NOT SAFE TO TYPE ACROSS A KEYBOARD
+# BOUNDARY. `type` reaches the guest as key positions, and so does RDP: the
+# machine is installed XKBLAYOUT="de", where the hyphen key of a US layout is
+# `ss`. Typing this password through a remote-desktop client produced fifteen
+# dots in the password field, a rejected login, and a product defect written up
+# against the authenticator that turned out not to exist (BUILD-NOTES #128).
+#
+# A test that types a credential over RDP must use a LAYOUT-INVARIANT one -
+# ASCII letters excluding y and z, and digits - or pin and assert both layouts.
 PASSWORD = os.environ.get("OS7LAB_PASSWORD", "os7-s5-password")
 PASSPHRASE = os.environ.get("OS7LAB_PASSPHRASE", "os7-s5-passphrase")
 
