@@ -39,8 +39,15 @@ their own AD admin account, work as themselves, and sign out — and that needs
 no domain join, no machine account and no new package.** It is proven against a
 real domain controller in a container.
 
-**A domain join is a separate, more expensive feature.** It is written, it
-builds, and **no OS/7 machine has ever run it.**
+**A domain join is a separate, more expensive feature, and since 2026-09-07 an
+OS/7 machine HAS run it** — against a real Windows Server 2025 domain
+controller, end to end: the machine account created in the OU it was told to
+use, the keytab written and used to obtain a ticket, sssd resolving domain
+accounts, the allow list enforced, the sudoers rule accepted by `visudo`, a
+domain user's home created, and the machine leaving the domain again. Two
+defects and three false statements in this document were found by running it;
+[SESSION-AD-JOIN.md](SESSION-AD-JOIN.md) is the record. What it needed that
+nobody had written down is `-UseLdapPassword`.
 
 The split between those two sentences is the whole of this document.
 
@@ -172,13 +179,32 @@ The road a fleet should take is a **pre-created computer account with a one-time
 password**, so no domain administrator credential is typed into a text-mode
 installer at all.
 
-### A9 — domain users' homes go outside the boot environment.
+### A9 — domain users' homes go outside the boot environment. **NOT ACHIEVED.**
 
 `sssd.conf` is generated with `fallback_homedir = /var/lib/os7/domain-homes/%u`.
 Without it, `pam_mkhomedir` — which is already in this image's `common-session`
 — creates them inside the boot environment, where `Restore-OS7` rolls them back
 with the operating system. That is BUILD-NOTES #74 in a second location, and
 this repository has already paid for it once.
+
+**AND THE PATH IS INSIDE THE BOOT ENVIRONMENT ANYWAY.** Measured 2026-09-07 on
+an installed machine, after a real join created a real domain user's home:
+
+    /var/lib/os7/domain-homes  ->  rpool/ROOT/os7_1.0.0.163_202608301351
+
+`New-OS7Storage` creates no dataset for it, and `$script:OS7DomainHomeRoot` in
+`OS7.Domain.ps1` is the only place the path is named anywhere in the product. So
+the sssd document is correct and the layout it depends on does not exist: a
+`Restore-OS7` today rolls back every domain user's home directory along with the
+operating system, which is the exact outcome this decision was written to
+prevent. The line moved the homes out of `/home` and not out of the boot
+environment.
+
+Fixing it is a storage-layout decision and therefore D10's and SETUP-PLAN's, not
+this document's: a dataset under `rpool/DATA` mounted at `/var/lib/os7`
+(alongside `var/log`, `var/spool`, `var/tmp`) would do it, and it has to be
+created by `New-OS7Storage` at install time for new machines and by a migration
+for existing ones — the same two halves BUILD-NOTES #74 needed. **Open.**
 
 ### A10 — a sudoers rule is checked by `visudo` before it counts.
 
@@ -196,10 +222,10 @@ and moves it into place only if that passes.
 
 | Tier | What | Cost | State |
 |---|---|---|---|
-| 1 | `Test-DirectoryModule` — escaping, conversions, flag decoding, error meanings, the sssd document | seconds, in-process | **40/40** |
-| 1 | `check-directory-logic.py` — the *decisions*, against a fake connection: which filter, which modify operation, whether a value is read before one bit is changed, what bytes a password becomes | seconds, no network | **15/15** |
-| 2 | `check-ad.py` — a real Samba AD DC in a container, with `ldbsearch` as the independent witness | ~2 minutes | **all green** |
-| 3 | a real **Windows Server** domain controller | not built | **owed** |
+| 1 | `Test-DirectoryModule` — escaping, conversions, flag decoding, error meanings, the sssd document | seconds, in-process | **54/54** |
+| 1 | `check-directory-logic.py` — the *decisions*, against a fake connection AND a fake command runner: which filter, which modify operation, whether a value is read before one bit is changed, what bytes a password becomes, which adcli arguments the join builds | seconds, no network | **34/34** |
+| 2 | `check-ad.py` — a real Samba AD DC in a container, with `ldbsearch` as the independent witness. **Stage 1 only: it performs no join** | ~2 minutes | **all green** |
+| 3 | a real **Windows Server** domain controller | a Hyper-V VM on the build host, driven by hand | **stage 1 and stage 2 both run 2026-09-06/07; not yet a harness** |
 
 Faking an LDAP server would have tested only the fake. The behaviours that
 decided this design — a refused simple bind, a paged search, three referrals, a
@@ -230,11 +256,11 @@ than asserted.
 
 | | |
 |---|---|
-| **AL1** | **No OS/7 machine has ever joined a domain.** `Join-OS7Domain` and screen 9D are code that compiles and passes a self-test. `check-ad.py` joins a *container* to a *Samba* domain; that is the protocol, not a fleet. |
-| **AL2** | **A boot-environment rollback breaks the machine account, and nothing else in this repository has this shape.** `/etc` lives inside the boot environment, so `/etc/krb5.keytab` does too, while sssd's cache under `/var/lib/sss` sits outside it (D10). An AD machine password rotates every 30 days by default: roll back, and the machine holds a credential the domain controller has moved past, authenticates nobody, and reports nothing. `Repair-OS7Domain` renews it and `Test-OS7Domain` notices — but whether the *layout* should change is open. It is D10's own argument arriving from the mirror image, and D10 did not consider it. |
+| **AL1** | ~~No OS/7 machine has ever joined a domain.~~ **Superseded 2026-09-07: a machine has, against Windows Server 2025** ([SESSION-AD-JOIN.md](SESSION-AD-JOIN.md)). What remains true is narrower and worth keeping: **screen 9D has never drawn**, so the INSTALLER's path to the join is still unexercised, and `-UseLdapPassword` — which the join needed — is not reachable from it. This row also used to say "`check-ad.py` joins a *container* to a *Samba* domain": **it does not, and never did.** That harness contains no `Join-DirectoryRealm`, no `adcli`, no keytab; its own header sentence claiming "join a realm" was wrong too. Stage 2 had never run anywhere, against anything, until it ran against Windows. |
+| **AL2** | **A boot-environment rollback rolls back the machine account, the sssd cache AND every domain user's home together**, and the reasoning this row used to give was wrong in the operator's favour. It said `/etc/krb5.keytab` is inside the boot environment while sssd's cache under `/var/lib/sss` "sits outside it (D10)". Measured on an installed machine 2026-09-07: `/var`, `/var/lib`, `/var/lib/sss` and `/var/lib/os7` are all backed by `rpool/ROOT/<be>`. The datasets outside the boot environment are `rpool/DATA/{log,spool,tmp,srv,lib/authd,lib/snapd,lib/networkmanager}` and `rpool/USERDATA/*` — and none of them is the one A9 depends on. An AD machine password rotates every 30 days by default: roll back, and the machine holds a credential the domain controller has moved past, authenticates nobody, and reports nothing. `Repair-OS7Domain` renews it and `Test-OS7Domain` notices. Whether the *layout* should change is still open, and now has a second reason to. |
 | **AL3** | **Samba is not Windows Server.** Not reproduced here: LDAP channel binding and signing enforcement, Windows password-policy plumbing and its error sub-codes, `msDS-*` constructed attributes, Windows LAPS, cross-forest referrals. A green `check-ad.py` is the gate for the protocol only. |
 | **AL4** | **Certificate trust is machine-wide and cannot be scoped to a session** (M-A6, M-A10). `Add-OS7DirectoryTrust` installs a CA into the system store and reads back that it took. There is no per-call option and no way to build one on this platform. |
-| **AL5** | **Kerberos single sign-on needs two configuration files nobody writes yet.** M-A9: the ambient-ticket path works only with `rdns = false` in `krb5.conf` and `SASL_NOCANON on` in `ldap.conf`. Neither file exists on an OS/7 image, and `krb5-user` is a stage-2 package. Stage 1 is deliberately password-based. |
+| **AL5** | **Kerberos single sign-on needs two configuration files OS/7 does not write.** M-A9: the ambient-ticket path works only with `rdns = false` in `krb5.conf` and `SASL_NOCANON on` in `ldap.conf`. This row used to say "neither file exists on an OS/7 image": **`/etc/krb5.conf` does exist** — measured 2026-09-07 — because `krb5-user` ships MIT's example file, complete with `ATHENA.MIT.EDU`, `stanford.edu` and `default_realm = LOCALHOST.LOCALDOMAIN`. It happens to set `rdns = false` already. A stock file naming a realm that does not exist is arguably worse than no file: `kinit` with no principal reports "Cannot find KDC for realm LOCALHOST.LOCALDOMAIN", which sends an operator looking for a KDC rather than for a missing configuration. The join does not need it (adcli writes its own snippet to a temp dir), so nothing is broken today. |
 | **AL6** | **`powershell/Directory/` is unpoliced by construction.** `check-layering.py`'s walk root is `powershell/OS7` only, so nothing stops the Directory module from shelling out to `resolvectl` or `systemctl`. That is true of `Net`, `Time` and `Systemd` too; the only defence is the file's own header, which says so. |
 | **AL7** | **arm64 is entirely unmeasured.** There is no arm64 packages manifest in `out/` at all. The three packages this work adds to `os7-base.list.chroot` are named precisely because they are on amd64 *by accident* and absent from arm64 by construction — but no arm64 image has been built since. |
 | **AL9** | **`Get-DirectoryAttributeValues` does not keep its own promise unless the caller wraps it.** Its contract says "always an array"; `return @($value)` is unrolled by the pipeline on the way out, so a bare `$v = Get-DirectoryAttributeValues …` on a one-value attribute is a `String` and `$v[0]` is a character — BUILD-NOTES #92 inside the function documented as its guard. It is latent: all eleven call sites wrap in `@(...)` and are correct. The obvious remedy, `return ,$value`, was written and MEASURED to break every one of those sites in the other direction (a one-element result becomes a nested array, and `MemberCount` reads 1 for a group of three). Neither spelling is safe for both call styles, so the migration is one commit that changes the function and all eleven sites together, and it has not been made. |

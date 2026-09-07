@@ -10,8 +10,15 @@ OS/7's Active Directory surface, against a DIRECTORY THAT ANSWERS.
 WHAT THIS IS AND IS NOT. It stands up a real Samba Active Directory domain
 controller in a container, points a second container at it, and drives the real
 `powershell/Directory` and `powershell/OS7` modules against it: bind, search,
-page, create, set a password, rebind as that account, join a realm. So it is a
-test of the PROTOCOL and of OS/7's layers over it. It is NOT a test of Windows
+page, create, set a password, rebind as that account. So it is a test of the
+PROTOCOL and of OS/7's layers over it.
+
+IT PERFORMS NO JOIN, and this sentence used to claim it did — "join a realm"
+was in the list above until 2026-09-07, and AD-PLAN's AL1 cited it. There is no
+`Join-DirectoryRealm` call in this file, no `adcli`, and no keytab. Stage 2 is
+tested against a real Windows Server domain controller by hand
+(docs/SESSION-AD-JOIN.md); turning that into a harness is owed. What this file
+does do for stage 2 is prove that stage 1 does not NEED it: see below. It is NOT a test of Windows
 Server, and the difference is written down rather than glossed over — see
 "WHAT SAMBA WILL NOT REPRODUCE" below. `check-directory-logic.py` is the fast,
 no-network half; nothing here replaces it and it does not replace this.

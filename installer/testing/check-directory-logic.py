@@ -56,6 +56,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -434,6 +435,155 @@ T 'with no session at all, the refusal names the cmdlet that fixes it' {{
     }}
 }}
 
+# --- the join, through the COMMAND seam ------------------------------------
+#
+# Test-DirectoryTool asks Get-Command whether adcli exists, and on a host
+# without it Join-DirectoryRealm refuses before it ever builds an argument
+# list -- which is right, and which would make every case below pass for the
+# wrong reason. So a STUB named adcli goes on PATH to make the presence check
+# true. The command override means it is never executed; only its existence
+# matters. Both spellings are written because this check has to run on the Mac,
+# on Linux and on the Windows box.
+$stubDir = Join-Path ([System.IO.Path]::GetTempPath()) ('os7-adcli-stub-' + [guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $stubDir
+if ($IsWindows) {{
+    Set-Content -Path (Join-Path $stubDir 'adcli.cmd') -Value '@echo off'
+}}
+else {{
+    $stubPath = Join-Path $stubDir 'adcli'
+    Set-Content -Path $stubPath -Value "#!/bin/sh`nexit 0"
+    & chmod '+x' $stubPath
+}}
+$savedPath = $env:PATH
+$env:PATH = $stubDir + [System.IO.Path]::PathSeparator + $env:PATH
+
+T 'the stub is visible, so the cases below test the join and not the refusal' {{
+    if (-not (Get-Command adcli -CommandType Application -ErrorAction SilentlyContinue)) {{
+        throw 'adcli is still not discoverable, so the join would refuse for the wrong reason'
+    }}
+    'adcli discoverable'
+}}
+
+T 'the join sends the password on STDIN and never in the argument list' {{
+    # The command seam, not the LDAP one: Join-DirectoryRealm shells out to
+    # adcli. The override records what adcli would have been given and reports a
+    # failure, so nothing is written to this host's /etc.
+    & (Get-Module Directory) {{
+        $script:__cmd = [System.Collections.Generic.List[object]]::new()
+        $script:DirectoryCommandOverride = {{
+            param($command, $arguments, $stdin)
+            $script:__cmd.Add([pscustomobject]@{{ Command = $command; Arguments = $arguments; Stdin = $stdin }})
+            [pscustomobject]@{{ ExitCode = 1; StdOut = ''; StdErr = 'adcli: some other failure' }}
+        }}
+    }}
+    try {{
+        Join-DirectoryRealm -Domain 'os7.test' -UserName 'admin' `
+            -Password (ConvertTo-SecureString 'hunter2hunter2' -AsPlainText -Force) `
+            -AllowGroup 'Domain Admins' -Confirm:$false | Out-Null
+    }} catch {{ }}
+    $call = (Get-Module Directory).Invoke({{ $script:__cmd }}) | Select-Object -First 1
+    if (-not $call) {{ throw 'adcli was never invoked' }}
+    if ($call.Command -ne 'adcli') {{ throw "ran $($call.Command)" }}
+    if (($call.Arguments -join ' ') -like '*hunter2hunter2*') {{
+        throw 'THE PASSWORD IS IN THE ARGUMENT LIST, where /proc and ps can read it'
+    }}
+    if ($call.Stdin -ne 'hunter2hunter2') {{ throw 'the password did not go to stdin' }}
+    if (($call.Arguments -join ' ') -notlike '*--stdin-password*') {{ throw 'no --stdin-password' }}
+    'stdin, and not argv'
+}}
+
+T 'by default the join does NOT pass --ldap-passwd, and a NAT failure names the way out' {{
+    # Measured 2026-09-07 against Windows Server 2025 from behind NAT: adcli's
+    # default Kerberos set-password path fails with "Message stream modified".
+    & (Get-Module Directory) {{
+        $script:__cmd.Clear()
+        $script:DirectoryCommandOverride = {{
+            param($command, $arguments, $stdin)
+            $script:__cmd.Add([pscustomobject]@{{ Command = $command; Arguments = $arguments }})
+            [pscustomobject]@{{
+                ExitCode = 4; StdOut = ''
+                StdErr = "adcli: joining domain os7.test failed: Couldn't set password for computer account: OS7-GUI`$: Message stream modified"
+            }}
+        }}
+    }}
+    $threw = $null
+    try {{
+        Join-DirectoryRealm -Domain 'os7.test' -UserName 'admin' `
+            -Password (ConvertTo-SecureString 'hunter2hunter2' -AsPlainText -Force) `
+            -AllowGroup 'Domain Admins' -Confirm:$false | Out-Null
+    }} catch {{ $threw = $_.Exception.Message }}
+    $sent = ((Get-Module Directory).Invoke({{ $script:__cmd }}) | Select-Object -First 1).Arguments -join ' '
+    if ($sent -like '*--ldap-passwd*') {{ throw 'the default changed adcli''s own default' }}
+    if (-not $threw) {{ throw 'the failure was swallowed' }}
+    if ($threw -notlike '*-UseLdapPassword*') {{ throw "the failure does not name the way out: $threw" }}
+    if ($threw -notlike '*NAT*') {{ throw "the failure does not say why: $threw" }}
+    if ($threw -notlike '*not a first join*') {{
+        throw "it does not warn that the computer account already exists: $threw"
+    }}
+    'default untouched; the failure explains itself'
+}}
+
+T 'and -UseLdapPassword passes --ldap-passwd, without the NAT sentence' {{
+    & (Get-Module Directory) {{
+        $script:__cmd.Clear()
+        $script:DirectoryCommandOverride = {{
+            param($command, $arguments, $stdin)
+            $script:__cmd.Add([pscustomobject]@{{ Command = $command; Arguments = $arguments }})
+            [pscustomobject]@{{ ExitCode = 4; StdOut = ''; StdErr = 'adcli: Message stream modified' }}
+        }}
+    }}
+    $threw = $null
+    try {{
+        Join-DirectoryRealm -Domain 'os7.test' -UserName 'admin' `
+            -Password (ConvertTo-SecureString 'hunter2hunter2' -AsPlainText -Force) `
+            -AllowGroup 'Domain Admins' -UseLdapPassword -Confirm:$false | Out-Null
+    }} catch {{ $threw = $_.Exception.Message }}
+    $sent = ((Get-Module Directory).Invoke({{ $script:__cmd }}) | Select-Object -First 1).Arguments -join ' '
+    if ($sent -notlike '*--ldap-passwd*') {{ throw "the switch did not reach adcli: $sent" }}
+    # Already using the LDAP path: repeating the advice would send an operator
+    # in a circle, so the plain error is what they get.
+    if ($threw -like '*-UseLdapPassword*') {{ throw 'it advises the switch that is already set' }}
+    '--ldap-passwd, and no circular advice'
+}}
+
+T 'the join renders sssd.conf BEFORE it joins, so a refused allow list joins nothing' {{
+    & (Get-Module Directory) {{
+        $script:__cmd.Clear()
+        $script:DirectoryCommandOverride = {{
+            param($command, $arguments, $stdin)
+            $script:__cmd.Add([pscustomobject]@{{ Command = $command; Arguments = $arguments }})
+            [pscustomobject]@{{ ExitCode = 0; StdOut = ''; StdErr = '' }}
+        }}
+    }}
+    $threw = $null
+    try {{
+        # No -AllowGroup and no -AllowAllDomainUsers: the sssd document refuses,
+        # and it must refuse while this host is still a member of nothing.
+        Join-DirectoryRealm -Domain 'os7.test' -UserName 'admin' `
+            -Password (ConvertTo-SecureString 'hunter2hunter2' -AsPlainText -Force) `
+            -Confirm:$false | Out-Null
+    }} catch {{ $threw = $_.Exception.Message }}
+    if (-not $threw) {{ throw 'an empty allow list was accepted' }}
+    # The refusal must be ABOUT THE ALLOW LIST. Asserting only that something
+    # threw would pass on a host where adcli is merely missing.
+    if ($threw -notlike '*simple_allow_groups*' -and $threw -notlike '*allow*') {{
+        throw "it refused for another reason: $threw"
+    }}
+    $count = @((Get-Module Directory).Invoke({{ $script:__cmd }})).Count
+    if ($count -ne 0) {{ throw "adcli ran $count time(s) before the refusal" }}
+    'refused, about the allow list, before adcli ran at all'
+}}
+
+T 'the command seam and PATH are put back, so later cases are unaffected' {{
+    & (Get-Module Directory) {{ $script:DirectoryCommandOverride = $null }}
+    $env:PATH = $savedPath
+    Remove-Item $stubDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (Get-Command adcli -CommandType Application -ErrorAction SilentlyContinue) {{
+        throw 'the stub is still on PATH'
+    }}
+    'restored'
+}}
+
 T 'the session object never carries the password into JSON' {{
     $json = $adminSession | ConvertTo-Json -Depth 8
     if ($json.Contains('hunter2hunter2')) {{ throw 'THE PASSWORD IS IN THE SESSION OBJECT' }}
@@ -639,8 +789,21 @@ def main():
         directory=DIRECTORY_MODULE.replace("\\", "/").replace("'", "''"),
         os7=OS7_MODULE.replace("\\", "/").replace("'", "''"))
 
-    result = subprocess.run(["pwsh", "-NoProfile", "-Command", script],
-                            capture_output=True, text=True)
+    # THE DRIVER GOES IN A FILE, NOT ON THE COMMAND LINE. Passing it with
+    # -Command worked until the join cases pushed it past Windows' command-line
+    # limit, and what surfaces there is CreateProcess's "The filename or
+    # extension is too long" — a message about a filename, for a script that is
+    # merely long. check-ad.py already writes its driver out; this now matches.
+    # encoding/errors are explicit because text=True alone decodes with the
+    # host's code page, and one em dash in a module's message would kill the
+    # read (the same trap os7lab.py records).
+    with tempfile.TemporaryDirectory() as work:
+        script_path = os.path.join(work, "driver.ps1")
+        with open(script_path, "w", newline="\n", encoding="utf-8") as handle:
+            handle.write(script)
+        result = subprocess.run(["pwsh", "-NoProfile", "-File", script_path],
+                                capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
     stdout = result.stdout.strip()
     start = stdout.rfind("[{")
     if start < 0:

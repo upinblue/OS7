@@ -59,7 +59,7 @@ here either — this file points, they rule.
 | ZFS from PowerShell: the two layers, decisions Z1–Z14, the v1 surface | [docs/ZFS-POWERSHELL-PLAN.md](docs/ZFS-POWERSHELL-PLAN.md) |
 | What OS/7 exposes as cmdlets, what it deliberately does not, how the layers are cut, decisions P1–P7 | [docs/POWERSHELL-SURFACE-PLAN.md](docs/POWERSHELL-SURFACE-PLAN.md) |
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
-| Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. The admin session is proven against a real domain controller; the join has never run on a machine |
+| Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. Both stages are now proven against a real **Windows Server 2025** DC on a machine ([SESSION-AD-REAL-DC.md](docs/SESSION-AD-REAL-DC.md), [SESSION-AD-JOIN.md](docs/SESSION-AD-JOIN.md)); what is still unexercised is the INSTALLER's road to the join (screen 9D) and arm64 |
 | Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **the decisions are still *Proposed*; v1 of the surface is BUILT and has run on a machine.** `Enable-`/`Test-`/`Disable-OS7RemoteDesktop` were exercised against the real daemon and a real RDP client on the GUI bench (§13a). The group, the PAM allow-list and the session verbs are deliberately NOT built — v1 has no per-user allow-list and no lockout, which is why `Enable-` demands a source scope |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
@@ -341,9 +341,20 @@ and `SessionOptions.Sealing` throws on Linux, so it is a simple bind over LDAPS
 on 636 and there is no third option. `powershell/Directory/` is the generic layer
 (P2-directory, the first layering rule to start at **1**, with its one site named
 in the rule); `OS7.Directory.ps1`, `OS7.DirectoryObject.ps1` and `OS7.Domain.ps1`
-are the product layer on top. The join is Stage 2 — written, builds, green in a
-container, **never run on a machine** — and arm64 is unmeasured for all of it.
-[docs/AD-PLAN.md](docs/AD-PLAN.md).
+are the product layer on top. **The join (Stage 2) HAS run on a machine since
+2026-09-07**, against the Hyper-V Windows Server 2025 test DC: account created in
+the named OU, keytab used to get a ticket, sssd resolving domain accounts, the
+allow list enforced, the sudoers rule accepted by `visudo`, a domain user's home
+created, and the machine leaving again
+([docs/SESSION-AD-JOIN.md](docs/SESSION-AD-JOIN.md)). It needed
+`-UseLdapPassword`, which did not exist: behind NAT adcli's Kerberos
+set-password path fails with "Message stream modified" and an LDAP modify of
+`unicodePwd` works. This line said "never run on a machine, green in a
+container" — the container part was never true either: `check-ad.py` performs no
+join at all, so Stage 2 had run nowhere. **Screen 9D has still never drawn** and
+cannot pass the new switch, arm64 is unmeasured, and A9's promise that domain
+homes live outside the boot environment is NOT achieved (they resolve to
+`rpool/ROOT/<be>`). [docs/AD-PLAN.md](docs/AD-PLAN.md).
 
 **The netplan document is generated in two languages and that is temporary.**
 `NetworkPlan.ToNetplanYaml` (C#, what `os7-setup` writes) and

@@ -141,6 +141,15 @@ function Join-OS7Domain {
 
 		THE PROOF IS NOT adcli's EXIT CODE. This reads the keytab back, asks
 		the name service to resolve an account, and reports both.
+
+		-UseLdapPassword IS FOR A MACHINE THAT REACHES ITS DOMAIN THROUGH NAT.
+		adcli sets the computer account's password through the Kerberos
+		set-password service by default, and that exchange is integrity-protected
+		over the addresses each end sees — so behind NAT it fails with "Message
+		stream modified", a sentence about a byte stream. Measured 2026-09-07
+		against Windows Server 2025 from behind QEMU's user-mode NAT: the default
+		fails, this switch joins. The failure names the switch, so nobody has to
+		know this in advance.
 	#>
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
@@ -154,7 +163,8 @@ function Join-OS7Domain {
 		[string[]]$AdministratorGroup = @(),
 		[string]$HomeDirectoryTemplate,
 		[string]$TargetRoot,
-		[switch]$SkipServiceRestart
+		[switch]$SkipServiceRestart,
+		[switch]$UseLdapPassword
 	)
 
 	Import-OS7DirectoryLayer
@@ -176,7 +186,8 @@ function Join-OS7Domain {
 		-OneTimePassword:$OneTimePassword -ComputerName $ComputerName `
 		-OrganizationalUnit $OrganizationalUnit -KeytabPath $keytabPath `
 		-SssdConfPath $sssdPath -AllowGroup $AllowGroup `
-		-HomeDirectoryTemplate $homeTemplate -Confirm:$false
+		-HomeDirectoryTemplate $homeTemplate -UseLdapPassword:$UseLdapPassword `
+		-Confirm:$false
 
 	if (@($AdministratorGroup).Count -gt 0) {
 		$null = Set-OS7DomainLogonPolicy -AdministratorGroup $AdministratorGroup `
@@ -187,7 +198,14 @@ function Join-OS7Domain {
 		try {
 			Import-OS7SystemdLayer
 			$null = Restart-SystemdUnit -Name 'sssd' -Confirm:$false
-			$null = Set-SystemdUnitStartup -Name 'sssd' -Enabled -Confirm:$false
+			# -Startup Enabled, NOT -Enabled. The switch spelling never bound and
+			# the binding error was swallowed by the catch below as "sssd could
+			# not be started here", so on an image where sssd is not already
+			# enabled the join left it un-enabled and the machine would have
+			# dropped out of the domain at the next boot. Measured 2026-09-07 on
+			# the first real join: the warning appeared, sssd was enabled anyway
+			# because this image ships it enabled, and nothing else showed it.
+			$null = Set-SystemdUnitStartup -Name 'sssd' -Startup Enabled -Confirm:$false
 		}
 		catch {
 			Write-OS7Step ('sssd could not be started here: ' +

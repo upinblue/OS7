@@ -1530,7 +1530,8 @@ function Join-DirectoryRealm {
 		[string[]]$AllowGroup = @(),
 		[switch]$AllowAllDomainUsers,
 		[string]$HomeDirectoryTemplate,
-		[string]$LoginShell = '/bin/bash'
+		[string]$LoginShell = '/bin/bash',
+		[switch]$UseLdapPassword
 	)
 
 	if (-not (Test-DirectoryTool -Name 'adcli')) {
@@ -1559,6 +1560,12 @@ function Join-DirectoryRealm {
 	if ($OrganizationalUnit) { $arguments.Add('--domain-ou'); $arguments.Add($OrganizationalUnit) }
 	if ($OneTimePassword) { $arguments.Add('--one-time-password') }
 	elseif ($UserName) { $arguments.Add('--login-user'); $arguments.Add($UserName) }
+	# WHICH WAY THE COMPUTER PASSWORD IS SET IS A CHOICE, and adcli's default one
+	# does not survive NAT. The failure translation below is where that is
+	# written down and how it was measured. adcli's default is left as it is:
+	# this is opt-in, because one measurement in one network is not a reason to
+	# change what every other machine already does.
+	if ($UseLdapPassword) { $arguments.Add('--ldap-passwd') }
 
 	$plain = ''
 	if ($Password) { $plain = [System.Net.NetworkCredential]::new('', $Password).Password }
@@ -1568,13 +1575,52 @@ function Join-DirectoryRealm {
 	$plain = $null
 
 	if ($result.ExitCode -ne 0) {
-		throw ("adcli could not join '$Domain' (exit $($result.ExitCode)): " +
-			$result.StdErr.Trim())
+		$stderr = ([string]$result.StdErr).Trim()
+		# TRANSLATE THE ONE FAILURE THAT TELLS AN OPERATOR NOTHING. By default
+		# adcli sets the computer account's password through the KERBEROS
+		# SET-PASSWORD service (kpasswd, RFC 3244), and that exchange is
+		# integrity-protected over the network addresses each end sees. Reach the
+		# domain controller through NAT and the two disagree, the checksum fails,
+		# and what surfaces is "Message stream modified" — a sentence about a
+		# byte stream, for a machine whose only problem is the road it took.
+		#
+		# Measured 2026-09-07, the first execution of this function ever, from an
+		# OS/7 machine behind QEMU's user-mode NAT (10.0.2.15) against Windows
+		# Server 2025: the default path fails exactly this way, and
+		# -UseLdapPassword — adcli --ldap-passwd, an LDAP modify of unicodePwd
+		# over the GSS-SPNEGO connection adcli has already sealed — joins the
+		# same machine with nothing else changed.
+		#
+		# AND THE COMPUTER ACCOUNT ALREADY EXISTS BY NOW. adcli creates the
+		# object first and sets the password afterwards, so this failure leaves
+		# an ENABLED computer account in the directory whose password this
+		# machine does not know (measured: CN=OS7-GUI, kvno 2, SPNs written).
+		# The retry therefore looks like a first join and is not one, which is
+		# worth saying rather than leaving to be discovered.
+		if (-not $UseLdapPassword -and $stderr -match 'Message stream modified') {
+			throw ("adcli got as far as creating the computer account for '$Domain' and then " +
+				'could not set its password through the Kerberos set-password service: ' +
+				'"Message stream modified". That exchange is integrity-protected over the ' +
+				'addresses each end sees, so it fails when this machine reaches the domain ' +
+				'controller through NAT. Retry with -UseLdapPassword, which sets the password ' +
+				'with an LDAP modify over the connection adcli has already sealed. The ' +
+				'computer account has probably been created by this attempt, so the retry is ' +
+				"not a first join. Underlying error: $stderr")
+		}
+		throw ("adcli could not join '$Domain' (exit $($result.ExitCode)): " + $stderr)
 	}
 
 	# 0600 BEFORE the content, never after: sssd refuses to start on a
 	# world-readable configuration, and a file that is briefly readable is a
 	# file that was readable.
+	#
+	# WHAT IT ENDS UP AS IS 640 root:sssd, and that is not this code losing the
+	# mode. Measured after a real join on 2026-09-07: the mode set here is 0600,
+	# Set-Content does not disturb it (probed separately), and the file reads
+	# 640 root:sssd once sssd has run — the daemon runs as the `sssd` user on
+	# this image and needs to read its own configuration. Which component
+	# relaxes it was not isolated. The property that matters holds either way:
+	# it is never world-readable.
 	$directory = [System.IO.Path]::GetDirectoryName($SssdConfPath)
 	if (-not [System.IO.Directory]::Exists($directory)) {
 		[void][System.IO.Directory]::CreateDirectory($directory)
