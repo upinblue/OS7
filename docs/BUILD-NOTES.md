@@ -6857,3 +6857,39 @@ though it answers "did the password arrive", which was the question.
    is repeated. This one reached `docs/REMOTE-DESKTOP-PLAN.md` as RL14, HANDOFF
    and a commit message before it was disproved, and the correction had to be
    pushed to the same places.
+
+### The three log lines that were not evidence
+
+Read afterwards out of authd's own source and issue tracker (sourced, not
+measured here) — and this is the transferable half, because each of these read
+like a clue and none of them is one:
+
+* **`authd: Broker selected local` is the CORRECT outcome, not a symptom.** In
+  authd the "local" broker is a *sentinel, not an authenticator*: the manager
+  creates it first with an empty config and no D-Bus connection, and it exists
+  so authd can say "this user is not mine". It never verifies a password. With
+  `/etc/authd/brokers.d` empty — which OS/7 knows it is, C8a — every user
+  resolves to it. Reading this line as "authd tried and failed" is backwards.
+* **`Sorry, that didn't work. Please try again.` is GNOME Shell's own generic
+  message**, from the GDM JavaScript, logged by Ubuntu's shell/authd
+  integration. It names no module and carries no information about which one
+  failed. It appears in upstream reports whose actual cause was `pam_unix`
+  rejecting.
+* **`gkr-pam: stashed password to try later in open session` is emitted for a
+  correct and an incorrect password alike.** It records that an authtok
+  existed, not that it was right.
+
+And the line that WAS evidence, pointing the opposite way from how it was read:
+`pam_unix(gdm-authd:auth): authentication failure`. `pam_authd` returns
+`PAM_IGNORE` when only the local broker is available, and the control in
+`/etc/pam.d/gdm-authd` maps `ignore` to "carry on" — so that line proves the
+fall-through **worked** and authd was already out of the transaction. The module
+that rejected the password was `pam_unix`, the same module and the same
+`/etc/shadow` row that accept it at the console. That alone should have moved
+the search to the input path.
+
+One fact about the shipped image, worth knowing and NOT the cause here: OS/7
+carries authd **0.6.1** while upstream is at 0.6.4, and the gap contains
+`#1696`, which short-circuits the local-broker-only case to `PAM_IGNORE`
+earlier, and `#1713`, a mutex for the GDM conversation that is not
+goroutine-safe. Neither was implicated by any measurement above.

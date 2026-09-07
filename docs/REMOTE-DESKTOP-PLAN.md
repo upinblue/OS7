@@ -717,6 +717,17 @@ hyphen key of a US layout is `ß` on a German one. Fifteen keystrokes went in an
 dots appeared in the password field, which was mistaken for proof that the password had
 arrived. BUILD-NOTES **#128** is the write-up and the rules it leaves.
 
+**Why the evidence looked convincing, which is the part worth keeping** (sourced from
+authd's source and issue tracker, not measured here): `Broker selected local` is the
+CORRECT outcome of an empty `brokers.d` — authd's local broker is a sentinel that never
+verifies a password; `Sorry, that didn't work` is GNOME Shell's own generic string and
+names no module; and `gkr-pam: stashed password` is logged for a right password as
+readily as a wrong one. The one line that was evidence — `pam_unix(gdm-authd:auth):
+authentication failure` — pointed the other way: `pam_authd` returns `PAM_IGNORE` when
+only the local broker exists and the control maps it to "carry on", so that line proves
+the fall-through worked and the module rejecting the password was `pam_unix`, which
+accepts the same password at the console. BUILD-NOTES #128.
+
 **M-R51 amends M-R35, and narrows the audit gap.** M-R35 reported `RemoteHost=0.0.0.0`
 and concluded the client address is not available from logind. That was measured on the
 GREETER session. **A completed USER session carries the real client address**
