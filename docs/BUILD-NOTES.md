@@ -6893,3 +6893,55 @@ carries authd **0.6.1** while upstream is at 0.6.4, and the gap contains
 `#1696`, which short-circuits the local-broker-only case to `PAM_IGNORE`
 earlier, and `#1713`, a mutex for the GDM conversation that is not
 goroutine-safe. Neither was implicated by any measurement above.
+
+---
+
+## #129 — `$x = if (…) { @() }` assigns NOTHING, so the empty branch is `$null` and `.Count` throws
+
+Found on 2026-09-07 on a booted machine, in a cmdlet that had just done its job
+correctly: `Unlock-OS7Account` cleared the account's tally, verified it, and then
+threw *"The property 'Count' cannot be found on this object"* on the way out.
+
+The code read:
+
+```powershell
+$still = if ($null -eq $after) { @() }
+         else { @($after | Where-Object { … }) }
+if ($still.Count) { throw … }
+```
+
+**An `if` used as an expression yields its branch through the PIPELINE, and a
+pipeline drops an empty collection.** `@()` written to the pipeline is nothing at
+all, so `$still` is `$null`, and `$null.Count` under
+`Set-StrictMode -Version Latest` is a terminating error. The same statement with
+a NON-empty branch works perfectly, which is why it survives every test where
+something is found.
+
+This is **BUILD-NOTES #92's mechanism in a third syntactic form**. #92 is the
+one about `return @($value)` unrolling on the way out of a function; #112/#119
+is the property read off a pipeline that may be empty. This is neither spelling
+and `check-ps-traps.py` sees none of them here, because the offending token is
+`if`.
+
+The same file carried it a second time, and there it was **silent**: 
+
+```powershell
+$lockedNames = if ($null -eq $locked) { $null }
+               else { @($locked | Where-Object { $_.Locked } | … ) }
+```
+
+On a machine where nobody is locked out the `else` branch yields an empty array,
+the assignment produces `$null`, and the cmdlet reports `LockedAccounts` as
+`$null` — which this surface reserves for *"could not be asked"*. A healthy
+machine would have read as an unanswerable one, with nothing throwing to say so.
+
+**The rule:** never let an empty collection travel through a pipeline to reach a
+variable. Assign the empty case directly and mutate:
+
+```powershell
+$still = @()
+if ($null -ne $after) { $still = @($after | Where-Object { … }) }
+```
+
+and read the count as `@($still).Count` if there is any doubt left. The three
+faces of this now cost this repository four separate debugging sessions.

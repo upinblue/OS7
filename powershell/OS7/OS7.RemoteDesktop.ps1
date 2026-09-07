@@ -613,9 +613,11 @@ function Get-OS7RemoteDesktop {
 		# and that is the state this field exists to make visible.
 		PolicyEnforced     = (@($policy.Present).Count -gt 0)
 		PolicyServices     = @($policy.Present)
-		# ALWAYS $false in v1, and it is a field rather than an omission so that
-		# a fleet asking this machine gets an answer instead of a gap.
-		LockoutEnforced    = $false
+		# ASKED OF THE LOCKOUT SURFACE, which owns it: the lockout is
+		# ACCOUNT-WIDE and lives in common-auth, so this field reports a policy
+		# this cmdlet does not set. Get-OS7AccountLockout is where it is
+		# managed, and $null here means that could not be asked.
+		LockoutEnforced    = $(try { (Get-OS7AccountLockout).Enabled } catch { $null })
 		AllowedUsers       = @($allowed | Where-Object { $_.Reason -eq 'allow-list' } | ForEach-Object Name)
 		Administrators     = @($allowed | Where-Object { $_.Reason -eq 'administrator' } | ForEach-Object Name)
 		RunningReason      = $runReason
@@ -1504,10 +1506,20 @@ function Test-OS7RemoteDesktop {
 		# A `required` pam_access naming a file that is not there refuses every
 		# graphical login, local ones included. This is the check for that.
 		"$($script:OS7RdpAccessFile)")
-	& $add 'account lockout armed' $false $(
-		'NOT IN v1. Placing pam_faillock by prepending to these services was MEASURED ' +
-		'breaking every login on them, local ones included: authfail must follow the ' +
-		'authentication modules and a prepend cannot wrap an included stack.')
+	$lock = $null
+	try { $lock = Get-OS7AccountLockout } catch { }
+	& $add 'account lockout armed' $(if ($lock) { $lock.Enabled } else { $null }) $(
+		if ($null -eq $lock) { 'the lockout surface could not be asked' }
+		elseif ($lock.Enabled) {
+			"$($lock.Attempts) failures lock for $($lock.LockoutMinutes) min - ACCOUNT-WIDE (ssh and the console too), and a success does NOT clear the counter"
+		}
+		else { 'no lockout: Set-OS7AccountLockout arms it, and it reaches every login path' })
+	if ($lock -and $lock.Enabled) {
+		# The property that makes it safe rather than merely present.
+		& $add 'the lockout order is right' $lock.OrderCorrect $(
+			'the check must precede the authenticators and the record must follow them (BUILD-NOTES #125)')
+		& $add 'root is exempt from the lockout' $lock.RootExempt 'even_deny_root is not set'
+	}
 
 	# THE SAFE-FAILURE CONTROL, and it is the most important check here. The
 	# rule must never reach the text console or ssh: those are how an operator

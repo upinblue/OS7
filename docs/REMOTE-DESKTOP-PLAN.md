@@ -745,6 +745,67 @@ layout-invariant credential or pin both layouts and assert them.
 
 ---
 
+## 13c. The account lockout, built 2026-09-07 through `common-auth`
+
+R10 wanted a lockout scoped to the remote greeter. Two measurements killed that
+(§13b): the local and the remote login screen are one PAM service, and a prepended
+`pam_faillock authfail` broke every login on it (#125). O-R4 was left as the product
+question — whether the lockout belongs in `common-auth`, account-wide. **It does, and
+it is built.**
+
+### R18 — the lockout lives in `common-auth` through `pam-auth-update`, and it is ACCOUNT-WIDE. Proposed 2026-09-07.
+
+Two profiles, because one block cannot straddle the authenticators, and `pam-auth-update`
+because it RECOMPUTES the jump chain — which is exactly what a hand-written stack gets
+wrong:
+
+| priority | line | whose |
+|---|---|---|
+| 1100 | `pam_faillock.so preauth` | OS/7 |
+| 1050 | `pam_authd_exec.so` | Ubuntu |
+| 256 | `pam_unix.so` | Ubuntu |
+| 128 | `pam_sss.so` | Ubuntu |
+| 64 | `pam_faillock.so authfail` | OS/7 |
+
+**M-R52 — pam-auth-update recomputed the chain by itself**: `pam_unix`'s `success=3`
+became `success=4` when the two lines went in, so a successful authentication still
+jumps over `authfail` and lands on `pam_permit`. That is the whole reason this is
+reachable at all, and it is measured on the generated file, not assumed.
+
+**M-R53 — the lockout works, end to end, measured over `su` on a pty** (and NOT over
+ssh, because OpenSSH 10.2's own `PerSourcePenalties` — on by default, `authfail:5` —
+blocks the source after five failures and contaminated the first run): right password
+with a clear tally succeeds; ten wrong lock the account; **the right password is then
+refused**; `faillock --reset` restores it; **root is never locked** (`even_deny_root` is
+deliberately absent).
+
+**M-R54 — a successful login does NOT clear the counter.** Measured: two failures, one
+success, still two failures recorded. `pam_faillock authsucc` is the module that would
+clear it and there is no position for it in a pam-auth-update stack, because the success
+path jumps to the end. The counter clears by TIME through `fail_interval`, which is
+exactly what Windows calls "reset the account lockout counter after N minutes". Reported
+as a field (`ClearsOnSuccess`) rather than left to be discovered.
+
+**M-R55 — the safe-failure controls hold.** With the lockout in the stack, a fresh ssh
+session and a fresh `sudo` both work; disabling removes both lines and they work still.
+`Set-OS7AccountLockout` reads the generated file back and checks the ORDER, and
+**reverses its own change** if either is wrong rather than leaving a half-applied auth
+stack.
+
+The surface is `Get-/Set-OS7AccountLockout` and `Unlock-OS7Account` — an account-wide
+noun, deliberately not a Remote Desktop one, because the policy reaches ssh, the text
+console, `sudo` and both login screens. `Get-/Test-OS7RemoteDesktop` report it and do
+not own it. The profiles are written by the cmdlet rather than shipped in a package, and
+carry `Default: no`, so nothing can switch a lockout on by itself.
+
+**RL15 — an administrator can lock themselves out for ten minutes.** There is no
+`even_deny_root`, so the physical console as root is always available, and the lock
+expires on its own; but a single-administrator machine whose admin locks their own
+account cannot run `Unlock-OS7Account` until it does. That is Windows' behaviour too,
+and it is why the default lock is ten minutes rather than an hour.
+
+---
+
 ## 14. Measurements owed before locking
 
 The `O-R` prefix marks these owed, distinct from the measured `M-R` above.
@@ -752,7 +813,7 @@ The `O-R` prefix marks these owed, distinct from the measured `M-R` above.
 * **O-R1** (RL1, oq4) — add `gnome-remote-desktop` to `tss`: does `set-credentials` TPM-seal, to which PCRs, **and does the seal survive `Update-OS7`** (else re-key on first boot)? → bench.
 * **O-R2** (R5, RL2, RL5, R11) — the remote-greeter PAM service and the **local-account fall-through** over RDP (does `pam_unix` run and emit an rhost success line), completing M-R34. → bench: a *completed* login, then `journalctl … gdm.service`.
 * ~~**O-R3**~~ **ANSWERED 2026-09-07 (M-R42/M-R44/M-R45)**, and differently from how it was asked: there is no `pam-auth-update` profile and no `pam_succeed_if`. The rule is one `pam_access` line in `gdm-authd` and `gdm-password`, the greeter exemption is by service selection, and all four quadrants were measured. What is still owed is the **admin deny path** - a way to forbid administrators from connecting, which CISA CM0042 recommends and v1 does not have.
-* **O-R4** (R10, RL4) — NARROWED by M-R42/M-R48: a lockout cannot be scoped to the remote path, because local and remote graphical logins are one PAM service, and it cannot be prepended, because `authfail` must follow the authentication modules. The open question is whether it belongs in `common-auth` through `pam-auth-update` - account-wide, ssh and the text console included. That is a product decision. → bench, after it is taken.
+* ~~**O-R4**~~ **ANSWERED 2026-09-07 (M-R52..M-R55, §13c)**: it belongs in `common-auth` through `pam-auth-update`, account-wide, and it is built as `Set-OS7AccountLockout`. What remains owed is narrower and is RL15's shape: nothing yet measures what a lockout does to a machine whose ONLY administrator is the locked account, on a machine with no console access.
 * **O-R5** (R8, R15, RL13) — whether `/var/lib/gnome-remote-desktop` and `/var/lib/os7/remote-desktop` sit on `rpool/DATA` (deciding rollback and backup propagation). → bench: `zfs list` + `stat`.
 * **O-R6** (R11, RL5) — any peer IP for a **refused** connection. → container + FreeRDP.
 * **O-R7** (RL9) — what a unit restart/stop does to an **established** session. → bench.

@@ -2702,7 +2702,7 @@ function Restore-OS7 {
 # for, and Invoke-OS7Native for openssl and chown — so after Service, and
 # still before OS7.Update.ps1, which stays last.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.Management.ps1',
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -2765,6 +2765,8 @@ Export-ModuleMember -Function Get-OS7Version,
 	Get-OS7RemoteDesktopCertificate, Set-OS7RemoteDesktopCertificate,
 	Test-OS7RemoteDesktop,
 	Get-OS7RemoteDesktopUser, Add-OS7RemoteDesktopUser, Remove-OS7RemoteDesktopUser,
+	# The account lockout. ACCOUNT-WIDE, not Remote-Desktop-scoped: it reaches
+	Get-OS7AccountLockout, Set-OS7AccountLockout, Unlock-OS7Account,
 	# Services and the log. Get-OS7Log is the clearest argument for why this
 	# product's shell is PowerShell: a journal is already structured, and
 	# `journalctl | grep` is a text pipeline over structure.

@@ -91,6 +91,11 @@
 		# allowed without being in it, which Get- reports as a Reason.
 		'Get-OS7RemoteDesktopUser', 'Add-OS7RemoteDesktopUser',
 		'Remove-OS7RemoteDesktopUser',
+		# Implemented - the account lockout (Windows' Account lockout policy).
+		# ACCOUNT-WIDE and named so: it lives in common-auth and reaches ssh, the
+		# text console, sudo and both login screens, because the local and the
+		# remote graphical login are ONE PAM service on this image (measured).
+		'Get-OS7AccountLockout', 'Set-OS7AccountLockout', 'Unlock-OS7Account',
 		# Implemented - services and the log, on the Systemd module. Get-Service
 		# does not exist on PowerShell for Linux (measured), so this is the verb
 		# an admin reaches for and does not find. Healthy is four questions, not

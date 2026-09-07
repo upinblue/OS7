@@ -192,7 +192,9 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Get-OS7RemoteDesktop Enable-OS7RemoteDesktop Disable-OS7RemoteDesktop \
 	Set-OS7RemoteDesktopCredential New-OS7RemoteDesktopCertificate \
 	Get-OS7RemoteDesktopCertificate Set-OS7RemoteDesktopCertificate \
-	Test-OS7RemoteDesktop \n	Get-OS7RemoteDesktopUser Add-OS7RemoteDesktopUser Remove-OS7RemoteDesktopUser \
+	Test-OS7RemoteDesktop \
+	Get-OS7RemoteDesktopUser Add-OS7RemoteDesktopUser Remove-OS7RemoteDesktopUser \
+	Get-OS7AccountLockout Set-OS7AccountLockout Unlock-OS7Account \
 	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
 	Get-OS7ManagementStatus
 
@@ -214,7 +216,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 # module comes up looking healthy. Naming those cmdlets in the export list above
 # is the second half of this guard and is still owed.
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
-	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.ScheduledTask.ps1 OS7.RemoteDesktop.ps1 OS7.Management.ps1 \
+	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.ScheduledTask.ps1 OS7.RemoteDesktop.ps1 OS7.AccountLockout.ps1 OS7.Management.ps1 \
 	OS7.Directory.ps1 OS7.DirectoryObject.ps1 OS7.Domain.ps1 \
 	OS7.Update.ps1 \
 	OS7.format.ps1xml os7-endpoints.json; do

@@ -374,6 +374,51 @@ $results = [ordered]@{}
         Where-Object { $_ -match 'pam_access|os7-remote-desktop' }).Count
     $r.policy_service_intact = @(Get-Content -LiteralPath (Join-Path $pamdir 'gdm-authd')).Count
 
+    # --- 14. the account lockout's decisions --------------------------------
+    $lockdir = Join-Path $lab 'pam-configs'
+    $null = New-Item -ItemType Directory -Force -Path $lockdir
+    $script:OS7LockoutProfileDir = $lockdir
+    $script:OS7LockoutConf = Join-Path $lab 'faillock.conf'
+    $script:OS7LockoutCommonAuth = Join-Path $lab 'common-auth'
+
+    $pre = Get-OS7LockoutProfileText -Name 'os7-faillock-preauth'
+    $af  = Get-OS7LockoutProfileText -Name 'os7-faillock-authfail'
+    $r.lock_pre_priority = (($pre | Where-Object { $_ -match '^Priority:' }) -replace '\D', '')
+    $r.lock_af_priority  = (($af  | Where-Object { $_ -match '^Priority:' }) -replace '\D', '')
+    $r.lock_pre_default_no = [bool](@($pre | Where-Object { $_ -eq 'Default: no' }).Count)
+    $r.lock_af_default_no  = [bool](@($af  | Where-Object { $_ -eq 'Default: no' }).Count)
+    $r.lock_both_primary = ((@($pre | Where-Object { $_ -eq 'Auth-Type: Primary' }).Count) -eq 1) -and
+                           ((@($af  | Where-Object { $_ -eq 'Auth-Type: Primary' }).Count) -eq 1)
+
+    # A stack in the order pam-auth-update produces on the real machine.
+    Set-Content -LiteralPath $script:OS7LockoutCommonAuth -Value @(
+        'auth	required	pam_faillock.so preauth'
+        'auth	[success=4 ignore=ignore default=die]	pam_authd_exec.so /usr/libexec/authd-pam'
+        'auth	[success=3 default=ignore]	pam_unix.so nullok try_first_pass'
+        'auth	[success=2 default=ignore]	pam_sss.so use_first_pass'
+        'auth	[default=die]	pam_faillock.so authfail'
+        'auth	requisite	pam_deny.so'
+        'auth	required	pam_permit.so')
+    $good = Get-OS7LockoutEffective
+    $r.lock_order_good = $good.Order
+
+    # The same modules in the WRONG order - what a prepending writer produces.
+    Set-Content -LiteralPath $script:OS7LockoutCommonAuth -Value @(
+        'auth	required	pam_faillock.so preauth'
+        'auth	[default=die]	pam_faillock.so authfail'
+        'auth	[success=2 default=ignore]	pam_unix.so nullok try_first_pass'
+        'auth	requisite	pam_deny.so')
+    $bad = Get-OS7LockoutEffective
+    $r.lock_order_bad = $bad.Order
+    $r.lock_bad_still_detected = ($bad.Preauth -and $bad.AuthFail)
+
+    # No lockout in the stack at all.
+    Set-Content -LiteralPath $script:OS7LockoutCommonAuth -Value @(
+        'auth	[success=1 default=ignore]	pam_unix.so'
+        'auth	requisite	pam_deny.so')
+    $none = Get-OS7LockoutEffective
+    $r.lock_absent = ((-not $none.Preauth) -and (-not $none.AuthFail))
+
     $r | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $out -Encoding utf8
 } $Lab $certPath $keyPath (Join-Path $Lab 'result.json') $haveOpenssl
 
@@ -569,6 +614,24 @@ def assert_logic(r, unix_expected, stderr=""):
           "removing it takes every line back out")
     check(r.get("policy_service_intact", 0) >= 2,
           "and leaves the service's own stack behind", f"{r.get('policy_service_intact')} lines")
+
+    print("\n### the account lockout: order is the whole property (R10, #125)\n")
+    check(r.get("lock_pre_priority") == "1100",
+          "the check runs before every authenticator", "priority " + str(r.get("lock_pre_priority")))
+    check(r.get("lock_af_priority") == "64",
+          "the record runs after them", "priority " + str(r.get("lock_af_priority")))
+    check(r.get("lock_both_primary") is True,
+          "both are Auth-Type: Primary - an Additional block lands after pam_deny, where a deny decides nothing")
+    check(r.get("lock_pre_default_no") is True and r.get("lock_af_default_no") is True,
+          "both are Default: no - no update may switch a lockout on by itself")
+    check(r.get("lock_order_good") is True,
+          "the order pam-auth-update produces is recognised as correct")
+    check(r.get("lock_order_bad") is False,
+          "the PREPENDED order - the one that broke every login on a service - is recognised as WRONG")
+    check(r.get("lock_bad_still_detected") is True,
+          "and it is still reported as present, so the machine says 'wrong' rather than 'absent'")
+    check(r.get("lock_absent") is True,
+          "a stack with no lockout reads as no lockout")
 
     print("\n### the private key's mode at generation (P7, BUILD-NOTES #117)\n")
     if r.get("unix_mode_checked"):
