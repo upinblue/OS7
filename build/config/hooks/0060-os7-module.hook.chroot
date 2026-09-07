@@ -192,7 +192,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Get-OS7RemoteDesktop Enable-OS7RemoteDesktop Disable-OS7RemoteDesktop \
 	Set-OS7RemoteDesktopCredential New-OS7RemoteDesktopCertificate \
 	Get-OS7RemoteDesktopCertificate Set-OS7RemoteDesktopCertificate \
-	Test-OS7RemoteDesktop \
+	Test-OS7RemoteDesktop \n	Get-OS7RemoteDesktopUser Add-OS7RemoteDesktopUser Remove-OS7RemoteDesktopUser \
 	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
 	Get-OS7ManagementStatus
 

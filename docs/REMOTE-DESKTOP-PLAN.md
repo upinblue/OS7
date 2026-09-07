@@ -657,14 +657,61 @@ And the end-to-end run, which is the thing the plan's §1 could not claim before
 
 ---
 
+## 13b. The allow-list and the lockout, built 2026-09-07 - and what measuring them changed
+
+R5 and R10 were deferred behind O-R2, O-R3, O-R4 and O-R18. The measurements were
+taken on a booted machine and **three of them contradicted the plan above**, which is
+why this section exists rather than a quiet edit to R5.
+
+| # | Fact | How |
+|---|---|---|
+| **M-R42** | **The enforcement point is `gdm-authd`, not `gdm-password`.** The plan said gdm-password on the strength of upstream sources. A `pam_exec` probe on every login path at once shows BOTH the local greeter login and the one delivered over RDP going through `gdm-authd`. OS/7 writes its rule into both, because a differently configured machine would otherwise be silently unguarded. **O-R2 answered.** | pam_exec probe, one login each way |
+| **M-R43** | **`rhost` is the discriminator, measured on both sides.** RDP: `service=gdm-authd rhost=172.17.0.3 tty=<none>`. Console: `service=gdm-authd rhost=<empty> tty=/dev/tty1`. Same service; only the origin separates them. The greeter's own launch environment is `gdm-launch-environment` with `rhost=0.0.0.0` - a different service file, which is why the exemption the plan owed is achieved by NOT touching it rather than by a clause. | the same probe |
+| **M-R44** | **`pam_succeed_if rhost = ""` does not work and reads as though it does.** PAM does not strip quotes from a token, so the comparison is against the two characters `""`. Measured: the module logs `'rhost' resolves to ''` and the requirement is still not met. A rule built on it fails OPEN. `pam_access` is used instead. | pam_succeed_if with debug |
+| **M-R45** | **The rule is correct in all four quadrants**, measured before a line of it shipped: non-member + remote -> `access denied`; member + remote -> `user_match=0`, allowed; **NON-MEMBER + LOCAL -> `from_match=0`, allowed**; administrator + local -> allowed. The third is the console-lockout case and the reason the feature is safe. pam_access compares the origin against the TTY when there is no remote host, and `LOCAL` matches it. **O-R18 answered for the rule.** | pam_access with debug over ssh-to-self and su |
+| **M-R46** | **On the real RDP path the allow-list refuses a non-member**: `pam_access(gdm-authd:auth): access denied for user 'rdtest' from '172.17.0.3'`, with the client's real address. With the account added to `os7-remotedesktop` the deny does not fire. | a FreeRDP client at the greeter |
+| **M-R47** | **The safe-failure control passes**: with the policy installed in both gdm services, an administrator signs in at the local console and reaches the OS/7 desktop, and ssh is untouched. Photographed. | os7lab click/type/shot, ssh |
+| **M-R48** | **A prepended `pam_faillock authfail` breaks every login on the service** - the local console login failed three times with the same password that had just worked, and removing the two faillock lines restored it. `authfail` must follow the authentication modules, and a service ending in an `@include` has no position a prepending writer can reach. BUILD-NOTES **#125**. | the console login, before and after |
+| **M-R49** | **A marker appended to a PAM module line is an ARGUMENT, not a comment.** BUILD-NOTES **#126**. | the written file |
+
+### What this changes in the decisions above
+
+**R5 is amended:** the service is `gdm-authd` (and `gdm-password` for safety), the
+mechanism is `pam_access` and not `pam_succeed_if`, the greeter exemption is by service
+selection, and the cmdlets `Get-/Add-/Remove-OS7RemoteDesktopUser` are **built** rather
+than deferred - their enforcement point is now measured.
+
+**R10 is not met, and is not quietly narrowed.** It said the faillock would live "on the
+remote greeter path only, scoped so a lockout never reaches the console". M-R42 makes that
+impossible - local and remote graphical logins are the same PAM service - and M-R48 makes
+the naive placement actively dangerous. **v1 therefore ships NO account lockout**, and says
+so in `Get-OS7RemoteDesktop` (`LockoutEnforced` is always `$false`) and in
+`Test-OS7RemoteDesktop`. RL4 stands unchanged and O-R4 is still owed, with a narrower
+question: whether a lockout belongs in `common-auth` through `pam-auth-update` - which
+would make it account-wide, ssh and the text console included, and is a product decision
+rather than a Remote Desktop one.
+
+### RL14 - the second login stage does not work on this image, and it is not this feature's doing
+
+**A local account cannot complete a sign-in over RDP on `OS7-1.0.0.163-amd64`**, and the
+allow-list is not why. The greeter delivered over RDP runs the authd protocol, selects the
+`local` broker, and rejects a password that the SAME account, the SAME password and the
+SAME PAM service accept at the physical console minutes earlier - measured both ways, with
+the typed password verified character by character in a screenshot. So `Enable-`,
+`Test-`, the allow-list and the certificate path are all exercised end to end, and the
+one thing that remains unproven over RDP is a completed personal login. **O-R2's remaining
+half is now this defect**, not the PAM question it was opened for.
+
+---
+
 ## 14. Measurements owed before locking
 
 The `O-R` prefix marks these owed, distinct from the measured `M-R` above.
 
 * **O-R1** (RL1, oq4) — add `gnome-remote-desktop` to `tss`: does `set-credentials` TPM-seal, to which PCRs, **and does the seal survive `Update-OS7`** (else re-key on first boot)? → bench.
 * **O-R2** (R5, RL2, RL5, R11) — the remote-greeter PAM service and the **local-account fall-through** over RDP (does `pam_unix` run and emit an rhost success line), completing M-R34. → bench: a *completed* login, then `journalctl … gdm.service`.
-* **O-R3** (R5, R10) — the rendered `pam-auth-update` profile: order, a `pam_succeed_if` "remote AND ingroup" exempting `gdm-launch-environment`, and the admin deny path. → container.
-* **O-R4** (R10) — faillock: N wrong passwords over RDP lock the account at the greeter while console login survives. → bench.
+* ~~**O-R3**~~ **ANSWERED 2026-09-07 (M-R42/M-R44/M-R45)**, and differently from how it was asked: there is no `pam-auth-update` profile and no `pam_succeed_if`. The rule is one `pam_access` line in `gdm-authd` and `gdm-password`, the greeter exemption is by service selection, and all four quadrants were measured. What is still owed is the **admin deny path** - a way to forbid administrators from connecting, which CISA CM0042 recommends and v1 does not have.
+* **O-R4** (R10, RL4) — NARROWED by M-R42/M-R48: a lockout cannot be scoped to the remote path, because local and remote graphical logins are one PAM service, and it cannot be prepended, because `authfail` must follow the authentication modules. The open question is whether it belongs in `common-auth` through `pam-auth-update` - account-wide, ssh and the text console included. That is a product decision. → bench, after it is taken.
 * **O-R5** (R8, R15, RL13) — whether `/var/lib/gnome-remote-desktop` and `/var/lib/os7/remote-desktop` sit on `rpool/DATA` (deciding rollback and backup propagation). → bench: `zfs list` + `stat`.
 * **O-R6** (R11, RL5) — any peer IP for a **refused** connection. → container + FreeRDP.
 * **O-R7** (RL9) — what a unit restart/stop does to an **established** session. → bench.
@@ -677,4 +724,4 @@ The `O-R` prefix marks these owed, distinct from the measured `M-R` above.
 * **O-R15** (R5) — which session a **completed** RDP login lands in (gnome-classic expected, AccountsService precedence) and whether its terminal reaches PowerShell (#86 control). → bench, after O-R2.
 * **O-R16** (§5) — multi-monitor / virtual-monitor (NEWS 49.rc), dynamic resolution on resize, and **German-keyboard scancode fidelity** over RDP. → bench + manual mstsc.
 * **O-R17** (R2, R7) — whether a Settings-written **local-state** `grd.conf` (`/var/lib/…`) can override `/etc`, and where a Settings-imported cert lands. → bench.
-* **O-R18** (R5, §9) — the safe-failure control: a remote-locked/denied account still authenticates at the physical console and over ssh. → bench.
+* ~~**O-R18**~~ **ANSWERED 2026-09-07 (M-R45/M-R47)**: a non-member is allowed on a local origin (`from_match=0`), and with the policy installed an administrator signs in at the physical console and reaches the desktop while ssh is untouched. `check-remotedesktop-logic.py` holds the file half of it - the rule must never appear in `login`, `sshd`, `su`, `sudo` or `common-auth`.

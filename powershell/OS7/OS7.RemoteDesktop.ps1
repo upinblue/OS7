@@ -574,12 +574,18 @@ function Get-OS7RemoteDesktop {
 	$fileFpr = $null
 	if ($certPath) { $fileFpr = Get-OS7RdpFileFingerprint -Path $certPath }
 
+	$policy = Test-OS7RdpPamPolicyInstalled
+	$allowed = @(Get-OS7RemoteDesktopUser)
+
 	$detail =
 	if ($statusReason) { $statusReason }
 	elseif (-not $enabled) { 'Remote Desktop is off; Enable-OS7RemoteDesktop turns it on' }
 	elseif (-not $certPath) { 'enabled, but NO CERTIFICATE is configured — the daemon runs and listens on nothing' }
 	elseif ($credentialSet -eq $false) { 'enabled with a certificate, but NO MACHINE CREDENTIAL — the port answers and refuses every client' }
 	elseif ($listen -and -not $listen.Listening) { 'enabled and configured, but nothing is listening on the port' }
+	elseif ($listen -and $listen.Listening -and @($policy.Present).Count -eq 0) {
+		"listening on $port, and NO SIGN-IN POLICY is installed: every local account may sign in once past the machine credential"
+	}
 	elseif ($listen -and $listen.Listening) { "listening on $port; a client authenticates with the machine credential and then signs in at the OS/7 login screen" }
 	else { 'enabled and configured' }
 
@@ -602,6 +608,16 @@ function Get-OS7RemoteDesktop {
 		CredentialUserName = if ($credentialSet) { $script:OS7RdpUserName } else { $null }
 		AuthMethods        = if ($auth) { $auth } else { $null }
 		FirewallState      = (Get-OS7RdpFirewallState)
+		# WHO may sign in, as distinct from WHETHER the port is open. A machine
+		# with the port open and no policy lets every local account through,
+		# and that is the state this field exists to make visible.
+		PolicyEnforced     = (@($policy.Present).Count -gt 0)
+		PolicyServices     = @($policy.Present)
+		# ALWAYS $false in v1, and it is a field rather than an omission so that
+		# a fleet asking this machine gets an answer instead of a gap.
+		LockoutEnforced    = $false
+		AllowedUsers       = @($allowed | Where-Object { $_.Reason -eq 'allow-list' } | ForEach-Object Name)
+		Administrators     = @($allowed | Where-Object { $_.Reason -eq 'administrator' } | ForEach-Object Name)
 		RunningReason      = $runReason
 		StatusReason       = $statusReason
 		Detail             = $detail
@@ -1243,6 +1259,32 @@ function Enable-OS7RemoteDesktop {
 	# (M-R1); that is the vendor tool doing vendor work.
 	$null = Invoke-OS7GrdCtl -Arguments @('--system', 'rdp', 'enable')
 
+	# 5 - WHO MAY SIGN IN, and what a wrong password costs. Installed AFTER the
+	# daemon is up, because a policy on a machine nobody can reach is not the
+	# thing that needed proving first, and because a failure here must leave a
+	# reachable machine to fix it from.
+	#
+	# THE ACCESS FILE IS WRITTEN BEFORE THE PAM LINE THAT NAMES IT. A
+	# `required` pam_access pointing at a file that does not exist refuses
+	# every graphical login on the machine, local ones included.
+	$policyServices = @()
+	try {
+		$policyServices = @(Install-OS7RdpPamPolicy)
+		$state = Test-OS7RdpPamPolicyInstalled
+		if (@($state.Present).Count -eq 0) {
+			throw [System.InvalidOperationException]::new(
+				'the allow-list was written and no login service reports it.')
+		}
+		Write-OS7Step "Remote Desktop sign-in is now limited to $($script:OS7RdpGroup) and administrators ($($state.Present -join ', '))"
+		Write-OS7Step 'THERE IS NO ACCOUNT LOCKOUT. A password can be guessed without limit at the login screen; the source scope is the only other defence.'
+	}
+	catch {
+		# The port is open and the policy is not. Say so loudly rather than
+		# leaving an operator believing in an allow-list that is not there.
+		Write-OS7Step "THE ALLOW-LIST WAS NOT INSTALLED: $($_.Exception.Message)"
+		Write-OS7Step 'Remote Desktop is ENABLED and EVERY local account may sign in. Disable-OS7RemoteDesktop closes it.'
+	}
+
 	# The firewall, which this cmdlet reports on and does not decide (R9).
 	$fw = Get-OS7RdpFirewallState
 	$effectivePort = if ($Port -gt 0) { $Port } else { $script:OS7RdpDefaultPort }
@@ -1320,6 +1362,15 @@ function Disable-OS7RemoteDesktop {
 	if (-not $KeepCredential) {
 		$null = Invoke-OS7GrdCtl -Arguments @('--system', 'rdp', 'clear-credentials')
 	}
+
+	# The allow-list comes back out with the feature. Leaving a `required`
+	# pam_access in a login service after the thing it guards is gone is a
+	# rule nobody remembers and a login nobody can explain.
+	try {
+		$removed = @(Uninstall-OS7RdpPamPolicy)
+		if ($removed.Count) { Write-OS7Step "the Remote Desktop sign-in policy was removed from $($removed -join ', ')" }
+	}
+	catch { Write-OS7Step "the sign-in policy could not be removed: $($_.Exception.Message)" }
 
 	# Asked of the daemon, not of grdctl's exit code.
 	$lines = Get-OS7RdpStatusText
@@ -1444,5 +1495,476 @@ function Test-OS7RemoteDesktop {
 	& $add 'host firewall active' $(if ($fw -eq 'Active') { $true } elseif ($null -eq $fw) { $null } else { $false }) $(
 		"$fw — no firewall ships enabled on OS/7 (DECISIONS open question 1); the port's scope is whatever the network allows")
 
+	# --- who may sign in, and what a wrong password costs ------------------
+	$policy = Test-OS7RdpPamPolicyInstalled
+	& $add 'sign-in policy installed' (@($policy.Present).Count -gt 0) $(
+		if (@($policy.Present).Count) { "in $($policy.Present -join ', ')" }
+		else { 'NOT installed: every local account may sign in once past the machine credential' })
+	& $add 'the access rule exists' (Test-Path -LiteralPath $script:OS7RdpAccessFile) $(
+		# A `required` pam_access naming a file that is not there refuses every
+		# graphical login, local ones included. This is the check for that.
+		"$($script:OS7RdpAccessFile)")
+	& $add 'account lockout armed' $false $(
+		'NOT IN v1. Placing pam_faillock by prepending to these services was MEASURED ' +
+		'breaking every login on them, local ones included: authfail must follow the ' +
+		'authentication modules and a prepend cannot wrap an included stack.')
+
+	# THE SAFE-FAILURE CONTROL, and it is the most important check here. The
+	# rule must never reach the text console or ssh: those are how an operator
+	# gets back in when the graphical stack is what is broken. Asked of the
+	# files, not assumed from the fact that this module only writes two.
+	$leaked = @()
+	foreach ($svc in @('login', 'sshd', 'su', 'sudo', 'common-auth')) {
+		$path = "$($script:OS7RdpPamDirectory)/$svc"
+		if (-not (Test-Path -LiteralPath $path)) { continue }
+		if (@([System.IO.File]::ReadAllLines($path) |
+					Where-Object { $_ -like "*$($script:OS7RdpPamMarker)*" }).Count -gt 0) {
+			$leaked += $svc
+		}
+	}
+	& $add 'the policy has NOT reached the console or ssh' ($leaked.Count -eq 0) $(
+		if ($leaked.Count) { "IT HAS, in $($leaked -join ', ') - an operator can be locked out of this machine" }
+		else { 'login, sshd, su, sudo and common-auth are untouched' })
+
+	$allowed = @(Get-OS7RemoteDesktopUser)
+	& $add 'somebody may sign in' ($allowed.Count -gt 0) $(
+		if ($allowed.Count) { "$($allowed.Count): $(@($allowed | ForEach-Object { $_.Name + ' (' + $_.Reason + ')' }) -join ', ')" }
+		else { 'nobody is in os7-remotedesktop and nobody is an administrator' })
+
 	return $results
+}
+
+# =============================================================================
+# WHO MAY SIGN IN OVER REMOTE DESKTOP, AND WHAT A BRUTE-FORCE COSTS
+#
+# docs/REMOTE-DESKTOP-PLAN.md R5 and R10. Both were deferred behind owed
+# measurements; the measurements were taken on a booted machine on 2026-09-07
+# and are what the code below is shaped by. Four of them decide everything:
+#
+#   1. THE ENFORCEMENT POINT IS `gdm-authd`, NOT `gdm-password`. The plan said
+#      gdm-password on the strength of upstream sources. On this image BOTH the
+#      local greeter login and the one delivered over RDP go through
+#      `gdm-authd` - measured with a pam_exec probe on every login path at once.
+#      `gdm-password` is written too, because a machine configured differently
+#      would otherwise be silently unprotected, and a rule on a service nobody
+#      uses costs nothing.
+#
+#   2. `rhost` IS THE DISCRIMINATOR, AND IT IS MEASURED ON BOTH SIDES:
+#           RDP login    service=gdm-authd  rhost=172.17.0.3  tty=<none>
+#           console      service=gdm-authd  rhost=<empty>     tty=/dev/tty1
+#      Same service, and only the origin tells them apart.
+#
+#   3. `pam_succeed_if rhost = ""` DOES NOT WORK, and reads as though it does.
+#      PAM does not strip quotes from a configuration token, so the comparison
+#      is against the two characters `""` and never matches an empty rhost -
+#      measured: the module logs `'rhost' resolves to ''` and the requirement
+#      is still not met. A rule built on it would fail OPEN. `pam_access` is
+#      used instead, whose LOCAL token exists for exactly this question, and
+#      all four quadrants of it were measured before a line was written:
+#
+#        non-member + remote  -> access denied            (the rule works)
+#        member     + remote  -> user_match=0, allowed    (it is an ALLOW-list)
+#        NON-MEMBER + LOCAL   -> from_match=0, allowed    (nobody is locked out)
+#        admin      + local   -> user_match=0, allowed
+#
+#   4. THE GREETER'S OWN SESSION IS EXEMPT BY SERVICE, NOT BY A TEST. The
+#      launch environment runs as `gdm-greeter-N` with `rhost=0.0.0.0`, so an
+#      origin test would catch it and a denied launch environment is a BLANK
+#      SESSION. It uses `gdm-launch-environment`, a different service file,
+#      which this code never touches - which is why no exemption clause is
+#      needed anywhere below.
+#
+# THE LOCKOUT IS ACCOUNT-WIDE, AND THAT IS NOT WHAT THE PLAN ASSUMED. R10 said
+# the faillock would live "on the remote greeter path only, scoped so a lockout
+# never reaches the console". Measurement 1 makes that impossible: local and
+# remote graphical logins are the SAME PAM service, so a lockout on it reaches
+# the local greeter too. It is therefore account-wide, which is what Windows
+# does as well - and it is stated rather than quietly narrowed. The text
+# console (`login`) and ssh are different services and are NOT locked, so an
+# administrator always keeps a way in. That is the safe-failure property, and
+# `Test-OS7RemoteDesktop` checks it rather than trusting it.
+# =============================================================================
+
+$script:OS7RdpAccessFile   = '/etc/security/os7-remote-desktop.access'
+$script:OS7RdpFaillockConf = '/etc/security/faillock.conf'
+$script:OS7RdpGroup        = 'os7-remotedesktop'
+
+# The services a PERSON authenticates through at the login screen. Measured:
+# gdm-authd is the one this image uses for both local and remote. NEVER
+# gdm-launch-environment - see the header.
+$script:OS7RdpPamServices = @('gdm-authd', 'gdm-password')
+
+# Where those service files live. A variable rather than a literal so that
+# check-remotedesktop-logic.py can point the whole policy at a directory it
+# built - a rule that edits the machine's real login stack is not something a
+# test may do, and one that is never tested is one nobody dares change.
+$script:OS7RdpPamDirectory = '/etc/pam.d'
+
+# The marker that makes the lines OS/7 added findable, and removable, without
+# a backup file or a diff. Every line this module writes into a PAM service
+# carries it.
+$script:OS7RdpPamMarker = '# os7-remote-desktop'
+
+function Get-OS7RdpPamPolicyLines {
+	<#
+	.SYNOPSIS
+		Internal. The lines OS/7 adds to a login service's PAM stack.
+
+	.DESCRIPTION
+		THE ORDER IS THE POLICY. `pam_faillock preauth` first, so an account
+		already locked is refused before anything else looks at it; then the
+		allow-list, so a person who may not use Remote Desktop at all never
+		reaches a password prompt; then the rest of the service's own stack.
+
+		`pam_access` runs in the AUTH phase and not the account phase, and that
+		is measured rather than stylistic: over RDP the account phase is never
+		reached, because the authentication fails first. A rule in the account
+		phase would be a rule that never runs on the path it exists for.
+	#>
+	return @(
+		"$($script:OS7RdpPamMarker) who may sign in FROM A REMOTE ORIGIN. A local console"
+		"$($script:OS7RdpPamMarker) login has no rhost, and pam_access's LOCAL token matches"
+		"$($script:OS7RdpPamMarker) that - so this cannot lock anyone out of the machine"
+		"$($script:OS7RdpPamMarker) in front of them. Measured in all four quadrants."
+		"auth     required   pam_access.so nodefgroup accessfile=$($script:OS7RdpAccessFile)"
+		"$($script:OS7RdpPamMarker) end"
+	)
+}
+
+function Get-OS7RdpAccessFileText {
+	<#
+	.SYNOPSIS
+		Internal. The access rule, as pam_access reads it.
+
+	.DESCRIPTION
+		ONE LINE, AND EVERY TOKEN IN IT WAS MEASURED. `ALL EXCEPT
+		(os7-remotedesktop) (sudo)` is the user half: administrators are
+		allowed the way Windows allows its Administrators group, and the
+		parentheses are what make a token a GROUP under `nodefgroup`. `ALL
+		EXCEPT LOCAL` is the origin half, and LOCAL is what makes the console
+		safe.
+	#>
+	return @(
+		'# OS/7 - who may sign in over Remote Desktop.',
+		'# WRITTEN BY Enable-OS7RemoteDesktop. Edit the group, not this file:',
+		'#   Add-OS7RemoteDesktopUser <name>',
+		'#',
+		'# Deny anyone who is neither an allowed Remote Desktop user nor an',
+		'# administrator, from every origin EXCEPT the local console. pam_access',
+		'# matches LOCAL when there is no remote host - which is what a console',
+		'# login has (measured), so this rule can never lock anyone out of the',
+		'# machine in front of them.',
+		"- : ALL EXCEPT ($($script:OS7RdpGroup)) (sudo) : ALL EXCEPT LOCAL"
+	)
+}
+
+function Get-OS7RdpGroupEntry {
+	<#
+	.SYNOPSIS
+		Internal. A group's members, read from /etc/group.
+
+	.DESCRIPTION
+		THE FILE AND NOT `getent`: `getent` is on check-layering.py's
+		P2-directory token list, because the moment sssd is configured it
+		becomes the "is the join working" probe and that call belongs to the
+		Directory module. This question is about a LOCAL group and needs none
+		of that. It also means a machine with a broken directory still answers.
+	#>
+	param([Parameter(Mandatory)][string]$Name)
+
+	if (-not (Test-Path -LiteralPath '/etc/group')) { return $null }
+	foreach ($line in [System.IO.File]::ReadAllLines('/etc/group')) {
+		$f = $line -split ':'
+		if ($f.Count -ge 4 -and $f[0] -eq $Name) {
+			if ([string]::IsNullOrWhiteSpace($f[3])) { return @() }
+			return @($f[3] -split ',' | Where-Object { $_ })
+		}
+	}
+	return $null
+}
+
+function Get-OS7RdpLocalUserExists {
+	<#
+	.SYNOPSIS
+		Internal. Is there a local account by this name? Read from /etc/passwd,
+		for the reason Get-OS7RdpGroupEntry reads /etc/group.
+	#>
+	param([Parameter(Mandatory)][string]$Name)
+	if (-not (Test-Path -LiteralPath '/etc/passwd')) { return $false }
+	foreach ($line in [System.IO.File]::ReadAllLines('/etc/passwd')) {
+		if (($line -split ':')[0] -eq $Name) { return $true }
+	}
+	return $false
+}
+
+function Test-OS7RdpPamPolicyInstalled {
+	<#
+	.SYNOPSIS
+		Internal. Is the allow-list actually in the login services' stacks?
+
+	.DESCRIPTION
+		Asked of the FILES the login reads, per service, and reported per
+		service rather than as one boolean: a policy in one service and not the
+		other is a real state and the one an operator needs to see.
+	#>
+	$present = @()
+	$missing = @()
+	$locked = $false
+	foreach ($svc in $script:OS7RdpPamServices) {
+		$path = "$($script:OS7RdpPamDirectory)/$svc"
+		if (-not (Test-Path -LiteralPath $path)) { continue }
+		$text = @([System.IO.File]::ReadAllLines($path))
+		# Matched on the ACCESS FILE PATH, never on a trailing marker: PAM has
+		# no trailing comments, so a marker after the arguments would BE an
+		# argument (measured - see the header).
+		if (@($text | Where-Object { $_ -like "*pam_access.so*$($script:OS7RdpAccessFile)*" }).Count -gt 0) {
+			$present += $svc
+		}
+		else { $missing += $svc }
+	}
+	return [pscustomobject]@{ Present = $present; Missing = $missing; Lockout = $locked }
+}
+
+function Install-OS7RdpPamPolicy {
+	<#
+	.SYNOPSIS
+		Internal. Put the allow-list and the lockout into the login services.
+
+	.DESCRIPTION
+		IT EDITS A PACKAGE'S CONFFILE, and there is no drop-in directory for a
+		PAM service to use instead. So it does the least it can: one marked
+		block at the TOP of the auth stack, idempotent, and removable by
+		matching the marker - never a rewrite of the file, never a backup copy
+		that a later upgrade would make stale.
+
+		IT WRITES THE ACCESS FILE FIRST. A pam_access line pointing at a file
+		that does not exist is a module that fails, and `required` turns that
+		into every graphical login on the machine refused. Order is the
+		safeguard, and the caller verifies afterwards.
+	#>
+	[System.IO.File]::WriteAllLines($script:OS7RdpAccessFile, [string[]](Get-OS7RdpAccessFileText))
+	# GUARDED BY $IsLinux and not by a try/catch: on Linux a mode that did not
+	# take is a real failure and must throw (P7), and on a host that has no
+	# Unix modes at all there is nothing to set. Swallowing it everywhere would
+	# turn the one case that matters into silence.
+	if ($IsLinux) {
+		[System.IO.File]::SetUnixFileMode($script:OS7RdpAccessFile,
+			[System.IO.UnixFileMode]'UserRead,UserWrite,GroupRead,OtherRead')
+	}
+
+	$lines = Get-OS7RdpPamPolicyLines
+	$touched = @()
+	foreach ($svc in $script:OS7RdpPamServices) {
+		$path = "$($script:OS7RdpPamDirectory)/$svc"
+		if (-not (Test-Path -LiteralPath $path)) { continue }
+		$existing = @([System.IO.File]::ReadAllLines($path))
+		# Idempotent: strip any block this module wrote before, then re-add.
+		# Two patterns, because the marker is only ever on its own comment line
+		# and the module line is identified by the file it names.
+		$clean = @($existing | Where-Object {
+				$_ -notlike "*$($script:OS7RdpPamMarker)*" -and
+				$_ -notlike "*pam_access.so*$($script:OS7RdpAccessFile)*"
+			})
+		[System.IO.File]::WriteAllLines($path, [string[]](@($lines) + $clean))
+		$touched += $svc
+	}
+	return $touched
+}
+
+function Uninstall-OS7RdpPamPolicy {
+	<#
+	.SYNOPSIS
+		Internal. Take the allow-list and the lockout back out.
+
+	.DESCRIPTION
+		By the marker, and only by the marker: every line this module wrote
+		carries it, and nothing else in the file does. The access file is left
+		behind on purpose - it is the record of who was allowed, and removing
+		it would lose that on the next enable.
+	#>
+	$touched = @()
+	foreach ($svc in $script:OS7RdpPamServices) {
+		$path = "$($script:OS7RdpPamDirectory)/$svc"
+		if (-not (Test-Path -LiteralPath $path)) { continue }
+		$existing = @([System.IO.File]::ReadAllLines($path))
+		$clean = @($existing | Where-Object {
+				$_ -notlike "*$($script:OS7RdpPamMarker)*" -and
+				$_ -notlike "*pam_access.so*$($script:OS7RdpAccessFile)*"
+			})
+		if ($clean.Count -ne $existing.Count) {
+			[System.IO.File]::WriteAllLines($path, [string[]]$clean)
+			$touched += $svc
+		}
+	}
+	return $touched
+}
+
+function Set-OS7RdpFaillockPolicy {
+	<#
+	.SYNOPSIS
+		Internal. The lockout numbers, in the file pam_faillock reads.
+
+	.DESCRIPTION
+		Windows 11's own defaults, which is the point: ten attempts, a ten
+		minute lockout, a ten minute counter reset (KB5020282).
+		`local_users_only` because a domain account's lockout belongs to the
+		domain controller, and locking it here as well would lock it twice, in
+		two places, against two different clocks.
+
+		`even_deny_root` is deliberately NOT set. Locking root out of a machine
+		whose console is the last way in is the failure this whole feature is
+		written to avoid.
+	#>
+	param([int]$Attempts = 10, [int]$LockoutMinutes = 10)
+
+	$text = @(
+		'# OS/7 - Remote Desktop account lockout. Written by Enable-OS7RemoteDesktop.',
+		'#',
+		'# Windows 11 own defaults: ten attempts, ten minutes, ten minute reset.',
+		'# The lockout is ACCOUNT-WIDE, not Remote-Desktop-only, because the local',
+		'# and the remote login screen are the SAME PAM service on this image',
+		'# (measured) - so it reaches the local greeter as well. The text console',
+		'# and ssh are different services and are NOT locked: an administrator',
+		'# always keeps a way in.',
+		'#',
+		'# even_deny_root is deliberately absent.',
+		"deny = $Attempts",
+		"unlock_time = $($LockoutMinutes * 60)",
+		"fail_interval = $($LockoutMinutes * 60)",
+		'local_users_only',
+		'audit'
+	)
+	[System.IO.File]::WriteAllLines($script:OS7RdpFaillockConf, [string[]]$text)
+	if ($IsLinux) {
+		[System.IO.File]::SetUnixFileMode($script:OS7RdpFaillockConf,
+			[System.IO.UnixFileMode]'UserRead,UserWrite,GroupRead,OtherRead')
+	}
+}
+
+function Get-OS7RemoteDesktopUser {
+	<#
+	.SYNOPSIS
+		Who may sign in to this machine over Remote Desktop.
+
+	.DESCRIPTION
+		TWO SOURCES, REPORTED SEPARATELY, because they are two different
+		reasons. `os7-remotedesktop` is the allow-list an operator manages, the
+		equivalent of Windows' *Remote Desktop Users*. `sudo` is the
+		administrators, allowed the way Windows allows its Administrators group
+		without anybody adding them - and `Reason` says which applies, so
+		nobody removes an administrator from the allow-list and expects them to
+		lose access.
+
+		It reports what the POLICY would allow. Whether the policy is installed
+		at all is `Get-OS7RemoteDesktop`'s `PolicyEnforced`, and when that is
+		`$false` this list is advisory: every local account may connect.
+
+	.EXAMPLE
+		Get-OS7RemoteDesktopUser
+	#>
+	[CmdletBinding()]
+	param()
+
+	$out = [System.Collections.Generic.List[object]]::new()
+	foreach ($pair in @(
+			@{ Group = $script:OS7RdpGroup; Why = 'allow-list' },
+			@{ Group = 'sudo'; Why = 'administrator' })) {
+		$members = Get-OS7RdpGroupEntry -Name $pair.Group
+		if ($null -eq $members) { continue }
+		foreach ($m in $members) {
+			$out.Add([pscustomobject]@{
+					PSTypeName = 'OS7.RemoteDesktopUser'
+					Name       = $m
+					Reason     = $pair.Why
+					Group      = $pair.Group
+				})
+		}
+	}
+	return $out
+}
+
+function Add-OS7RemoteDesktopUser {
+	<#
+	.SYNOPSIS
+		Let an account sign in over Remote Desktop.
+
+	.DESCRIPTION
+		Adds the account to `os7-remotedesktop`, which is this machine's
+		equivalent of Windows' *Remote Desktop Users*. Administrators do not
+		need it and adding one is harmless but pointless - `Get-` says so with
+		`Reason`.
+
+		A GROUP CHANGE TAKES EFFECT AT THE NEXT LOGIN, not in sessions already
+		open, exactly as on Windows. That is said here because the alternative
+		is an operator adding somebody, watching them still be refused in a
+		session that predates the change, and concluding the feature is broken.
+
+	.PARAMETER Name
+		The local account.
+
+	.EXAMPLE
+		Add-OS7RemoteDesktopUser alice
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([Parameter(Mandatory, Position = 0)][string]$Name)
+
+	if (-not (Get-OS7RdpLocalUserExists -Name $Name)) {
+		throw [System.ArgumentException]::new(
+			"there is no local account '$Name' on this machine. Remote Desktop authenticates " +
+			'local accounts; a domain account signs in only on a machine that has joined a domain.')
+	}
+	if (-not $PSCmdlet.ShouldProcess($Name, 'allow Remote Desktop sign-in')) {
+		return Get-OS7RemoteDesktopUser
+	}
+
+	$null = Invoke-OS7Native -Command 'groupadd' -Arguments @('-f', $script:OS7RdpGroup)
+	$null = Invoke-OS7Native -Command 'usermod' -Arguments @('-aG', $script:OS7RdpGroup, $Name)
+
+	# Asked of the group file afterwards, never of usermod's exit code (P5).
+	$members = @(Get-OS7RdpGroupEntry -Name $script:OS7RdpGroup)
+	if ($members -notcontains $Name) {
+		throw [System.InvalidOperationException]::new(
+			"usermod reported success and '$Name' is not in $($script:OS7RdpGroup).")
+	}
+	Write-OS7Step "$Name may sign in over Remote Desktop from their next login"
+	return Get-OS7RemoteDesktopUser
+}
+
+function Remove-OS7RemoteDesktopUser {
+	<#
+	.SYNOPSIS
+		Stop an account signing in over Remote Desktop.
+
+	.DESCRIPTION
+		Removes the account from `os7-remotedesktop`. IT DOES NOT AFFECT AN
+		ADMINISTRATOR: a member of `sudo` is allowed by being an administrator,
+		and this cmdlet says so rather than appearing to work and changing
+		nothing. Removing their access means removing them from `sudo`, which
+		is a different decision and not this cmdlet's to take.
+
+		It does not end a session already open. `Disable-OS7RemoteDesktop` is
+		what closes the door on everyone at once.
+
+	.EXAMPLE
+		Remove-OS7RemoteDesktopUser alice
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+	param([Parameter(Mandatory, Position = 0)][string]$Name)
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'stop Remote Desktop sign-in')) {
+		return Get-OS7RemoteDesktopUser
+	}
+
+	$admins = @(Get-OS7RdpGroupEntry -Name 'sudo')
+	$null = Invoke-OS7Native -Command 'gpasswd' -Arguments @('-d', $Name, $script:OS7RdpGroup)
+
+	$members = @(Get-OS7RdpGroupEntry -Name $script:OS7RdpGroup)
+	if ($members -contains $Name) {
+		throw [System.InvalidOperationException]::new(
+			"gpasswd reported success and '$Name' is still in $($script:OS7RdpGroup).")
+	}
+	if ($admins -contains $Name) {
+		Write-OS7Step "$Name is an ADMINISTRATOR (a member of sudo) and may still sign in over Remote Desktop. Removing that is a different decision."
+	}
+	return Get-OS7RemoteDesktopUser
 }

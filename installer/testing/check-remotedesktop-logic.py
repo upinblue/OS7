@@ -332,6 +332,48 @@ $results = [ordered]@{}
     }
     else { $r.unix_mode_checked = $false }
 
+    # --- 13. the sign-in policy, against a PAM directory this test built ----
+    $pamdir = Join-Path $lab 'pam.d'
+    $null = New-Item -ItemType Directory -Force -Path $pamdir
+    $script:OS7RdpPamDirectory = $pamdir
+    $script:OS7RdpAccessFile = Join-Path $lab 'rd.access'
+    foreach ($svc in @('gdm-authd', 'gdm-password', 'login', 'sshd')) {
+        Set-Content -LiteralPath (Join-Path $pamdir $svc) -Value @('#%PAM-1.0', 'auth required pam_unix.so')
+    }
+
+    $policyLines = Get-OS7RdpPamPolicyLines
+    # NO MODULE LINE MAY CARRY A TRAILING MARKER. PAM has no trailing comments:
+    # anything after the arguments IS an argument. Writing `pam_access.so ... #
+    # os7-remote-desktop` hands pam_access two options it does not know.
+    $moduleLines = @($policyLines | Where-Object { $_ -notmatch '^\s*#' })
+    $r.policy_module_lines = $moduleLines.Count
+    $r.policy_module_line_has_hash = [bool](@($moduleLines | Where-Object { $_ -match '#' }).Count)
+    $r.policy_has_faillock = [bool](@($policyLines | Where-Object { $_ -match 'pam_faillock' }).Count)
+    $r.policy_access_is_auth = [bool](@($moduleLines | Where-Object { $_ -match '^auth\s' -and $_ -match 'pam_access' }).Count)
+
+    $null = Install-OS7RdpPamPolicy
+    $state = Test-OS7RdpPamPolicyInstalled
+    $r.policy_present = @($state.Present)
+    $r.policy_missing = @($state.Missing)
+    $r.policy_access_file = (Test-Path -LiteralPath $script:OS7RdpAccessFile)
+    $r.policy_access_rule = @(Get-Content -LiteralPath $script:OS7RdpAccessFile |
+        Where-Object { $_ -notmatch '^\s*#' }) -join ''
+    # The console and ssh must NEVER receive it.
+    $r.policy_touched_login = (Select-String -Path (Join-Path $pamdir 'login') -Pattern 'pam_access' -Quiet) -eq $true
+    $r.policy_touched_sshd = (Select-String -Path (Join-Path $pamdir 'sshd') -Pattern 'pam_access' -Quiet) -eq $true
+
+    # Idempotent: installing twice must not double the block.
+    $null = Install-OS7RdpPamPolicy
+    # MODULE lines only. One of the comment lines contains the word pam_access,
+    # and counting it made this assertion fail against correct code.
+    $r.policy_lines_after_twice = @(Get-Content -LiteralPath (Join-Path $pamdir 'gdm-authd') |
+        Where-Object { $_ -match 'pam_access' -and $_ -notmatch '^\s*#' }).Count
+
+    $null = Uninstall-OS7RdpPamPolicy
+    $r.policy_after_remove = @(Get-Content -LiteralPath (Join-Path $pamdir 'gdm-authd') |
+        Where-Object { $_ -match 'pam_access|os7-remote-desktop' }).Count
+    $r.policy_service_intact = @(Get-Content -LiteralPath (Join-Path $pamdir 'gdm-authd')).Count
+
     $r | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $out -Encoding utf8
 } $Lab $certPath $keyPath (Join-Path $Lab 'result.json') $haveOpenssl
 
@@ -502,6 +544,31 @@ def assert_logic(r, unix_expected, stderr=""):
     check(r["password_differs"], "differs between calls")
     check(r["password_alphabet_safe"],
           "and avoids the glyphs an operator would misread out of a console font")
+
+    print("\n### who may sign in: the allow-list (R5)\n")
+    check(r.get("policy_module_line_has_hash") is False,
+          "no PAM module line carries a trailing marker - PAM has no trailing comments, so one would be an ARGUMENT",
+          f"{r.get('policy_module_lines')} module line(s)")
+    check(r.get("policy_has_faillock") is False,
+          "v1 writes NO pam_faillock line: prepending authfail was measured breaking every login on the service")
+    check(r.get("policy_access_is_auth") is True,
+          "the rule runs in the AUTH phase - over RDP the account phase is never reached")
+    check(sorted(r.get("policy_present") or []) == ["gdm-authd", "gdm-password"],
+          "it is installed in both login services", ", ".join(r.get("policy_present") or []))
+    check(r.get("policy_access_file") is True, "the access file it names exists")
+    rule = (r.get("policy_access_rule") or "")
+    check("ALL EXCEPT LOCAL" in rule,
+          "the origin half exempts LOCAL, which is what a console login is", rule[:60])
+    check("os7-remotedesktop" in rule and "sudo" in rule,
+          "the user half is the allow-list group and the administrators")
+    check(r.get("policy_touched_login") is False and r.get("policy_touched_sshd") is False,
+          "THE CONSOLE AND SSH ARE UNTOUCHED - the safe-failure property")
+    check(r.get("policy_lines_after_twice") == 1,
+          "installing twice leaves ONE rule, not two", str(r.get("policy_lines_after_twice")))
+    check(r.get("policy_after_remove") == 0,
+          "removing it takes every line back out")
+    check(r.get("policy_service_intact", 0) >= 2,
+          "and leaves the service's own stack behind", f"{r.get('policy_service_intact')} lines")
 
     print("\n### the private key's mode at generation (P7, BUILD-NOTES #117)\n")
     if r.get("unix_mode_checked"):

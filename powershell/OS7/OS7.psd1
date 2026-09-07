@@ -86,6 +86,11 @@
 		'Set-OS7RemoteDesktopCredential',
 		'New-OS7RemoteDesktopCertificate', 'Get-OS7RemoteDesktopCertificate',
 		'Set-OS7RemoteDesktopCertificate', 'Test-OS7RemoteDesktop',
+		# Who may sign in over Remote Desktop. The group is this machine's
+		# equivalent of Windows' Remote Desktop Users; administrators are
+		# allowed without being in it, which Get- reports as a Reason.
+		'Get-OS7RemoteDesktopUser', 'Add-OS7RemoteDesktopUser',
+		'Remove-OS7RemoteDesktopUser',
 		# Implemented - services and the log, on the Systemd module. Get-Service
 		# does not exist on PowerShell for Linux (measured), so this is the verb
 		# an admin reaches for and does not find. Healthy is four questions, not

@@ -2748,6 +2748,7 @@ Export-ModuleMember -Function Get-OS7Version,
 	Set-OS7RemoteDesktopCredential, New-OS7RemoteDesktopCertificate,
 	Get-OS7RemoteDesktopCertificate, Set-OS7RemoteDesktopCertificate,
 	Test-OS7RemoteDesktop,
+	Get-OS7RemoteDesktopUser, Add-OS7RemoteDesktopUser, Remove-OS7RemoteDesktopUser,
 	# Services and the log. Get-OS7Log is the clearest argument for why this
 	# product's shell is PowerShell: a journal is already structured, and
 	# `journalctl | grep` is a text pipeline over structure.

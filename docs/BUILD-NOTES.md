@@ -6663,3 +6663,89 @@ broken systemd. The three cases are now kept apart in `Get-OS7RemoteDesktop`:
 **The rule:** "systemd did not list it" is not "it is not there". Before writing
 `$null` for a unit, ask whether the unit file exists — the answer that is
 missing from the list is usually the answer the operator wants.
+
+---
+
+## #125 — `pam_faillock authfail` PREPENDED to a service breaks every login on it, and a prepend cannot wrap an `@include`
+
+Found on 2026-09-07 on a booted machine, by doing it: the allow-list and the
+lockout were written into `gdm-authd` as one block at the top of the auth
+stack, and afterwards the LOCAL console login — which had succeeded minutes
+before with the same password — failed three times in a row.
+
+What was written:
+
+```
+auth     required        pam_faillock.so preauth
+auth     required        pam_access.so   nodefgroup accessfile=…
+auth     [default=die]   pam_faillock.so authfail
+#%PAM-1.0                                              <- the service's own stack
+auth     [success=ok …]  pam_succeed_if.so user != root quiet_success
+auth     [success=1 …]   pam_authd.so
+```
+
+**`authfail` is meant to run AFTER the authentication modules** and record the
+failure they produced. Placed before them it runs before any password has been
+checked, and with `[default=die]` it ends the stack. `pam_access` was innocent:
+removing the two `pam_faillock` lines and changing nothing else made the same
+console login succeed and reach the desktop.
+
+The documented placement wraps the authentication modules:
+
+```
+auth  required           pam_faillock.so preauth
+@include common-auth                                   <- the modules
+auth  [default=die]      pam_faillock.so authfail
+auth  sufficient         pam_faillock.so authsucc
+```
+
+**and a block that is PREPENDED cannot wrap anything.** The service file ends in
+an `@include`; there is no position a prepending writer can reach that is after
+it. Ubuntu's answer is `pam-auth-update`, which edits `common-auth` itself — and
+that is every service on the machine, ssh and the text console included, which
+is a different and much larger decision.
+
+So v1 of the Remote Desktop feature ships the allow-list and **no lockout**, and
+says so in `Get-OS7RemoteDesktop` (`LockoutEnforced` is `$false`) and in
+`Test-OS7RemoteDesktop` rather than leaving a gap to be discovered.
+
+**The rule:** a PAM module whose documentation shows it wrapping other modules
+cannot be installed by a writer that only prepends. Check the shape of the
+insertion against the shape the module needs before writing the code, and test
+a login on the machine — a stack that parses is not a stack that authenticates.
+
+---
+
+## #126 — PAM has no trailing comments: a marker after a module's arguments IS an argument
+
+Found in the same session, in the same block, and it survived a working test
+because the module it was passed to ignored what it did not recognise.
+
+To make its own lines findable and removable, the code appended a marker:
+
+```
+auth  required  pam_access.so nodefgroup accessfile=/etc/security/os7-…  # os7-remote-desktop
+```
+
+`/etc/pam.d` is not a shell and not an ini file. A line is
+`type control module-path module-arguments`, and **everything after the module
+path is an argument** — so `pam_access` was handed `#` and `os7-remote-desktop`
+as two options. It happened to tolerate them; `pam_faillock` or a module with
+strict option parsing would not, and the failure would arrive as a login that
+does not work with nothing in the file that looks wrong.
+
+The fix is that a marker only ever occupies **its own comment line**, and OS/7's
+own module line is recognised by the file it names:
+
+```powershell
+$_ -notlike "*pam_access.so*$($script:OS7RdpAccessFile)*"
+```
+
+`check-remotedesktop-logic.py` asserts it directly — no module line the policy
+generates may contain a `#` at all — because this is invisible in a file that
+looks perfectly ordinary.
+
+**The rule:** every configuration format has its own idea of a comment, and
+three of them in this repository do not have one where it was assumed
+(`/etc/pam.d` here, `grd.conf`'s GKeyFile, and a PAM `access.conf` origin list).
+Put the marker on a line of its own, or identify the line by its content.
