@@ -3,6 +3,7 @@
 Ask a built ISO what it is — without booting it.
 
     ./installer/testing/check-image.py [arch]      (default arm64)
+    ./installer/testing/check-image.py --self-test (no ISO, no Docker, ~1s)
 
 Every other harness in this directory boots a VM, because what they check is
 behaviour. Everything here is a PROPERTY OF THE IMAGE, so it is read straight out
@@ -12,7 +13,7 @@ this case.
 WHAT IT IS FOR. The release identity (docs/RELEASE-AND-UPDATE-PLAN.md §3) is
 written by build hook 0075, which checks its own work. This checks it from
 outside, on the finished artefact, after live-build has had its way with the
-tree — and it checks three things the hook structurally cannot:
+tree — and it checks four things the hook structurally cannot:
 
   * `/etc/apt/sources.list` in the SHIPPED image. The hook runs mid-build, before
     live-build rewrites apt's configuration for the binary stage. An image whose
@@ -24,6 +25,12 @@ tree — and it checks three things the hook structurally cannot:
   * `os7-setup --version` and `--self-test`, run by CHROOTING INTO the image, so
     the binary resolves `/usr/lib/os7/release.json` against the image's root
     rather than the build container's.
+  * WHETHER SECURE BOOT FIRMWARE WOULD LOAD THE MEDIUM AT ALL (added 2026-09-07).
+    The signature chain is a property of the finished ISO's /EFI tree and of the
+    FAT image the El Torito entry points at, so no hook can see it; and it is
+    read with the IMAGE's own sbverify, because sbsigntool ships in the product
+    on both architectures. `--self-test` is the other half of that rule — see
+    secureboot_checks().
 
 The rule this file exists to serve: **ask the thing itself.** A build log saying
 the mirrors were pinned is a diagnostic. The sources.list in the image is the
@@ -425,6 +432,83 @@ emit zfs.modprobe      bash -c 'grep -rh "zfs" /mnt/sq/etc/modprobe.d/ /mnt/sq/u
 emit volume            bash -c 'blkid -o value -s LABEL /iso/ISONAME'
 emit grub.cfg          bash -c 'cat /mnt/iso/boot/grub/grub.cfg 2>/dev/null | head -40'
 
+# THE SECURE BOOT CHAIN ON THE MEDIUM (D1, installer/SETUP-PLAN.md §5).
+#
+# The chain the product decided on is Microsoft -> shim -> Canonical-signed
+# GRUB -> Canonical-signed kernel, and on the INSTALLED disk it is there:
+# measured 2026-09-07 out of an os7-setup install's ESP, without booting it.
+# The MEDIUM is the half nobody had asked, and the answer matters most on
+# amd64, where firmware ships with Secure Boot ON and therefore refuses an
+# unsigned loader outright.
+#
+# TWO SIDES ARE READ, because firmware picks one and different firmware picks
+# differently: the ISO9660 tree's /EFI/BOOT, and the FAT image the El Torito
+# entry actually points at (boot/grub/efiboot.img). A medium whose two sides
+# disagree boots differently depending on the machine, which is the shape of a
+# defect that reproduces on one bench and nowhere else.
+mkdir -p /mnt/esp
+mount -o loop,ro /mnt/iso/boot/grub/efiboot.img /mnt/esp 2>/dev/null || true
+emit sb.iso.efidir     bash -c 'ls -l /mnt/iso/EFI/BOOT/ 2>&1'
+emit sb.esp.efidir     bash -c 'ls -l /mnt/esp/EFI/BOOT/ 2>&1'
+emit sb.cfg            bash -c 'for f in /mnt/iso/EFI/BOOT/grub.cfg /mnt/esp/EFI/BOOT/grub.cfg /mnt/esp/boot/grub/grub.cfg; do if [ -f "$f" ]; then echo "== $f"; sed "s/^/    /" "$f"; else echo "== $f (absent)"; fi; done'
+
+# The candidates are copied where the IMAGE's OWN sbverify can reach them,
+# which is inside the chroot. Two reasons it has to run there and neither is
+# convenience:
+#
+#   * sbsigntool ships IN the product (both architectures, read out of the
+#     shipped package manifest), so the tool that answers is the one on the
+#     medium rather than whatever the build container happens to carry.
+#   * /usr/lib/shim/shim<arch>.efi.signed is an ABSOLUTE symlink into
+#     /etc/alternatives. Read from the container it resolves against the
+#     CONTAINER's root and answers about a file that is not the product's -
+#     the same class of mistake as running os7-setup with `cd` instead of
+#     chroot, which is what the header of this file is about.
+mkdir -p /mnt/root/sb
+for f in /mnt/iso/EFI/BOOT/*; do [ -f "$f" ] && cp "$f" "/mnt/root/sb/iso.$(basename "$f")" || true; done
+for f in /mnt/esp/EFI/BOOT/*; do [ -f "$f" ] && cp "$f" "/mnt/root/sb/esp.$(basename "$f")" || true; done
+# GLOBBED, because the file is /casper/vmlinuz-<abi>-generic and the name
+# moves with every kernel. Naming it would have made this check answer
+# "<not on the medium>" about a kernel that is there - which is the wrong
+# failure and the expensive kind, since it reads as a broken medium.
+for f in /mnt/iso/casper/vmlinuz*; do [ -f "$f" ] && cp "$f" /mnt/root/sb/iso.casper.vmlinuz || true; done
+cat > /mnt/root/tmp/os7-sb-probe.sh <<'SBP'
+#!/bin/sh
+# $1 = the EFI arch suffix (x64 | aa64), $2 = the grub target (x86_64 | arm64).
+# gcd<arch> is the CD-media build and grub<arch> the disk one; they differ in
+# exactly one thing that decides whether a medium boots - the prefix compiled
+# into them, /boot/grub against /EFI/ubuntu - so both are hashed here and the
+# checking side says which one the medium is carrying.
+for name in shim gcd grub; do
+    case $name in
+        shim) p=/usr/lib/shim/shim$1.efi.signed ;;
+        gcd)  p=/usr/lib/grub/$2-efi-signed/gcd$1.efi.signed ;;
+        grub) p=/usr/lib/grub/$2-efi-signed/grub$1.efi.signed ;;
+    esac
+    r=$(readlink -f "$p" 2>/dev/null)
+    if [ -f "$r" ]; then
+        echo "image $name $(sha256sum "$r" | cut -d' ' -f1) $(stat -c %s "$r") $r"
+    else
+        echo "image $name MISSING 0 $p"
+    fi
+done
+for f in /sb/*; do
+    [ -f "$f" ] || continue
+    echo "medium $(basename "$f") $(sha256sum "$f" | cut -d' ' -f1) $(stat -c %s "$f")"
+done
+for f in /sb/*; do
+    [ -f "$f" ] || continue
+    echo "verify $(basename "$f")"
+    sbverify --list "$f" 2>&1 | sed 's/^/    /'
+done
+SBP
+emit sb.chain          bash -c 'chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin sh /tmp/os7-sb-probe.sh EFIARCH GRUBTARGET 2>&1'
+
+# /mnt/esp on its own line and allowed to fail: an ISO with no El Torito FAT
+# image never got it mounted, and that is a finding for the checking side to
+# report - not a reason for this probe to exit non-zero and take every other
+# answer in this run with it.
+umount /mnt/esp 2>/dev/null || true
 umount /mnt/root/proc /mnt/root/dev /mnt/root /mnt/rw /mnt/sq /mnt/iso
 """
 
@@ -458,6 +542,22 @@ def includes_modes(arch: str) -> dict[str, str]:
     return modes
 
 
+def efi_arch(arch: str) -> str:
+    """The suffix UEFI file names carry: BOOTX64.EFI, shimaa64.efi.signed.
+
+    Debian's is the naming everything here has to match, because the files are
+    the ARCHIVE's and not ours — shim looks for its second stage by a compiled
+    -in name, so a medium that calls the file something else is a medium shim
+    cannot chain from.
+    """
+    return "x64" if arch == "amd64" else "aa64"
+
+
+def grub_target(arch: str) -> str:
+    """The grub target directory name: /usr/lib/grub/<target>-efi-signed."""
+    return "x86_64" if arch == "amd64" else "arm64"
+
+
 def read_image(arch: str) -> dict[str, str]:
     iso = os.path.join(REPO, "out", f"os7-{arch}.iso")
     if not os.path.exists(iso):
@@ -467,17 +567,32 @@ def read_image(arch: str) -> dict[str, str]:
     real = os.path.basename(os.path.realpath(iso))
     print(f"    reading {real}")
 
+    probe = (PROBE.replace("ISONAME", real)
+                  .replace("INCLUDESPATHS",
+                           " ".join(sorted(includes_modes(arch))) or "/dev/null")
+                  .replace("EFIARCH", efi_arch(arch))
+                  .replace("GRUBTARGET", grub_target(arch)))
     out = subprocess.run(
         ["docker", "run", "--rm", "--privileged", "--platform", f"linux/{arch}",
          "-v", f"{os.path.join(REPO, 'out')}:/iso:ro", f"os7-build:{arch}",
-         "bash", "-c", PROBE.replace("ISONAME", real).replace(
-             "INCLUDESPATHS", " ".join(sorted(includes_modes(arch))) or "/dev/null")],
+         "bash", "-c", probe],
         capture_output=True, text=True)
     if out.returncode != 0:
         sys.exit(f"could not read the image:\n{out.stderr[-2000:]}")
 
-    sections, key = {}, None
-    for line in out.stdout.splitlines():
+    return parse_sections(out.stdout)
+
+
+def parse_sections(text: str) -> dict[str, str]:
+    """Split `emit`'s `<<<key>>>` framing into a dict.
+
+    Its own function so that --self-test reads a RECORDED probe through the
+    same parser the live one goes through. Anything before the first marker is
+    dropped, which is what lets a fixture carry a header explaining itself.
+    """
+    sections: dict[str, list[str]] = {}
+    key: str | None = None
+    for line in text.splitlines():
         if line.startswith("<<<") and line.endswith(">>>"):
             key = line[3:-3]
             sections[key] = []
@@ -536,7 +651,259 @@ def generated_scripts(log: str) -> dict[str, list[str]]:
     return scripts
 
 
+def secureboot_checks(img: dict[str, str], arch: str, check) -> None:
+    """Would Secure Boot firmware load this medium? (D1)
+
+    A FUNCTION RATHER THAN A BLOCK IN main() FOR ONE REASON: on the ISO this
+    was written against, every check here is red, and a block of checks whose
+    GREEN path has never executed is a block that can be unsatisfiable
+    without anybody noticing. Out here it can be handed the readings from a
+    medium that IS assembled correctly - the installed ESP was used, which
+    carries the real chain - and required to pass. That is the same rule as
+    check-ps-traps.py's OS7_SCAN_ROOT: a rule is worth having once it has
+    been shown both to fire and to stay quiet.
+    """
+    #
+    # THE CHAIN IS FOUR LINKS AND THE MEDIUM IS THE ONLY ONE NOBODY CHECKED.
+    # Microsoft's UEFI CA signs shim, Canonical's signs GRUB and the kernel;
+    # on the INSTALLED disk all four are in place, measured 2026-09-07 out of
+    # an os7-setup install's ESP with no boot at all. The medium was built by
+    # grub-mkstandalone instead, which produces an image nobody has signed, so
+    # firmware with Secure Boot ON refuses it - and on amd64 that is the
+    # factory setting. build/lib/efi-remaster.sh says so in its own header and
+    # calls it an open item; this is the check that stops it being one.
+    #
+    # It is deliberately not one check. "Unsigned" and "signed by the wrong
+    # authority" and "the right authority, but the disk build of GRUB whose
+    # prefix points at a directory this medium does not have" are three
+    # different mediums, and only the first is obvious from a failed boot.
+    MS_CA = "Microsoft Corporation UEFI CA 2011"
+    CANONICAL_CA = "Canonical Ltd. Master Certificate Authority"
+
+    chain_img: dict[str, tuple[str, int, str]] = {}
+    chain_med: dict[str, tuple[str, int]] = {}
+    verify: dict[str, str] = {}
+    cur: str | None = None
+    for line in img.get("sb.chain", "").splitlines():
+        if line.startswith("    ") and cur:
+            verify[cur] += line.strip() + " "
+            continue
+        f = line.split()
+        cur = None
+        if f[:1] == ["image"] and len(f) >= 5:
+            chain_img[f[1]] = (f[2], int(f[3]), f[4])
+        elif f[:1] == ["medium"] and len(f) >= 4:
+            chain_med[f[1]] = (f[2], int(f[3]))
+        elif f[:1] == ["verify"] and len(f) >= 2:
+            cur = f[1]
+            verify[cur] = ""
+
+    cfgs: dict[str, str] = {}
+    key: str | None = None
+    for line in img.get("sb.cfg", "").splitlines():
+        if line.startswith("== "):
+            key = line[3:].strip()
+            cfgs[key] = ""
+        elif key is not None:
+            cfgs[key] += line.strip() + " "
+
+    def med(prefix: str, name: str):
+        """(sha256, size) of one file on one side of the medium, or None.
+
+        Case-insensitively, because the two sides do not agree on case and
+        cannot: the ISO9660 tree carries the name as written and FAT hands
+        back a short name in upper case for anything that fits in 8.3.
+        """
+        want = f"{prefix}.{name}".lower()
+        for k, v in chain_med.items():
+            if k.lower() == want:
+                return v
+        return None
+
+    def signed_by(prefix: str, name: str, ca: str):
+        want = f"{prefix}.{name}".lower()
+        for k, text in verify.items():
+            if k.lower() == want:
+                return ca in text, " ".join(text.split())[:110] or "<sbverify said nothing>"
+        return False, "<not on the medium>"
+
+    loader = f"BOOT{efi_arch(arch).upper()}.EFI"
+    grubefi = f"grub{efi_arch(arch)}.efi"
+    mmefi = f"mm{efi_arch(arch)}.efi"
+    img_shim = chain_img.get("shim", ("MISSING", 0, ""))
+    img_gcd = chain_img.get("gcd", ("MISSING", 0, ""))
+    img_grub = chain_img.get("grub", ("MISSING", 0, ""))
+
+    # THE SOURCE FIRST. Everything below asks whether the medium carries these
+    # files; this asks whether the product has them to carry. It is the check
+    # that notices shim-signed or grub-efi-<arch>-signed leaving a package
+    # list - which would take Secure Boot off the installed disk too, and
+    # nothing else in this file would say a word about it.
+    absent = [n for n, v in (("shim", img_shim), ("gcd", img_gcd), ("grub", img_grub))
+              if v[0] == "MISSING"]
+    check(not absent,
+          "the image ships the signed loaders the medium is assembled from",
+          ", ".join(f"{n} absent at {chain_img[n][2]}" for n in absent) or
+          f"shim {img_shim[1]}B, gcd {img_gcd[1]}B, grub {img_grub[1]}B")
+
+    for prefix, human in (("iso", "the ISO9660 tree"),
+                          ("esp", "the El Torito FAT image")):
+        ok, detail = signed_by(prefix, loader, MS_CA)
+        check(ok, f"{human}'s {loader} is shim, signed by Microsoft's UEFI CA",
+              detail)
+
+        got = med(prefix, loader)
+        check(bool(got) and got[0] == img_shim[0],
+              "and it is the shim THIS image ships, byte for byte",
+              f"medium {got[0][:16] if got else '<absent>'} vs image {img_shim[0][:16]}")
+
+        ok, detail = signed_by(prefix, grubefi, CANONICAL_CA)
+        check(ok, f"and {grubefi} beside it is GRUB, signed by Canonical",
+              detail)
+
+        # gcd, NOT grub. The two differ in the prefix compiled into them -
+        # measured 2026-09-07: /boot/grub in gcd<arch>.efi.signed and
+        # /EFI/ubuntu in grub<arch>.efi.signed - and /EFI/ubuntu is a
+        # directory no OS/7 medium has. A medium carrying the disk build is
+        # signed correctly, chains correctly, and lands at a GRUB prompt.
+        got = med(prefix, grubefi)
+        check(bool(got) and got[0] == img_gcd[0],
+              "and it is the CD-media build (gcd), whose prefix is /boot/grub",
+              "the DISK build (grub), prefix /EFI/ubuntu"
+              if got and got[0] == img_grub[0] else
+              f"medium {got[0][:16] if got else '<absent>'} vs gcd {img_gcd[0][:16]}")
+
+        # Where a verification failure goes. shim launches MokManager from its
+        # own directory when it cannot verify what it was asked to load; with
+        # no mm<arch>.efi there the failure path is a dead end, and what the
+        # operator gets is a machine that stops with nothing to act on.
+        check(med(prefix, mmefi) is not None,
+              f"and MokManager ({mmefi}) is beside it, so a refusal has somewhere to go",
+              "absent" if med(prefix, mmefi) is None else "")
+
+        # AND THAT GRUB CAN FIND ITS CONFIGURATION. Ubuntu's GRUB reads the
+        # grub.cfg next to the binary it was loaded from ($cmdpath), which is
+        # not folklore here: it is the mechanism the installed ESP already
+        # depends on - /EFI/BOOT/grub.cfg is the file that names which boot
+        # environment's menu is read (docs/SESSION-BOOT-ENVIRONMENTS.md).
+        beside = ""
+        for k, v in cfgs.items():
+            if k.startswith(f"/mnt/{prefix}/EFI/BOOT/grub.cfg") and "(absent)" not in k:
+                beside = v
+        check(bool(beside.strip()),
+              "and a grub.cfg sits beside the loader, where that GRUB looks for it",
+              " ".join(beside.split())[:90] or "absent")
+
+    iso_loader, esp_loader = med("iso", loader), med("esp", loader)
+    check(bool(iso_loader) and iso_loader == esp_loader,
+          "both sides of the medium carry the same loader",
+          f"iso {iso_loader[0][:12] if iso_loader else '<absent>'} vs "
+          f"esp {esp_loader[0][:12] if esp_loader else '<absent>'}")
+
+    # THE LINK THAT IS ALREADY RIGHT, and it is here to prove the machinery
+    # rather than to pass: the kernel on the medium comes signed out of the
+    # archive, so this reads ok on the ISO that fails everything above it. A
+    # block of checks that is uniformly red says nothing about which of them
+    # would have caught a regression.
+    ok, detail = signed_by("iso", "casper.vmlinuz", CANONICAL_CA)
+    check(ok, "the kernel the medium boots is signed by Canonical", detail)
+
+    # AND THE MENU HAS TO BE WRITTEN FOR A SIGNED GRUB. Under Secure Boot the
+    # signed image refuses to load a module from disk, so every command the
+    # menu uses must already be built into it. `insmod` is the one that reads
+    # as harmless and is not: on firmware with Secure Boot off it works, so
+    # this cannot be found by booting the bench the medium was developed on.
+    menu = img.get("grub.cfg", "")
+    insmods = [ln.strip() for ln in menu.splitlines() if ln.strip().startswith("insmod")]
+    check(bool(menu) and not insmods,
+          "the medium's menu loads no GRUB module from disk (a signed GRUB will not)",
+          "; ".join(insmods) if insmods else ("<no grub.cfg on the medium>" if not menu else ""))
+
+    # NOT A CHECK, AND NOW FOR A BETTER REASON THAN WHEN IT WAS WRITTEN.
+    #
+    # gcd's compiled-in prefix is /boot/grub, so a stub there inside the FAT
+    # image would make the prefix resolve whatever $root starts as - a belt
+    # against $cmdpath not applying on El Torito the way it does on the
+    # installed ESP. It turned out not to be needed: 1.0.0.192 carries no such
+    # stub and booted to Setup's welcome screen under Microsoft-keyed OVMF with
+    # Secure Boot on, measured 2026-09-07. So this stays a report rather than
+    # becoming a requirement - and if a firmware is ever found that needs it,
+    # the line above is where its absence will already have been visible.
+    fatstub = any(k.startswith("/mnt/esp/boot/grub/grub.cfg") and "(absent)" not in k
+                  for k in cfgs)
+    print(f"      note  the El Torito image {'carries' if fatstub else 'carries no'} "
+          f"/boot/grub/grub.cfg, the stub gcd's compiled-in prefix would resolve to")
+
+
+def self_test() -> int:
+    """Run secureboot_checks() over a RECORDED correct medium and require green.
+
+    No ISO, no Docker, no arch: this is the half of the Secure Boot rule that
+    the artefact cannot exercise, because no OS/7 medium satisfies it yet. It
+    runs on either host in a second, and it is what stops the rule from being
+    one nobody could ever pass.
+    """
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "secureboot-good.probe")
+    if not os.path.exists(fixture):
+        print(f"      FAIL  the recorded medium is missing at {fixture}")
+        return 1
+    img = parse_sections(open(fixture, encoding="utf-8").read())
+    bad = 0
+
+    def check(ok, what, detail=""):
+        nonlocal bad
+        print(f"      {'ok  ' if ok else 'FAIL'}  {what}" + (f" — {detail}" if detail else ""))
+        if not ok:
+            bad += 1
+
+    print("\n### check-image.py's own Secure Boot rule, over a recorded correct medium")
+    secureboot_checks(img, "amd64", check)
+    print()
+    if bad:
+        print(f"{bad} of the Secure Boot checks cannot be satisfied by a correct "
+              f"medium — the RULE is wrong, not the image.")
+        return 1
+    print("The Secure Boot rule passes on a correctly assembled medium.")
+    return 0
+
+
+def record_secureboot(arch: str) -> int:
+    """Re-record fixtures/secureboot-good.probe from a real medium.
+
+    A verb rather than a shell recipe, for the same reason run-zfs.py has
+    `capture`: the fixture is only worth what its provenance is worth, and a
+    fixture reproducible by one command cannot quietly become something
+    somebody assembled by hand. Run it against an ISO the checks PASS on.
+    """
+    img = read_image(arch)
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "secureboot-good.probe")
+    real = os.path.basename(os.path.realpath(os.path.join(REPO, "out", f"os7-{arch}.iso")))
+    with open(fixture, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"""\
+# check-image.py --self-test: the readings a CORRECTLY assembled medium
+# produces, for secureboot_checks(). Recorded from {real}
+# by `check-image.py --record-secureboot {arch}` — do not edit by hand.
+#
+# That ISO is a medium that BOOTS with Secure Boot on: Microsoft-keyed OVMF,
+# shim -> gcd -> Canonical-signed kernel -> Setup's welcome screen, measured
+# 2026-09-07 (docs/SESSION-SECUREBOOT-MEDIUM.md). So this is a recording of a
+# real artefact and not a construction — which matters, because the job of the
+# fixture is to prove the rule is satisfiable at all.
+""")
+        for key in ("sb.chain", "sb.cfg", "grub.cfg"):
+            fh.write(f"<<<{key}>>>\n{img.get(key, '')}\n")
+    print(f"    recorded {fixture} from {real}")
+    return 0
+
+
 def main() -> None:
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(self_test())
+    if "--record-secureboot" in sys.argv[1:]:
+        rest = [a for a in sys.argv[1:] if a != "--record-secureboot"]
+        sys.exit(record_secureboot(rest[0] if rest else "arm64"))
     arch = sys.argv[1] if len(sys.argv) > 1 else "arm64"
     print(f"\n### the image, asked what it is ({arch})")
     img = read_image(arch)
@@ -1377,6 +1744,8 @@ def main() -> None:
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",
           "the ISO volume carries the version", img.get("volume", ""))
+
+    secureboot_checks(img, arch, check)
 
     print()
     if bad:

@@ -34,14 +34,37 @@
 #   <arch>     amd64 | arm64
 #   <work_dir> contains the live-build "binary/" tree (after `lb build`).
 #
-# NOTE: this produces a STRUCTURALLY bootable UEFI ISO (EFI El Torito entry +
-# appended EF-type partition + /EFI/BOOT/BOOT<ARCH>.EFI). The GRUB it embeds is
-# built by grub-mkstandalone and is therefore UNSIGNED: the medium boots with
-# Secure Boot OFF. That is a property of the MEDIUM only — what Setup installs
-# to the disk is shim + Canonical-signed GRUB, which is what spikes S4 and S6
-# proved. A Secure-Boot-bootable install medium is an open item, and it matters
-# more on amd64, where firmware ships with Secure Boot enabled: see
-# docs/SESSION-AMD64-FIRST-ISO.md.
+# THE MEDIUM'S BOOT PATH IS THE ARCHIVE'S, NOT OURS (since 2026-09-07).
+#
+# Until then this script built the loader with grub-mkstandalone, which nobody
+# has signed, so the medium booted only with Secure Boot OFF — while what Setup
+# installed to the disk was shim + Canonical-signed GRUB all along. On amd64,
+# where firmware ships with Secure Boot ENABLED, that made the product's own
+# install medium the one thing a factory-configured machine would refuse.
+#
+# So the four files are taken out of the squashfs THIS BUILD just produced:
+#
+#   /usr/lib/shim/shim<sfx>.efi.signed         -> /EFI/BOOT/BOOT<ARCH>.EFI
+#   /usr/lib/grub/<target>-efi-signed/gcd<sfx>.efi.signed -> /EFI/BOOT/grub<sfx>.efi
+#   /usr/lib/shim/mm<sfx>.efi                  -> /EFI/BOOT/mm<sfx>.efi
+#   a stub grub.cfg beside them, which is where that GRUB looks
+#
+# Out of the SQUASHFS and not out of the build container, for one reason that
+# matters: the squashfs is what ships, so the pin in build/config/os7-release.conf
+# governs the medium's loader exactly as it governs the installed machine's. The
+# medium's shim is then byte-identical to the one grub-install will put on the
+# disk, and installer/testing/check-image.py requires that rather than hoping.
+#
+# gcd<sfx>, NOT grub<sfx>. The two differ in the prefix compiled into them —
+# /boot/grub against /EFI/ubuntu, measured 2026-09-07 — and /EFI/ubuntu is a
+# directory no OS/7 medium has. The disk build is signed correctly, chains
+# correctly from shim, and lands at a GRUB prompt.
+#
+# One path serves both worlds: shim with Secure Boot off simply chains onward
+# without verifying, which is how every Ubuntu medium boots on a machine with
+# it disabled. There is deliberately no second, unsigned branch to keep working.
+#
+# docs/SESSION-SECUREBOOT-MEDIUM.md has the measurements.
 set -euo pipefail
 
 ARCH="${1:?arch required (amd64|arm64)}"
@@ -53,13 +76,13 @@ BIN="${WORK}/binary"
 # and that is the point of the file.
 case "${ARCH}" in
 	arm64)
-		GRUB_FORMAT="arm64-efi"
-		EFI_BASENAME="bootaa64.efi"
+		EFI_SUFFIX="aa64"
+		GRUB_TARGET="arm64"
 		EFI_ONDISK="BOOTAA64.EFI"
 		;;
 	amd64)
-		GRUB_FORMAT="x86_64-efi"
-		EFI_BASENAME="bootx64.efi"
+		EFI_SUFFIX="x64"
+		GRUB_TARGET="x86_64"
 		EFI_ONDISK="BOOTX64.EFI"
 		;;
 	*)
@@ -68,14 +91,17 @@ case "${ARCH}" in
 		;;
 esac
 
-# grub-mkstandalone reads its modules from /usr/lib/grub/<format>, and the
-# Dockerfile installs only the one matching the container's own architecture
-# (grub-efi-arm64-bin OR grub-pc-bin + grub-efi-amd64-bin). A missing directory
-# here means the wrong container, and saying so beats grub-mkstandalone's own
-# error, which names a module rather than the cause.
-[ -d "/usr/lib/grub/${GRUB_FORMAT}" ] || {
-	echo "!!! efi-remaster: /usr/lib/grub/${GRUB_FORMAT} is not in this container." >&2
-	echo "!!! ${ARCH} must be re-mastered in the ${ARCH} build image - see Dockerfile." >&2
+# THIS USED TO CHECK THE CONTAINER'S OWN /usr/lib/grub/<format>, because
+# grub-mkstandalone read its modules from there and a mismatched container
+# produced an error naming a module rather than the cause. Nothing here reads
+# the container's GRUB any more — the loader comes out of the image being
+# built — so the check would now guard a dependency that no longer exists.
+#
+# What replaced it is stricter and about the right thing: the four files are
+# looked for IN THE SQUASHFS by name, after extraction, and a missing one names
+# itself. See the EFI assembly below.
+command -v unsquashfs >/dev/null || {
+	echo "!!! efi-remaster: no unsquashfs in this container - see Dockerfile." >&2
 	exit 1
 }
 
@@ -183,11 +209,19 @@ echo ">>> ${ARCH} EFI: kernel=${VMLINUZ} initrd=${INITRD}"
 #
 # The LIVE entry deliberately does NOT get this. On amd64 "try before you
 # install" means a desktop (L14), and that is the entry that promises it.
+# AND IT USES ONLY COMMANDS THE SIGNED GRUB ALREADY HAS.
+#
+# `insmod all_video` was here until 2026-09-07 and had to go: under Secure Boot
+# the signed image refuses to load a module from disk, so a menu that calls
+# insmod works on a Secure-Boot-OFF bench and nowhere else - which is the worst
+# shape a defect can have, because the bench this medium was developed on is
+# exactly that bench. What is left (`set`, `menuentry`, `search --file`,
+# `linux`, `initrd`) is built into gcd<sfx>.efi.signed; `search --file` needs
+# search_fs_file and iso9660, both of which Ubuntu's own install media boot on.
 mkdir -p "${BIN}/boot/grub"
 cat > "${BIN}/boot/grub/grub.cfg" <<EOF
 set default=0
 set timeout=10
-insmod all_video
 menuentry "Install OS/7 (${ARCH})" {
     search --no-floppy --set=root --file /.disk/info
     linux  /casper/${VMLINUZ} boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 ---
@@ -205,35 +239,107 @@ menuentry "OS/7 (${ARCH}) — live session (safe graphics)" {
 }
 EOF
 
-# Standalone EFI image. Its embedded /boot/grub/grub.cfg just finds the media and
-# hands off to the real menu above.
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
-cat > "${TMP}/embed.cfg" <<'EOF'
+
+# ---------------------------------------------------------------------------
+# The signed boot chain, lifted out of the squashfs this build just wrote.
+# ---------------------------------------------------------------------------
+SQUASH="${BIN}/casper/filesystem.squashfs"
+[ -f "${SQUASH}" ] || { echo "!!! efi-remaster: no squashfs at ${SQUASH}" >&2; exit 1; }
+
+SBROOT="${TMP}/sb"
+# /etc/alternatives comes along because shim<sfx>.efi.signed IS a symlink into
+# it (measured), and unsquashfs extracts only what it is asked for.
+unsquashfs -q -n -f -d "${SBROOT}" "${SQUASH}" \
+	"usr/lib/shim" \
+	"usr/lib/grub/${GRUB_TARGET}-efi-signed" \
+	"etc/alternatives" >/dev/null 2>&1 || true
+
+# ASK FOR THE FILES, THEN LOOK FOR THEM. `unsquashfs -d out image a/path/that/
+# does/not/exist` extracts nothing and EXITS 0 - measured 2026-08-24 and the
+# reason build.sh reads its manifest back the same way. So the exit code above
+# is discarded on purpose and every file is required by name below.
+
+# RESOLVED INSIDE THE EXTRACTED TREE, NEVER WITH readlink -f.
+#
+# /usr/lib/shim/shim<sfx>.efi.signed points at /etc/alternatives/... and that
+# target is ABSOLUTE: `readlink -f` would resolve it against the BUILD
+# CONTAINER's root and hand back a file that is not the product's - or nothing.
+# This walks the chain within ${SBROOT}, which is the same resolution
+# grub-install performs inside the installed system, so the medium's shim and
+# the disk's shim are the same bytes.
+resolve_in() {
+	local root="$1" p="$2" hops=0 t
+	while [ -L "${root}${p}" ]; do
+		hops=$((hops + 1))
+		[ "${hops}" -le 8 ] || { echo "!!! efi-remaster: symlink loop at ${p}" >&2; return 1; }
+		t="$(readlink "${root}${p}")"
+		case "${t}" in
+			/*) p="${t}" ;;
+			*)  p="$(dirname "${p}")/${t}" ;;
+		esac
+	done
+	printf '%s' "${p}"
+}
+
+SHIM_IN_IMAGE="$(resolve_in "${SBROOT}" "/usr/lib/shim/shim${EFI_SUFFIX}.efi.signed")"
+SHIM="${SBROOT}${SHIM_IN_IMAGE}"
+GRUB="${SBROOT}/usr/lib/grub/${GRUB_TARGET}-efi-signed/gcd${EFI_SUFFIX}.efi.signed"
+MOKM="${SBROOT}/usr/lib/shim/mm${EFI_SUFFIX}.efi"
+
+MISSING=""
+for f in "${SHIM}" "${GRUB}" "${MOKM}"; do
+	[ -s "${f}" ] || MISSING="${MISSING} ${f#${SBROOT}}"
+done
+[ -z "${MISSING}" ] || {
+	echo "!!! efi-remaster: the image carries no signed boot chain for ${ARCH}:${MISSING}" >&2
+	echo "!!! shim-signed and grub-efi-${ARCH}-signed must be in the package lists," >&2
+	echo "!!! and installer/testing/check-image.py checks that on the finished ISO." >&2
+	exit 1
+}
+echo ">>> ${ARCH} EFI: shim=$(basename "${SHIM_IN_IMAGE}") ($(stat -c %s "${SHIM}") B)," \
+     "grub=gcd${EFI_SUFFIX} ($(stat -c %s "${GRUB}") B)"
+
+# WHERE THAT GRUB LOOKS FOR ITS CONFIGURATION, and it is not folklore: Ubuntu's
+# GRUB reads the grub.cfg next to the binary it was loaded from ($cmdpath).
+# The installed ESP already depends on it - /EFI/BOOT/grub.cfg is the file that
+# names which boot environment's menu is read, and that machine boots from a
+# FAT filesystem with no /boot/grub on it at all
+# (docs/SESSION-BOOT-ENVIRONMENTS.md). gcd's own compiled-in prefix is
+# /boot/grub, which resolves on the ISO9660 side; this stub covers the FAT one.
+cat > "${TMP}/stub.cfg" <<'EOF'
 search --no-floppy --set=root --file /.disk/info
 set prefix=($root)/boot/grub
 configfile /boot/grub/grub.cfg
 EOF
 
-grub-mkstandalone \
-    --format="${GRUB_FORMAT}" \
-    --output="${TMP}/${EFI_BASENAME}" \
-    --modules="part_gpt part_msdos fat iso9660 normal linux configfile search search_fs_file echo all_video gfxterm test true" \
-    "boot/grub/grub.cfg=${TMP}/embed.cfg"
-
-# Expose the loader on the ISO9660 side too (some firmwares look here).
+# The ISO9660 side. Some firmware looks here rather than at the El Torito image,
+# and check-image.py requires the two sides to carry the same loader, because a
+# medium whose sides disagree boots differently depending on the machine.
 mkdir -p "${BIN}/EFI/BOOT"
-cp "${TMP}/${EFI_BASENAME}" "${BIN}/EFI/BOOT/${EFI_ONDISK}"
+cp "${SHIM}" "${BIN}/EFI/BOOT/${EFI_ONDISK}"
+cp "${GRUB}" "${BIN}/EFI/BOOT/grub${EFI_SUFFIX}.efi"
+cp "${MOKM}" "${BIN}/EFI/BOOT/mm${EFI_SUFFIX}.efi"
+cp "${TMP}/stub.cfg" "${BIN}/EFI/BOOT/grub.cfg"
 
-# FAT EF-system-partition image holding the same loader — this is what the EFI
-# El Torito entry points at, and what makes a USB dd of the ISO bootable.
+# FAT EF-system-partition image holding the same four files — this is what the
+# EFI El Torito entry points at, and what makes a USB dd of the ISO bootable.
+#
+# shim looks for its second stage by a name compiled into it (grub<sfx>.efi in
+# its own directory), and launches mm<sfx>.efi when it cannot verify what it
+# was asked to load - so MokManager is what gives a refusal somewhere to go
+# instead of a machine that stops with nothing to act on.
 EFIIMG="${BIN}/boot/grub/efiboot.img"
 rm -f "${EFIIMG}"
-# Size the FAT image to comfortably hold the standalone EFI binary (which embeds
-# a GRUB memdisk and can be several MB). 24 MiB is generous and cheap.
+# 24 MiB against ~4.3 MB of loaders. Generous, cheap, and unchanged from when
+# the single standalone image lived here.
 mkfs.vfat -C "${EFIIMG}" 24576 >/dev/null
 mmd   -i "${EFIIMG}" ::EFI ::EFI/BOOT
-mcopy -i "${EFIIMG}" "${TMP}/${EFI_BASENAME}" "::EFI/BOOT/${EFI_ONDISK}"
+mcopy -i "${EFIIMG}" "${SHIM}"            "::EFI/BOOT/${EFI_ONDISK}"
+mcopy -i "${EFIIMG}" "${GRUB}"            "::EFI/BOOT/grub${EFI_SUFFIX}.efi"
+mcopy -i "${EFIIMG}" "${MOKM}"            "::EFI/BOOT/mm${EFI_SUFFIX}.efi"
+mcopy -i "${EFIIMG}" "${TMP}/stub.cfg"    "::EFI/BOOT/grub.cfg"
 
 echo ">>> ${ARCH} EFI: re-mastering bootable ISO -> ${OUT_ISO}"
 rm -f "${OUT_ISO}"

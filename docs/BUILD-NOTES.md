@@ -7092,3 +7092,105 @@ phase could observe the screen on amd64 as `walk` already does, which also
 needs a command channel for its ten assertions and would make the phase a
 different shape per architecture. docs/SESSION-PHASE3-ON-AMD64.md carries the
 measurements.
+
+## #133 — `readlink -f` on a built image's symlink answers about the READING system, exits 0, and can be right for the wrong file
+
+Found 2026-09-07 while making the install medium Secure-Boot-bootable. The
+loader has to come out of the squashfs the build just wrote, and the file to
+copy is
+
+```
+/usr/lib/shim/shimx64.efi.signed -> /etc/alternatives/shimx64.efi.signed
+                                 -> /usr/lib/shim/shimx64.efi.signed.latest
+```
+
+an **absolute** two-hop symlink through the alternatives system. Extracted to
+`/tmp/sb` and asked from the build container:
+
+```
+$ readlink    /tmp/sb/usr/lib/shim/shimx64.efi.signed
+/etc/alternatives/shimx64.efi.signed
+$ readlink -f /tmp/sb/usr/lib/shim/shimx64.efi.signed
+/etc/alternatives/shimx64.efi.signed          <- exit 0
+$ [ -e /etc/alternatives/shimx64.efi.signed ] ; echo $?
+1                                              <- and it is not there
+```
+
+**Exit 0, and a path that looks exactly like the answer.** It is the image's
+own namespace, so it reads as correct to anybody checking the output rather
+than the file; `[ -n "$x" ]` passes. Only opening it fails, and that is one
+`cp` later, in a build whose earlier lines all succeeded.
+
+**The worse case is the one that does not fail at all.** The build container is
+one `apt-get install shim-signed` away from having
+`/etc/alternatives/shimx64.efi.signed` itself — and then `readlink -f` returns
+a real, readable, correctly Microsoft-signed file: **the container's shim, not
+the product's.** Every check that asks "is this shim signed by Microsoft" says
+yes. The medium would ship a loader from a different snapshot than the machine
+it installs, and nothing in the build would have a word to say about it.
+
+So `build/lib/efi-remaster.sh` walks the chain itself, inside the extraction
+root, and never calls `readlink -f`:
+
+```sh
+while [ -L "${root}${p}" ]; do
+    t="$(readlink "${root}${p}")"
+    case "${t}" in /*) p="${t}" ;; *) p="$(dirname "${p}")/${t}" ;; esac
+done
+```
+
+which is the same resolution `grub-install` performs inside the installed
+system — so the medium's shim and the disk's shim are the same bytes, and
+`installer/testing/check-image.py` requires that rather than hoping for it.
+
+**The general rule: a path read out of one root must be resolved in that root.**
+It is why check-image.py chroots to run `os7-setup --version` instead of `cd`-ing
+into the squashfs (see its header), and it will bite anything that reads a built
+image from outside — `readlink -f`, `realpath`, `cp -L`, `install`, Python's
+`os.path.realpath`, all of them silently.
+
+## #134 — no harness could boot the install medium through its own bootloader, which is why an unsigned one lived on it for months
+
+Not a bug in any file — a hole in the observation, and the reason
+BUILD-NOTES has a #133 at all.
+
+Every VM harness in `installer/testing/` boots the live medium by handing QEMU
+`-kernel` and `-initrd` lifted out of the ISO (`vmscreen.py`, and `os7lab.py`
+whenever `--iso` is given, which sets a command line unconditionally). Three
+older scripts do `-cdrom … -boot d` (`run-zfs.py`, `run-backup.py`,
+`run-s3.py`) — and `vmarch.py` deliberately hands them the **non**-Secure-Boot
+OVMF, with a comment saying why: the medium's GRUB was unsigned, so the
+MS-keyed firmware would refuse it.
+
+The result: **the ISO's bootloader had never run in this repository**, on
+either host. `run-phase3.py boot` proves an installed disk boots; nothing
+proved the medium did, and the medium was the artefact being shipped. Under
+Secure Boot — the amd64 factory setting — a Microsoft-keyed firmware answered:
+
+```
+BdsDxe: failed to load Boot0002 "UEFI QEMU DVD-ROM QM00005 " …
+        : Access Denied -- rejected probably by Secure Boot
+>>Start PXE over IPv4.
+```
+
+measured 2026-09-07 on `OS7-1.0.0.175-amd64.iso`, and the fixed medium
+(1.0.0.192) reaches Setup's welcome screen under the same firmware.
+
+**Two things worth carrying.** First, the same shape as #132: a harness that
+observes through one channel asserts something about the channel too, and here
+the channel skipped the component under test entirely. Second, the medium is
+cheaper to observe than anybody assumed — **OVMF and GRUB both write to the
+serial line on amd64**, so the whole boot menu is legible as text without a
+single screendump:
+
+```
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00005 "
+GNU GRUB  version 2.14
+*Install OS/7 (amd64)
+ OS/7 (amd64) — live session, without installing
+ The highlighted entry will be executed automatically in 10s.
+```
+
+Anything asserting on the medium's boot can therefore assert on strings, which
+is what a harness should do; the screendump is only needed once the kernel has
+taken the console, because the installed system carries no `console=` (#132).
