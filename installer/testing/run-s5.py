@@ -634,6 +634,15 @@ def send_script(c, name, text):
 
     Not a heredoc: `expect` would have to match a terminator that the typed text
     itself contains, which is the exact shape BUILD-NOTES #16 warns about.
+
+    FOR TEXT WITH NO LEADING TABS, which every script here has and which is
+    why this has never bitten. The guest's bash is interactive, so readline
+    owns the TAB key: a line that starts with one is typed at a readline that
+    treats it as FILENAME COMPLETION, and the directory listing lands in the
+    middle of the file while `wc -l` still reports a plausible number.
+    BUILD-NOTES #139, found pushing a PowerShell file, which this repository
+    indents with tabs. Push anything else as base64 and check its sha256 on
+    the machine.
     """
     c.drop()
     c.send(f": > /tmp/{name}")

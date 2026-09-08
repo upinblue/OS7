@@ -18,6 +18,21 @@ follow from them:
     arm64   qemu-system-aarch64   virt,accel=hvf   AAVMF      ttyAMA0  tpm-tis-device
     amd64   qemu-system-x86_64    q35,accel=kvm    OVMF       ttyS0    tpm-tis
 
+and, since 2026-09-07, a SECOND firmware column — `VmArch(secure_boot=True)`
+picks the enforcing build and the Microsoft-keyed variable store:
+
+    arch    firmware, Secure Boot OFF (default)  firmware, Secure Boot ON
+    arm64   edk2-aarch64-code.fd + edk2-*-vars   AAVMF_CODE.secboot.fd + AAVMF_VARS.ms.fd
+            (Homebrew's QEMU)                    (fetched from ubuntu:26.04, as spike S4 does)
+    amd64   OVMF_CODE_4M.fd + OVMF_VARS_4M.fd    OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.ms.fd
+            (both out of os7-vm:amd64's ovmf package)
+
+Nothing else differs, so every existing harness produces exactly the argv it
+produced before. `vmscreen.Lab` and `os7lab` already accept a VmArch INSTANCE,
+so a harness that wants Secure Boot needs no change in either of them:
+
+    Lab("sbtest", arch=VmArch(secure_boot=True))
+
 and the EXECUTION VEHICLE, which is the part that is genuinely different
 rather than renamed. On the Mac, QEMU is a host process and the harness owns
 its stdio. On the Windows box there is no host QEMU and no host KVM — both
@@ -128,10 +143,29 @@ atexit.register(_cleanup_all)
 
 
 class VmArch:
-    """Everything about a VM that depends on the target architecture."""
+    """Everything about a VM that depends on the target architecture.
 
-    def __init__(self, arch=None):
+    `secure_boot` picks the OTHER firmware pair (2026-09-07). It is a
+    constructor argument and not an environment variable on purpose: whether a
+    run enforced Secure Boot has to be visible in the code that started the
+    run, because six months later "was that measured with Secure Boot on?" is
+    a question no environment answers. `OS7_VM_ARCH` exists because one host
+    must be able to build the other's command lines; nothing needs to flip
+    this from outside.
+
+    Nothing else changes with it — machine, accelerator, serial, TPM and
+    vehicle are identical — so every existing harness keeps producing exactly
+    the argv `check-vm-arch.py` holds it to.
+    """
+
+    # Shared with installer/spikes/run-s4.py, which downloads the same AAVMF
+    # into the same directory. Two copies of a 4 MB firmware would be harmless
+    # and two DIFFERENT copies would not.
+    FIRMWARE_CACHE = os.path.join(REPO, ".vm", "firmware")
+
+    def __init__(self, arch=None, secure_boot=False):
         self.arch = arch or pick_arch()
+        self.secure_boot = bool(secure_boot)
         if self.arch == "arm64":
             self.qemu_binary = "qemu-system-aarch64"
             self.machine = "virt,accel=hvf"
@@ -217,13 +251,34 @@ class VmArch:
     def base_args(self):
         return [self.qemu_binary, "-machine", self.machine, "-cpu", "host"]
 
+    # SECURE BOOT IS A PROPERTY OF THE PAIR, NOT OF EITHER FILE.
+    #
+    # The enforcing OVMF build with the KEY-LESS variable store leaves
+    # SecureBoot at 0 — no PK, so nothing to enforce against — and the
+    # non-enforcing build with the MS-keyed store enforces nothing either. Only
+    # both together are Secure Boot on, which is why `firmware_code()` and
+    # `prepare_vars()` read the same flag off the same object instead of taking
+    # an argument each: a caller cannot get one of them and not the other.
+    #
+    # And on amd64 the code file is LITERALLY the same file both ways round:
+    # /usr/share/OVMF/OVMF_CODE_4M.ms.fd is a symlink to
+    # OVMF_CODE_4M.secboot.fd (measured 2026-09-07 in os7-vm:amd64), so the
+    # ".ms" name says nothing about the code and everything about the vars it
+    # is meant to be paired with. The enforcing build is named by what it is.
     def firmware_code(self):
         if self.arch == "arm64":
+            if self.secure_boot:
+                return os.path.join(self.FIRMWARE_CACHE, "AAVMF_CODE.secboot.fd")
             return os.path.join(qemu_prefix(), "share", "qemu", "edk2-aarch64-code.fd")
-        # The non-Secure-Boot OVMF build, deliberately: the GRUB on the OS/7
-        # medium is unsigned on both architectures (HANDOFF §2), so the
-        # MS-keyed OVMF_CODE_4M.ms.fd would refuse to boot the thing under
-        # test. TPM measurement does not need Secure Boot to be on.
+        if self.secure_boot:
+            return "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd"
+        # The non-Secure-Boot build stays the default. It was chosen when the
+        # OS/7 medium's GRUB was unsigned and the MS-keyed firmware refused to
+        # boot the thing under test; since 1.0.0.192 the amd64 medium boots
+        # signed (docs/SESSION-SECUREBOOT-MEDIUM.md §7), so this is no longer
+        # a necessity — but it is still what every existing harness ran on and
+        # what check-vm-arch.py holds them to. Flipping it would silently
+        # re-measure the whole suite on different firmware.
         return "/usr/share/OVMF/OVMF_CODE_4M.fd"
 
     def firmware_args(self, vars_path):
@@ -232,26 +287,100 @@ class VmArch:
             "-drive", f"if=pflash,format=raw,file={self.path(vars_path)}",
         ]
 
-    def prepare_vars(self, vars_path):
-        """Put a writable firmware variable store at `vars_path`."""
-        if os.path.exists(vars_path):
+    def ensure_firmware(self):
+        """Fetch the Secure Boot AAVMF, once. arm64 + secure_boot only.
+
+        Homebrew's QEMU ships no Secure Boot aarch64 firmware — `edk2-aarch64-
+        code.fd` carries no keys and does not enforce — so it comes out of
+        ubuntu:26.04's `qemu-efi-aarch64`, which is where spike S4 got it and
+        how S4 booted under the Microsoft keys in the first place. amd64 needs
+        nothing: the `ovmf` package inside os7-vm:amd64 has both pairs.
+        """
+        if self.arch != "arm64" or not self.secure_boot or CHECK_MODE:
             return
+        code, vars_tpl = self.firmware_code(), self._vars_template()
+        if os.path.exists(code) and os.path.exists(vars_tpl):
+            return
+        os.makedirs(self.FIRMWARE_CACHE, exist_ok=True)
+        print("    fetching qemu-efi-aarch64 (Secure Boot firmware) …")
+        run("docker", "run", "--rm", "--platform", "linux/arm64",
+            "-v", f"{self.FIRMWARE_CACHE}:/fw", "ubuntu:26.04", "bash", "-c",
+            "set -e; apt-get update -qq >/dev/null 2>&1; "
+            "apt-get download qemu-efi-aarch64 >/dev/null 2>&1; "
+            "dpkg-deb -x qemu-efi-aarch64_*.deb /x; cp /x/usr/share/AAVMF/* /fw/",
+            stdout=subprocess.DEVNULL)
+        for f in (code, vars_tpl):
+            if not os.path.exists(f):
+                raise SystemExit(f"firmware extraction did not produce {f}")
+
+    def _vars_template(self):
+        """Where a fresh variable store is copied FROM.
+
+        arm64 non-Secure-Boot returns whichever of the two EDK2 names this
+        QEMU ships; the others are single files. amd64's are container paths.
+        """
         if self.arch == "arm64":
+            if self.secure_boot:
+                return os.path.join(self.FIRMWARE_CACHE, "AAVMF_VARS.ms.fd")
             pre = qemu_prefix()
             for c in ("edk2-arm-vars.fd", "edk2-aarch64-vars.fd"):
                 src = os.path.join(pre, "share", "qemu", c)
                 if os.path.exists(src):
-                    shutil.copy(src, vars_path)
-                    return
+                    return src
             raise SystemExit("no EDK2 vars template found")
-        self.ensure_image()
+        return ("/usr/share/OVMF/OVMF_VARS_4M.ms.fd" if self.secure_boot
+                else "/usr/share/OVMF/OVMF_VARS_4M.fd")
+
+    def vars_marker(self, vars_path):
+        """The file recording which firmware a variable store belongs to."""
+        return os.path.abspath(vars_path) + ".firmware"
+
+    def prepare_vars(self, vars_path):
+        """Put a writable firmware variable store at `vars_path`.
+
+        AN EXISTING STORE IS KEPT, and that is load-bearing: TPM enrolment and
+        any enrolled key live in it, so a bench that boots twice must boot the
+        second time with what the first one wrote. Which is also the trap this
+        method now refuses to walk into.
+
+        The two variable stores are the same SIZE (540 672 bytes both) and
+        differ only in content, so reusing a key-less store for a Secure Boot
+        run gives a machine that boots happily with SecureBoot=0 while the
+        harness reports having tested Secure Boot. Nothing would fail. The
+        marker beside the store is what makes that mismatch loud; its absence
+        means `plain`, because that is the only mode that existed before
+        2026-09-07 and every bench under .vm/ predates it.
+        """
+        want = "secureboot" if self.secure_boot else "plain"
+        marker = self.vars_marker(vars_path)
+        if os.path.exists(vars_path):
+            got = "plain"
+            if os.path.exists(marker):
+                got = (open(marker).read().strip() or "plain")
+            if got != want:
+                raise SystemExit(
+                    f"{vars_path} is a {got!r} firmware variable store and this "
+                    f"run wants {want!r}.\nThe two are the same size and differ "
+                    f"only in content, so reusing one would report a Secure Boot "
+                    f"result from firmware that enforces nothing.\nDelete "
+                    f"{vars_path} (and {marker}) to start that bench's firmware "
+                    f"again, or use a different bench.")
+            return
+
+        self.ensure_firmware()
+        tpl = self._vars_template()
         d = os.path.dirname(os.path.abspath(vars_path))
         os.makedirs(d, exist_ok=True)
-        run("docker", "run", "--rm", "-v", f"{d}:/vmdir", VM_IMAGE,
-            "cp", "/usr/share/OVMF/OVMF_VARS_4M.fd",
-            f"/vmdir/{os.path.basename(vars_path)}")
+        if self.arch == "arm64":
+            shutil.copy(tpl, vars_path)
+        else:
+            self.ensure_image()
+            run("docker", "run", "--rm", "-v", f"{d}:/vmdir", VM_IMAGE,
+                "cp", tpl, f"/vmdir/{os.path.basename(vars_path)}")
         if not os.path.exists(vars_path):
-            raise SystemExit(f"OVMF vars template did not arrive at {vars_path}")
+            raise SystemExit(f"the {want} vars template did not arrive at {vars_path}")
+        with open(marker, "w") as fh:
+            fh.write(want + "\n")
 
     def qmp_args(self, qmpsock, name):
         """The -qmp server argument. Unix socket on the host path; TCP in the

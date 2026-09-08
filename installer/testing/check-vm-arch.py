@@ -314,12 +314,146 @@ def run_amd64():
         shutil.rmtree(lab.dir, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# Secure Boot — the second firmware pair (2026-09-07). Property, both arches.
+# ---------------------------------------------------------------------------
+def run_secureboot(arch):
+    """`VmArch(secure_boot=True)` must change the firmware and NOTHING else.
+
+    The default is what every harness in this directory has ever run on and
+    what the golden half above holds byte-identical, so the strongest thing to
+    say about a new firmware mode is not "it picks the right file" but "it
+    touches exactly one argument of the command line". That is asserted by
+    building a full argv both ways and diffing it.
+    """
+    print(f"\n-- {arch}: Secure Boot is a second firmware pair and nothing else")
+    vmarch = load("vmarch", "vmarch.py")
+    vmscreen = load("vmscreen", "vmscreen.py")
+
+    plain, sb = vmarch.VmArch(arch), vmarch.VmArch(arch, secure_boot=True)
+    check(plain.secure_boot is False and sb.secure_boot is True,
+          "secure_boot defaults to off and is settable",
+          f"{plain.secure_boot} / {sb.secure_boot}")
+
+    want_code, want_vars = ("AAVMF_CODE.secboot.fd", "AAVMF_VARS.ms.fd") \
+        if arch == "arm64" else ("OVMF_CODE_4M.secboot.fd", "OVMF_VARS_4M.ms.fd")
+    check(os.path.basename(sb.firmware_code()) == want_code,
+          f"the Secure Boot code build is {want_code}", sb.firmware_code())
+    check(os.path.basename(sb._vars_template()) == want_vars,
+          f"and it is paired with the Microsoft-keyed {want_vars}",
+          sb._vars_template())
+
+    # SECURE BOOT IS THE PAIR. The enforcing build with a key-less store
+    # enforces nothing, so a mode that got one of the two right would be worse
+    # than no mode at all: the machine boots, the harness reports Secure Boot.
+    check("secboot" in os.path.basename(sb.firmware_code())
+          and ".ms." in os.path.basename(sb._vars_template()),
+          "neither half of the pair can be had without the other")
+
+    plain_code = os.path.basename(plain.firmware_code())
+    check(plain_code == ("edk2-aarch64-code.fd" if arch == "arm64"
+                         else "OVMF_CODE_4M.fd"),
+          "the default is still the non-enforcing build", plain_code)
+    if arch == "arm64":
+        # Its vars template is whichever of two names this QEMU ships, so it
+        # cannot be asserted against a prefix that does not exist. Said out
+        # loud rather than skipped silently.
+        print("  note  arm64's non-Secure-Boot vars template comes from the "
+              "host QEMU and is not checked here")
+    else:
+        check(os.path.basename(plain._vars_template()) == "OVMF_VARS_4M.fd",
+              "and its key-less variable store", plain._vars_template())
+
+    # ---- the whole command line, both ways ---------------------------------
+    labp = vmscreen.Lab("vmarchck", target_gb=24, iso_as_disk=True, nic=True)
+    labs = vmscreen.Lab("vmarchck", target_gb=24, iso_as_disk=True, nic=True,
+                        arch=sb)
+    os.makedirs(labp.dir, exist_ok=True)
+    for f in (labp.target, labp.payload):
+        open(f, "ab").close()
+    try:
+        cmdline = "boot=casper quiet"
+        a1, a2 = labp.qemu_args(cmdline, payload=True), labs.qemu_args(cmdline, payload=True)
+        check(len(a1) == len(a2), "the argv is the same length either way",
+              f"{len(a1)} vs {len(a2)}")
+        diff = [(i, x, y) for i, (x, y) in enumerate(zip(a1, a2)) if x != y]
+        check(len(diff) == 1,
+              "exactly one argument changes", "; ".join(
+                  f"[{i}] {x} -> {y}" for i, x, y in diff) or "none changed")
+        if len(diff) == 1:
+            _, was, now = diff[0]
+            check("if=pflash" in now and "readonly=on" in now,
+                  "and it is the firmware CODE pflash drive", now)
+            check(want_code in now and want_code not in was,
+                  "which now names the enforcing build", f"{was} -> {now}")
+        # The vars DRIVE is deliberately unchanged: same bench, same path, and
+        # what differs is the CONTENT prepare_vars puts there. Which is the
+        # whole reason it carries a marker.
+        check(a1.count("if=pflash,format=raw,file=" + labp.arch.path(labp.vars))
+              == a2.count("if=pflash,format=raw,file=" + labs.arch.path(labs.vars))
+              == 1, "the variable store is the same argument in both")
+        if arch == "amd64":
+            # The amd64 firmware lives INSIDE os7-vm:amd64, so no argument may
+            # carry a host path — the property the default half asserts, asked
+            # again of the new argv. It would break the day somebody made
+            # amd64's Secure Boot firmware come out of .vm/firmware/ the way
+            # arm64's does, which is a plausible thing to try.
+            leaks = [a for a in a2 if REPO.replace("\\", "/") in a.replace("\\", "/")]
+            check(not leaks, "and no host path leaks into the Secure Boot argv",
+                  "; ".join(leaks[:2]))
+    finally:
+        shutil.rmtree(labp.dir, ignore_errors=True)
+
+    # ---- and a stale variable store is refused ----------------------------
+    #
+    # The two stores are the same size and differ only in content, so this is
+    # the one mismatch that would otherwise produce a green Secure Boot result
+    # from firmware enforcing nothing. No docker: prepare_vars returns or
+    # raises before it reaches any.
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    try:
+        v = os.path.join(tmp, "edk2-vars.fd")
+        open(v, "wb").write(b"\0" * 16)
+        try:
+            plain.prepare_vars(v)
+            check(True, "an existing store with no marker is taken as plain")
+        except SystemExit as exc:
+            check(False, "an existing store with no marker is taken as plain", str(exc))
+        try:
+            sb.prepare_vars(v)
+            check(False, "and a Secure Boot run REFUSES that store")
+        except SystemExit as exc:
+            check("wants 'secureboot'" in str(exc),
+                  "and a Secure Boot run REFUSES that store",
+                  " ".join(str(exc).split())[:80])
+        # The reverse, too: a store written for Secure Boot must not be
+        # silently reused by a run that does not want it.
+        with open(sb.vars_marker(v), "w") as fh:
+            fh.write("secureboot\n")
+        try:
+            plain.prepare_vars(v)
+            check(False, "and a plain run refuses a Secure Boot store")
+        except SystemExit as exc:
+            check("wants 'plain'" in str(exc),
+                  "and a plain run refuses a Secure Boot store",
+                  " ".join(str(exc).split())[:80])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # ensure_firmware() must not reach docker from here — CHECK_MODE is on,
+    # and on amd64 there is nothing to fetch in the first place.
+    sb.ensure_firmware()
+    check(True, "ensure_firmware() is a no-op under OS7_VMARCH_CHECK")
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("arm64", "amd64"):
         os.environ["OS7_VM_ARCH"] = sys.argv[1]
         os.environ["OS7_QEMU_PREFIX"] = FAKE_PREFIX
         os.environ["OS7_VMARCH_CHECK"] = "1"
         (run_arm64 if sys.argv[1] == "arm64" else run_amd64)()
+        run_secureboot(sys.argv[1])
         print(f"\n  {_ok} ok, {_bad} failed")
         sys.exit(1 if _bad else 0)
 

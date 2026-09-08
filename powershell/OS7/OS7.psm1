@@ -2701,8 +2701,13 @@ function Restore-OS7 {
 # Import-OS7SystemdLayer for the unit state and the restart grdctl has no verb
 # for, and Invoke-OS7Native for openssl and chown — so after Service, and
 # still before OS7.Update.ps1, which stays last.
+#
+# OS7.SecureBoot.ps1 depends on nothing here — two sysfs reads and no layer
+# import at all — so its position is free, and it is placed beside Time for
+# the same reason Time is where it is: both answer a question about the
+# machine rather than acting on it.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -2751,6 +2756,11 @@ Export-ModuleMember -Function Get-OS7Version,
 	# a clock problem - it reports that the password is wrong.
 	Set-OS7TimeZone, Get-OS7Time, Get-OS7TimeSynchronization,
 	Set-OS7TimeSynchronization, Sync-OS7Time,
+	# Secure Boot, which the Windows administrator this product is for asks
+	# about with Confirm-SecureBootUEFI. Reads the UEFI variable rather than
+	# mokutil's prose, and reports LOCKDOWN beside it because that is the
+	# consequence an operator collides with: no unsigned module loads.
+	Get-OS7SecureBoot,
 	# Remoting. TWO mechanisms, reported separately: the /etc/profile.d hand-off
 	# that makes an interactive ssh land in PowerShell, and the sshd SUBSYSTEM
 	# that Enter-PSSession needs. A machine can have either without the other.

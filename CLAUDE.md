@@ -15,7 +15,7 @@ on 2026-08-25:
 | host | builds | tests |
 |---|---|---|
 | **Apple Silicon Mac** | `make build-arm64`, native, ~5 min. amd64 **cannot** be built here (#12/#23) | every `run-*.py` harness, on the arm64 branch of `installer/testing/vmarch.py` — `qemu-system-aarch64 -machine virt,accel=hvf` as a HOST process, byte-identical to the pre-port construction (`check-vm-arch.py` holds it) |
-| **x64 Windows + Docker Desktop** | `make build-amd64` — through WSL's make; native, ~20 min ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py`, the container checks — **and `run-s5.py` since 2026-08-28**: vmarch.py's amd64 branch runs `qemu-system-x86_64 -machine q35,accel=kvm` with OVMF INSIDE the `os7-vm:amd64` container, serial over the docker client's stdio ([SESSION-VM-HARNESS-PORT.md](docs/SESSION-VM-HARNESS-PORT.md)). **`run-phase3.py install` and `walk` since 2026-09-07** — both PASS, and screen 9D drew for the first time; its `boot` phase **cannot** run here, because an installed amd64 machine has no `console=` and the phase watches the serial line (#132, [SESSION-PHASE3-ON-AMD64.md](docs/SESSION-PHASE3-ON-AMD64.md)). The remaining harnesses are ported and UNRUN on this host |
+| **x64 Windows + Docker Desktop** | `make build-amd64` — through WSL's make; native, ~20 min ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md)) | `check-image.py`, `check-os7-repo.py`, the container checks — **and `run-s5.py` since 2026-08-28**: vmarch.py's amd64 branch runs `qemu-system-x86_64 -machine q35,accel=kvm` with OVMF INSIDE the `os7-vm:amd64` container, serial over the docker client's stdio ([SESSION-VM-HARNESS-PORT.md](docs/SESSION-VM-HARNESS-PORT.md)). **`run-phase3.py install` and `walk` since 2026-09-07** — both PASS, and screen 9D drew for the first time; its `boot` phase **cannot** run here, because an installed amd64 machine has no `console=` and the phase watches the serial line (#132, [SESSION-PHASE3-ON-AMD64.md](docs/SESSION-PHASE3-ON-AMD64.md)). **And `run-secureboot.py all` since 2026-09-08** — 32 ok: `VmArch(secure_boot=True)` swaps in the enforcing firmware and the Microsoft-keyed variable store, which is the whole of what Secure Boot testing needs here, and the harness gives the machine a serial console the way run-s5 does ([SESSION-SECUREBOOT-MEDIUM.md](docs/SESSION-SECUREBOOT-MEDIUM.md) §9). The remaining harnesses are ported and UNRUN on this host |
 
 **The x86_64 port exists since 2026-08-28 and `run-s5.py all` has passed on
 it IN FULL** — install, boot (which measured #69 for the first time, see
@@ -78,7 +78,22 @@ make build-arm64                          # the ISO. ~5 min. Docker, privileged.
 make build-amd64                          # x86_64 hosts only - refuses elsewhere
 make build-amd64-vm                       # on Apple Silicon: a QEMU x86 VM, hours
 
-./installer/testing/check-image.py        # ask a built ISO what it is - no boot
+./installer/testing/check-image.py        # ask a built ISO what it is - no boot.
+                                          #   Since 2026-09-07 that includes
+                                          #   whether Secure Boot firmware would
+                                          #   LOAD the medium: both sides of it,
+                                          #   verified with the image's OWN
+                                          #   sbverify, and the loader required
+                                          #   to be byte-identical to the shim
+                                          #   the machine will boot from
+./installer/testing/check-image.py --self-test
+                                          #   the other half of that rule, which
+                                          #   the artefact cannot exercise: the
+                                          #   readings of a CORRECT medium, run
+                                          #   through the same checks, required
+                                          #   to pass. A rule every ISO fails is
+                                          #   a rule that might be unsatisfiable.
+                                          #   No ISO, no Docker, ~1s, both hosts
 make repo-amd64                           # OS/7's own SIGNED package repository
 ./installer/testing/check-os7-repo.py     # and the check that matters: install
                                           #   from it, in a plain ubuntu:26.04,
@@ -131,11 +146,74 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   unattended check's exit codes.
                                           #   Runs on BOTH hosts since
                                           #   2026-08-28 (amd64: KVM in Docker)
+./installer/testing/run-secureboot.py all # SECURE BOOT ON A MACHINE, and the
+                                          #   only harness here that boots the
+                                          #   MEDIUM through its own bootloader
+                                          #   - `-cdrom`, no `-kernel`, the
+                                          #   firmware finding shim by itself
+                                          #   (#134: every other one boots
+                                          #   around it, which is how an
+                                          #   unsigned loader lived on the ISO
+                                          #   for months). It types at GRUB's
+                                          #   command line to get a console,
+                                          #   because the product's menu puts
+                                          #   none there and should not. Four
+                                          #   phases: `medium` asks the live
+                                          #   system (SecureBoot enabled, the
+                                          #   kernel's own line, lockdown
+                                          #   [integrity], and zfs.ko loading
+                                          #   under it), `install` installs from
+                                          #   that verified medium, `disk` boots
+                                          #   it with NO medium and requires the
+                                          #   TPM to unseal with nothing typed,
+                                          #   and `policy` is the control: the
+                                          #   same disk under non-enforcing
+                                          #   firmware MUST ask for the
+                                          #   passphrase, and must still take
+                                          #   it. 32 ok on amd64 2026-09-08;
+                                          #   arm64 UNRUN. It is also what
+                                          #   corrected #100 - the install-time
+                                          #   seal DOES open, once the sealing
+                                          #   session itself booted through shim
+./installer/testing/check-secureboot-logic.py
+                                          #   Get-OS7SecureBoot's DECISIONS,
+                                          #   against fake roots: three
+                                          #   outcomes per answer, because
+                                          #   "not a UEFI machine", "this
+                                          #   firmware has no Secure Boot" and
+                                          #   "supported but off" send an
+                                          #   operator three different places.
+                                          #   Two cases carry real defects and
+                                          #   are proven to FIRE via
+                                          #   OS7_SB_MODULE: the efivarfs
+                                          #   ATTRIBUTE byte (0x07, truthy for
+                                          #   every variable in the store) and
+                                          #   the BRACKETED lockdown mode
+                                          #   (`none [integrity] …` - the
+                                          #   first word is the wrong answer).
+                                          #   19 checks, seconds, needs pwsh
+./installer/testing/check-module-parts.py # the OS7 module is one directory
+                                          #   named in FOUR places - the .psm1
+                                          #   foreach, hook 0060, the .deb's
+                                          #   required paths and the manifest's
+                                          #   exports - and build-os7-
+                                          #   packages.sh said of its own list
+                                          #   "asserted equal by nothing".
+                                          #   Now asserted. It also holds
+                                          #   POWERSHELL-REFERENCE.md's counts
+                                          #   against Get-Command, which were
+                                          #   stale by 19 the day it was
+                                          #   written. Seconds, no Docker
 ./installer/testing/check-vm-arch.py      # the harness port's own check: the
                                           #   arm64 command lines byte-identical
                                           #   to the pre-port construction, the
-                                          #   amd64 ones by property. No QEMU,
-                                          #   no Docker, ~2s, both hosts
+                                          #   amd64 ones by property - and the
+                                          #   Secure Boot firmware mode, whose
+                                          #   strongest check builds a whole
+                                          #   command line both ways and
+                                          #   requires EXACTLY ONE argument to
+                                          #   differ. No QEMU, no Docker, ~2s,
+                                          #   both hosts, 71 checks
 ./installer/testing/shoot-manual.py       # the administrator manual's pictures,
                                           #   taken from a machine: boot an
                                           #   installed disk with NO medium, log
@@ -313,9 +391,17 @@ pair reached by a road nothing checks.
 matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/` and `powershell/Directory/` are the generic layers — none
 knows anything about OS/7, and all five would run on any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is 109 of the 202 functions
-(101 of 194 until eight AD cmdlets landed on 2026-09-07; 95 of 185 until the
-scheduled-task surface landed on 2026-08-29).
+`powershell/OS7/` is the product layer on top, and it is **126 of the 221
+functions** — measured 2026-09-08 by asking the modules, which is the only way
+this line has ever been right for long. It said "109 of 202" that morning and
+had been wrong for two commits: Systemd had grown `Get-SystemdSession` and OS7
+the Remote Desktop session verbs and the account lockout, neither of which
+touched the file. **`check-module-parts.py` now holds this count and the six
+per-module rows in [docs/POWERSHELL-REFERENCE.md](docs/POWERSHELL-REFERENCE.md)
+against `Get-Command`**, so the next drift fails a check instead of surviving
+in prose. (Earlier readings, kept because they date the surface: 101 of 194
+until eight AD cmdlets landed on 2026-09-07; 95 of 185 until the
+scheduled-task surface landed on 2026-08-29.)
 Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units and **P2-directory**
 about the directory; `check-layering.py` holds **all five** at baselines that may
@@ -625,9 +711,19 @@ the ones a fresh session hits first.
 - **#69 — sealing to PCR 7 from the installer seals against the INSTALLER's
   PCR 7.** The live session boots with `-kernel`; the installed machine boots
   through shim, which extends PCR 7. Same TPM, different measurement, and
-  `cryptsetup` says "TPM policy does not match current system state". Enrolment
-  belongs on FIRST BOOT, which is why spike S4 worked and the install step does
-  not.
+  `cryptsetup` says "TPM policy does not match current system state".
+  **This paragraph then said "enrolment belongs on FIRST BOOT" and that was the
+  HARNESS talking** (measured 2026-09-08, #100): PCR 7 measures the Secure Boot
+  policy and the CERTIFICATE shim validated with, not the binary — which lands
+  in PCR 4 and is not sealed to. Boot the medium the way a person does, through
+  shim, and the live session's PCR 7 equals the installed machine's: the
+  install-time seal opens on the first boot, twice, in
+  `./installer/testing/run-secureboot.py`. What still moves PCR 7 for real is a
+  shim or `dbx` update after the install (S6, and `run-secureboot.py policy`),
+  so the UL1 firstboot re-seal keeps its job — as a belt for a policy CHANGE
+  rather than for every install. Under `-kernel` shim never runs at all, which
+  is why spike S4 worked and every harness that boots that way saw the other
+  answer.
 - **#67 — `10_linux_zfs` lists ONE boot environment per machine without zsys.**
   Its `history` section is zsys-only, and the running environment always sorts
   first, so a second one can never appear in a menu generated from the first.
@@ -797,4 +893,8 @@ amd64 ISOs are built routinely on the x64 Windows host, four of them carried the
 update train through its gate, and `out/` holds several
 ([SESSION-AMD64-ON-WINDOWS.md](docs/SESSION-AMD64-ON-WINDOWS.md),
 [SESSION-UPDATE-DELIVERY.md](docs/SESSION-UPDATE-DELIVERY.md)). What is arm64-only
-is the DESKTOP evidence and every `run-*.py` harness except `run-s5.py`.
+is the DESKTOP evidence and every `run-*.py` harness except `run-s5.py`,
+`run-phase3.py` (`install` and `walk`; not `boot`, #132) and
+`run-secureboot.py` — and the last of those inverts the usual direction:
+**Secure Boot on a machine is measured on amd64 and UNMEASURED on arm64**,
+because no arm64 ISO has been built with the signed medium yet.

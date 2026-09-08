@@ -5286,7 +5286,7 @@ with nothing visibly mounted. Whether the PRODUCT should ship a serial console
 on the server image is a real question (§6 wants every cmdlet usable over
 serial) and is left open rather than decided by a test harness.
 
-## #100 — the install-time TPM seal does not open through shim: #69, now measured
+## #100 — the install-time TPM seal did not open through shim, because the SEALING session had not booted through shim either (#69, measured twice)
 
 **2026-08-28, the first amd64 boot of a machine this repository installed.**
 The enrolment was perfect — token in slot 1, sealed to PCR 7, handler and
@@ -5309,6 +5309,34 @@ is the product's own version of the same move — it asks whether the seal opens
 against THIS boot and re-enrols when it does not. Unattended re-enrolment
 still needs a secret nobody escrows: U8 is open and the migration says so out
 loud instead of failing the boot.
+
+**2026-09-08 — AND THE CAUSE WAS THE VEHICLE, MEASURED.** `run-secureboot.py`
+boots the medium the way a person does: `-cdrom`, no `-kernel`, the firmware
+finding shim on the medium itself. Install from THAT live session, under
+Microsoft-keyed OVMF, and the installed machine's **first** boot unlocks from
+the TPM with nothing typed — the install-time seal opens.
+
+Which is what the physics says once both ends are looked at. PCR 7 measures
+the Secure Boot policy AND the certificate shim used to validate what it
+loaded; the live session's shim validates `gcdx64.efi` and the installed
+machine's shim validates `grubx64.efi`, both against the same Canonical
+certificate, so PCR 7 agrees. The BINARIES differ and land in PCR 4, which
+`--tpm2-pcrs=7` does not seal to. Under `-kernel` shim never runs at all,
+which is the different measurement #100 saw.
+
+So the sentence "the install-time seal does not open through shim" is too
+strong: it does not open when the SEALING session did not itself boot through
+shim. **UL1 keeps its job** — a shim or dbx update after the install moves
+PCR 7 for real, which is S6's finding and U8's question, and
+`run-secureboot.py policy` now measures that from the machine's own mouth:
+
+    OS/7 TPM: the TPM would not unlock os7_root - the passphrase still works
+    Please unlock disk os7_root: TPM policy does not match current system
+    state. Either system has been tempered with or policy out-of-date
+
+What changes is the ROUTINE case. A machine installed from a Secure-Boot-on
+medium onto Secure-Boot-on firmware needs no re-enrolment at all, and the
+harnesses that said otherwise were reporting their own `-kernel` boot.
 
 ## #101 — a worktree made by Windows git is unreadable to WSL git
 
@@ -7194,3 +7222,216 @@ GNU GRUB  version 2.14
 Anything asserting on the medium's boot can therefore assert on strings, which
 is what a harness should do; the screendump is only needed once the kernel has
 taken the console, because the installed system carries no `console=` (#132).
+
+## #135 — `expect` matches the ACCUMULATED buffer, so waiting twice for the same pattern returns instantly
+
+**2026-09-08, the first run of `run-secureboot.py policy`.** The phase waits
+for the passphrase prompt, types the passphrase, and waits again — for a login
+prompt, or for the passphrase prompt a second time, which would mean the
+keyslot did not open:
+
+```python
+i = c.expect([r"unlock disk", …], 900, "the passphrase prompt")   # matched
+c.send(PASSPHRASE)
+i = c.expect([r"\blogin:", r"unlock disk"], 600, "a login")       # matched at once
+```
+
+The second call returned **immediately with index 1**, out of the text the
+FIRST one had already matched, and the harness reported that the passphrase
+had been rejected on a machine that was about to accept it. There is no
+"still waiting" line in the log, which is the tell: the failure took no time
+at all.
+
+`Console.buf` accumulates until something calls `drop()`, and `ask()` drops
+before every command — which is why nothing else in the repository had hit
+this. A bare `expect` after another `expect` is the one place it bites.
+
+**The rule: `drop()` before waiting for something you have just waited for.**
+And it is worth waiting for the negative case explicitly rather than letting a
+timeout stand in for it — a rejected passphrase and a hung boot are different
+findings, and a 600-second silence does not distinguish them. This is #16's
+family: there the marker was one the typed command carried, here it is one the
+previous wait had already consumed.
+
+## #136 — booting through the firmware makes its NVRAM state, and `-boot d` does not overrule OVMF's BootOrder
+
+**2026-09-08, the first two `run-secureboot.py all` runs.** The phase that
+boots the install medium sat at
+
+```
+OS/7 TPM: no /dev/tpmrm0 - falling back to the passphrase
+Please unlock disk os7_root:
+```
+
+for a machine it was not about — and the run after that reached
+
+```
+BdsDxe: failed to load Boot0008 "OS/7" from HD(1,GPT,…)/\EFI\OS7\shimx64.efi: Not Found
+>>Start PXE over IPv4.
+```
+
+without ever trying the CD-ROM. Both are the same cause: `grub-install` writes
+an NVRAM boot entry during the install, that entry lives in the **firmware
+variable store**, and OVMF honours its own `BootOrder`. `-boot d` is a hint to
+QEMU's own boot logic, not an instruction to a UEFI firmware.
+
+So a variable store is not a scratch file. It carries the machine's boot
+options, which means:
+
+* a medium phase run after an install boots the **disk**;
+* the same phase run after the disk was wiped boots **nothing** and goes to
+  the network, because the entry survives the filesystem it names.
+
+`run-secureboot.py` therefore keeps THREE stores, and the reason each exists is
+in the code: one made fresh for the medium (which also attaches no disk), one
+made fresh at the start of an install and then carried into the disk phase
+BECAUSE the install's own NVRAM entry is what a real machine boots from, and a
+non-enforcing one for the policy control.
+
+**Every other harness here is immune, and that is the tell.** They hand QEMU
+`-kernel`, so the firmware is never asked what to boot and its NVRAM never
+matters — the same blind spot as #134, one layer further in. Anything that
+starts booting through the firmware inherits this.
+
+## #137 — a `str.replace()` that matches nothing changes nothing and says so cheerfully
+
+**2026-09-08.** A one-line fix to `run-secureboot.py` was applied with a Python
+script piped into `python -`, and the anchor it searched for contained an
+em-dash. It matched nothing, `replace()` returned the string unchanged, the
+script wrote the file and exited 0 — and the harness ran a 20-minute VM cycle
+with the fix absent. The grep that would have caught it was run and read too
+quickly: the call site simply was not in the output.
+
+The cause is narrow and worth knowing on this host: **Python reading a script
+from stdin does not necessarily decode it as UTF-8 on Windows**, so a non-ASCII
+character in the source of the search string is not the byte sequence the file
+holds. The fix in the file was UTF-8; the needle was not.
+
+Two rules, and the second is the general one:
+
+* **Anchor on ASCII** when scripting an edit, or read and write with an
+  explicit encoding on both ends.
+* **Assert the replacement happened.** `assert old in s` before replacing, or
+  compare lengths after. This is #13's shape and #66's — a tool that reports
+  success for having done nothing — arriving through the editor rather than
+  through live-build or unsquashfs.
+
+## #138 — a wall of "Couldn't download package" is an upstream 503, not your change
+
+**2026-09-08.** `make build-amd64` died with one warning per package —
+
+```
+W: Couldn't download package zlib1g (ver 1:1.3.dfsg+really1.3.1-1ubuntu3 arch amd64)
+   at https://snapshot.ubuntu.com/ubuntu/20260824T000000Z/pool/main/z/zlib/…
+E: Couldn't download packages: networkd-dispatcher libtext-wrapi18n-perl …
+P: Begin unmounting filesystems...
+chroot: failed to run command '/usr/bin/env': No such file or directory
+```
+
+— which reads as a broken chroot, and the last line reads as a broken image.
+Both are consequences. The `chroot: /usr/bin/env` line is the CLEANUP running
+in a chroot that was never populated, and every warning above it is the same
+fact repeated 300 times.
+
+The one measurement that separates "my change broke the build" from "the
+archive is away" is a single request:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://snapshot.ubuntu.com/ubuntu/20260824T000000Z/dists/resolute/Release
+```
+
+It answered **503** while `archive.ubuntu.com` answered 200, and **200 on the
+first retry twenty seconds later**. snapshot.ubuntu.com rate-limits or blips;
+the pin points every source at it (that is the point of the pin), so a blip is
+a total build failure and looks like nothing else.
+
+Debootstrap having succeeded is not evidence against this: the Release file and
+the early stages come from a different path than the pool, and the log's own
+shape says so — `Valid Release signature` appears *above* the 300 warnings.
+
+**Retry once before debugging anything.** And when a build fails, read the
+FIRST error rather than the last: here the last line is about `/usr/bin/env`
+and has nothing to do with the cause.
+
+**AND IT IS NOT A ONE-OFF — it was measured.** The retry brought the build to
+the Cascadia font fetch and died there the same way:
+
+```
+fetching https://snapshot.ubuntu.com/…/fonts-cascadia-code_2407.24-3_all.deb
+curl: (22) The requested URL returned error: 503
+curl: (22) The requested URL returned error: 503
+curl: (22) The requested URL returned error: 503
+curl: (22) The requested URL returned error: 503
+```
+
+Twelve requests to that exact URL answered **9 × 200 and 3 × failure (000,
+500, 502)** — roughly a quarter, spread out rather than bursty. A build makes
+hundreds of requests, so at that rate SOME fetch fails on nearly every build,
+and a fetch with four attempts is not enough.
+
+`build-os7-packages.sh` already knew this and the other three fetches did not:
+
+```
+curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors    # it
+curl -fsSL --retry 3                                                          # them
+```
+
+So `build-console-font.sh`, `build-installed-console-font.sh` and
+`build-desktop-theme.sh` were brought up to the repository's own best-known
+form (`--retry 6 --retry-delay 4 --retry-connrefused --retry-all-errors`).
+Plain `--retry` does cover 5xx; what it does not cover is a refused
+connection or a reset, and three attempts against a one-in-four failure rate
+is a coin toss. **The general shape: one hardened call site and three
+unhardened ones is the same defect as one specification written twice** — the
+knowledge was in the repository and not where it was needed.
+
+## #139 — `send_script` corrupts any file whose lines start with a TAB, because readline reads TAB as completion
+
+**2026-09-08.** `run-s5.py`'s `send_script()` writes a file into a guest by
+typing one line at a time:
+
+```python
+c.send(f"printf '%s\n' '{safe}' >> /tmp/{name}")
+```
+
+which is deliberate and documented — a heredoc would need `expect` to match a
+terminator the typed text itself contains, which is #16. It has worked for
+every script this repository pushes, and every one of those is a SHELL script
+indented with spaces.
+
+The first attempt to push a **PowerShell** file — `OS7.SecureBoot.ps1`, and the
+repository's PowerShell style indents with tabs — produced this on the serial
+line:
+
+```
+bash-5.3# printf '%s\n' '.$supported = $false' >> /tmp/OS7.SecureBoot.ps1
+./             .azure/        .bashrc        .gnupg/        .profile
+../            .bash_history  .cache/        .local/        .ssh/
+```
+
+**The guest's bash is interactive, so readline owns the TAB key.** A leading
+tab inside the single-quoted argument is typed at a readline that treats it as
+filename completion: the directory gets listed into the middle of the file, the
+line is mangled, and `wc -l` afterwards still reports a plausible number. The
+file that arrives is not the file that was sent, and nothing says so.
+
+`printf %s` is innocent here; the corruption happens before bash ever parses
+the line.
+
+**Base64 is the transport that has none of these properties** — no tabs, no
+quotes, no shell metacharacters, no line structure at all:
+
+```python
+for i in range(0, len(b64), 512):
+    c.send(f"printf %s {b64[i:i + 512]} >> /tmp/x.b64")
+ask(c, "base64 -d /tmp/x.b64 > /tmp/x.ps1")
+```
+
+and the arrival is then checked the only way that means anything: `sha256sum`
+on the machine against the hash of the bytes in the repository. A length check
+would have passed on the corrupted file, because the directory listing that
+replaced the indentation was about as long as the indentation.
+
+Anything pushing a non-shell file into a guest over a console should use that
+shape. `send_script` is fine for what it was written for and should say so.

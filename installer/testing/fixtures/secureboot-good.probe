@@ -1,5 +1,5 @@
 # check-image.py --self-test: the readings a CORRECTLY assembled medium
-# produces, for secureboot_checks(). Recorded from OS7-1.0.0.192-amd64.iso
+# produces, for secureboot_checks(). Recorded from OS7-1.0.0.193-amd64.iso
 # by `check-image.py --record-secureboot amd64` — do not edit by hand.
 #
 # That ISO is a medium that BOOTS with Secure Boot on: Microsoft-keyed OVMF,

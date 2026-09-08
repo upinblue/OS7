@@ -179,7 +179,13 @@ def main():
     for lang in ("de", "en"):
         path = os.path.join(HERE, TEXT[lang]["file"])
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        # newline="\n" EXPLICITLY. Run on Windows, Python translates every \n
+        # to CR LF on the way out, so the same generator produces different
+        # BYTES on the two hosts this repository is built on and git spends
+        # every commit normalising a file it was handed wrong. BUILD-NOTES #70's
+        # family, and the same rule check-image.py's bash_syntax() states: the
+        # encoding is decided here, because here is the only place that can.
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(render(commands, lang))
         print("    " + TEXT[lang]["file"])
 

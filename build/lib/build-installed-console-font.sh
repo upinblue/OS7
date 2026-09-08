@@ -89,7 +89,15 @@ mkdir -p "${CACHE_DIR}"
 DEB_PATH="${CACHE_DIR}/${DEB}"
 if [[ ! -f "${DEB_PATH}" ]]; then
 	echo "    fetching ${URL}"
-	curl -fsSL --retry 3 -o "${DEB_PATH}.part" "${URL}"
+	# --retry-all-errors AND --retry-connrefused, which is the form
+	# build-os7-packages.sh already used and these three did not.
+	# snapshot.ubuntu.com serves an intermittent 503/500/502 - measured
+	# 2026-09-08 at 3 failures in 12 requests - and a build makes
+	# hundreds of them, so one unlucky fetch is a total build failure
+	# that reads like a broken tree (BUILD-NOTES #138). Plain --retry
+	# does cover 5xx; what it does not cover is a connection refused or
+	# a reset, and three attempts at a 25%% failure rate is not enough.
+	curl -fsSL --retry 6 --retry-delay 4 --retry-connrefused --retry-all-errors -o "${DEB_PATH}.part" "${URL}"
 	mv "${DEB_PATH}.part" "${DEB_PATH}"
 fi
 

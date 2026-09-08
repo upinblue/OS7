@@ -77,7 +77,15 @@ FONT_DEB="${WORK}/classicfonts.deb"
 FONT_URL="${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}/${OS7_CLASSICFONT_POOL}"
 
 echo "    fetching ${OS7_CLASSICFONT_POOL}"
-curl -fsSL --retry 3 -o "${FONT_DEB}" "${FONT_URL}"
+# --retry-all-errors AND --retry-connrefused, which is the form
+# build-os7-packages.sh already used and these three did not.
+# snapshot.ubuntu.com serves an intermittent 503/500/502 - measured
+# 2026-09-08 at 3 failures in 12 requests - and a build makes
+# hundreds of them, so one unlucky fetch is a total build failure
+# that reads like a broken tree (BUILD-NOTES #138). Plain --retry
+# does cover 5xx; what it does not cover is a connection refused or
+# a reset, and three attempts at a 25%% failure rate is not enough.
+curl -fsSL --retry 6 --retry-delay 4 --retry-connrefused --retry-all-errors -o "${FONT_DEB}" "${FONT_URL}"
 
 GOT="$(sha256sum "${FONT_DEB}" | cut -d' ' -f1)"
 if [[ "${GOT}" != "${OS7_CLASSICFONT_SHA256}" ]]; then

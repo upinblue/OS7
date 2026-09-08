@@ -72,6 +72,13 @@
 		# problem starts presenting as an authentication problem.
 		'Set-OS7TimeZone', 'Get-OS7Time', 'Get-OS7TimeSynchronization',
 		'Set-OS7TimeSynchronization', 'Sync-OS7Time',
+		# Implemented - Secure Boot. THREE outcomes per answer, because "not a
+		# UEFI machine", "no Secure Boot support in this firmware" and
+		# "supported but switched off" send an operator three different
+		# places. Reads the UEFI variable, not mokutil: measured 2026-09-08,
+		# mokutil answers "disabled" under one firmware and "doesn't support
+		# Secure Boot" under another, and only one of those can be turned on.
+		'Get-OS7SecureBoot',
 		# Implemented - remoting. Get-OS7Remoting answers from `sshd -T`, not
 		# from a file: sshd_config includes a whole directory and a Match block
 		# can change the answer per user, so the file says what somebody wrote
