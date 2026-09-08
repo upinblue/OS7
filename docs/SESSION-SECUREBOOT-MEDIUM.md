@@ -629,9 +629,22 @@ mistakes it for a measurement.
 ## What was NOT measured
 
 * **Nothing was booted.** Not one claim in this document is a boot result.
-* **arm64: the code path is measured, the medium is not.**
-  `out/os7-arm64.iso` is still 1.0.0.175, built before any of this. What
-  changed on 2026-09-08 is that arm64 containers run here at all —
+* ~~**arm64: the code path is measured, the medium is not.**~~ **The medium is
+  measured too, since 2026-09-09** — `OS7-1.0.0.194-arm64.iso` was built on
+  the x64 Windows host under emulation and `check-image.py arm64` passes on
+  it: `BOOTAA64.EFI` is Microsoft-signed shim, `grubaa64.efi` beside it is
+  `gcdaa64` (prefix `/boot/grub`, hash `cfc15dd8e3794369…` on both sides of
+  the medium), `mmaa64.efi` is there, the `$cmdpath` stub is there, and the
+  kernel is Canonical-signed. **#12/#23 has no mirror image** (BUILD-NOTES
+  #140): amd64 cannot be built on Apple Silicon, and arm64 CAN be built on
+  x86_64 — emulated, about an hour and a half against five minutes native,
+  after registering the binfmt handler Docker Desktop was missing.
+
+  So what arm64 still owes is exactly one thing: a **BOOT**.
+  `run-secureboot.py all` needs HVF and therefore the Mac. The paragraph below
+  was written before that, when `out/os7-arm64.iso` was still 1.0.0.175 and
+  the code was the open question. What changed first, on 2026-09-08, is that
+  arm64 containers run here at all —
   `docker run --privileged tonistiigi/binfmt --install arm64` registered the
   handler that was missing, and `docker run --platform linux/arm64` had been
   answering `exec format error`. With that, the `aa64` branch of
@@ -646,11 +659,10 @@ mistakes it for a measurement.
   extracted tree, exit 0. So the file names and the resolution are right on
   arm64, measured rather than substituted.
 
-  **What arm64 still owes is one `make build-arm64` (emulated here, native on
-  the Mac), one `check-image.py arm64`, and one `run-secureboot.py all`** —
-  the last of which needs HVF and therefore the Mac. Note the inversion this
-  creates: Secure Boot on a machine is the first thing in this repository
-  measured on amd64 and unmeasured on arm64.
+  Both of those turned out to be doable here, which is what the paragraph
+  above records. Note the inversion the remainder creates: Secure Boot on a
+  machine is the first thing in this repository measured on amd64 and
+  unmeasured on arm64.
 * ~~**Whether a medium assembled this way boots.**~~ Measured in §7: it does,
   under Microsoft keys. What is still unmeasured is everything AFTER the
   welcome screen — no install has been performed from a Secure-Boot-on medium,

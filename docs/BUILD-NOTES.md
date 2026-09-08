@@ -7435,3 +7435,44 @@ replaced the indentation was about as long as the indentation.
 
 Anything pushing a non-shell file into a guest over a console should use that
 shape. `send_script` is fine for what it was written for and should say so.
+
+## #140 — arm64 ISOs CAN be built on the x64 host under emulation: #12/#23 has no mirror image
+
+**2026-09-09.** #12/#23 says amd64 ISOs cannot be built on Apple Silicon:
+debootstrap's tar hits ENOSYS under Docker's emulation and the build dies.
+The obvious inference is that the reverse fails too, and CLAUDE.md's host
+table has read that way since it was written — arm64 builds on the Mac, amd64
+on the Windows box, and neither crosses.
+
+**The reverse works.** `docker run --privileged --rm tonistiigi/binfmt
+--install arm64` registers the handler Docker Desktop was missing (before it,
+`docker run --platform linux/arm64` answers `exec format error`), and then
+
+    make build-arm64
+
+completes on the x64 Windows host and produces a working artefact:
+
+```
+>>> arm64 EFI: shim=shimaa64.efi.signed.latest (987440 B), grub=gcdaa64 (2533256 B)
+>>> Done: /work/out/OS7-1.0.0.194-arm64.iso
+```
+
+`check-image.py arm64` then passes on it — every check, including the Secure
+Boot chain with the `aa64` names, `mmaa64.efi`, the `$cmdpath` stub and the
+Canonical-signed kernel. That check needs the emulated container too and also
+runs here now.
+
+**Slow, not broken.** The build's own recorded timestamp to the finished ISO
+is about an hour and a half, against roughly five minutes native. Every
+package unpacks through qemu-user, and the six PowerShell module self-tests in
+`check-image.py` run interpreted twice over.
+
+This is an OBSERVATION, not an explanation: nothing here says why aarch64-on-
+x86_64 emulation survives what x86_64-on-aarch64 does not, and the syscall
+#12/#23 names may simply be one qemu-user target's gap. Do not turn it into a
+rule in the other direction without measuring.
+
+**What it changes.** The arm64 MEDIUM no longer needs a Mac — it can be built
+and read here, so it stops drifting behind amd64 the way it had (its ISO was
+1.0.0.175 while amd64 was at .193). What still needs the Mac is every arm64
+BOOT: HVF, and therefore `run-secureboot.py`, `run-phase3.py` and the spikes.
