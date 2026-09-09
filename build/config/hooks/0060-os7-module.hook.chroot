@@ -109,10 +109,38 @@ check_module Time Get-ChronyTracking Get-ChronySource Get-ChronySourceFile \
 # the case that turns the message column into System.Object[] if the parser
 # assumes a string. Naming the module here is what stops an image shipping
 # without the parser that handles it.
+#
+# ALL TWENTY-ONE ARE NAMED, since 2026-09-09, and the eight added that day are
+# the reason this comment grew. The list had thirteen while the manifest
+# promised twenty-one — the same two-filter shape the Net block above was paid
+# by, one layer further out: there it was Export-ModuleMember against
+# FunctionsToExport, here it is what the IMAGE is required to have against what
+# the module delivers. A short list does not fail; it simply stops being an
+# assertion about the part of the surface it does not mention.
+#
+# Two of them earn a sentence of their own:
+#
+#   Invoke-SystemdShutdown exists because PowerShell's own Restart-Computer on
+#   Linux runs `/usr/sbin/shutdown` with NO arguments, which on Ubuntu is
+#   systemctl's compatibility interface and whose flagless action is POWEROFF.
+#   An image shipping without it leaves every caller reaching for the thing
+#   that is wrong, and the symptom is a machine that does not come back.
+#
+#   Set-SystemdHostName is half of an operation: the name and /etc/hosts move
+#   together, because sudo resolves its own host name on every invocation. A
+#   machine that got the cmdlet and not the file resolves nothing.
+#
+# installer/testing/check-module-parts.py now requires every name here to be
+# one the module's manifest promises, so a typo in this list fails in seconds
+# instead of twenty minutes into a build.
 check_module Systemd Get-SystemdSession Stop-SystemdSession \
 	Get-SystemdUnit Start-SystemdUnit Stop-SystemdUnit \
 	Restart-SystemdUnit Set-SystemdUnitStartup Update-SystemdUnit Get-SystemdJournal \
 	Get-SystemdTimer New-SystemdTimer Remove-SystemdTimer \
+	Invoke-SystemdShutdown \
+	Get-SystemdUnitFreezerState Suspend-SystemdUnit Resume-SystemdUnit \
+	New-SystemdService Remove-SystemdService \
+	Get-SystemdHostName Set-SystemdHostName \
 	Test-SystemdModule
 # Directory is the fifth generic layer, and one name in this list is the reason
 # the line exists: Connect-DirectoryServer. Everything else the module exports is

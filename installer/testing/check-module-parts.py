@@ -200,7 +200,8 @@ def main():
           f"every one of the {len(exports)} exported names is defined somewhere",
           ", ".join(phantom) if phantom else "")
 
-    check_manifests_deliver()
+    promised = check_manifests_deliver()
+    check_hook_requires_real_functions(promised)
     check_reference_counts()
 
     print(f"\n  {_ok} ok, {_bad} failed")
@@ -223,6 +224,64 @@ MODULE_ROOT = os.environ.get("OS7_MODULE_ROOT") or os.path.join(REPO, "powershel
 
 def module_psd1(name):
     return os.path.join(MODULE_ROOT, name, name + ".psd1")
+
+
+def hook_required_functions(text):
+    """What hook 0060 requires each module to EXPORT, per `check_module` line.
+
+    Returns {module: {name, ...}}. The lines continue with backslashes and the
+    first word after the module name is a function, so the whole logical line
+    is joined before it is split.
+    """
+    out = {}
+    joined = re.sub(r"\\\s*\n\s*", " ", text)
+    for m in re.finditer(r"^check_module\s+([A-Za-z0-9]+)\s+(.*)$", joined, re.M):
+        name, rest = m.group(1), m.group(2)
+        out[name] = set(re.findall(r"\b([A-Z][A-Za-z]*-[A-Za-z0-9]+)\b", rest))
+    return out
+
+
+def check_hook_requires_real_functions(promised):
+    """Every function hook 0060 requires must be one the module PROMISES.
+
+    The hook runs inside the chroot during the ISO build and fails it when a
+    named function is not exported. That is the right behaviour and a slow way
+    to learn about a typo: the build has already spent twenty minutes by the
+    time it gets there. This is the same question asked in a second.
+
+    IT IS DELIBERATELY NOT "the hook names everything". Those lists are curated
+    — Zfs names nine of twenty-six, and its own comment says which name is the
+    reason each line exists. A rule demanding completeness would be arguing
+    with the file's design; a rule demanding that what it DOES name is real is
+    the part that can only be wrong by accident.
+
+    The coverage question is reported instead, so that a list which has fallen
+    behind its module is visible rather than silent — which is exactly what
+    happened to `check_module Systemd`: thirteen named, twenty-one promised,
+    for one day.
+    """
+    text = read(HOOK)
+    required = hook_required_functions(text)
+    if not required:
+        check(False, "hook 0060's check_module lines could be read")
+        return
+    for mod in MODULES:
+        want = required.get(mod, set())
+        if not want:
+            check(False, f"hook 0060 has a check_module line for {mod}")
+            continue
+        unreal = sorted(want - promised.get(mod, set()))
+        check(not unreal,
+              f"the {len(want)} functions hook 0060 requires of {mod} are all real",
+              "NOT PROMISED BY THE MANIFEST: " + ", ".join(unreal) if unreal else "")
+    # The note, not a rule: how much of each surface the image is held to.
+    short = [f"{m} {len(required.get(m, set()))}/{len(promised.get(m, set()))}"
+             for m in MODULES
+             if len(required.get(m, set())) < len(promised.get(m, set()))]
+    if short:
+        print("      note  hook 0060 holds the image to part of the surface: "
+              + ", ".join(short) + " — curated by design, but a list that has "
+              "fallen behind its module is invisible from inside the build")
 
 
 def check_manifests_deliver():
@@ -251,7 +310,7 @@ def check_manifests_deliver():
     if not shutil.which("pwsh"):
         print("      note  pwsh is not on this host; the manifests' promises "
               "were not checked")
-        return
+        return {}
     script = "; ".join(
         f"Import-Module {module_psd1(m)} -Force"
         for m in MODULES)
@@ -269,7 +328,7 @@ def check_manifests_deliver():
     if out.returncode != 0:
         check(False, "every module could be asked what it exports",
               (out.stderr or out.stdout).strip()[-200:])
-        return
+        return {}
     text = out.stdout.replace("\r", "")
     got = {}
     for kind in ("PROMISED", "DELIVERED"):
@@ -286,6 +345,10 @@ def check_manifests_deliver():
               ("PROMISED BUT NOT EXPORTED: " + ", ".join(missing) if missing else "")
               + ("; " if missing and extra else "")
               + ("exported but not promised: " + ", ".join(extra) if extra else ""))
+
+    # Handed on rather than measured twice: the hook rule needs the same
+    # promises and a second pwsh start costs more than every check here.
+    return {m: got[("PROMISED", m)] for m in MODULES}
 
 
 def check_reference_counts():
