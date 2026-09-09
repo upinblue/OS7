@@ -11,7 +11,7 @@ ZFS boot environments so an update can be undone — on top of Ubuntu 26.04 LTS.
 [![Root](https://img.shields.io/badge/root-ZFS%20on%20LUKS2-0057ad)](installer/SETUP-PLAN.md)
 [![Arch](https://img.shields.io/badge/arch-x86--64%20%7C%20arm64-555555)](#system-requirements)
 [![Status](https://img.shields.io/badge/status-preview-ff6912)](#status)
-[![Release](https://img.shields.io/badge/current-1.0.0.175%20preview-0057ad)](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview)
+[![Release](https://img.shields.io/badge/current-1.0.0.203%20preview-0057ad)](https://github.com/upinblue/OS7/releases/tag/v1.0.0.203-preview)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Made by [up in blue GmbH](https://github.com/upinblue)
@@ -19,19 +19,22 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 </div>
 
 > [!WARNING]
-> **The current state is a PREVIEW: [1.0.0.175](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview),
-> published 2026-09-03.** It is the first state of OS/7 ever published — `1.0.0` has
-> not shipped, and this is a preview of it. The machine says so itself: a person sees
-> `OS/7 1.0.0 (preview)` in `PRETTY_NAME`, `/etc/issue`, the MOTD and every Setup screen.
+> **The current state is a PREVIEW: [1.0.0.203](https://github.com/upinblue/OS7/releases/tag/v1.0.0.203-preview),
+> published 2026-09-09.** `1.0.0` has not shipped; this is the second preview of it, after
+> [1.0.0.175](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview) on
+> 2026-09-03. The machine says so itself: a person sees `OS/7 1.0.0 (preview)` in
+> `PRETTY_NAME`, `/etc/issue`, the MOTD and every Setup screen.
 >
 > **Both architectures install and boot** — arm64 as a server, x86-64 as a desktop with
-> GNOME, Edge, the Intune portal and VS Code. Entra ID sign-in does not work yet — the
-> broker is absent from the image — no OS/7 machine
-> has ever joined a domain, and the backup code has never run on a machine. Please don't
-> put this on hardware you care about.
+> GNOME, Edge, the Intune portal and VS Code. **x86-64 boots under Secure Boot since this
+> release**, measured on a machine to an installed disk that unlocks itself from the TPM;
+> on arm64 the same signed chain is on the medium and has never been booted under
+> enforcing firmware. Entra ID sign-in does not work yet — the broker is absent from the
+> image — and the backup code has never run on a machine. Please don't put this on
+> hardware you care about.
 >
-> What was measured for 1.0.0.175, and what was not, is listed in the
-> [release notes](https://github.com/upinblue/OS7/releases/tag/v1.0.0.175-preview).
+> What was measured for 1.0.0.203, and what was not, is listed in the
+> [release notes](https://github.com/upinblue/OS7/releases/tag/v1.0.0.203-preview).
 > [What works](#status) is listed below.
 
 ---

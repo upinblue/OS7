@@ -329,3 +329,45 @@ Both media from `42156cf6bda2`, clean tree, `reproducible: true`.
 Green on `45d00f8` (§3) and unchanged by the two fixes since, except
 `check-os7-repo.py`, which grew the eight-check refusal section and is green
 with it.
+
+---
+
+## 7. os7.org does not currently serve the site, and the release notes link to it
+
+**Measured 2026-09-09, after the deploy succeeded.** The site is deployed and
+correct — every page is in the webspace's document root with a 22:55 timestamp,
+`manual/1.0.0.203/` holds both PDFs, and `iso/` holds both media with a
+`SHA256SUMS` read back off the server and identical to what
+`make-release-dir.py` measured. `check-sitemap.py` is 17 ok and
+`check-htaccess.py` 54 ok against a real Apache.
+
+**And the domain does not point at it:**
+
+| | |
+|---|---|
+| `os7.org` A record (asked of `1.1.1.1`, not this machine's resolver) | `80.158.111.94` |
+| the Hetzner webspace the site is deployed to | `167.235.125.41` |
+| `80.158.111.94:80` | open — answers `403` for `Host: os7.org` |
+| `80.158.111.94:443` | **closed** |
+| `https://os7.org/download` | connection timeout |
+
+So the download links this release publishes — in the GitHub release notes, on
+the download page itself, and in `releases.json` — resolve to a host that has no
+HTTPS listener and refuses HTTP. Nothing in this session touched DNS, and the
+webspace half of the publication is complete and verifiable; what is missing is
+the record that points the name at it. `os7-web`'s README says the site went
+live on `os7.org` on 2026-08-30 from Hetzner Webhosting, so this is a change
+since then rather than something that never worked.
+
+**What that means for the release, stated rather than softened:** the apt
+repository is published, verified from outside over the real transport and
+usable by machines. The ISOs are on the webspace at the exact paths the pages
+name. The public *download* path is dead until the A record points at
+`167.235.125.41` (and the certificate follows), and until then the media are
+reachable only from the Storage Box, which needs a credential.
+
+**And the process lesson, which is mine:** I published links to a host I had not
+asked whether it answers. Every artefact in this release was verified by asking
+the thing itself; the one exception was the one an ordinary reader would try
+first. RELEASE-PROCESS §3 step 10 says to verify from outside — it names apt and
+`Get-OS7Release`, and it should name the download page too.

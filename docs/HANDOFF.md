@@ -83,6 +83,39 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**1.0.0.203 IS PUBLISHED (2026-09-09), and it is the second preview.** Both
+media from `42156cf`, clean tree, `reproducible: true`; the signed apt
+repository on the Storage Box now holds **both** releases with 1.0.0.203's index
+entry recording that it supersedes 1.0.0.175; os7.org offers the new images and
+the versioned manual; the GitHub pre-release carries the changelog and the
+descriptors. What that run measured, and the five defects it found, is
+[SESSION-PREVIEW-203.md](SESSION-PREVIEW-203.md).
+
+**Three things it leaves owed, in the order they cost:**
+
+1. **UL6 has never been satisfied and now has a release that says so.** No
+   `archive/<version>/<arch>/*.deb` exists for 1.0.0.175 or 1.0.0.203, and no
+   tool builds one — §4's layout is proposed, not built. So the reproducibility
+   claim rests on `snapshot.ubuntu.com`, for which Canonical publishes no
+   retention guarantee. Defensible for a preview; not for a `stable`.
+2. **#144: two amd64 builds from one pin do not hold the same package set.**
+   Edge, the Intune portal, the identity broker and VS Code come unpinned from
+   the live `packages.microsoft.com`; only pwsh is pinned by version and hash.
+   Measured by accident — two media an hour apart differed by 7 MB because
+   `code` moved upstream. Pinning the four turns every Edge release into a
+   release event (§3.4 says that is the intended shape) and is the honest fix.
+3. **#145 is a one-line fix and it is not made**: `OS7_CHANNEL` belongs in
+   `build-os7-packages.sh`'s env-preservation list beside the other three.
+
+**And the release process itself now owes a rule it learned the hard way.**
+Both of the rebuilds this release cost were defects in measuring instruments
+(#143, #141), and both were found *after* the media were built. The gate list in
+[RELEASE-PROCESS.md](RELEASE-PROCESS.md) §2 is what it is for; what it does not
+say is that the tooling changed in the same commit as the pin should be
+exercised BEFORE the media are cut. It cost two amd64 builds and one arm64 build
+to learn that.
+
+
 **SECURE BOOT IS FINISHED ON amd64 AND OWES arm64 EXACTLY ONE THING: A BOOT
 (2026-09-09).** `./installer/testing/run-secureboot.py all` is 32 ok on this
 host — the medium boots through its own signed bootloader under Microsoft-keyed

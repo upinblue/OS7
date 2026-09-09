@@ -8,11 +8,19 @@ must be green before any of them may. **This file decides only those three
 things.** Where it appears to contradict a plan, the plan wins and this file is
 wrong.
 
-Nothing here has been executed end to end. **No OS/7 release has ever been
-published**, the version has been `1.0.0.<build>` for every build this
-repository has ever made, and `OS7_VERSION_PATCH` has never moved. This document
-is the sequence that first publication is meant to follow, written before it
-happens rather than reconstructed after.
+**This has now been executed end to end, twice** — 1.0.0.175 on 2026-09-03 and
+1.0.0.203 on 2026-09-09. The paragraph here said "nothing here has been executed
+end to end" until the second run, five days after it stopped being true, which is
+itself the argument for the sentence below: a document that describes a process
+has to be corrected by the process.
+
+The version has been `1.0.0.<build>` for every build this repository has ever
+made and `OS7_VERSION_PATCH` has never moved, both still true. What the second
+run added is worth reading before the third: **§4.2 is built** (the credential a
+published repository needs), and the run cost **two rebuilds of both media**
+because the gate found two defects — in the release tooling itself, not in the
+product (BUILD-NOTES #143 and #141). Steps 1–7 are reversible for exactly this
+reason. [SESSION-PREVIEW-203.md](SESSION-PREVIEW-203.md) is that run's record.
 
 ---
 
@@ -90,12 +98,15 @@ host that can run them, because that is the thing a single operator forgets.
 | `check-vm-arch.py` | either | The Mac's QEMU command lines are still byte-identical to the pre-port construction. |
 | `check-image.py <arch>` | either | **Per architecture, on the artefact** — the shipped `sources.list`, dpkg ownership, the branded identity. |
 | `run-s5.py all` | amd64: this box · arm64: the Mac | **The machine gate.** Install, TPM boot, cycle, `Update-OS7` against a served repository, the unattended timer. |
-| `run-phase3.py all` | the Mac | Install, boot with no medium, install again by keypress. Still the #74 gate, still unrun since the fix. |
+| `run-phase3.py install` and `walk` | amd64: this box · arm64: the Mac | Install, then install again **by keypress**. `boot` cannot run on amd64 — an installed machine there has no `console=` and the phase watches the serial line (#132). |
+| `run-secureboot.py all` | amd64: this box · arm64: the Mac | **Secure Boot on a machine**, and the only harness that boots the MEDIUM through its own bootloader. Added to this table 2026-09-09, when it first gated a release. |
 
 **arm64's evidence standard is lower than amd64's, and that is a decision, not
-an oversight.** As of 2026-08-30 arm64 gets `check-image.py` — 93 checks, green
-on an ISO built on the x64 host (§7.1) — and no boot gate, because no aarch64
-host with hardware virtualisation is in the release loop.
+an oversight.** As of 1.0.0.203 arm64 gets `check-image.py` — **114 checks**,
+green on an ISO built on the x64 host (§7.1) — and **no boot gate at all**,
+because no aarch64 host with hardware virtualisation is in the release loop. It
+was 93 checks when this paragraph was written on 2026-08-30; the number moved
+with the Secure Boot rules, and it is the artefact's whole evidence.
 Whatever is true at publication time **must be stated on the download page and
 in the release notes**. A version number that claims more than was measured is
 the one defect this repository exists to avoid.
@@ -215,6 +226,19 @@ apt update && apt install os7-server=<version>
 
 and, from an installed machine, `Get-OS7Release` — which verifies the signed
 index and each descriptor's hash before it lists anything.
+
+and **the public download path, by the name a reader will type** — not the
+webspace's own hostname, not the IP, and not a page served out of the checkout.
+That last one was added on 2026-09-09 because it was the one thing this process
+did not check and the one thing that was broken: 1.0.0.203 published download
+links to `https://os7.org`, whose A record pointed at a host with no HTTPS
+listener at all, while every page and both media sat correctly on the webspace
+(SESSION-PREVIEW-203.md §7).
+
+```bash
+curl -sI https://os7.org/download                       # must be 200
+curl -sI https://os7.org/download/OS7-<version>-amd64.iso   # must be 200 or a 302 that is
+```
 
 A release nobody has fetched over the real transport is a release whose
 publication has not been tested, only performed.
