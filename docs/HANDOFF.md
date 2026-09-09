@@ -83,6 +83,30 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**SECURE BOOT IS FINISHED ON amd64 AND OWES arm64 EXACTLY ONE THING: A BOOT
+(2026-09-09).** `./installer/testing/run-secureboot.py all` is 32 ok on this
+host — the medium boots through its own signed bootloader under Microsoft-keyed
+OVMF, a machine is installed from it, that machine comes up with no medium and
+unlocks itself from the TPM with nothing typed, and a control phase requires
+the passphrase back when the firmware policy changes. `Get-OS7SecureBoot`
+answers what an administrator asks and is required to agree with `mokutil` on
+the same machine. The arm64 MEDIUM is done too — 1.0.0.194 carries the signed
+chain and `check-image.py arm64` passes on it, both built here under emulation
+(#140). So the three things worth picking up, in the order they cost:
+
+1. **`run-secureboot.py all` on the Mac.** HVF, and nothing else: the harness
+   is architecture-parameterised, `vmarch.ensure_firmware()` downloads the
+   Secure Boot AAVMF the way spike S4 does, and neither has ever executed.
+   This is the last unmeasured line in the chain.
+2. **The Complete screen says nothing about Secure Boot.** Deliberately not
+   decided in passing: a screen that reports a firmware setting has to say
+   what the operator should DO about it, and that text is a product decision
+   ([SESSION-SECUREBOOT-MEDIUM.md](SESSION-SECUREBOOT-MEDIUM.md) §10).
+3. **U8 has not moved, but it can now be shown.** `run-secureboot.py policy`
+   produces the exact prompt a fleet meets the morning after a shim or `dbx`
+   update. The escrow is still missing; what changed is that the cost of its
+   absence is one command away (DECISIONS, open question 7).
+
 **THERE IS A WORKBENCH SINCE 2026-08-30, AND IT CHANGES WHAT "GO AND LOOK" COSTS.**
 `installer/testing/os7lab.py` runs a VM that outlives the process that started
 it, so asking a booted machine a question costs a command instead of a boot —
@@ -909,6 +933,14 @@ that has ever reached the binary stage on amd64.
 
 Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
 
+- **#138 — a wall of "Couldn't download package" is an UPSTREAM 503, not your
+  change.** `snapshot.ubuntu.com` failed 3 of 12 requests when this was
+  measured (2026-09-08) and a build makes hundreds, so it dies looking exactly
+  like a broken tree — and the LAST line of the log is
+  `chroot: failed to run command '/usr/bin/env'`, which is the cleanup, not the
+  cause. One `curl -w '%{http_code}'` at the pinned snapshot separates the two
+  in a second. **Retry before debugging anything**; three builds in a row died
+  this way and the fourth succeeded unchanged.
 - **#13 — hooks must be at `config/hooks/*.chroot`, FLAT.** The older
   `config/hooks/normal/` layout does not match; live-build then runs nothing,
   prints "Begin executing hooks...", and **exits 0**. `build.sh` now hard-fails
@@ -1009,6 +1041,16 @@ capture worse; several attempts produced garbage. `installer/spikes/run-s3.py`
 shows what it takes to do it reliably anyway (BUILD-NOTES #16) — read freely,
 type one character at a time, re-send a step whose acknowledgement never
 arrives, and answer the terminal's queries.
+
+**And since 2026-09-07, "does the firmware even accept it" is answerable
+without booting either.** `check-image.py <arch>` reads both sides of the
+medium — the ISO9660 tree and the FAT image El Torito points at — and verifies
+them with the IMAGE's own `sbverify`, requiring the loader to be byte-identical
+to the shim the installed machine will boot from. `check-image.py --self-test`
+is the other half of that rule, run against a recorded correct medium, because
+a rule every ISO fails is a rule that might be unsatisfiable. Whether the thing
+then BOOTS under Secure Boot is `run-secureboot.py`, which is the only harness
+here that lets the firmware find the loader by itself (#134).
 
 For everything that is not "does it boot", mount the squashfs and run the
 image's own binaries — fast, clean, quotable:

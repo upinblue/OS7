@@ -224,6 +224,18 @@ which get one.
 > measurement corrected the plan rather than the other way round. What survives
 > of the clause is its point: ask per subsystem.
 
+> **And asked again on 2026-09-09, with the opposite answer: Secure Boot got NO
+> generic layer.** `Get-OS7SecureBoot` reads two paths under `/sys` — one
+> five-byte EFI variable and one line of text — and there is no second consumer
+> and no surface anybody would reuse. Writing `powershell/Firmware/` for that
+> would be the reflex this clause warns about, in the direction the time zone
+> did not go. The line where that changes is named in the code rather than left
+> to judgement: **enrolling keys, reading `dbx` or driving MOK** is a surface,
+> and the moment one of those is wanted the layer should be extracted. Until
+> then the cmdlet lives in `powershell/OS7/OS7.SecureBoot.ps1` and
+> `check-layering.py` has nothing to hold, because there is no subsystem
+> underneath it to reach around.
+
 ### P3 — The netplan renderer moves to PowerShell, in two steps. Decided 2026-08-27.
 
 Today it is `NetworkPlan.ToNetplanYaml` in C#

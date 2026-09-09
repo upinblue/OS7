@@ -142,7 +142,10 @@ happens to carry.
 arm64 was measured by unpacking `shim-signed:arm64` and
 `grub-efi-arm64-signed:arm64` from `ports.ubuntu.com` inside an **amd64**
 container (`dpkg --add-architecture arm64`, `apt-get download`, `dpkg-deb -x`) —
-no emulation, because this host has none registered. It ships
+no emulation, because on the day of that measurement this host had none
+registered. It does since 2026-09-09 (§"What was NOT measured"), so the same
+question could be asked more directly now; the route above is recorded because
+it is the route the numbers below came from. It ships
 `shimaa64.efi.signed.latest`, `mmaa64.efi`, `BOOTAA64.CSV`, and
 `gcdaa64.efi.signed` with prefix `/boot/grub`. The plan is the same file names
 with `aa64` and `arm64` substituted, which is how the check is parameterised.

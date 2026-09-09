@@ -1705,6 +1705,20 @@ for: `shim-signed` chains to Canonical's signed GRUB, the firmware accepts it
 against the Microsoft UEFI CA, and ZFS-on-LUKS root comes up underneath. TPM2
 auto-unlock works too — but **not** from `systemd-cryptenroll` alone. See L17.
 
+**And D1 is settled on the OTHER platform, from the MEDIUM inwards, since
+2026-09-08.** S4 booted a disk the S3 spike had installed, under firmware the
+spike configured; what it could not say is whether the product's own install
+MEDIUM boots under Secure Boot, because until 1.0.0.192 it did not —
+`build/lib/efi-remaster.sh` built the loader with `grub-mkstandalone` and
+nobody signed that. `./installer/testing/run-secureboot.py all` now boots the
+medium through its own bootloader under Microsoft-keyed OVMF, installs from it,
+boots the installed machine with no medium at all, and requires the TPM to
+unseal with nothing typed — 32 ok on amd64, plus a control phase that requires
+the passphrase back when the firmware policy changes. It is also what corrected
+BUILD-NOTES #100: the install-time seal DOES open, once the sealing session
+itself booted through shim.
+[../docs/SESSION-SECUREBOOT-MEDIUM.md](../docs/SESSION-SECUREBOOT-MEDIUM.md).
+
 **S2 passed on 2026-08-23** too: NativeAOT builds against Canonical's SDK on
 both architectures, and the binary runs in the ISO without .NET present. Note
 that the amd64 binary builds fine on an Apple Silicon host even though the amd64

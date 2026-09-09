@@ -26,7 +26,7 @@ Made by [up in blue GmbH](https://github.com/upinblue)
 >
 > **Both architectures install and boot** — arm64 as a server, x86-64 as a desktop with
 > GNOME, Edge, the Intune portal and VS Code. Entra ID sign-in does not work yet — the
-> broker is absent from the image — Secure Boot is untested on x86-64, no OS/7 machine
+> broker is absent from the image — no OS/7 machine
 > has ever joined a domain, and the backup code has never run on a machine. Please don't
 > put this on hardware you care about.
 >
@@ -74,13 +74,20 @@ consumers looking for a daily driver.
 
 ## Status
 
-Everything marked ✅ has been done on a real (virtual) machine. The two columns are
-checked differently: arm64 by the scripted harnesses in `installer/testing/`, which
-assert their own results and can be re-run by anyone; x86-64 by hand in a Hyper-V VM,
-because those harnesses are `qemu-system-aarch64` and no x86_64 equivalent exists yet.
-Writing one is the main gap in the project's testing.
+Everything marked ✅ has been done on a real (virtual) machine, and both columns are
+now checked by the **same scripted harnesses** in `installer/testing/` — they assert
+their own results and can be re-run by anyone.
 
-|  | **arm64** — server only<br><sub>scripted harness</sub> | **x86-64** — desktop or server<br><sub>tested by hand</sub> |
+That is newer than it sounds, and this paragraph said the opposite until 2026-09-09:
+*“x86-64 by hand in a Hyper-V VM, because those harnesses are `qemu-system-aarch64`
+and no x86_64 equivalent exists yet. Writing one is the main gap in the project's
+testing.”* The gap was closed on 2026-08-28 — `installer/testing/vmarch.py` is the one
+place the machine type, the accelerator and the firmware come from, and its x86_64
+branch runs QEMU with KVM inside a container. The install-and-boot gate, the update
+train and Secure Boot all run there now. What still needs an Apple Silicon Mac is
+every **arm64 boot**, because that needs HVF.
+
+|  | **arm64** — server only<br><sub>scripted harness</sub> | **x86-64** — desktop or server<br><sub>scripted harness</sub> |
 |---|---|---|
 | ISO builds | ✅ natively on Apple Silicon, ~5 min | ✅ natively on any x86-64 host, ~20 min. Not on Apple Silicon: Docker's x86 emulation cannot unpack a Debian rootfs |
 | Medium boots | ✅ | ✅ firmware → GRUB → OS/7's menu |
@@ -89,7 +96,7 @@ Writing one is the main gap in the project's testing.
 | Installed disk boots alone | ✅ with no setup medium attached | ✅ boots to GDM and logs in as the account Setup created |
 | Network, wired and Wi-Fi | ✅ static and DHCP, WPA2-PSK associates | ✅ wired; Wi-Fi has no meaning in the VM it was tested in |
 | GNOME · Edge · Intune portal · VS Code | — (arm64 is server-only by design) | ✅ the desktop comes up and the applications run |
-| Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ❔ not tested |
+| Secure Boot + TPM2 auto-unlock | ✅ on the installed disk | ✅ end to end — the medium boots signed, the machine installed from it unlocks itself from the TPM, and turning Secure Boot back off brings the passphrase prompt back |
 | `Restore-OS7` — roll back a bad update | ✅ clone → change → activate → reboot → roll back | ❔ not tested |
 | Entra ID sign-in | ❌ the `authd-msentraid` broker is a Canonical snap and cannot yet be put into the image | ❌ |
 | Active Directory — administer a domain from an OS/7 machine | 🚧 the same code, never run on arm64 | 🚧 signing in to a domain controller and administering it is green against a real Samba AD DC in a container, and needs no domain join; the join itself is written and no machine has ever run it |
@@ -117,7 +124,7 @@ a ZFS root that likes memory, and a LUKS2 header whose Argon2id unlock is pinned
 | | |
 |---|---|
 | **UEFI** | Mandatory. OS/7 boots via shim + Canonical-signed GRUB and ships no BIOS/CSM path at all. |
-| **Secure Boot** | Supported on the installed system; **switch it off to install**, because the setup medium's GRUB is unsigned. |
+| **Secure Boot** | **Leave it on.** The setup medium boots under Secure Boot with the stock Microsoft keys — shim, Canonical-signed GRUB, Canonical-signed kernel — and so does the machine it installs, which then unlocks itself from the TPM. Measured end to end on x86-64 (`installer/testing/run-secureboot.py`); the arm64 medium is signed the same way but its boot is unmeasured. Until 1.0.0.191 this row said *“switch it off to install”*, and it was true — the medium's GRUB was unsigned. |
 | **TPM 2.0** | Optional but wanted. Without it, OS/7 asks for the LUKS2 passphrase on every boot instead of unlocking itself. |
 | **Setup medium** | A USB stick of **4 GB** or more (arm64 ISO ≈ 1.8 GB, x86-64 ≈ 3.1 GB); 8 GB is comfortable. |
 | **Disk** | One whole disk. The installer refuses anything under **16 GB**. That is the point at which the layout stops fitting, not a recommended size. |
@@ -145,10 +152,15 @@ a ZFS root that likes memory, and a LUKS2 header whose Argon2id unlock is pinned
   environments need room to clone. The test harnesses install into a 24 GB target;
   32 GB is the smallest disk on which the x86-64 desktop product is not immediately
   cramped.
-- **TPM 2.0 and Secure Boot** were measured together by spikes S4 and S6: the installed
-  disk boots with Secure Boot on against the Microsoft UEFI CA, auto-unlock works,
-  a TPM-less machine still prompts, and a Secure Boot policy change breaks auto-unlock
-  *detectably and recoverably*.
+- **TPM 2.0 and Secure Boot** were measured together by spikes S4 and S6 on arm64: the
+  installed disk boots with Secure Boot on against the Microsoft UEFI CA, auto-unlock
+  works, a TPM-less machine still prompts, and a Secure Boot policy change breaks
+  auto-unlock *detectably and recoverably*. On x86-64 the whole chain is now one
+  scripted gate — `installer/testing/run-secureboot.py` boots the setup medium through
+  its own signed bootloader under the stock Microsoft keys, installs from it, and the
+  installed machine comes up with no medium and unlocks itself from the TPM with
+  nothing typed. Turning Secure Boot back off brings the passphrase prompt back, which
+  is what makes the rest of it mean something.
 - **ISO sizes** are measured from the built artefacts, not estimated: roughly 1.8 GB for
   arm64 and 3.1 GB for x86-64.
 

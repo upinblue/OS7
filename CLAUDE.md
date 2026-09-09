@@ -186,12 +186,14 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   Two cases carry real defects and
                                           #   are proven to FIRE via
                                           #   OS7_SB_MODULE: the efivarfs
-                                          #   ATTRIBUTE byte (0x07, truthy for
-                                          #   every variable in the store) and
+                                          #   ATTRIBUTE byte - 0x06 on a real
+                                          #   machine, measured, and truthy, so
+                                          #   reading byte 0 says "enabled" for
+                                          #   every variable in the store - and
                                           #   the BRACKETED lockdown mode
                                           #   (`none [integrity] …` - the
                                           #   first word is the wrong answer).
-                                          #   19 checks, seconds, needs pwsh
+                                          #   20 checks, seconds, needs pwsh
 ./installer/testing/check-module-parts.py # the OS7 module is one directory
                                           #   named in FOUR places - the .psm1
                                           #   foreach, hook 0060, the .deb's
@@ -258,11 +260,19 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
-./installer/testing/check-layering.py     # Z1, P2, P2-time, P2-systemd: does OS7
-                                          #   still reach ZFS, the network, the
-                                          #   clock or systemd directly. FOUR
-                                          #   rules; the first three at 0, the
-                                          #   systemd one at 2 and named
+./installer/testing/check-layering.py     # Z1, P2, P2-time, P2-systemd,
+                                          #   P2-directory: does OS7 still reach
+                                          #   ZFS, the network, the clock,
+                                          #   systemd or the directory directly.
+                                          #   FIVE rules, measured 2026-09-09 at
+                                          #   0 / 0 / 0 / 2 / 1 against baselines
+                                          #   that may fall and may not rise;
+                                          #   each non-zero site is NAMED. This
+                                          #   entry said FOUR and listed four
+                                          #   until then, while the prose forty
+                                          #   lines further down said five - the
+                                          #   file disagreeing with itself about
+                                          #   a number the check prints
 ./installer/testing/check-management-logic.py # Entra/Intune/Arc DECISIONS against
                                           #   a real image with systemd as PID 1.
                                           #   25 checks. Proves the thing that
@@ -804,17 +814,28 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             the os7-module .deb (hook 0022) and NOT by staging;
                             build.sh stages the tests/ fixtures alone
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four of
-                            the FIFTEEN files DOT-SOURCED by OS7.psm1, so a copy
+                            the EIGHTEEN files DOT-SOURCED by OS7.psm1, so a copy
                             that took the .psm1 alone is a real failure mode -
-                            hook 0060 names all fifteen, and so does the .deb
-                            content check since the 2026-08-28 merge. This line
-                            said "four ... all five" while the file said FOURTEEN
-                            sixty lines below it - and said FOURTEEN again when
-                            OS7.ScheduledTask.ps1 made it fifteen on 2026-08-29
+                            hook 0060 names all eighteen, and so does the .deb
+                            content check since the 2026-08-28 merge.
+                            THIS NUMBER HAS BEEN WRONG FOUR TIMES: it said
+                            "four ... all five" while the file said FOURTEEN
+                            sixty lines below it; FOURTEEN again when
+                            OS7.ScheduledTask.ps1 made it fifteen; and FIFTEEN
+                            until 2026-09-09, by which point AccountLockout,
+                            RemoteDesktop and SecureBoot had made it eighteen.
+                            SINCE 2026-09-09 IT IS CHECKED:
+                            installer/testing/check-module-parts.py requires
+                            the .psm1 foreach, hook 0060, the .deb's required
+                            paths and the directory itself to name the same set,
+                            so the next one to add a file cannot get three of
+                            four right. The number in this sentence still has
+                            nothing checking it, which is why the check exists
+                            and this table should be read as the map it is
   OS7.Home.ps1              where a home directory lives, and the migration for
                             machines installed before Setup passed -UserName
                             (#74). Dot-sourced too - it was the fifth of five
-                            when this table was written, and is one of fifteen
+                            when this table was written, and is one of eighteen
   OS7.Network.ps1           the network as an operator asks about it: Get-/Set-
                             OS7NetworkAdapter, Get-OS7NetworkConfiguration,
                             Test-OS7Network, Get-OS7Endpoint. Set- verifies by
@@ -853,9 +874,12 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             named os7-task-* BEFORE touching systemd
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. LAST of the
-                            FIFTEEN dot-sourced files, and last because it
+                            EIGHTEEN dot-sourced files, and last because it
                             calls every helper above it and PowerShell defines
-                            functions as the script runs
+                            functions as the script runs - which is the one
+                            thing about the list that is ORDER and not a set,
+                            so check-module-parts.py compares membership and
+                            leaves the ordering to this comment
 build/packages/             OS/7's own .debs (C7). Each is a control.in plus an
                             optional tree/; build/lib/build-os7-packages.sh
                             builds them from the SAME sources build.sh stages

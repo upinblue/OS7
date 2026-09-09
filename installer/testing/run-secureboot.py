@@ -8,6 +8,12 @@ Secure Boot, end to end, on a machine.
     ./run-secureboot.py disk          the installed machine, no medium, TPM unlock
     ./run-secureboot.py policy        Secure Boot OFF again: the passphrase MUST return
 
+`medium` and `disk` also ask the product's own `Get-OS7SecureBoot` and require
+it to AGREE with `mokutil` on the same machine — two independent readings of
+one fact, which is what makes either of them worth printing. Its decision
+table lives in installer/testing/check-secureboot-logic.py against fake roots;
+here is the only place it meets real efivarfs.
+
 WHAT THIS ANSWERS THAT NOTHING ELSE DOES. Since 1.0.0.192 the amd64 install
 medium carries a Microsoft-signed shim and a Canonical-signed GRUB
 (docs/SESSION-SECUREBOOT-MEDIUM.md), and `check-image.py` reads that off the

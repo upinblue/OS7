@@ -114,6 +114,16 @@ The work itself takes seconds.
   actually get used at boot — which is the part nobody tells you about.
 - [`run-s4.py`](run-s4.py) drives QEMU with `AAVMF_CODE.secboot.fd` and `swtpm`.
 - [`../../docs/SESSION-S4-SECUREBOOT-TPM.md`](../../docs/SESSION-S4-SECUREBOOT-TPM.md)
+
+**S4 has a successor and is not superseded by it.** Since 2026-09-08 the
+product's own question — does the SHIPPED medium boot under Secure Boot, and
+does a machine installed from it unlock itself — is
+[`../testing/run-secureboot.py`](../testing/run-secureboot.py), on amd64, with
+a control phase S4 never had. S4 stays exactly as it is: it booted a disk the
+S3 spike had installed, under firmware the spike configured, and that is the
+evidence it is. It is also what proved the harness's own vehicle was the cause
+of BUILD-NOTES #100 — the two runs differ in nothing but how the sealing
+session booted.
   is the write-up.
 
 ## S6
