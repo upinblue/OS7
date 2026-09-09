@@ -57,6 +57,25 @@
 		# --output=json` accepts the option, prints the table and exits 0
 		# (measured on systemd 259).
 		'Get-SystemdSession', 'Stop-SystemdSession',
+		# The machine's own power state. The ACTION IS ALWAYS EXPLICIT here,
+		# because PowerShell's own Restart-Computer on Linux runs
+		# `/usr/sbin/shutdown` with no arguments at all — which on Ubuntu is
+		# systemctl's compatibility interface, whose flagless action is
+		# POWEROFF. Measured 2026-09-09; upstream since 2021.
+		'Invoke-SystemdShutdown',
+		# The freezer — the nearest thing systemd has to a paused service, and
+		# not the same thing. A frozen unit still reports ActiveState=active
+		# (measured), so the freezer is a field of its own or it is invisible.
+		'Get-SystemdUnitFreezerState', 'Suspend-SystemdUnit', 'Resume-SystemdUnit',
+		# Service units, authored the way the timer pair is: validated, written
+		# into one directory, and asked back from systemd. Remove- refuses
+		# anything that is not a plain file there — a mask is a symlink at
+		# exactly that path.
+		'New-SystemdService', 'Remove-SystemdService',
+		# The machine's name: static, transient and pretty are three names, and
+		# /etc/hosts is part of the operation — sudo resolves its own host name
+		# on every invocation.
+		'Get-SystemdHostName', 'Set-SystemdHostName',
 		# The self-test: recorded real systemctl and journalctl output,
 		# including a MESSAGE that is a byte array rather than a string.
 		'Test-SystemdModule'

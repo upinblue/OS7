@@ -373,14 +373,26 @@ function Set-SystemdUnitStartup {
 		touch the running unit — a distinction `systemctl` makes and nobody
 		remembers. The returned object shows both `StartupType` and
 		`ActiveState`, so the difference is visible rather than assumed.
+
+	.PARAMETER Startup
+		`Enabled`, `Disabled`, `Masked` — or `Unmasked`, which is the fourth
+		because `disable` DOES NOT UNMASK. A masked unit is a symlink to
+		/dev/null and `systemctl disable` leaves it exactly where it is, so a
+		caller walking a unit from Masked back to Disabled and never saying
+		`unmask` produces a unit that reports `disabled`, refuses to start, and
+		gives no reason connecting the two.
 	#>
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory)][string]$Name,
-		[Parameter(Mandatory)][ValidateSet('Enabled', 'Disabled', 'Masked')][string]$Startup
+		[Parameter(Mandatory)]
+		[ValidateSet('Enabled', 'Disabled', 'Masked', 'Unmasked')][string]$Startup
 	)
 
-	$verb = switch ($Startup) { 'Enabled' { 'enable' } 'Disabled' { 'disable' } 'Masked' { 'mask' } }
+	$verb = switch ($Startup) {
+		'Enabled' { 'enable' } 'Disabled' { 'disable' }
+		'Masked' { 'mask' } 'Unmasked' { 'unmask' }
+	}
 	if (-not $PSCmdlet.ShouldProcess($Name, "$verb at boot")) { return @(Get-SystemdUnit -Name $Name) }
 	Set-SystemdUnitState -Verb $verb -Name $Name
 }
@@ -1324,6 +1336,513 @@ function Stop-SystemdSession {
 	return $still
 }
 
+# ---------------------------------------------------------------------------
+# The machine's own power state
+#
+# MEASURED 2026-09-09, and it is why this function exists rather than a caller
+# reaching for `shutdown` itself. PowerShell 7.6.5's own `Restart-Computer` and
+# `Stop-Computer` on Linux both run
+#
+#     /usr/sbin/shutdown          (with NO arguments at all)
+#
+# recorded by putting a recorder in place of every binary they might reach for,
+# inside the shipped ISO's own root. On Ubuntu `/usr/sbin/shutdown` is a symlink
+# to `systemctl`, whose compatibility interface says of itself that one of
+# `-H --halt`, `-P --poweroff` or `-r --reboot` is to be GIVEN — and without a
+# flag the action is poweroff. So `Restart-Computer` powers an OS/7 machine OFF
+# and reports success. Upstream has had it since 2021
+# (PowerShell/PowerShell#14684) and it is still true in 7.6.5.
+#
+# Therefore: the action is ALWAYS explicit here, and it goes through `systemctl
+# reboot` / `poweroff` / `halt` rather than the compatibility interface, because
+# those cannot be re-interpreted by an argv[0].
+# ---------------------------------------------------------------------------
+
+function Invoke-SystemdShutdown {
+	<#
+	.SYNOPSIS
+		Reboots, powers off or halts this machine — the action always spelled
+		out.
+
+	.DESCRIPTION
+		WHAT THIS CAN AND CANNOT VERIFY. An immediate action cannot be read
+		back: the process asking is one of the ones about to be killed. What it
+		CAN catch is the request being REFUSED — a non-root caller gets polkit's
+		"Access denied as the requested operation requires interactive
+		authentication" on stderr with a non-zero exit (measured on a machine),
+		and this throws it rather than returning quietly.
+
+		A DELAYED action can be read back, and is: `shutdown --show` is asked
+		afterwards, and a schedule systemd will not confirm is an error rather
+		than a hope.
+
+	.PARAMETER Action
+		`Reboot`, `PowerOff` or `Halt`. Mandatory and deliberately not
+		defaulted — a defaulted action is the upstream bug this routes around.
+
+	.PARAMETER Delay
+		Schedule it instead of doing it now. `shutdown`'s granularity is whole
+		MINUTES (its own `+m` argument), so this rounds UP to the next minute
+		and returns the scheduled time systemd reported back.
+
+	.PARAMETER Message
+		A wall message for the signed-in users. Only meaningful with -Delay —
+		in the immediate case there is nobody left to read it.
+
+	.EXAMPLE
+		Invoke-SystemdShutdown -Action Reboot
+
+	.EXAMPLE
+		Invoke-SystemdShutdown -Action PowerOff -Delay ([timespan]::FromMinutes(5)) -Message 'Maintenance'
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory)][ValidateSet('Reboot', 'PowerOff', 'Halt')][string]$Action,
+		[timespan]$Delay = [timespan]::Zero,
+		[string]$Message
+	)
+
+	$verb = switch ($Action) { 'Reboot' { 'reboot' } 'PowerOff' { 'poweroff' } 'Halt' { 'halt' } }
+
+	if ($Delay -le [timespan]::Zero) {
+		if (-not $PSCmdlet.ShouldProcess('this machine', $verb)) { return }
+		$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @($verb)
+		# 0 means the job was ACCEPTED and the machine is on its way down, so
+		# there is nothing left to ask. Anything else is a refusal, and a
+		# refusal that returns quietly is a machine that did not reboot.
+		if ($r.ExitCode -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"systemctl $verb exited $($r.ExitCode): $(($r.StdErr + ' ' + $r.StdOut).Trim())")
+		}
+		return
+	}
+
+	# The scheduling path, and the ONLY place this module uses `shutdown` — it
+	# is the only interface that takes a time. The flag is always given.
+	$flag = switch ($Action) { 'Reboot' { '-r' } 'PowerOff' { '-P' } 'Halt' { '-H' } }
+	$minutes = [int][math]::Ceiling($Delay.TotalMinutes)
+	$shutdownArgs = @($flag, "+$minutes")
+	if ($Message) { $shutdownArgs = $shutdownArgs + $Message }
+
+	if (-not $PSCmdlet.ShouldProcess('this machine', "$verb in $minutes minute(s)")) { return }
+
+	$r = Invoke-SystemdCommand -Command 'shutdown' -Arguments $shutdownArgs
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"shutdown $($shutdownArgs -join ' ') exited $($r.ExitCode): " +
+			"$(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+
+	# ASK, DO NOT ASSUME. `shutdown` exits 0 having merely parsed its arguments;
+	# what proves a schedule exists is systemd saying so.
+	$show = Invoke-SystemdCommand -Command 'shutdown' -Arguments @('--show')
+	$text = ($show.StdOut + $show.StdErr).Trim()
+	if (-not $text) {
+		throw [System.InvalidOperationException]::new(
+			"shutdown $($shutdownArgs -join ' ') exited 0 but 'shutdown --show' reports no " +
+			'pending shutdown, so nothing was scheduled.')
+	}
+	return [pscustomobject]@{
+		Action    = $Action
+		Minutes   = $minutes
+		Scheduled = $text
+	}
+}
+
+# ---------------------------------------------------------------------------
+# The freezer
+#
+# `systemctl freeze` suspends every process in a unit's cgroup; `thaw` resumes
+# them. It is the nearest thing systemd has to a paused Windows service and it
+# is NOT the same thing: Windows asks the service, which may decline; the
+# freezer does not ask.
+#
+# MEASURED on an installed OS/7 machine, 2026-09-09: freeze exits 0,
+# `FreezerState` becomes `frozen` — and `ActiveState` STAYS `active`. That last
+# one is why Get-SystemdUnit's state fields cannot answer this question, and why
+# an operator who cannot see the freezer sees a running service that has stopped
+# answering.
+# ---------------------------------------------------------------------------
+
+function Get-SystemdUnitFreezerState {
+	<#
+	.SYNOPSIS
+		`running`, `freezing`, `frozen` or `thawing` for one unit — or $null
+		when systemd would not say.
+
+	.DESCRIPTION
+		$null AND NEVER `running` WHEN THE ANSWER DID NOT ARRIVE. A unit that
+		does not exist, a systemd too old to have a freezer and a refused query
+		must all read differently from "this unit is not frozen".
+
+		One unit at a time on purpose: this is a `systemctl show` per unit, and
+		`Get-SystemdUnit` deliberately does not pay for it across a whole
+		machine's worth of units.
+	#>
+	param([Parameter(Mandatory)][string]$Name)
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @(
+		'show', $Name, '--property=FreezerState', '--value')
+	if ($r.ExitCode -ne 0) { return $null }
+	$v = $r.StdOut.Trim()
+	if (-not $v) { return $null }
+	# `frozen-by-parent` and `freezing-by-parent` exist too. A caller asking
+	# whether this unit is frozen wants yes; the reason stays in the raw word.
+	return $v
+}
+
+function Suspend-SystemdUnit {
+	<#
+	.SYNOPSIS
+		Freezes a unit's processes, and reads the freezer back.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([Parameter(Mandatory)][string]$Name)
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'freeze')) { return }
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('freeze', $Name)
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl freeze $Name exited $($r.ExitCode): $(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+	$state = Get-SystemdUnitFreezerState -Name $Name
+	if ($state -notlike 'frozen*') {
+		throw [System.InvalidOperationException]::new(
+			"systemctl freeze $Name exited 0 but FreezerState is '$state'.")
+	}
+	return $state
+}
+
+function Resume-SystemdUnit {
+	<#
+	.SYNOPSIS
+		Thaws a frozen unit's processes, and reads the freezer back.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([Parameter(Mandatory)][string]$Name)
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'thaw')) { return }
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('thaw', $Name)
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl thaw $Name exited $($r.ExitCode): $(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+	$state = Get-SystemdUnitFreezerState -Name $Name
+	if ($state -like 'frozen*') {
+		throw [System.InvalidOperationException]::new(
+			"systemctl thaw $Name exited 0 but FreezerState is still '$state'.")
+	}
+	return $state
+}
+
+# ---------------------------------------------------------------------------
+# Service units this module wrote
+#
+# New-SystemdTimer's rules applied to a lone `.service`: validate before
+# writing, write into $script:SystemdUnitDirectory only, daemon-reload, and ask
+# systemd whether it loaded what was written. Remove- refuses anything that is
+# not a plain file in that directory, for the reasons Remove-SystemdTimer
+# spells out — a mask IS a symlink at exactly that path, and removing a
+# package's unit file is dpkg's job.
+# ---------------------------------------------------------------------------
+
+function New-SystemdService {
+	<#
+	.SYNOPSIS
+		Writes a .service unit and asks systemd whether it loaded.
+
+	.PARAMETER Name
+		The unit name, with or without the `.service` suffix.
+
+	.PARAMETER Command
+		`ExecStart=`, verbatim in systemd's vocabulary — the first word must be
+		an absolute path, and `%` and `$` mean what they mean THERE.
+
+	.PARAMETER Description
+		`Description=`. Defaults to the name.
+
+	.PARAMETER DependsOn
+		Units this one needs, written as BOTH `Requires=` and `After=`.
+		`Requires` alone orders nothing, which is the trap that makes a
+		dependency look declared and behave as though it were not.
+
+	.PARAMETER User
+		Run as this account instead of root.
+
+	.PARAMETER Enabled
+		Also write `WantedBy=multi-user.target`, so that `systemctl enable` has
+		something to install. WITHOUT an [Install] section a unit cannot be
+		enabled at all — systemd calls that `static` and `enable` fails.
+
+	.PARAMETER Force
+		Overwrite a unit file this directory already holds.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Command,
+		[string]$Description,
+		[string[]]$DependsOn = @(),
+		[string]$User,
+		[switch]$Enabled,
+		[switch]$Force
+	)
+
+	$base = $Name -replace '\.service$', ''
+	if (-not $base -or $base -match '[/\s]') {
+		throw [System.ArgumentException]::new(
+			"'$Name' is not a unit name — a unit name carries no path separator and no whitespace.")
+	}
+
+	if (-not $Description) { $Description = $base }
+	Test-SystemdUnitText -What 'Description' -Value $Description
+	Test-SystemdUnitText -What 'Command' -Value $Command
+	if ($User) { Test-SystemdUnitText -What 'User' -Value $User }
+	foreach ($d in $DependsOn) { Test-SystemdUnitText -What 'DependsOn' -Value $d }
+
+	$path = Join-Path $script:SystemdUnitDirectory "$base.service"
+	if ([System.IO.File]::Exists($path) -and -not $Force) {
+		throw [System.InvalidOperationException]::new("$path already exists. -Force overwrites it.")
+	}
+
+	$lines = @('[Unit]', "Description=$Description")
+	if ($DependsOn.Count) {
+		$lines = $lines + "Requires=$($DependsOn -join ' ')"
+		$lines = $lines + "After=$($DependsOn -join ' ')"
+	}
+	$lines = $lines + @('', '[Service]', 'Type=simple', "ExecStart=$Command")
+	if ($User) { $lines = $lines + "User=$User" }
+	if ($Enabled) { $lines = $lines + @('', '[Install]', 'WantedBy=multi-user.target') }
+
+	if (-not $PSCmdlet.ShouldProcess("$base.service", 'write the unit file')) { return }
+
+	if (-not [System.IO.Directory]::Exists($script:SystemdUnitDirectory)) {
+		[System.IO.Directory]::CreateDirectory($script:SystemdUnitDirectory) | Out-Null
+	}
+	[System.IO.File]::WriteAllText($path, (($lines -join "`n") + "`n"))
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	# THE ASSERTION THAT MATTERS. The filesystem writes a unit with a syntax
+	# error happily, systemd refuses it, and `daemon-reload` exits 0 either way.
+	$state = Get-SystemdUnitLoadState -Name "$base.service"
+	if ($state -ne 'loaded') {
+		throw [System.InvalidOperationException]::new(
+			"$path was written but systemd reports LoadState=$state for $base.service.")
+	}
+
+	return @(Get-SystemdUnit -Name "$base.service")
+}
+
+function Remove-SystemdService {
+	<#
+	.SYNOPSIS
+		Removes a .service unit file this module could have written, and asks
+		systemd whether it is gone.
+
+	.DESCRIPTION
+		ONLY A PLAIN FILE IN $script:SystemdUnitDirectory. A package's unit
+		lives elsewhere and is the package manager's; a symlink at this path is
+		a MASK, and deleting it would un-say an administrator's suppression
+		rather than remove a service. Both are refused by name before anything
+		runs — Remove-SystemdTimer's rules, for the same reasons.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param([Parameter(Mandatory)][string]$Name)
+
+	$base = $Name -replace '\.service$', ''
+	$path = Join-Path $script:SystemdUnitDirectory "$base.service"
+
+	if (-not [System.IO.File]::Exists($path)) {
+		$state = Get-SystemdUnitLoadState -Name "$base.service"
+		if ($state -eq 'loaded') {
+			throw [System.InvalidOperationException]::new(
+				"$base.service exists but its unit file is not in $script:SystemdUnitDirectory, " +
+				'so it is not one this module wrote. Removing a package''s unit file is the ' +
+				'package manager''s job; to stop it, disable or mask it instead.')
+		}
+		throw [System.InvalidOperationException]::new(
+			"There is no $base.service in $script:SystemdUnitDirectory and systemd reports " +
+			"LoadState=$state.")
+	}
+	if ($null -ne [System.IO.FileInfo]::new($path).LinkTarget) {
+		throw [System.InvalidOperationException]::new(
+			"$path is a symlink — that is a mask (or somebody's redirection), not a unit this " +
+			'module wrote. Deleting it would un-say the mask; systemctl unmask is the verb ' +
+			'that means that.')
+	}
+
+	if (-not $PSCmdlet.ShouldProcess("$base.service", 'stop, disable and remove')) { return }
+
+	# Best-effort: a service that was never started makes `stop` a no-op and one
+	# that was never enabled makes `disable` one. systemd's own answer at the
+	# end is the assertion.
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('stop', "$base.service") | Out-Null
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('disable', "$base.service") | Out-Null
+	[System.IO.File]::Delete($path)
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+	$state = Get-SystemdUnitLoadState -Name "$base.service"
+	if ($state -ne 'not-found') {
+		throw [System.InvalidOperationException]::new(
+			"$base.service was removed from $script:SystemdUnitDirectory but systemd still " +
+			"reports LoadState=$state — another unit file elsewhere is shadowing it.")
+	}
+}
+
+# ---------------------------------------------------------------------------
+# The machine's name
+#
+# THREE NAMES AND NOT ONE, and knowing the difference is systemd's job: the
+# STATIC name in /etc/hostname, the TRANSIENT one the kernel carries, and the
+# PRETTY one, which may contain anything. `hostnamectl` sets the first two
+# together; writing /etc/hostname alone changes the machine's name at the next
+# boot and nothing about the machine now.
+# ---------------------------------------------------------------------------
+
+function Get-SystemdHostName {
+	<#
+	.SYNOPSIS
+		The static, transient and pretty host names, from the places that hold
+		them.
+
+	.DESCRIPTION
+		The kernel's name is read from `/proc/sys/kernel/hostname` rather than
+		from `hostnamectl` — a diagnostic must not depend on the subsystem it is
+		diagnosing, and this one gets asked precisely when hostnamectl may have
+		failed.
+	#>
+	[CmdletBinding()]
+	param()
+
+	$static = if ([System.IO.File]::Exists('/etc/hostname')) {
+		[System.IO.File]::ReadAllText('/etc/hostname').Trim()
+	}
+	else { $null }
+
+	$transient = if ([System.IO.File]::Exists('/proc/sys/kernel/hostname')) {
+		[System.IO.File]::ReadAllText('/proc/sys/kernel/hostname').Trim()
+	}
+	else { $null }
+
+	$pretty = $null
+	$r = Invoke-SystemdCommand -Command 'hostnamectl' -Arguments @('--pretty')
+	if ($r.ExitCode -eq 0) { $pretty = $r.StdOut.Trim() }
+
+	return [pscustomobject]@{
+		Static    = $static
+		Transient = $transient
+		Pretty    = $pretty
+	}
+}
+
+function Set-SystemdHostName {
+	<#
+	.SYNOPSIS
+		Sets the machine's name — static and transient together — and reads it
+		back from the kernel.
+
+	.DESCRIPTION
+		VALIDATED BEFORE ANYTHING IS WRITTEN. A host name is at most 63
+		characters of letters, digits and hyphens and may not begin or end with
+		one (RFC 1123). `hostnamectl` accepts things a resolver will not, and
+		the failure that leaves behind is a machine whose name nothing can look
+		up.
+
+		/etc/hosts IS PART OF THE OPERATION, which is the reason this exists
+		rather than a caller running hostnamectl: Debian and Ubuntu put
+		`127.0.1.1 <hostname>` there, sudo resolves its own host name on every
+		invocation, and a machine renamed without that line updated answers
+		`sudo: unable to resolve host` to every command afterwards.
+
+	.PARAMETER Name
+		The new static and transient host name.
+
+	.PARAMETER Pretty
+		The free-form name. Not used for resolution.
+
+	.PARAMETER SkipHostsFile
+		Leave /etc/hosts alone — for a caller that manages the file itself.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[string]$Pretty,
+		[switch]$SkipHostsFile
+	)
+
+	if ($Name.Length -gt 63 -or $Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$') {
+		throw [System.ArgumentException]::new(
+			"'$Name' is not a host name a resolver will accept: up to 63 letters, digits and " +
+			'hyphens, not starting or ending with a hyphen (RFC 1123).')
+	}
+	if ($Pretty) { Test-SystemdUnitText -What 'Pretty' -Value $Pretty }
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'set the host name')) { return @(Get-SystemdHostName) }
+
+	$before = Get-SystemdHostName
+
+	$r = Invoke-SystemdCommand -Command 'hostnamectl' -Arguments @('set-hostname', $Name)
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"hostnamectl set-hostname $Name exited $($r.ExitCode): " +
+			"$(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+	if ($Pretty) {
+		$p = Invoke-SystemdCommand -Command 'hostnamectl' -Arguments @(
+			'set-hostname', '--pretty', $Pretty)
+		if ($p.ExitCode -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"hostnamectl set-hostname --pretty exited $($p.ExitCode): " +
+				"$(($p.StdErr + ' ' + $p.StdOut).Trim())")
+		}
+	}
+
+	# ASK THE KERNEL, not hostnamectl: the read-back goes to the other side of
+	# the thing that was just changed.
+	$after = Get-SystemdHostName
+	if ($after.Transient -ne $Name) {
+		throw [System.InvalidOperationException]::new(
+			"hostnamectl exited 0 but the kernel still reports '$($after.Transient)'.")
+	}
+
+	if (-not $SkipHostsFile -and $before.Static -and [System.IO.File]::Exists('/etc/hosts')) {
+		# ONLY the loopback lines, and only a whole label: a machine called
+		# `os7` must not turn `os7-backup.example.com` on some other line into
+		# `newname-backup`. Done line by line rather than with one regex over
+		# the file, so what is and is not rewritten is readable.
+		$out = @()
+		$changed = $false
+		foreach ($line in [System.IO.File]::ReadAllLines('/etc/hosts')) {
+			if ($line -match '^\s*127\.0\.[01]\.1\s') {
+				$fields = $line -split '(\s+)'
+				for ($i = 0; $i -lt $fields.Count; $i++) {
+					if ($fields[$i] -eq $before.Static) { $fields[$i] = $Name; $changed = $true }
+					elseif ($fields[$i] -like "$($before.Static).*") {
+						$fields[$i] = $Name + $fields[$i].Substring($before.Static.Length)
+						$changed = $true
+					}
+				}
+				$out = $out + ($fields -join '')
+			}
+			else { $out = $out + $line }
+		}
+		if ($changed) { [System.IO.File]::WriteAllLines('/etc/hosts', $out) }
+	}
+
+	return @($after)
+}
+
 function Test-SystemdModule {
 	<#
 	.SYNOPSIS
@@ -1847,4 +2366,8 @@ Export-ModuleMember -Function @(
 	'Get-SystemdTimer', 'New-SystemdTimer', 'Remove-SystemdTimer',
 	'Get-SystemdJournal',
 	'Get-SystemdSession', 'Stop-SystemdSession',
+	'Invoke-SystemdShutdown',
+	'Get-SystemdUnitFreezerState', 'Suspend-SystemdUnit', 'Resume-SystemdUnit',
+	'New-SystemdService', 'Remove-SystemdService',
+	'Get-SystemdHostName', 'Set-SystemdHostName',
 	'Test-SystemdModule')

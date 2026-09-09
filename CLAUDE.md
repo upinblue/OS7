@@ -201,7 +201,20 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   exports - and build-os7-
                                           #   packages.sh said of its own list
                                           #   "asserted equal by nothing".
-                                          #   Now asserted. It also holds
+                                          #   Now asserted. It also requires
+                                          #   every module to DELIVER what its
+                                          #   manifest promises - a .psd1's
+                                          #   FunctionsToExport and a .psm1's
+                                          #   Export-ModuleMember are two lists
+                                          #   and PowerShell takes the
+                                          #   intersection, so a name in one
+                                          #   and not the other is a cmdlet an
+                                          #   operator is told does not exist.
+                                          #   That happened in Systemd one day
+                                          #   after this file was written
+                                          #   (13 delivered, 21 promised), and
+                                          #   OS7_MODULE_ROOT is how the rule
+                                          #   is proven to fire. And it holds
                                           #   POWERSHELL-REFERENCE.md's counts
                                           #   against Get-Command, which were
                                           #   stale by 19 the day it was
@@ -401,7 +414,7 @@ pair reached by a road nothing checks.
 matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/` and `powershell/Directory/` are the generic layers — none
 knows anything about OS/7, and all five would run on any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is **126 of the 221
+`powershell/OS7/` is the product layer on top, and it is **126 of the 229
 functions** — measured 2026-09-08 by asking the modules, which is the only way
 this line has ever been right for long. It said "109 of 202" that morning and
 had been wrong for two commits: Systemd had grown `Get-SystemdSession` and OS7

@@ -200,6 +200,7 @@ def main():
           f"every one of the {len(exports)} exported names is defined somewhere",
           ", ".join(phantom) if phantom else "")
 
+    check_manifests_deliver()
     check_reference_counts()
 
     print(f"\n  {_ok} ok, {_bad} failed")
@@ -209,6 +210,82 @@ def main():
 
 REFERENCE = os.path.join(REPO, "docs", "POWERSHELL-REFERENCE.md")
 MODULES = ("Zfs", "Net", "Time", "Systemd", "Directory", "OS7")
+
+# OS7_MODULE_ROOT points the manifest rule at another copy of powershell/,
+# which is how it is proven to FIRE rather than only to stay quiet: copy the
+# tree aside, take a name out of a .psm1's Export-ModuleMember while leaving
+# it in the .psd1, point this at the copy, and require RED. Same argument as
+# check-ps-traps.py's OS7_SCAN_ROOT and check-secureboot-logic.py's
+# OS7_SB_MODULE — and the same reason not to plant the defect in the working
+# tree, which somebody may be editing while the check runs.
+MODULE_ROOT = os.environ.get("OS7_MODULE_ROOT") or os.path.join(REPO, "powershell")
+
+
+def module_psd1(name):
+    return os.path.join(MODULE_ROOT, name, name + ".psd1")
+
+
+def check_manifests_deliver():
+    """Does every module DELIVER what its manifest promises, and nothing else?
+
+    A .psd1's `FunctionsToExport` and a .psm1's `Export-ModuleMember` are two
+    lists that have to agree, and PowerShell takes the INTERSECTION — so a name
+    in the manifest and not in the module is not exported, `Import-Module`
+    still succeeds, and an operator who types it is told the cmdlet does not
+    exist. Nothing says a word.
+
+    THIS RULE EXISTS BECAUSE IT HAPPENED, one day after this file was written
+    and in a module this file does not read the parts of. `Systemd.psd1` grew
+    eight names — Invoke-SystemdShutdown, the freezer pair, the service pair,
+    the host-name pair — the .psm1 grew all eight functions, `Test-SystemdModule`
+    grew to 95 checks over them, and `Export-ModuleMember` was left at
+    thirteen. `Get-Command -Module Systemd` returned 13 while the manifest
+    promised 21.
+
+    So it asks the MODULE rather than parsing either list: what the manifest
+    says, against what `Import-Module` actually hands over. That is the only
+    comparison an operator's experience depends on, and it catches every
+    direction at once — a name missing from Export-ModuleMember, a function
+    that was never written, and a typo in either place.
+    """
+    if not shutil.which("pwsh"):
+        print("      note  pwsh is not on this host; the manifests' promises "
+              "were not checked")
+        return
+    script = "; ".join(
+        f"Import-Module {module_psd1(m)} -Force"
+        for m in MODULES)
+    # The manifest's own list, read by PowerShell rather than by a regex, and
+    # what the module hands over. Two lines per module, one prefix each.
+    script += "; " + "; ".join(
+        f"'PROMISED {m}=' + (((Import-PowerShellDataFile "
+        f"{module_psd1(m)}).FunctionsToExport "
+        f"| Sort-Object) -join ','); "
+        f"'DELIVERED {m}=' + (((Get-Command -Module {m} -CommandType Function)"
+        f".Name | Sort-Object) -join ',')"
+        for m in MODULES)
+    out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        check(False, "every module could be asked what it exports",
+              (out.stderr or out.stdout).strip()[-200:])
+        return
+    text = out.stdout.replace("\r", "")
+    got = {}
+    for kind in ("PROMISED", "DELIVERED"):
+        for m in MODULES:
+            mt = re.search(rf"^{kind} {m}=(.*)$", text, re.M)
+            got[(kind, m)] = set(filter(None, (mt.group(1) if mt else "").split(",")))
+
+    for m in MODULES:
+        promised, delivered = got[("PROMISED", m)], got[("DELIVERED", m)]
+        missing = sorted(promised - delivered)
+        extra = sorted(delivered - promised)
+        check(not missing and not extra,
+              f"{m} delivers the {len(promised)} functions its manifest promises",
+              ("PROMISED BUT NOT EXPORTED: " + ", ".join(missing) if missing else "")
+              + ("; " if missing and extra else "")
+              + ("exported but not promised: " + ", ".join(extra) if extra else ""))
 
 
 def check_reference_counts():

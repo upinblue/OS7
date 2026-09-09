@@ -13,7 +13,7 @@ Die Beschreibungen sind die englischen Originaltexte der Module — es ist derse
 | `powershell/Zfs/` | generisch | 26 |
 | `powershell/Net/` | generisch | 11 |
 | `powershell/Time/` | generisch | 9 |
-| `powershell/Systemd/` | generisch | 13 |
+| `powershell/Systemd/` | generisch | 21 |
 | `powershell/Directory/` | generisch | 36 |
 | `powershell/OS7/` | das Produkt | 126 |
 
@@ -90,17 +90,25 @@ Units und das Journal.
 
 | Befehl | Beschreibung | Parameter |
 |---|---|---|
+| `Get-SystemdHostName` | The static, transient and pretty host names, from the places that hold them. | *keine* |
 | `Get-SystemdJournal` | The journal, as objects with real types. | Unit, Identifier, Priority, Since, Until, Tail, Boot |
 | `Get-SystemdSession` | Who is signed in to this machine, and how. | Id, User, Remote, Class |
 | `Get-SystemdTimer` | The timers this machine has: what they will run, when they will next run, and when they last did. | Name, Detailed |
 | `Get-SystemdUnit` | The units this machine has, and what state they are in. | Name, Type, State, Detailed |
+| `Get-SystemdUnitFreezerState` | `running`, `freezing`, `frozen` or `thawing` for one unit â€” or $null when systemd would not say. | **Name** |
+| `Invoke-SystemdShutdown` | Reboots, powers off or halts this machine â€” the action always spelled out. | **Action**, Delay, Message |
+| `New-SystemdService` | Writes a .service unit and asks systemd whether it loaded. | **Name**, **Command**, Description, DependsOn, User, Enabled, Force |
 | `New-SystemdTimer` | Writes a timer and the service it activates, and asks systemd whether it loaded them. | **Name**, **Command**, **OnCalendar**, Description, User, Persistent, RandomizedDelay, Force |
+| `Remove-SystemdService` | Removes a .service unit file this module could have written, and asks systemd whether it is gone. | **Name** |
 | `Remove-SystemdTimer` | Removes a timer unit pair this module could have written, and asks systemd whether it is gone. | **Name** |
 | `Restart-SystemdUnit` | Restarts a unit and reports what it became. | **Name** |
+| `Resume-SystemdUnit` | Thaws a frozen unit's processes, and reads the freezer back. | **Name** |
+| `Set-SystemdHostName` | Sets the machine's name â€” static and transient together â€” and reads it back from the kernel. | **Name**, Pretty, SkipHostsFile |
 | `Set-SystemdUnitStartup` | Whether a unit starts at boot, and reports what it became. | **Name**, **Startup** |
 | `Start-SystemdUnit` | Starts a unit and reports what it became. | **Name** |
 | `Stop-SystemdSession` | End a session: everything running in it is stopped. | **Id**, Force |
 | `Stop-SystemdUnit` | Stops a unit and reports what it became. | **Name** |
+| `Suspend-SystemdUnit` | Freezes a unit's processes, and reads the freezer back. | **Name** |
 | `Test-SystemdModule` | Checks this module against RECORDED REAL systemctl and journalctl output. Needs no systemd, no root and no journal. | FixturePath |
 | `Update-SystemdUnit` | Tells a running unit to re-read its own configuration â€” `systemctl reload`. | **Name** |
 
