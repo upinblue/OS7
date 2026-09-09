@@ -1,4 +1,4 @@
-# Session: the second preview — 1.0.0.201, and the credential that made an update path real
+# Session: the second preview — and two gate failures that were both in the measuring instruments
 
 **2026-09-09, on the x64 Windows host.** Cutting the second preview of `1.0.0`.
 [RELEASE-PROCESS.md](RELEASE-PROCESS.md) is the sequence; this file is what one
@@ -6,12 +6,17 @@ run of it measured. Everything below was measured on this machine, and where a
 harness could not run, that is said in place rather than left for the next
 reader to assume.
 
-The release: **1.0.0.201, channel `preview`**, cut from `45d00f8f386b` with a
-clean tree. The version fields do not move — `1.0.0` has been published once
-(1.0.0.175, 2026-09-03) and this is the second preview of the same product, so
-only `BUILD` moves. It is 201 and not 200 because the archive-snapshot bump
-needs a commit, and §1.3 says the release is cut from the commit that bumps the
-pin.
+The release: **1.0.0.203, channel `preview`**. The version fields do not move —
+`1.0.0` has been published once (1.0.0.175, 2026-09-03) and this is the second
+preview of the same product, so only `BUILD` moves.
+
+**It moved three times, and both reasons are in this file.** 200 was the clean
+tree this session started on; the archive-snapshot bump made it 201 (§1.3: the
+release is cut from the commit that bumps the pin); #143 made it 202 and #141
+made it 203. Each of those two was a defect in a measuring instrument, each was
+found by running the gate on the medium about to be published, and each cost a
+rebuild of both media rather than a footnote in the release notes. That is the
+process working, and it is the reason the number is not 201.
 
 ---
 
@@ -226,3 +231,46 @@ dangerous of the two ways to be wrong.
 rejected deliberately: the tag would then name a tree whose own `run-s5.py all`
 cannot run, and a release nobody can reproduce from its tag is the thing this
 process exists to prevent.
+
+---
+
+## 5. The gate failed a second time, in the harness — #141 again
+
+**`run-s5.py all` on the 1.0.0.202 medium: `install` PASS, `boot` PASS,
+`cycle` PASS, `update` and `timer` FAILED.** Same pattern as §4: the product was
+right and the instrument was stale.
+
+```
+ok    2/8 Set-OS7UpdateChannel took http://10.0.2.2:8907, and apt verified it
+FAIL  3/8 Update-OS7 did not apply the release:
+      no release index for channel 'development' at http://10.0.2.2:8907.
+```
+
+Check 2 is worth reading first, because it is the one §4.2 was built for: the
+**new, strict read-back** — the one that parses which line apt printed for this
+source instead of trusting `apt-get -qq update`'s exit code — passed on a real
+machine, against real apt, against a real repository, on a server with **no**
+credential. Both halves of the new logic therefore hold on a machine: the
+credential path in the image, and the no-credential path #143 had wrongly
+forbidden.
+
+Check 3 failed because `run-s5.py` built its test repository with no
+`OS7_CHANNEL` and so inherited the pin's — `preview` since 2026-09-02 — while
+pointing the machine at `-Channel development` on a hard-coded line three
+hundred lines away. The index went to `index/preview.json`, the machine asked
+for `index/development.json`, and the `timer` phase then failed the same way,
+reporting exit 1 where it asserts 2. **Four red checks, one stale word.** The
+phase had not run since 2026-08-28, four days before the pin changed.
+
+That is [BUILD-NOTES](BUILD-NOTES.md) **#141** in a second place, and #141 was
+written the same morning about `check-os7-repo.py`. The fix is a named
+`UPDATE_CHANNEL` at the top of the file, read by the repository build and by
+both places that point the machine. Two harnesses here build the real
+repository and both now name the channel; `check-update-logic.py` authors its
+own index and controls it already — so the class is closed, not the instance.
+
+**And the version moved again**: 1.0.0.202 → **1.0.0.203**, both media rebuilt
+from one commit. Two rebuilds for two defects in one afternoon, both of them in
+the parts of this repository that exist to catch defects, and both found by the
+only thing that could find them — running the gate on the medium that was about
+to be published.

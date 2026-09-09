@@ -7548,6 +7548,36 @@ twenty-two `check-*.py` in this repository were red when they were all run
 together for the first time in a while — this one, and `check-image.py arm64`,
 which was #140's binfmt registration going away with a Docker restart.
 
+### It happened again the same day, in the harness nobody had re-run
+
+**2026-09-09, cutting the 1.0.0.202 preview.** `run-s5.py`'s update phase built
+its test repository with no `OS7_CHANNEL` — so it took the pin's, `preview` —
+while pointing the machine at `-Channel development` on a hard-coded line three
+hundred lines away. The index landed in `index/preview.json`; the machine asked
+for `index/development.json`; `Update-OS7` refused with a message that was
+exactly right and was about the harness:
+
+```
+no release index for channel 'development' at http://10.0.2.2:8907. Either the
+channel is wrong or this machine is pointed at something that is not an OS/7
+repository — see Set-OS7UpdateChannel.
+```
+
+Then the `timer` phase failed the same way, reporting exit 1 where it asserts 2.
+**Four red checks, one stale word**, on a medium whose `install`, `boot` and
+`cycle` phases had all just passed — and the phase had not run since 2026-08-28,
+four days before the pin changed.
+
+The fix is the same shape: `UPDATE_CHANNEL` at the top of the file, read by the
+repository build and by both places that point the machine. Two harnesses in
+this repository build the real repository and **both** now name the channel they
+write; `check-update-logic.py` authors its own index in-process and controls it
+already. That closes the class rather than the instance.
+
+The cost is worth writing down, because it is the argument for running a gate
+before you need it: this was found by the release process, after the media had
+been built, so the fix moved `BUILD` and both architectures were rebuilt.
+
 ---
 
 ## #142 — `Restart-Computer` POWERS A LINUX MACHINE OFF and reports success, and the manual told operators to type it

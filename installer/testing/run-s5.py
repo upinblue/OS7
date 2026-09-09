@@ -71,6 +71,31 @@ USERNAME = "os7admin"
 # than none. What the clone actually gets is one package, below.
 NEXT_RELEASE = "1.0.1.0"
 
+# THE CHANNEL THIS HARNESS BUILDS AND FOLLOWS, NAMED HERE RATHER THAN INHERITED.
+#
+# BUILD-NOTES #141, met for the second time. The repository build below used to
+# pass no OS7_CHANNEL, so it took whatever the PIN said, while the machine was
+# pointed at `-Channel development` on a hard-coded line 300 lines away. That
+# agreed for as long as the pin said `development` — it did on 2026-08-28, when
+# this phase last passed — and stopped agreeing on 2026-09-02, when 1.0.0 became
+# a `preview`. The index then landed in index/preview.json and the machine asked
+# for index/development.json, so `Update-OS7` refused with a message that was
+# exactly right and about the harness:
+#
+#     no release index for channel 'development' at http://10.0.2.2:8907.
+#     Either the channel is wrong or this machine is pointed at something that
+#     is not an OS/7 repository — see Set-OS7UpdateChannel.
+#
+# and the timer phase then failed the same way, reporting exit 1 where it
+# asserts 2. Four red checks, one stale word, and nothing had run the phase in
+# the eleven days between. check-os7-repo.py was given its own channel name for
+# this reason earlier the same day; this is the other place that needed it.
+#
+# `development` and not `preview`: the assertions downstream are about a release
+# signed by a development key, which is what `-AllowDevelopment` exists to make
+# a machine say out loud. Changing the word would change what they test.
+UPDATE_CHANNEL = "development"
+
 # The change that makes the two environments distinguishable at a glance, and
 # distinguishable in the only place that matters — the package database, which
 # is INSIDE the boot environment by decision D10. `hello` is 144 KiB, is in the
@@ -1007,6 +1032,8 @@ def build_release_repo(version):
          "-e", f"OS7_VERSION={version}", "-e", f"OS7_ARCH={lab.arch.arch}",
          "-e", f"OS7_REPO_URI={lab.arch.guest_host_url(HTTP_PORT)}",
          "-e", "OS7_REPO_ENABLED=yes",
+         # NAMED, not inherited from the pin (#141) — see UPDATE_CHANNEL.
+         "-e", f"OS7_CHANNEL={UPDATE_CHANNEL}",
          lab.arch.build_image, "bash", "-c",
          "/work/build/lib/build-os7-repo.sh /work/build/config/os7-release.conf /out"],
         capture_output=True, text=True)
@@ -1044,7 +1071,8 @@ def phase_update():
         build_release_repo(vnext)
 
         text = ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} "
-                     "-Channel development | Format-List Channel,Uri,Enabled | Out-String",
+                     f"-Channel {UPDATE_CHANNEL} | Format-List Channel,Uri,Enabled "
+                     "| Out-String",
                   "point the machine at the repository", timeout=600)
         body = body_of(text, "Out-String")
         if url in body and "Enabled" in body:
@@ -1222,8 +1250,9 @@ def phase_timer():
         # says so with exit 2. The environment the update phase staged and the
         # rollback left behind is removed first, so the timer's own staging is
         # what is measured rather than found.
-        ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} -Channel development "
-             "| Out-Null", "re-enable the channel", timeout=600)
+        ps(c, f"Import-Module OS7; Set-OS7UpdateChannel -Uri {url} "
+             f"-Channel {UPDATE_CHANNEL} | Out-Null",
+           "re-enable the channel", timeout=600)
         # The leading \n is deliberate: a module from before the trailing-newline
         # fix in Set-OS7UpdateChannel left update.conf without one, and a bare
         # append GLUED this line onto the channel line — the timer then read
