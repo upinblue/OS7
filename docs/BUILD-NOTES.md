@@ -7476,3 +7476,74 @@ rule in the other direction without measuring.
 and read here, so it stops drifting behind amd64 the way it had (its ISO was
 1.0.0.175 while amd64 was at .193). What still needs the Mac is every arm64
 BOOT: HVF, and therefore `run-secureboot.py`, `run-phase3.py` and the spikes.
+
+**AND THE REGISTRATION DOES NOT SURVIVE A DOCKER DESKTOP RESTART** — measured
+2026-09-09, a few hours after the first paragraph was written. `binfmt_misc`
+handlers live in the Docker VM's kernel, and the VM is recreated when Docker
+Desktop restarts, so the arm64 capability quietly goes away. What it looks like
+is not a missing handler:
+
+```
+### the image, asked what it is (arm64)
+    reading OS7-1.0.0.194-arm64.iso
+could not read the image:
+exec /usr/bin/bash: exec format error
+```
+
+**In ZERO seconds** — which is the tell. A check that fails instantly failed
+before it did any work, and `exec format error` about `/usr/bin/bash` is the
+kernel refusing to run an aarch64 binary, not anything about the ISO. Re-run
+the `tonistiigi/binfmt --install arm64` line and the same check passes.
+
+So it is a per-session prerequisite on this host, not a setting. Anything
+scripted that depends on it should either register the handler itself or say
+what is missing — `docker run --platform linux/arm64 <img> uname -m` answers
+in a second and either prints `aarch64` or fails the same way.
+
+## #141 — a check that INHERITS a value from the pin goes red when the product changes, for a reason unrelated to what it checks
+
+**2026-09-09**, running every check on this host after Docker Desktop came
+back. `check-os7-repo.py` reported
+
+```
+  one tree, two architectures (§7.3)
+      ok    the Release names BOTH architectures — Architectures: amd64 arm64
+      ok    two descriptors at one version, each under its own architecture
+      FAIL  the index holds one entry per (version, architecture) — arm64
+      ok    and each entry names its own architecture's descriptor
+```
+
+which reads as a repository that lost an index entry. It had not. Asked of the
+built tree:
+
+```
+index/preview.json      1.0.0.196 amd64
+index/development.json  1.0.0.196 arm64
+```
+
+**The two architectures of one version were in two different CHANNELS.** The
+check's first build passed no `OS7_CHANNEL` and inherited the pin's; the
+second-architecture merge run hard-codes `development`; and the §7.3
+assertions read `development.json`. Those three agreed while the pin said
+`development` — it did at `f2a8217`, where the assertions were written and the
+commit message records them green — and stopped agreeing at `934eba0`,
+*"1.0.0 becomes a preview"*, which changed a value in
+`build/config/os7-release.conf` and nothing else.
+
+`git log -S 'OS7_CHANNEL='` does **not** find that commit, which is worth
+knowing on its own: `-S` counts occurrences of a string, and changing a
+value between the quotes leaves the count alone. `git show <rev>:<path>` is
+what answers "what was this set to then".
+
+**The rule: a check owns every value its assertions depend on.** The channel
+names are now a constant in the file and are passed to every build it makes,
+so the check is independent of the pin's maturity — which is correct, because
+what it checks is the repository's mechanics and not what the product calls
+itself this month.
+
+**And the cost was invisible for eleven days**, because nothing runs this check
+automatically and no session had a reason to. That is the second half of the
+lesson: a gate nobody runs is a gate that is red on average. Two of the
+twenty-two `check-*.py` in this repository were red when they were all run
+together for the first time in a while — this one, and `check-image.py arm64`,
+which was #140's binfmt registration going away with a Docker restart.

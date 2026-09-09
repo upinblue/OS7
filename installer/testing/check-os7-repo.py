@@ -520,6 +520,11 @@ def parse(stdout):
     return facts
 
 
+# The channel every build in this file goes into, and the index the §7.3
+# assertions read. Named here rather than inherited from the pin — see the
+# comment at the first build.
+DEV_CHANNEL = "development"
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", default="amd64", choices=("amd64", "arm64"))
@@ -565,6 +570,25 @@ def main():
                  # disabled. This run is the case where there IS somewhere to
                  # point it.
                  "-e", "OS7_REPO_ENABLED=yes",
+                 # THE CHANNEL IS NAMED HERE, and it was not until 2026-09-09.
+                 #
+                 # This run used to inherit whatever OS7_CHANNEL the pin held,
+                 # while the second-architecture merge below hard-codes
+                 # `development` and the §7.3 assertions read development.json.
+                 # That agreed while the pin said `development` — it did at
+                 # f2a8217, when those assertions were written and green — and
+                 # stopped agreeing at 934eba0, which turned 1.0.0 into a
+                 # `preview`. The two architectures of one version then landed
+                 # in two different channel indexes and
+                 # "the index holds one entry per (version, architecture)"
+                 # failed with `arm64`: the amd64 entry was in preview.json,
+                 # which nothing here reads.
+                 #
+                 # A check that inherits a value it does not name goes red for
+                 # a reason that has nothing to do with what it checks, and
+                 # this one went red for eleven days without anybody running
+                 # it. The channel names it asserts are now its own.
+                 "-e", f"OS7_CHANNEL={DEV_CHANNEL}",
                  f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
                  "/work/build/lib/build-os7-repo.sh "
                  "/work/build/config/os7-release.conf /out"])
@@ -675,7 +699,7 @@ def main():
     # rewrote LAST, which is exactly the property a two-run tree has to hold.
     other = "arm64" if args.arch == "amd64" else "amd64"
     print(f"      merging the second architecture — OS/7 {version} ({other})")
-    build_more(version, "development", label=f"the {other} merge", arch=other)
+    build_more(version, DEV_CHANNEL, label=f"the {other} merge", arch=other)
 
     print(f"      installing from it in a clean {TEST_IMAGE}")
     got = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
@@ -697,11 +721,11 @@ def main():
 
     # -- the channels, read off the repository itself ------------------------
     print("\n  two channels, one repository")
-    with open(os.path.join(repo_dir, "index", "development.json")) as fh:
+    with open(os.path.join(repo_dir, "index", f"{DEV_CHANNEL}.json")) as fh:
         dev_idx = json.load(fh)
     with open(os.path.join(repo_dir, "index", "stable.json")) as fh:
         st_idx = json.load(fh)
-    check(dev_idx.get("channel") == "development"
+    check(dev_idx.get("channel") == DEV_CHANNEL
           and st_idx.get("channel") == "stable",
           "each index says the channel its filename claims")
     check(os.path.exists(os.path.join(repo_dir, "index", "development.json.asc"))
