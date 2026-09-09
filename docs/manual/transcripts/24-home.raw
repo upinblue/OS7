@@ -12,7 +12,7 @@ OS7-STEP run: stat -c %d /home/os7admin
 [32;1mOwnDataset    : [0mTrue
 [32;1mOwnFilesystem : [0mTrue
 [32;1mAgrees        : [0mTrue
-[32;1mDeviceId      : [0m54
+[32;1mDeviceId      : [0m55
 [32;1mNote          : [0mon its own dataset, outside the boot environment
 
 [6n

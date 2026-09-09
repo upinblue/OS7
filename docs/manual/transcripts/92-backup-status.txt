@@ -2,16 +2,17 @@ Configured                : True
 Enabled                   : True
 ScheduleFileInstalled     : True
 Sources                   : {@{Dataset=rpool/USERDATA; Exists=True; Datasets=2;
-                             Snapshots=0; Newest=; AgeMinutes=; Oldest=}, @{Dat
-                            aset=rpool/DATA/srv; Exists=True; Datasets=1; Snaps
-                            hots=0; Newest=; AgeMinutes=; Oldest=}}
+                             Snapshots=8; Newest=09/09/2026 19:47:53; AgeMinute
+                            s=3; Oldest=}, @{Dataset=rpool/DATA/srv; Exists=Tru
+                            e; Datasets=1; Snapshots=4; Newest=09/09/2026 19:47
+                            :53; AgeMinutes=3; Oldest=}}
 Targets                   :
 Uncovered                 : {}
-NewestLocalSnapshot       :
-MinutesSinceLocalSnapshot :
+NewestLocalSnapshot       : 09/09/2026 19:47:53
+MinutesSinceLocalSnapshot : 3
 NewestReplication         :
 HoursSinceReplication     :
-CheckedAt                 : 09/03/2026 10:09:03
+CheckedAt                 : 09/09/2026 19:50:30
 
 
 PS /home/os7admin>

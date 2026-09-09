@@ -5,7 +5,7 @@ PS /home/os7admin> [?1h[6nR[6n[24;81H[24;80HRe[6n[24;82H[24;80HReg[6n[
 
 [32;1mName        : [0mos7-task-scrub.timer
 [32;1mDescription : [0mOS/7 task: scrub
-[32;1mNextRun     : [0m09/06/2026 03:00:00
+[32;1mNextRun     : [0m09/13/2026 03:00:00
 [32;1mLastRun     : [0m
 [32;1mLastResult  : [0msuccess
 [32;1mActivates   : [0mos7-task-scrub.service

@@ -7738,3 +7738,173 @@ exercise the builder, passes an overridden URI and so walked through the
 not-firing branch without ever visiting the other one. A refusal that has never
 been seen to fire is a refusal nobody has checked, and this one fired on the
 wrong input the first time it mattered. It is now checked in both directions.
+
+## #144 — two amd64 builds from one pin do NOT hold the same package set, and the number says they do
+
+**Measured 2026-09-09, by accident, cutting the 1.0.0.203 preview.** The 203
+medium came out **7 110 656 bytes smaller** than the 202 medium built one hour
+earlier from the same pin. The two package manifests differ in exactly ten
+lines: the nine OS/7 packages' own version numbers, and
+
+```
+- code   1.136.2-1788561671   amd64
++ code   1.137.0-1788902055   amd64
+```
+
+1510 packages both times, and Visual Studio Code moved upstream in the hour
+between the builds.
+
+**The cause is stated in the pin and its consequence was not.**
+`packages.microsoft.com` has no snapshot service, so
+build/config/os7-release.conf pins what it can by version AND hash — and it does
+that for **pwsh alone**. `microsoft-edge-stable`, `intune-portal`,
+`microsoft-identity-broker` and `code` are installed by
+`config/hooks-amd64/0030-microsoft-gui-stack.hook.chroot` with a plain
+`apt-get install` against the live repository. Four packages, unpinned, on every
+amd64 medium.
+
+**So the rule the pin's own header states is broken on amd64:** "a version
+number is only honest if the archive is pinned. `apt full-upgrade` against a
+live archive gives a different system depending on the day it ran, and two
+machines would then report the same number and hold different bits. That is
+worse than having no number, because a number gets trusted." Two media, one
+pin, one hour, different bits — and both would call themselves 1.0.0.x with the
+same authority.
+
+**Why S7 said otherwise, and why that was not wrong.** Spike S7 measured "two
+builds from one pin hold identical package sets, 549 packages, same manifest
+hash" (SESSION-RELEASE-IDENTITY.md). That was **arm64**, which is server-only
+and carries none of these four packages. The claim was true of what it measured
+and was then read as true of the product.
+
+**What IS honest today, and it is not nothing:** hook 0075 writes the MEASURED
+package manifest into the image and beside the ISO, so the artefact records
+exactly which Edge and which `code` it contains, and `check-image.py` reads that
+back. A support case can always establish what a given medium holds. What cannot
+be established is the reverse direction — a version number does not identify the
+contents on amd64.
+
+**Not fixed here.** The options are a local mirror-snapshot of
+packages.microsoft.com (the only one that makes the whole medium reproducible),
+pinning each of the four by version+hash the way pwsh is (honest, and turns
+every upstream Edge release into a release event — §3.4 says that is the
+intended shape), or stating the limit and living with it. Choosing costs a
+decision about how often OS/7 wants to cut a release, which is RP4 and unmade.
+Recorded here so the next person reads the number correctly.
+
+## #145 — `OS7_CHANNEL` is the fourth value the pin silently overwrites, and only three were on the list
+
+**Measured 2026-09-09**, in the `run-s5.py` update phase after #141's fix, from
+two lines of its own output one after the other:
+
+```
+>>> OS/7 repository os7-1.0 — 1.0.0.204 (development) / amd64
+>>> OS/7 packages 1.0.0.204 (preview) for amd64
+```
+
+One `docker run`, one `-e OS7_CHANNEL=development`, two different answers.
+`build-os7-repo.sh` honours the environment for the INDEX it writes;
+`build-os7-packages.sh` does not, for the packages' own `release.json`.
+
+**The cause is documented in the very file that has the defect.** Its header
+says, in capitals, "SOURCING THE PIN OVERWRITES THE ENVIRONMENT, SILENTLY", and
+explains that `docker run -e OS7_REPO_URI=…` followed by
+`source os7-release.conf` leaves the pin's value in place because a plain
+assignment in a sourced file wins over an exported variable. It then captures
+and restores exactly three values — `OS7_REPO_URI`, `OS7_REPO_ENABLED`,
+`OS7_SUITE` — and calls them "the three repository-facing values a caller
+legitimately overrides". `OS7_CHANNEL` is a fourth, it is now overridden by two
+harnesses, and it was not on the list.
+
+**What it does and does not break.** Nothing on a released medium: a release
+build passes no `OS7_CHANNEL`, so the pin's value reaches both the index and the
+packages and they agree. What it produces in a harness is a package whose
+declared maturity is `preview` listed in an index called `development` — which
+RELEASE-PROCESS §1.2 explicitly permits ("`OS7_CHANNEL` is the maturity of this
+build, a fact about the artefact; the index channel is which listing a machine
+reads, an intention about an audience") and just as explicitly says "must be a
+deliberate, stated act — never a default". Here it was a default, and nothing
+said so.
+
+`check-os7-repo.py` gets the same split for the same reason and passes for the
+same reason: its assertions are about the index.
+
+**The fix is one line and it is not made here** — the media of 1.0.0.203 were
+already built when this was found, and a commit moves BUILD. Add `OS7_CHANNEL`
+to the captured set, and have `build-os7-repo.sh` print the two channels
+together so a disagreement is visible rather than inferable from two lines
+forty apart.
+
+## #146 — a harness died on an ARROW, because a redirected stdout on Windows is cp1252
+
+**Measured 2026-09-09.** `run-phase3.py walk` reached its last assertion and then
+crashed:
+
+```
+UnicodeEncodeError: 'charmap' codec can't encode character '→'
+  File "…/run-phase3.py", line 900, in phase_walk
+    print(f"      ok    the copy bar advanced while copying "
+          f"({copy_percents[0]}% → {copy_percents[-1]}%, …")
+```
+
+The install it was checking had **succeeded**; the walk had got as far as
+watching the copy bar advance. What failed was printing the `→` in the success
+message, because the harness's stdout was redirected to a file and Python then
+picks the locale encoding — cp1252 on this host — instead of UTF-8. Run with the
+output on a terminal, or through PowerShell's `Tee-Object`, the same run is fine,
+which is why this had never appeared: every earlier invocation of these
+harnesses on this host was interactive.
+
+**It is worth a number because of what it looks like.** A `Traceback` in the
+last line of a two-phase VM harness reads as "the walk failed", and the walk had
+not failed — it had passed and could not say so. Two of this session's other
+findings were also defects in measuring instruments (#143, #141), and the cost
+of misreading this one would have been a third rebuild for nothing.
+
+`PYTHONUTF8=1` (or `PYTHONIOENCODING=utf-8`) in the invocation is the fix, and
+it belongs in the invocation rather than in the harnesses: the arrow is correct
+output and Windows' default codepage is the thing that is wrong about it. Every
+`installer/testing/*.py` run with redirected output on this host needs it.
+
+## #147 — a check reported the REPOSITORY broken because Python translated its script's newlines
+
+**Measured 2026-09-09**, publishing 1.0.0.203. `check-storagebox.py` — the
+outside verification RELEASE-PROCESS §3 step 10 requires — went red on the two
+checks that matter:
+
+```
+  4. apt, in a clean container, with the right credential
+      FAIL  URI /: not fetched — apt printed neither Get: nor Err: for the source
+  5. THE CONTROL — a wrong credential must be REFUSED, not merely fail
+      FAIL  the control cannot run — no URI fetched above
+```
+
+**The repository was fine.** Run by hand, apt in a clean `ubuntu:26.04` fetched
+`InRelease`, verified its signature, fetched `Packages` and reported
+`Candidate: 1.0.0.203`. What was broken was the check.
+
+`subprocess.run(cmd, input=script, text=True)` writes stdin through a
+`TextIOWrapper` whose newline translation follows the HOST. Measured on this
+box: every `\n` in the script reaches the container's bash as `\r\n`. bash then
+reads `umask 077\r` as "octal number out of range", `>/dev/null 2>&1\r` as
+"ambiguous redirect", and the heredocs as garbage — so **apt never ran**, the
+output contained no `Get:` line, and the function's verdict for "apt printed
+nothing" is `unfetched`. Which it renders as a failure about the server.
+
+**This is the third newline or encoding fault in one session** (#146 was the
+same family, and the release pin itself was silently converted to CRLF by a
+`pathlib.write_text` earlier the same day), and it is the worst of the three,
+because the other two crashed while this one produced a confident, wrong,
+product-shaped answer: "the published repository cannot be fetched".
+
+The fix is to hand the shell bytes — `input=script.encode("utf-8")`, decoding
+the output explicitly — so the container sees exactly what the file contains.
+After it: **6 ok, 0 failed**, including the control, which is what makes step 4
+mean anything.
+
+**And the standing lesson has a corollary.** "A diagnostic must not depend on
+the subsystem it is diagnosing" is in this file twice. Add: a diagnostic must
+not depend on the HOST's text conventions either, and on Windows that is not a
+theoretical concern — `git`, Python's text mode, PowerShell's redirection and
+the console codepage each have an opinion about bytes this repository ships to
+Linux.

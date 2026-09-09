@@ -274,3 +274,58 @@ from one commit. Two rebuilds for two defects in one afternoon, both of them in
 the parts of this repository that exist to catch defects, and both found by the
 only thing that could find them — running the gate on the medium that was about
 to be published.
+
+---
+
+## 6. What 1.0.0.203 was measured against
+
+Both media from `42156cf6bda2`, clean tree, `reproducible: true`.
+
+| | |
+|---|---|
+| `OS7-1.0.0.203-amd64.iso` | 3 344 904 192 B |
+| `OS7-1.0.0.203-arm64.iso` | 1 848 668 160 B |
+
+### amd64 — on this host, with KVM
+
+* **`check-image.py amd64` — 141 ok, 0 failed** (1.0.0.175's number was 121).
+  Includes the whole Secure Boot chain read out of the shipped medium:
+  `BOOTX64.EFI` is Microsoft-signed shim, **byte-identical to the shim the image
+  itself ships** (`4c89145e958cf592` on both sides), Canonical's `grubx64.efi`
+  beside it, the same loader in the ISO9660 tree and in the El Torito FAT image,
+  and a Canonical-signed kernel. Plus the four new credential checks: shipped,
+  keyed to the host apt matches on, **mode 600**, owned by `os7-release`.
+* **`run-s5.py all` — all five phases PASS, 28 checks, 0 failed.** Installed
+  unattended with a TPM; **booted from the disk alone with nothing typed**;
+  cloned, changed, activated, rebooted into the clone and rolled back; then took
+  a served release **1.0.0.203 → 1.0.0.204**, ran its firstboot migration,
+  reported the new version from `Get-OS7Version`, kept the previous environment
+  under `-Keep 2` and **rolled the update back**; and the unattended timer
+  honoured its exit-code contract — 0 with no channel, 2 staged, 2 again without
+  minting a second environment.
+* **`run-secureboot.py all` — 35 ok, GREEN**, all four phases: the medium booted
+  **through its own signed bootloader** under Microsoft-keyed OVMF (`-cdrom`, no
+  `-kernel`), a machine was installed from that verified medium, the disk came up
+  with **no medium attached and Secure Boot on and unlocked itself from the
+  TPM**, and the control phase — the same disk under non-enforcing firmware —
+  required the passphrase back.
+* **`run-phase3.py install` — PASS.** All eighteen Setup steps, both pools
+  exported.
+* **`run-phase3.py walk`** — see §7; its first run died on an encoding fault in
+  its own success message (#146), not on the install.
+
+### arm64 — the artefact, and only the artefact
+
+* **`check-image.py arm64` — 114 ok, 0 failed.** The signed chain is on this
+  medium too: `shimaa64.efi.signed.latest` (987 440 B) and `gcdaa64`
+  (2 533 256 B), lifted out of the squashfs the build had just written.
+* **Never booted.** No aarch64 host with hardware virtualisation is in this
+  release loop, so `run-secureboot.py all`, `run-s5.py all` and `run-phase3.py`
+  have not run on arm64 for this build or any other. That is the bar
+  RELEASE-PROCESS §2 describes and it is what the download page has to say.
+
+### The no-VM half
+
+Green on `45d00f8` (§3) and unchanged by the two fixes since, except
+`check-os7-repo.py`, which grew the eight-check refusal section and is green
+with it.

@@ -1,7 +1,7 @@
 Name  Health        Size        Free
 ----  ------        ----        ----
-bpool ONLINE  2013265920  1888600064
-rpool ONLINE 22548578304 17832361984
+bpool ONLINE  2013265920  1888354304
+rpool ONLINE 22548578304 17821884416
 
 
 PS /home/os7admin>

@@ -1,3 +1,5 @@
+Name        : os7_1.0.0.175_202609030759
+Release     : 1.0.0.175
 Created     : 09/03/2026 09:59:29
 Active      : True
 Running     : True
@@ -5,20 +7,8 @@ Menu        : True
 Complete    : True
 RootDataset : rpool/ROOT/os7_1.0.0.175_202609030759
 BootDataset : bpool/BOOT/os7_1.0.0.175_202609030759
-Used        : 4833701888
+Used        : 4841168896
 Origin      :
-
-Name        : demo
-Release     :
-Created     : 09/03/2026 10:07:08
-Active      : False
-Running     : False
-Menu        : False
-Complete    : True
-RootDataset : rpool/ROOT/demo
-BootDataset : bpool/BOOT/demo
-Used        : 32768
-Origin      : rpool/ROOT/os7_1.0.0.175_202609030759@demo
 
 
 PS /home/os7admin>

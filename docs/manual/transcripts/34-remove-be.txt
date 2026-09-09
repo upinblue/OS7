@@ -1,5 +1,3 @@
-ZFS-STEP destroy bpool/BOOT/demo
-ZFS-STEP destroy rpool/ROOT/demo
-OS7-STEP boot environment demo destroyed
+OperationStopped: no boot environment called 'demo'
 
 PS /home/os7admin>

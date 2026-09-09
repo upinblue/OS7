@@ -1,7 +1,7 @@
 Name        : sanoid.timer
 Description : Run Sanoid Every 15 Minutes
-NextRun     : 09/03/2026 10:15:00
-LastRun     :
+NextRun     : 09/09/2026 20:00:00
+LastRun     : 09/09/2026 19:47:52
 LastResult  : success
 Activates   : sanoid.service
 StartupType : enabled

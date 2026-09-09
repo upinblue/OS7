@@ -224,14 +224,23 @@ echo "=== APT-UPDATE-END rc=$?"
 apt-cache show os7-base 2>/dev/null | sed -n 's/^Version: /VERSION /p' | head -1
 apt-cache policy 2>/dev/null | sed -n 's/^ *release /ORIGIN /p' | head -4
 """
+    # AS BYTES, NOT AS TEXT (BUILD-NOTES #147). `input=` with `text=True`
+    # writes through a TextIOWrapper whose newline translation is the HOST's:
+    # measured 2026-09-09, a "\n" in this string reaches the container's bash as
+    # "\r\n" on Windows. bash then reads `umask 077\r` as an octal number out of
+    # range and `> /dev/null 2>&1\r` as an ambiguous redirect, apt never runs at
+    # all, and this function reports `unfetched` — a FAILURE about the
+    # repository, from a script that never executed. The output is decoded here
+    # instead, so the shell sees exactly the bytes this file contains.
     try:
         r = subprocess.run(
             ["docker", "run", "--rm", "-i", CONTAINER, "bash", "-s"],
-            input=script, capture_output=True, text=True, timeout=600,
+            input=script.encode("utf-8"), capture_output=True, timeout=600,
         )
     except subprocess.TimeoutExpired:
         return "unfetched", None, "the container timed out"
-    out = (r.stdout or "") + (r.stderr or "")
+    out = (r.stdout or b"").decode("utf-8", "replace") + \
+          (r.stderr or b"").decode("utf-8", "replace")
 
     if "NO-CA-BUNDLE" in out:
         return "tls", None, "ca-certificates could not be installed in the container"
