@@ -377,11 +377,18 @@ real server.
   OS7_REPO_CREDENTIAL=$HOME/.os7/storagebox.conf`) and **never from this
   repository, which is public**. It is a conffile for the same reason
   `os7.sources` is one: `Set-OS7UpdateChannel` rewrites it, and a plain file is
-  replaced on the next upgrade of the package. A build whose `OS7_REPO_URI`
-  needs authentication and was handed no credential **refuses** — the medium it
-  would produce installs machines that cannot reach the published repository and
-  say nothing about why — with `OS7_REPO_NO_CREDENTIAL=1` as the deliberate
-  opt-out. The mode is then read back **out of the built `.deb`**
+  replaced on the next upgrade of the package. A build whose repository needs
+  authentication and was handed no credential **refuses** — the medium it would
+  produce installs machines that cannot reach the published repository and say
+  nothing about why — with `OS7_REPO_NO_CREDENTIAL=1` as the deliberate opt-out.
+  **"Needs authentication" is the pin's declaration, `OS7_REPO_AUTH`, and not
+  an inference from the URI's scheme** (BUILD-NOTES #143): `http(s)` says
+  nothing about a server, C7 §6.4 makes an unauthenticated mirror a supported
+  deployment, and the scheme-based version of this refusal stopped `run-s5.py`
+  from building the HTTP mirror it tests the update train against. The
+  declaration describes the URI beside it, so a caller that overrides
+  `OS7_REPO_URI` has replaced the server it was about and the refusal does not
+  apply. The mode is then read back **out of the built `.deb`**
   (`dpkg-deb -c` must say `-rw-------`), because the staging tree sits on a bind
   mount and a Windows host does not honour a `chmod` there (BUILD-NOTES #117):
   the file would present as 0777, `pkg_finish`'s exact-0777 sweep would make it
@@ -397,6 +404,16 @@ Gated by `check-update-logic.py` ("Set-OS7UpdateChannel and the credential apt
 reads"), whose fake `apt-get` reproduces the measured trap — it prints a 401
 `Err:` line **and exits 0** — so the four refusals are proven to fire, with a
 control run in which apt fetches the source and the same call succeeds.
+
+**And the BUILDER's refusal is gated in both directions**, by
+`check-os7-repo.py` ("the builder's credential refusal, both ways"), which is
+the check that did not exist on the day the refusal was written: it builds
+`os7-release` alone, four times, and requires the refusal to fire for the pin's
+own URI with no credential, to stay silent for an overridden one, to be
+passable with `OS7_REPO_NO_CREDENTIAL=1`, and — when a credential is handed in —
+to put it in the `.deb` at `-rw-------` without the password appearing in the
+build's own output. A refusal that has never been seen to fire is a refusal
+nobody has checked, and #143 is what that cost.
 
 ---
 

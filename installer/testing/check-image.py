@@ -1041,20 +1041,29 @@ def main() -> None:
     # -- the credential, and only when the shipped source needs one -----------
     #
     # RELEASE-PROCESS §4.2. The question the ARTEFACT can answer, which no
-    # build log can: this medium's own apt source names a host, and either the
-    # medium carries the credential for that host or every machine it installs
-    # cannot reach the repository and nothing on it says why.
+    # build log can: either this medium carries the credential its own apt
+    # source needs, or every machine it installs cannot reach the repository
+    # and nothing on it says why.
     #
-    # CONDITIONAL ON THE MEDIUM, not on how it was built. An http(s) URI needs
-    # authentication (§4.1a measured the box answering an anonymous request
-    # 401); a file:// URI is the pre-publication world and needs none. So a
-    # tree building for somewhere else is not failed for a credential it was
-    # right not to have — and OS/7's own published media cannot lose theirs
-    # quietly, which is what this check is for.
+    # NOT FROM THE SCHEME. That was BUILD-NOTES #143: `http(s)` does not mean
+    # "requires authentication" — that is a fact about one server, and C7 §6.4
+    # makes a plain unauthenticated mirror a supported deployment. The medium
+    # carries the declaration instead: release.conf's OS7_REPO_AUTH. It applies
+    # only when the shipped source still points at the URI that file names — a
+    # build handed a different one replaced the server the declaration is
+    # about, which is exactly what run-s5.py and check-os7-repo.py do.
     src_uri = next((l.split(None, 1)[1].strip()
                     for l in img.get("os7.sources", "").splitlines()
                     if l.strip().startswith("URIs:")), "")
-    if src_uri.startswith(("http://", "https://")):
+    pin = {}
+    for line in img.get("release.conf", "").splitlines():
+        if "=" in line and not line.strip().startswith("#"):
+            k, v = line.split("=", 1)
+            pin[k.strip()] = v.strip().strip('"').strip("'")
+    needs_auth = (pin.get("OS7_REPO_AUTH", "no") == "yes"
+                  and src_uri == pin.get("OS7_REPO_URI", "")
+                  and src_uri.startswith(("http://", "https://")))
+    if needs_auth:
         want_host = src_uri.split("://", 1)[1].split("/", 1)[0]
         auth = img.get("os7.auth", "")
         check(f"machine {want_host}" in auth,
@@ -1077,7 +1086,8 @@ def main() -> None:
               "with a login in it", next((l for l in auth.splitlines()
                                           if l.startswith("login ")), "(none)"))
     else:
-        check(True, "the shipped source needs no credential",
+        check(True, "the shipped source declares no credential requirement",
+              f"OS7_REPO_AUTH={pin.get('OS7_REPO_AUTH', '(unset)')}, "
               f"URIs: {src_uri or '(none)'}")
     check(img.get("os7.staged.debs", "").strip() in ("(gone)", ""),
           "the staged .debs were consumed, not shipped",

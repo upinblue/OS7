@@ -422,13 +422,26 @@ build_os7_release() {
 	# A CONFFILE, for the same reason os7.sources is one: Set-OS7UpdateChannel
 	# rewrites it when an operator points the machine elsewhere, and a plain
 	# file would be replaced on the first upgrade of this package.
-	local auth_host="" auth_login="" auth_password=""
+	# WHETHER A CREDENTIAL IS NEEDED IS THE PIN'S DECLARATION, NOT THE SCHEME'S
+	# (BUILD-NOTES #143). Deciding it from `http(s)` refused run-s5.py's build,
+	# because a plain HTTP mirror with no authentication is a supported
+	# deployment (C7 §6.4) and that harness serves one. Two conditions, both
+	# necessary:
+	#
+	#   * OS7_REPO_AUTH says the server needs one, and
+	#   * the URI in force IS the one that declaration is about — a caller that
+	#     overrode OS7_REPO_URI replaced the server, and the pin's statement
+	#     about the old one says nothing about the new one.
+	local auth_host="" auth_login="" auth_password="" auth_needed="no"
 	case "${OS7_REPO_URI}" in
 		http://*|https://*)
 			auth_host="${OS7_REPO_URI#*://}"
 			auth_host="${auth_host%%/*}"
 			;;
 	esac
+	if [[ -z "${_env_repo_uri}" && "${OS7_REPO_AUTH:-no}" == "yes" && -n "${auth_host}" ]]; then
+		auth_needed="yes"
+	fi
 
 	if [[ -n "${auth_host}" && -n "${OS7_REPO_CREDENTIAL_FILE:-}" ]]; then
 		[[ -r "${OS7_REPO_CREDENTIAL_FILE}" ]] || {
@@ -475,19 +488,20 @@ build_os7_release() {
 		)
 		chmod 0600 "${stage}/etc/apt/auth.conf.d/os7.conf"
 		echo "    os7-release: credential for ${auth_host} (${auth_login}) shipped"
-	elif [[ -n "${auth_host}" && "${OS7_REPO_NO_CREDENTIAL:-}" != "1" ]]; then
-		echo "!!! os7-release: OS7_REPO_URI is ${OS7_REPO_URI}, which needs a" >&2
-		echo "!!! credential (RELEASE-PROCESS §4.1a: that server answers an" >&2
-		echo "!!! anonymous request with 401), and this build was handed none." >&2
+	elif [[ "${auth_needed}" == "yes" && "${OS7_REPO_NO_CREDENTIAL:-}" != "1" ]]; then
+		echo "!!! os7-release: the pin declares OS7_REPO_AUTH=yes for" >&2
+		echo "!!! ${OS7_REPO_URI}, and this build was handed no credential." >&2
 		echo "!!!" >&2
 		echo "!!! A medium built like this installs machines that cannot reach" >&2
-		echo "!!! the published repository at all, and nothing on them would say" >&2
-		echo "!!! why. Refusing rather than shipping that quietly." >&2
+		echo "!!! that repository at all, and nothing on them would say why." >&2
+		echo "!!! Refusing rather than shipping it quietly (RELEASE-PROCESS 4.2)." >&2
 		echo "!!!" >&2
 		echo "!!!   make build-${OS7_ARCH} OS7_REPO_CREDENTIAL=\$HOME/.os7/storagebox.conf" >&2
 		echo "!!!" >&2
-		echo "!!! Building for somewhere else? Point the pin's OS7_REPO_URI" >&2
-		echo "!!! there, or set OS7_REPO_NO_CREDENTIAL=1 to ship without one." >&2
+		echo "!!! Serving the tree from somewhere that needs no credential? Hand" >&2
+		echo "!!! OS7_REPO_URI in — an overridden URI is not what that pin line" >&2
+		echo "!!! describes, and this refusal does not apply to it. Or set" >&2
+		echo "!!! OS7_REPO_NO_CREDENTIAL=1 to ship the pin's URI without one." >&2
 		exit 1
 	fi
 

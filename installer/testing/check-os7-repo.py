@@ -42,6 +42,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BUILD_IMAGE = "os7-build"
@@ -1017,6 +1018,101 @@ def main():
     check(f.get("goodkey.rc") == "0",
           "while the same isolated update with the right key still succeeds",
           f"exit {f.get('goodkey.rc')}")
+
+    # -- the builder's REFUSAL, in both directions (BUILD-NOTES #143) ---------
+    #
+    # RELEASE-PROCESS §4.2 requires that a build cannot silently produce a
+    # medium without a credential its repository needs. That refusal is the one
+    # piece of the §4.2 work whose whole job is to FAIL, and on the day it was
+    # written nothing exercised it: the run above hands an overridden
+    # OS7_REPO_URI in, so it walks the not-firing branch and never visits the
+    # other one. The first input that reached the firing branch was run-s5.py's
+    # own HTTP mirror, which it refused — a scheme is not a server.
+    #
+    # So both directions are asserted here, on os7-release alone (seconds: no
+    # pwsh tarball, no fonts), against a real container and a real dpkg-deb.
+    print("\n  the builder's credential refusal, both ways")
+    ref_dir = tempfile.mkdtemp(prefix="os7-refusal-")
+    cred = os.path.join(ref_dir, "storagebox.conf")
+    with open(cred, "w", newline="\n") as fh:
+        fh.write("OS7_SB_HOST=box.invalid\n"
+                 "OS7_SB_REPO_USER=probe-user\n"
+                 "OS7_SB_REPO_PASSWORD=probe-secret-9134\n")
+
+    def build_release(extra_env, name):
+        """build-os7-packages.sh for os7-release only. Returns (rc, log, deb).
+
+        THE TRUST ANCHOR IS HANDED IN, from the repository this run already
+        built. os7-release refuses to exist without one (§6.3) — a package
+        shipped keyless leaves every machine unable to verify an update — and
+        that refusal comes BEFORE the credential logic under test, so without
+        this the four cases below would all fail for the wrong reason. Which is
+        what they did the first time they ran.
+        """
+        out = os.path.join(ref_dir, name)
+        os.makedirs(out, exist_ok=True)
+        r = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                 "-v", f"{REPO}:/work", "-v", f"{ref_dir}:/cred:ro",
+                 "-v", f"{repo_dir}:/repo:ro", "-v", f"{out}:/out",
+                 "-e", "OS7_REPO_PUBKEY=/repo/keyring/os7-archive-keyring.gpg",
+                 "-e", f"OS7_VERSION={version}", "-e", f"OS7_ARCH={args.arch}",
+                 "-e", f"OS7_CHANNEL={DEV_CHANNEL}",
+                 *[a for kv in extra_env.items() for a in ("-e", f"{kv[0]}={kv[1]}")],
+                 f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
+                 "/work/build/lib/build-os7-packages.sh "
+                 "/work/build/config/os7-release.conf /out os7-release"])
+        deb = os.path.join(out, f"os7-release_{version}_all.deb")
+        return r.returncode, (r.stdout or "") + (r.stderr or ""), deb
+
+    def deb_has_credential(deb):
+        if not os.path.exists(deb):
+            return None
+        r = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                 "-v", f"{os.path.dirname(deb)}:/d:ro",
+                 f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
+                 f"dpkg-deb -c /d/{os.path.basename(deb)} "
+                 "| grep ' ./etc/apt/auth.conf.d/os7.conf' || true"])
+        return (r.stdout or "").strip()
+
+    pin_auth = ""
+    with open(os.path.join(REPO, "build", "config", "os7-release.conf")) as fh:
+        for line in fh:
+            if line.startswith("OS7_REPO_AUTH="):
+                pin_auth = line.split("=", 1)[1].strip().strip('"')
+    check(pin_auth == "yes",
+          "the pin declares its server needs a credential — the premise of all this",
+          f"OS7_REPO_AUTH={pin_auth or '(unset)'}")
+
+    # IT FIRES: the pin's own URI, the pin's declaration, no credential.
+    rc, log, _ = build_release({}, "refuse")
+    check(rc != 0 and "OS7_REPO_AUTH=yes" in log,
+          "no credential for the pin's own URI is REFUSED",
+          (["(no !!! line)"] + [l for l in log.splitlines() if l.startswith("!!!")])[-1][:110])
+
+    # IT DOES NOT FIRE on an overridden URI. This is #143's exact input — the
+    # case that was refused, and the case run-s5.py needs to build at all.
+    rc, log, deb = build_release({"OS7_REPO_URI": "http://10.0.2.2:8907"}, "override")
+    check(rc == 0, "an OVERRIDDEN URI builds without one — a scheme is not a server",
+          (log.strip().splitlines() or [""])[-1][:110])
+    check(deb_has_credential(deb) == "",
+          "and ships no credential, since none was given for that server")
+
+    # THE OPT-OUT works on the pin's URI too, and still ships nothing.
+    rc, log, deb = build_release({"OS7_REPO_NO_CREDENTIAL": "1"}, "optout")
+    check(rc == 0, "OS7_REPO_NO_CREDENTIAL=1 is the deliberate way past it",
+          (log.strip().splitlines() or [""])[-1][:110])
+    check(deb_has_credential(deb) == "", "and it ships no credential either")
+
+    # AND THE SATISFIED CASE: a credential handed in is written, 0600, in the deb.
+    rc, log, deb = build_release(
+        {"OS7_REPO_CREDENTIAL_FILE": "/cred/storagebox.conf"}, "satisfied")
+    line = deb_has_credential(deb) or ""
+    check(rc == 0 and line.startswith("-rw-------"),
+          "a credential handed in ships at 0600, asked of the .deb",
+          line.split()[0] if line else "(absent)")
+    check("probe-secret" not in log,
+          "and the build never printed the password")
+    shutil.rmtree(ref_dir, ignore_errors=True)
 
     print()
     if bad:

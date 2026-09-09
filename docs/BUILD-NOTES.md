@@ -7654,3 +7654,57 @@ proven to fire: plant `Action = 'PowerOff'` in `Restart-Computer` on a copy of
 Verified on the machine the same afternoon: `Restart-Computer` on the `gui`
 bench, and the console said `reboot: Restarting system` with the VM still
 running a fresh kernel.
+
+## #143 — I inferred from the URI SCHEME what was true of one SERVER, and the refusal fired on the harness
+
+**Measured 2026-09-09, by `run-s5.py all` on the 1.0.0.201 medium**, in the
+update phase, after install, boot and cycle had all passed:
+
+```
+!!! os7-release: OS7_REPO_URI is http://10.0.2.2:8907, which needs a
+!!! credential (RELEASE-PROCESS §4.1a: that server answers an
+!!! anonymous request with 401), and this build was handed none.
+…
+the 1.0.0.202 repository did not build
+```
+
+The refusal is right to exist. RELEASE-PROCESS §4.2 requires that a build whose
+repository needs authentication cannot silently produce a medium without the
+credential, because such a medium installs machines that cannot reach the
+repository and say nothing about why. What was wrong is the **question it
+asked**: it keyed on the URI being `http(s)`, and treated that as meaning "this
+server requires authentication".
+
+**It does not. That is a fact about the Storage Box, not about the scheme.**
+§6.4 of CURATION-AND-DELIVERY-PLAN says the repository is a static tree
+"deliberately: it can be served from anything, mirrored into an air-gapped site
+by copying a directory" — so a plain HTTP mirror with no authentication is a
+supported deployment, and `run-s5.py` serves exactly one at
+`http://10.0.2.2:8907` in order to test the update train. The one measurement
+that had been taken — an anonymous `GET /` to `u661569-sub2.your-storagebox.de`
+answered 401 — was generalised into a property of every `http(s)` URI, which is
+the shape BUILD-NOTES #80 already records for `/etc/os-release`: never protect
+"the field they match on"; state the fact you actually measured.
+
+**The fix is to write the fact down where the URI is chosen.** The pin gains
+`OS7_REPO_AUTH`, a declaration by whoever picked the server, and the refusal
+keys on that. It also keys on the URI being **the pin's own**: a caller that
+replaced `OS7_REPO_URI` in the environment — which `run-s5.py` and
+`check-os7-repo.py` both do, and which the top of `build-os7-packages.sh`
+already handles as a first-class case — has replaced the server the pin's
+declaration was about, so the declaration does not travel with the override.
+
+`check-image.py`'s artefact-side check had the same defect and gets the same
+fix, answerable from the medium alone: the credential is required when the
+shipped `os7.sources` URI is the shipped `release.conf`'s `OS7_REPO_URI` **and**
+that file declares `OS7_REPO_AUTH=yes`.
+
+**Why nothing caught it before the gate did:** the three checks written for
+§4.2 the same morning covered the cmdlet (`check-update-logic.py`), the artefact
+(`check-image.py`) and the two-places-one-host consistency
+(`check-storagebox.py`). None covered the BUILDER's refusal — the one piece of
+new logic whose whole job is to fail — and `check-os7-repo.py`, which does
+exercise the builder, passes an overridden URI and so walked through the
+not-firing branch without ever visiting the other one. A refusal that has never
+been seen to fire is a refusal nobody has checked, and this one fired on the
+wrong input the first time it mattered. It is now checked in both directions.
