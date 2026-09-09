@@ -22,10 +22,20 @@ dabei.
 | `Set-Service -StartupType` | `Set-OS7Service -StartupType` |
 | `services.msc` | `Get-OS7Service -OS7Only -Detailed` |
 
-> Es heißt `Get-OS7Service` und nicht `Get-Service`, weil die Parameter nicht
-> dieselben sind. Ein Cmdlet, das den Windows-Namen trägt und ein Drittel der
-> Parameter versteht, macht aus einem kopierten Skript ein halb
-> funktionierendes.
+> **Die linke Spalte funktioniert hier ebenfalls.** `Get-Service`,
+> `Start-Service`, `Stop-Service`, `Restart-Service` und `Set-Service` gibt es
+> auf OS/7 mit Windows' Parametern und Windows' Spalten (`Status`, `Name`,
+> `StartType`, `DisplayName`) — PowerShell selbst bringt sie unter Linux nicht
+> mit. Die rechte Spalte bleibt die Oberfläche, die dieses Handbuch lehrt: ihre
+> Parameter sind die von systemd, und `Healthy` beantwortet eine Frage, die
+> `Status` nicht beantworten kann — eine Unit in einer Neustartschleife meldet
+> `Running`.
+>
+> Zwei Unterschiede sind wichtig, wenn Sie die Windows-Namen benutzen.
+> `Set-Service -StartupType Disabled` **maskiert** die Unit, denn „lässt sich
+> nicht starten" heißt auf systemd genau das; `-StartupType Manual` nimmt das
+> zurück. Und `Suspend-Service` friert die Prozesse ein, statt den Dienst um
+> eine Pause zu bitten — systemd fragt nicht.
 
 ## Aufgabenplanung
 
@@ -136,10 +146,43 @@ OS/7-Maschine aus.
 Diese Cmdlets funktionieren auf OS/7 unverändert und wurden deshalb bewusst
 **nicht** nachgebaut:
 
-`Get-Process` · `Stop-Process` · `Get-FileHash` · `Restart-Computer` ·
-`Stop-Computer` · `Get-Date` · `Test-Connection` · `Get-Credential` ·
-`Get-ChildItem` · `Copy-Item` · `Select-String` · `ConvertTo-Json` ·
-`Invoke-RestMethod` · `Get-Content` · `Start-Job`
+`Get-Process` · `Stop-Process` · `Get-FileHash` · `Get-Date` ·
+`Test-Connection` · `Get-Credential` · `Get-ChildItem` · `Copy-Item` ·
+`Select-String` · `ConvertTo-Json` · `Invoke-RestMethod` · `Get-Content` ·
+`Start-Job`
+
+`Restart-Computer` und `Stop-Computer` standen bis zum 09.09.2026 in dieser
+Liste und stehen jetzt in der nächsten: **OS/7 liefert sie selbst.** PowerShells
+eigene Fassung ruft unter Linux `/usr/sbin/shutdown` **ohne jedes Argument**
+auf, und das ist auf Ubuntu ein Symlink auf `systemctl`, dessen Standardaktion
+ohne Flag **Ausschalten** ist. `Restart-Computer` hat die Maschine also
+ausgeschaltet und Erfolg gemeldet. Die OS/7-Fassung sagt `systemctl reboot`,
+und sie nimmt das `-Force`, das ein kopiertes Skript mitbringt — PowerShells
+eigene hat unter Linux überhaupt keine Parameter.
+
+## Windows-Namen, die es hier gibt
+
+Vierzehn Cmdlets aus `Microsoft.PowerShell.Management`, die PowerShell unter
+Linux nicht mitbringt (gemessen: 15 der 62 dokumentierten fehlen), liefert OS/7
+selbst — mit Windows' Parametern:
+
+| Name | Anmerkung |
+|---|---|
+| `Get-Service` | `Status` ist `Running`/`Stopped`/`Paused`, `StartType` ist `Automatic`/`Manual`/`Disabled`. systemds eigene Wörter stehen daneben: `SystemdActiveState`, `SystemdSubState`, `SystemdFreezerState` — und `Healthy`. |
+| `Start-`/`Stop-`/`Restart-Service` | Jeder liest die Unit danach zurück. `systemctl start` meldet Erfolg, sobald der *Auftrag* angenommen ist. |
+| `Suspend-`/`Resume-Service` | systemds Freezer. Friert alle Prozesse der Unit ein, ohne zu fragen. Eine eingefrorene Unit meldet weiterhin `ActiveState=active`, deshalb kommt `Paused` vom Freezer. |
+| `Set-Service` | `-StartupType` und `-Status`. `Disabled` maskiert. |
+| `New-`/`Remove-Service` | Schreibt bzw. entfernt eine `.service`-Unit in `/etc/systemd/system` und fragt systemd, ob sie geladen wurde. Entfernt nichts, was ein Paket mitgebracht hat. |
+| `Set-TimeZone` | Die Hälfte, die neben `Get-TimeZone` fehlte. Nimmt IANA-Namen **und Windows-IDs**: `-Id 'W. Europe Standard Time'` wird zu `Europe/Berlin`. |
+| `Get-ComputerInfo` | Was diese Maschine ist, unter Windows' Eigenschaftsnamen. |
+| `Rename-Computer` | Ändert statischen Namen, Kernel-Namen und die `127.0.1.1`-Zeile in `/etc/hosts` zusammen. **Auf einer Domänen-Maschine abgewiesen** — der Keytab trägt den alten Namen. |
+| `Restart-`/`Stop-Computer` | Siehe oben. |
+
+> Was ein Cmdlet hier nicht leisten kann, weist es **namentlich** ab und nennt
+> den Weg: `Get-Service -DependentServices` sagt, dass systemd Abhängigkeiten
+> als Graph führt und `systemctl list-dependencies --reverse` die Frage
+> beantwortet. Ein stillschweigend ignorierter Parameter wäre schlimmer als
+> eine Fehlermeldung.
 
 Ebenso die gesamte Sprache: Pipelines, `Where-Object`, `ForEach-Object`,
 Format-Cmdlets, `Export-Csv`, Fehlerbehandlung, Skripte und Module.

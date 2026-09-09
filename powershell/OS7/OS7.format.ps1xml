@@ -264,5 +264,46 @@
       </ListControl>
     </View>
 
+    <!--
+      Get-Service, in Windows' own column order: Status, Name, DisplayName.
+
+      THE COLUMNS ARE THE POINT OF THE COMPATIBILITY LAYER. An administrator
+      who types `Get-Service` at an OS/7 machine is reading the shape of the
+      output as much as the values, and a table that puts systemd's words first
+      would announce that this is not the cmdlet they meant. The systemd fields
+      are all still on the object — SystemdActiveState, SystemdSubState,
+      SystemdFreezerState, Healthy — and `Format-List` or `Select-Object` shows
+      them.
+
+      Healthy is NOT in the table, deliberately. It is $true for the great
+      majority of rows, so a column of it would be noise in the one view that
+      has to stay scannable; `Get-Service | Where-Object { -not $_.Healthy }` is
+      the question worth asking and it is in Get-Service's help.
+    -->
+    <View>
+      <Name>OS7.Compat.Windows.ServiceController</Name>
+      <ViewSelectedBy>
+        <TypeName>OS7.Compat.Windows.ServiceController</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Status</Label><Width>16</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Name</Label><Width>28</Width></TableColumnHeader>
+          <TableColumnHeader><Label>StartType</Label><Width>11</Width></TableColumnHeader>
+          <TableColumnHeader><Label>DisplayName</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>StartType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DisplayName</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
   </ViewDefinitions>
 </Configuration>

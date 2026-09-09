@@ -21,9 +21,19 @@ equivalence — where the concepts differ, it says so.
 | `Set-Service -StartupType` | `Set-OS7Service -StartupType` |
 | `services.msc` | `Get-OS7Service -OS7Only -Detailed` |
 
-> It is `Get-OS7Service` and not `Get-Service` because the parameters are not
-> the same. A cmdlet carrying the Windows name and understanding a third of the
-> parameters turns a copied script into one that half-works.
+> **The left-hand column works here too.** `Get-Service`, `Start-Service`,
+> `Stop-Service`, `Restart-Service` and `Set-Service` exist on OS/7 with
+> Windows' parameters and Windows' columns (`Status`, `Name`, `StartType`,
+> `DisplayName`) — PowerShell itself does not ship them on Linux. The
+> right-hand column stays the surface this manual teaches: its parameters are
+> systemd's, and `Healthy` answers a question `Status` cannot — a unit in a
+> restart loop reports `Running`.
+>
+> Two differences matter if you use the Windows names.
+> `Set-Service -StartupType Disabled` **masks** the unit, because "cannot be
+> started" is exactly what that means to systemd; `-StartupType Manual` undoes
+> it. And `Suspend-Service` freezes the processes rather than asking the service
+> to pause — systemd does not ask.
 
 ## Scheduled tasks
 
@@ -132,10 +142,41 @@ Unlike on Windows, directory administration needs **no domain membership**:
 These cmdlets work unchanged on OS/7 and were therefore deliberately **not**
 rebuilt:
 
-`Get-Process` · `Stop-Process` · `Get-FileHash` · `Restart-Computer` ·
-`Stop-Computer` · `Get-Date` · `Test-Connection` · `Get-Credential` ·
-`Get-ChildItem` · `Copy-Item` · `Select-String` · `ConvertTo-Json` ·
-`Invoke-RestMethod` · `Get-Content` · `Start-Job`
+`Get-Process` · `Stop-Process` · `Get-FileHash` · `Get-Date` ·
+`Test-Connection` · `Get-Credential` · `Get-ChildItem` · `Copy-Item` ·
+`Select-String` · `ConvertTo-Json` · `Invoke-RestMethod` · `Get-Content` ·
+`Start-Job`
+
+`Restart-Computer` and `Stop-Computer` were on that list until 2026-09-09 and
+are now on the next one: **OS/7 supplies them itself.** PowerShell's own version
+on Linux runs `/usr/sbin/shutdown` with **no arguments at all**, and on Ubuntu
+that path is a symlink to `systemctl`, whose default action without a flag is
+**power off**. So `Restart-Computer` powered the machine off and reported
+success. The OS/7 version says `systemctl reboot`, and it takes the `-Force` a
+copied script carries — PowerShell's own has no parameters at all on Linux.
+
+## Windows names that exist here
+
+Fourteen cmdlets from `Microsoft.PowerShell.Management` that PowerShell does not
+ship on Linux (measured: 15 of the 62 documented ones are absent) are supplied
+by OS/7 itself, with Windows' parameters:
+
+| Name | Note |
+|---|---|
+| `Get-Service` | `Status` is `Running`/`Stopped`/`Paused`, `StartType` is `Automatic`/`Manual`/`Disabled`. systemd's own words sit beside them: `SystemdActiveState`, `SystemdSubState`, `SystemdFreezerState` — and `Healthy`. |
+| `Start-`/`Stop-`/`Restart-Service` | Each reads the unit back afterwards. `systemctl start` reports success as soon as the *job* is accepted. |
+| `Suspend-`/`Resume-Service` | systemd's freezer. It freezes every process in the unit without asking. A frozen unit still reports `ActiveState=active`, which is why `Paused` comes from the freezer. |
+| `Set-Service` | `-StartupType` and `-Status`. `Disabled` masks. |
+| `New-`/`Remove-Service` | Writes or removes a `.service` unit in `/etc/systemd/system` and asks systemd whether it loaded. It removes nothing a package brought. |
+| `Set-TimeZone` | The half that was missing beside `Get-TimeZone`. Takes IANA names **and Windows ids**: `-Id 'W. Europe Standard Time'` becomes `Europe/Berlin`. |
+| `Get-ComputerInfo` | What this machine is, under Windows' property names. |
+| `Rename-Computer` | Changes the static name, the kernel name and the `127.0.1.1` line in `/etc/hosts` together. **Refused on a domain-joined machine** — the keytab carries the old name. |
+| `Restart-`/`Stop-Computer` | See above. |
+
+> Anything a cmdlet here cannot do, it refuses **by name** and says where to go:
+> `Get-Service -DependentServices` explains that systemd keeps dependencies as a
+> graph and that `systemctl list-dependencies --reverse` answers the question. A
+> parameter ignored in silence would be worse than an error.
 
 And so does the whole language: pipelines, `Where-Object`, `ForEach-Object`,
 the format cmdlets, `Export-Csv`, error handling, scripts and modules.

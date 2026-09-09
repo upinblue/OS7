@@ -40,7 +40,16 @@ foreach ($m in @({quoted})) {{
 }}
 $common = @({common})
 $out = foreach ($c in Get-Command -Module {modules} | Sort-Object ModuleName, Name) {{
-    $h = Get-Help $c.Name -ErrorAction SilentlyContinue
+    # MODULE-QUALIFIED, because a bare name can match MORE THAN ONE help
+    # topic and then .Synopsis is an ARRAY. Since P1a the OS7 module exports
+    # Get-Service, Restart-Computer and twelve more Windows names, and on a
+    # WINDOWS host `Get-Help Get-Service` finds both the function and
+    # Microsoft's cmdlet -- two topics, two synopses, and this generator died
+    # on `'list' object has no attribute 'replace'`. On an OS/7 machine there
+    # is only ever one, which is exactly the kind of difference a generator
+    # must not depend on.
+    $h = Get-Help -Name "$($c.ModuleName)\$($c.Name)" -ErrorAction SilentlyContinue
+    if (-not $h) {{ $h = @(Get-Help $c.Name -Category Function -ErrorAction SilentlyContinue)[0] }}
     [pscustomobject]@{{
         Module   = $c.ModuleName
         Name     = $c.Name
@@ -67,8 +76,15 @@ def ask_the_modules():
                        quoted=",".join("'" + m + "'" for m in MODULES),
                        repo=REPO.replace("\\", "/"),
                        common=",".join("'" + c + "'" for c in COMMON))
+    # `text=True` ALONE DECODES WITH THE HOST'S CODE PAGE, and this file is
+    # full of em dashes. On the x64 Windows host every one of them came back
+    # as three characters and went into the appendix that way: 26 of them were
+    # in the committed file before this was fixed. Same trap os7lab.py records
+    # -- the host console must not decide what the guest may say -- reached
+    # from the other direction, and it is silent: nothing fails, the words are
+    # just wrong.
     p = subprocess.run(["pwsh", "-NoProfile", "-Command", script],
-                       capture_output=True, text=True)
+                       capture_output=True, encoding="utf-8", errors="replace")
     if p.returncode != 0:
         raise SystemExit("pwsh failed:\n" + p.stderr[:2000])
     return json.loads(p.stdout.lstrip("﻿"))

@@ -219,6 +219,31 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   against Get-Command, which were
                                           #   stale by 19 the day it was
                                           #   written. Seconds, no Docker
+./installer/testing/check-compat-windows.py
+                                          #   the WINDOWS NAMES, and the one that
+                                          #   lies. 15 of the 62 cmdlets the
+                                          #   Microsoft.PowerShell.Management
+                                          #   reference documents are ABSENT on
+                                          #   Linux; twelve are now supplied, and
+                                          #   Restart-/Stop-Computer are supplied
+                                          #   too because the shipped ones run
+                                          #   `/usr/sbin/shutdown` with NO
+                                          #   arguments - systemctl's
+                                          #   compatibility interface, whose
+                                          #   flagless action is POWEROFF (#142).
+                                          #   214 checks: every Windows parameter
+                                          #   declared, every refusal reachable,
+                                          #   real and PROVEN TO THROW, both
+                                          #   mapping tables total, and
+                                          #   Restart-Computer asserted to ask
+                                          #   for `systemctl reboot` and never
+                                          #   for shutdown. The Windows side is
+                                          #   RECORDED from a real Windows pwsh
+                                          #   7.6.5 - the pinned version - so a
+                                          #   difference is a platform one.
+                                          #   OS7_MODULE_ROOT plants the defect on
+                                          #   a copy and it goes RED. Seconds,
+                                          #   needs only pwsh, both hosts
 ./installer/testing/check-vm-arch.py      # the harness port's own check: the
                                           #   arm64 command lines byte-identical
                                           #   to the pre-port construction, the
@@ -414,9 +439,15 @@ pair reached by a road nothing checks.
 matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/` and `powershell/Directory/` are the generic layers — none
 knows anything about OS/7, and all five would run on any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is **126 of the 229
-functions** — measured 2026-09-08 by asking the modules, which is the only way
-this line has ever been right for long. It said "109 of 202" that morning and
+`powershell/OS7/` is the product layer on top, and it is **140 of the 243
+functions** — measured 2026-09-09 by asking the modules, which is the only way
+this line has ever been right for long. It said "126 of 229" that morning, and
+the fourteen that changed it are not OS/7 names at all: since P1a
+(2026-09-09) the module also supplies **the Windows names Microsoft's
+`Microsoft.PowerShell.Management` does not ship on Linux** — `Get-Service` and
+the service family, `Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer`, and
+`Restart-`/`Stop-Computer`. See the paragraph below and
+[docs/SESSION-WINDOWS-COMPAT.md](docs/SESSION-WINDOWS-COMPAT.md). It said "109 of 202" that morning and
 had been wrong for two commits: Systemd had grown `Get-SystemdSession` and OS7
 the Remote Desktop session verbs and the account lockout, neither of which
 touched the file. **`check-module-parts.py` now holds this count and the six
@@ -425,6 +456,22 @@ against `Get-Command`**, so the next drift fails a check instead of surviving
 in prose. (Earlier readings, kept because they date the surface: 101 of 194
 until eight AD cmdlets landed on 2026-09-07; 95 of 185 until the
 scheduled-task surface landed on 2026-08-29.)
+**And since 2026-09-09 the surface answers to Windows' names as well as its
+own, which reverses half of P1.** 15 of the 62 cmdlets the
+`Microsoft.PowerShell.Management` reference documents are ABSENT on Linux
+(measured against the shipped ISO's own pwsh and an installed machine), and
+twelve of them are now supplied as FUNCTIONS with Windows' parameters, loaded by
+default — not the opt-in aliases P1 planned, because "the name resolves" and "a
+copied script runs" are different products.
+**The other two are `Restart-Computer` and `Stop-Computer`, which exist and are
+shadowed anyway: both run `/usr/sbin/shutdown` with NO arguments, which on
+Ubuntu is systemctl's compatibility interface defaulting to POWEROFF — so the
+shipped `Restart-Computer` powers an OS/7 machine off and reports success**
+(#142; upstream PowerShell/PowerShell#14684 since 2021; the product's own manual
+told operators to type it). Every Windows parameter is declared and either
+honoured or refused BY NAME with a reason; `check-compat-windows.py` drives that
+table against parameter sets recorded from a real Windows pwsh 7.6.5.
+
 Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units and **P2-directory**
 about the directory; `check-layering.py` holds **all five** at baselines that may
@@ -827,16 +874,18 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             the os7-module .deb (hook 0022) and NOT by staging;
                             build.sh stages the tests/ fixtures alone
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four of
-                            the EIGHTEEN files DOT-SOURCED by OS7.psm1, so a copy
+                            the NINETEEN files DOT-SOURCED by OS7.psm1, so a copy
                             that took the .psm1 alone is a real failure mode -
-                            hook 0060 names all eighteen, and so does the .deb
+                            hook 0060 names all nineteen, and so does the .deb
                             content check since the 2026-08-28 merge.
-                            THIS NUMBER HAS BEEN WRONG FOUR TIMES: it said
+                            THIS NUMBER HAS BEEN WRONG FIVE TIMES: it said
                             "four ... all five" while the file said FOURTEEN
                             sixty lines below it; FOURTEEN again when
-                            OS7.ScheduledTask.ps1 made it fifteen; and FIFTEEN
+                            OS7.ScheduledTask.ps1 made it fifteen; FIFTEEN
                             until 2026-09-09, by which point AccountLockout,
-                            RemoteDesktop and SecureBoot had made it eighteen.
+                            RemoteDesktop and SecureBoot had made it eighteen;
+                            and EIGHTEEN for the rest of that same day, until
+                            OS7.Compat.Windows.ps1 made it nineteen.
                             SINCE 2026-09-09 IT IS CHECKED:
                             installer/testing/check-module-parts.py requires
                             the .psm1 foreach, hook 0060, the .deb's required
@@ -848,7 +897,7 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
   OS7.Home.ps1              where a home directory lives, and the migration for
                             machines installed before Setup passed -UserName
                             (#74). Dot-sourced too - it was the fifth of five
-                            when this table was written, and is one of eighteen
+                            when this table was written, and is one of nineteen
   OS7.Network.ps1           the network as an operator asks about it: Get-/Set-
                             OS7NetworkAdapter, Get-OS7NetworkConfiguration,
                             Test-OS7Network, Get-OS7Endpoint. Set- verifies by
@@ -885,9 +934,17 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             disabled tasks stay listed (#116), run-now starts
                             the SERVICE, and Unregister refuses anything not
                             named os7-task-* BEFORE touching systemd
+  OS7.Compat.Windows.ps1    the Windows names PowerShell does not ship on
+                            Linux, as FUNCTIONS with Windows' parameters and
+                            Windows' output columns (P1a). SECOND TO LAST of the
+                            nineteen, because it calls across nearly all of
+                            them. Two of its fourteen shadow a cmdlet that
+                            EXISTS - Restart-/Stop-Computer, which run
+                            `shutdown` with no arguments and therefore power the
+                            machine off (#142)
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. LAST of the
-                            EIGHTEEN dot-sourced files, and last because it
+                            NINETEEN dot-sourced files, and last because it
                             calls every helper above it and PowerShell defines
                             functions as the script runs - which is the one
                             thing about the list that is ORDER and not a set,

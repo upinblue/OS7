@@ -15,7 +15,7 @@ Die Beschreibungen sind die englischen Originaltexte der Module — es ist derse
 | `powershell/Time/` | generisch | 9 |
 | `powershell/Systemd/` | generisch | 21 |
 | `powershell/Directory/` | generisch | 36 |
-| `powershell/OS7/` | das Produkt | 126 |
+| `powershell/OS7/` | das Produkt | 140 |
 
 ## `Zfs`
 
@@ -57,13 +57,13 @@ Das Netzwerk: `ip`, netplan, networkd, NetworkManager, resolved.
 | Befehl | Beschreibung | Parameter |
 |---|---|---|
 | `Get-NetLink` | The network links this kernel has, with the addresses actually on them. | Name, SysfsRoot |
-| `Get-NetplanConfiguration` | What netplan is configured to do â€” merged, with the files it was merged from named separately. | RootDir |
-| `Get-NetRadio` | Whether any radio is blocked â€” and whether that question could be answered at all. | *keine* |
+| `Get-NetplanConfiguration` | What netplan is configured to do — merged, with the files it was merged from named separately. | RootDir |
+| `Get-NetRadio` | Whether any radio is blocked — and whether that question could be answered at all. | *keine* |
 | `Get-NetRoute` | The routes this kernel has. | Family |
 | `Invoke-NetplanApply` | Runs `netplan apply`. DOES NOT JUDGE WHETHER IT WORKED. | *keine* |
-| `New-NetplanDocument` | Renders a netplan document. A pure function â€” it touches no file, no interface and no running system. | **Renderer**, **Version**, WrittenBy, InterfaceName, MacAddress, Wireless, **Method**, Address, Gateway, Nameserver, SearchDomain, Ssid, Hidden, Security, Psk, Identity, AnonymousIdentity, Password, CaCertificate |
+| `New-NetplanDocument` | Renders a netplan document. A pure function — it touches no file, no interface and no running system. | **Renderer**, **Version**, WrittenBy, InterfaceName, MacAddress, Wireless, **Method**, Address, Gateway, Nameserver, SearchDomain, Ssid, Hidden, Security, Psk, Identity, AnonymousIdentity, Password, CaCertificate |
 | `Remove-NetplanDocument` | Deletes a netplan document. Used to undo a document that did not exist before. | **Path** |
-| `Resolve-NetSrvRecord` | The SRV records for a name â€” and whether the resolver could be asked at all. | **Name**, Server, Tool |
+| `Resolve-NetSrvRecord` | The SRV records for a name — and whether the resolver could be asked at all. | **Name**, Server, Tool |
 | `Set-NetplanDocument` | Writes a netplan document, and hands back what was there before. | **Path**, **Content** |
 | `Test-NetModule` | Checks this module's own contract. Needs no network and no root. | FixturePath |
 | `Wait-NetLinkAddress` | Waits for a link to have an address, and answers by asking the kernel. | **Name**, TimeoutSeconds, RequireGateway |
@@ -76,10 +76,10 @@ Die Uhr: chrony, Zeitzone, Hardware-Uhr.
 |---|---|---|
 | `Get-ChronySource` | The time sources chrony knows about, and what it thinks of each. | *keine* |
 | `Get-ChronySourceFile` | Where chrony reads NTP sources from, and what is in each file. | Root |
-| `Get-ChronyTracking` | What chrony is doing with this clock â€” whether it is disciplined, by whom, and how far off it is. | *keine* |
+| `Get-ChronyTracking` | What chrony is doing with this clock — whether it is disciplined, by whom, and how far off it is. | *keine* |
 | `Get-SystemClock` | The clock: local, UTC, and whether the hardware clock is kept in local time. | Root |
 | `Get-SystemTimeZone` | The zone this machine is in, read from the only thing that decides it. | Root |
-| `Set-ChronySource` | Writes one `.sources` file and asks chrony to reload â€” without restarting it. | **Name**, Server, Pool, Root |
+| `Set-ChronySource` | Writes one `.sources` file and asks chrony to reload — without restarting it. | **Name**, Server, Pool, Root |
 | `Set-SystemTimeZone` | Sets the zone by writing the symlink, and reads it back. | **Id**, Root |
 | `Sync-ChronyClock` | Tells chronyd to STEP the clock now rather than slew it. | *keine* |
 | `Test-TimeModule` | Checks this module against RECORDED REAL chrony output and a zone tree it builds. No daemon, no root, no network. | FixturePath |
@@ -95,22 +95,22 @@ Units und das Journal.
 | `Get-SystemdSession` | Who is signed in to this machine, and how. | Id, User, Remote, Class |
 | `Get-SystemdTimer` | The timers this machine has: what they will run, when they will next run, and when they last did. | Name, Detailed |
 | `Get-SystemdUnit` | The units this machine has, and what state they are in. | Name, Type, State, Detailed |
-| `Get-SystemdUnitFreezerState` | `running`, `freezing`, `frozen` or `thawing` for one unit â€” or $null when systemd would not say. | **Name** |
-| `Invoke-SystemdShutdown` | Reboots, powers off or halts this machine â€” the action always spelled out. | **Action**, Delay, Message |
+| `Get-SystemdUnitFreezerState` | `running`, `freezing`, `frozen` or `thawing` for one unit — or $null when systemd would not say. | **Name** |
+| `Invoke-SystemdShutdown` | Reboots, powers off or halts this machine — the action always spelled out. | **Action**, Delay, Message |
 | `New-SystemdService` | Writes a .service unit and asks systemd whether it loaded. | **Name**, **Command**, Description, DependsOn, User, Enabled, Force |
 | `New-SystemdTimer` | Writes a timer and the service it activates, and asks systemd whether it loaded them. | **Name**, **Command**, **OnCalendar**, Description, User, Persistent, RandomizedDelay, Force |
 | `Remove-SystemdService` | Removes a .service unit file this module could have written, and asks systemd whether it is gone. | **Name** |
 | `Remove-SystemdTimer` | Removes a timer unit pair this module could have written, and asks systemd whether it is gone. | **Name** |
 | `Restart-SystemdUnit` | Restarts a unit and reports what it became. | **Name** |
 | `Resume-SystemdUnit` | Thaws a frozen unit's processes, and reads the freezer back. | **Name** |
-| `Set-SystemdHostName` | Sets the machine's name â€” static and transient together â€” and reads it back from the kernel. | **Name**, Pretty, SkipHostsFile |
+| `Set-SystemdHostName` | Sets the machine's name — static and transient together — and reads it back from the kernel. | **Name**, Pretty, SkipHostsFile |
 | `Set-SystemdUnitStartup` | Whether a unit starts at boot, and reports what it became. | **Name**, **Startup** |
 | `Start-SystemdUnit` | Starts a unit and reports what it became. | **Name** |
 | `Stop-SystemdSession` | End a session: everything running in it is stopped. | **Id**, Force |
 | `Stop-SystemdUnit` | Stops a unit and reports what it became. | **Name** |
 | `Suspend-SystemdUnit` | Freezes a unit's processes, and reads the freezer back. | **Name** |
 | `Test-SystemdModule` | Checks this module against RECORDED REAL systemctl and journalctl output. Needs no systemd, no root and no journal. | FixturePath |
-| `Update-SystemdUnit` | Tells a running unit to re-read its own configuration â€” `systemctl reload`. | **Name** |
+| `Update-SystemdUnit` | Tells a running unit to re-read its own configuration — `systemctl reload`. | **Name** |
 
 ## `Directory`
 
@@ -130,7 +130,7 @@ LDAP, Kerberos und die Realm-Mitgliedschaft. Kennt nichts von Active Directorys 
 | `Disconnect-DirectoryServer` | Close a session's connection. Safe to call twice. | **Session** |
 | `Get-DirectoryAccountControl` | Decode userAccountControl into named flags and the two answers an operator actually asks for. | Value |
 | `Get-DirectoryAttributeScalar` | The first value of one attribute, or $null. Never a character. | **Attributes**, **Name** |
-| `Get-DirectoryAttributeValues` | Every value of one attribute, ALWAYS as an array â€” empty when absent. | **Attributes**, **Name** |
+| `Get-DirectoryAttributeValues` | Every value of one attribute, ALWAYS as an array — empty when absent. | **Attributes**, **Name** |
 | `Get-DirectoryErrorMeaning` | Turn an LdapException into a sentence about what is wrong. | **Exception** |
 | `Get-DirectoryIdentityResolution` | Whether the name service can resolve a directory account on this host. | **Name** |
 | `Get-DirectoryKeytabPrincipal` | The principals in a keytab, read with klist -k. | KeytabPath |
@@ -168,15 +168,16 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Disable-OS7Backup` | Stop taking scheduled snapshots. Destroys nothing. | *keine* |
 | `Disable-OS7RemoteDesktop` | Turn Remote Desktop off. | KeepCredential |
 | `Disable-OS7Remoting` | Stops offering the PowerShell subsystem. | *keine* |
-| `Disable-OS7ScheduledTask` | Stops a task's schedule â€” now, and at the next boot. | **Name** |
+| `Disable-OS7ScheduledTask` | Stops a task's schedule — now, and at the next boot. | **Name** |
 | `Dismount-OS7BackupTarget` | Export a local backup pool and lock its container, so the drive can go. | **Name** |
 | `Enable-OS7ADAccount` | Enable a user or computer account. | **Identity**, Session |
 | `Enable-OS7Backup` | Turn scheduled snapshots on, writing a default policy if there is none. | *keine* |
 | `Enable-OS7RemoteDesktop` | Turn Remote Desktop on, so this machine can be reached with mstsc. | AllowFrom, AllowAnySource, Port |
 | `Enable-OS7Remoting` | Makes `Enter-PSSession -HostName` work against this machine. | *keine* |
-| `Enable-OS7ScheduledTask` | Makes a task run on its schedule â€” from now on, and after reboots. | **Name** |
+| `Enable-OS7ScheduledTask` | Makes a task run on its schedule — from now on, and after reboots. | **Name** |
 | `Enter-OS7AdminSession` | Sign in to Active Directory with an administrative account, for this shell. | **Domain**, Credential, Server, UseKerberos, AllowUnencrypted, TimeoutSeconds |
 | `Exit-OS7AdminSession` | Close the directory session and forget it. | Session |
+| `Get-ComputerInfo` | What this machine is, under the property names a Windows script reads. | Property |
 | `Get-OS7AccountLockout` | Whether a wrong password costs anything on this machine, and to whom. | *keine* |
 | `Get-OS7ADComputer` | Find computer accounts in Active Directory. | Identity, Filter, SearchBase, Property, Session |
 | `Get-OS7ADDomain` | What the domain controller says about the domain. | Session |
@@ -186,10 +187,10 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Get-OS7AdminSession` | The directory session this shell is signed in with, if any. | *keine* |
 | `Get-OS7ADObject` | One object by distinguished name, with every attribute it carries. | **DistinguishedName**, Property, Session |
 | `Get-OS7ADOrganizationalUnit` | Find organisational units. | Identity, SearchBase, Session |
-| `Get-OS7ADPrincipalGroupMembership` | The groups an account is in â€” the inverse of Get-OS7ADGroupMember. | **Identity**, Recursive, ExcludePrimaryGroup, SearchBase, Session |
+| `Get-OS7ADPrincipalGroupMembership` | The groups an account is in — the inverse of Get-OS7ADGroupMember. | **Identity**, Recursive, ExcludePrimaryGroup, SearchBase, Session |
 | `Get-OS7ADUser` | Find users in Active Directory. | Identity, Filter, SearchBase, Property, Session |
 | `Get-OS7ArcStatus` | Azure Arc: whether the Connected Machine agent is installed, and what it says about itself. | *keine* |
-| `Get-OS7BackupCoverage` | Which home directories the policy actually reaches â€” and which it cannot. | Policy |
+| `Get-OS7BackupCoverage` | Which home directories the policy actually reaches — and which it cannot. | Policy |
 | `Get-OS7BackupPolicy` | What this machine is configured to snapshot, and what it actually has. | ConfigOnly |
 | `Get-OS7BackupStatus` | Whether this machine's data is actually backed up, asked of ZFS. | SkipTargets |
 | `Get-OS7BackupTarget` | Where copies go, and what is actually there. | Name, SkipProbe |
@@ -197,22 +198,22 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Get-OS7Domain` | Whether this machine is a member of a domain, as configured and as it actually stands. | ProbeAccount |
 | `Get-OS7DomainLogonPolicy` | Which domain groups may sign in to this machine, and which administer it. | SudoersPath |
 | `Get-OS7Endpoint` | The named services OS/7 knows how to test for, out of the data file beside this module. | Cloud, Name |
-| `Get-OS7EntraStatus` | Whether this machine can sign a user in with Entra ID â€” and if not, why not. | *keine* |
+| `Get-OS7EntraStatus` | Whether this machine can sign a user in with Entra ID — and if not, why not. | *keine* |
 | `Get-OS7FileVersion` | Every version of a file or folder that a snapshot still holds. | **Path**, Newest, DistinctOnly, IncludeCurrent |
 | `Get-OS7Home` | Every home directory on this machine, and whether it has a dataset. | UserName |
 | `Get-OS7InstallLog` | What os7-setup did when this machine was installed. | Path |
-| `Get-OS7IntuneEnrollment` | What can be said about Intune on this machine â€” and what cannot. | *keine* |
+| `Get-OS7IntuneEnrollment` | What can be said about Intune on this machine — and what cannot. | *keine* |
 | `Get-OS7KerberosTicket` | The Kerberos tickets this session holds. | *keine* |
 | `Get-OS7Log` | The system log, as objects. | Unit, Priority, Since, Until, Tail, Boot, OS7Only |
 | `Get-OS7ManagementStatus` | The three management paths in one answer: can this machine sign users in, be managed, and be inventoried? | SkipNetwork |
 | `Get-OS7NetworkAdapter` | The network adapters this machine has, and what is actually on them. | Name, IncludeLoopback |
-| `Get-OS7NetworkConfiguration` | What this machine is CONFIGURED to do about the network, and what it is ACTUALLY doing â€” as two separate answers. | *keine* |
+| `Get-OS7NetworkConfiguration` | What this machine is CONFIGURED to do about the network, and what it is ACTUALLY doing — as two separate answers. | *keine* |
 | `Get-OS7Release` | What OS/7 releases this machine's channel offers. | Available, Channel, Source |
 | `Get-OS7RemoteDesktop` | Whether this machine can be reached with Remote Desktop, and whether it actually would be. | *keine* |
-| `Get-OS7RemoteDesktopCertificate` | The certificate this machine presents to a Remote Desktop client â€” the one on disk, and the one the daemon is actually serving. | Port |
+| `Get-OS7RemoteDesktopCertificate` | The certificate this machine presents to a Remote Desktop client — the one on disk, and the one the daemon is actually serving. | Port |
 | `Get-OS7RemoteDesktopSession` | Who is signed in over Remote Desktop right now. | UserName |
 | `Get-OS7RemoteDesktopUser` | Who may sign in to this machine over Remote Desktop. | *keine* |
-| `Get-OS7Remoting` | Whether this machine can be reached with PowerShell â€” both ways it can be meant. | *keine* |
+| `Get-OS7Remoting` | Whether this machine can be reached with PowerShell — both ways it can be meant. | *keine* |
 | `Get-OS7ScheduledTask` | What runs on a schedule on this machine, and whether it actually will. | Name, OS7Only, Detailed |
 | `Get-OS7SecureBoot` | Whether this machine booted with Secure Boot enforcing, and what that does to the running kernel. | Root |
 | `Get-OS7Service` | The services on this machine, and whether they are actually well. | Name, State, OS7Only, Detailed |
@@ -220,6 +221,7 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Get-OS7Time` | The clock: local, UTC, the zone, and whether the hardware clock is kept in local time. | *keine* |
 | `Get-OS7TimeSynchronization` | Whether this machine's clock is being disciplined, by whom, and whether it is close enough for Entra sign-in to work. | *keine* |
 | `Get-OS7Version` | Which OS/7 this is. | Detailed, CheckDrift, Path |
+| `Get-Service` | The services on this machine, in Windows' vocabulary. | Name, **DisplayName**, InputObject, Include, Exclude, DependentServices, RequiredServices |
 | `Join-OS7Domain` | Join this machine to an Active Directory domain. | **Domain**, UserName, Password, OneTimePassword, ComputerName, OrganizationalUnit, AllowGroup, AdministratorGroup, HomeDirectoryTemplate, TargetRoot, SkipServiceRestart, UseLdapPassword |
 | `Mount-OS7BackupTarget` | Unlock and import a local backup pool that is not currently available. | **Name**, Passphrase |
 | `Move-OS7ADObject` | Move an object to another container. | **DistinguishedName**, **TargetPath**, Session |
@@ -227,12 +229,13 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `New-OS7ADGroup` | Create a group. | **Name**, **Path**, Scope, DistributionList, Description, Session |
 | `New-OS7ADOrganizationalUnit` | Create an organisational unit. | **Name**, **Path**, Description, Session |
 | `New-OS7ADUser` | Create a user account. | **Name**, **Path**, Password, DisplayName, GivenName, Surname, UserPrincipalName, Mail, Description, Enabled, Session |
-| `New-OS7BackupTarget` | Define where backups go â€” and, with -CreateOn, build it. | **Name**, **Pool**, **ComputerName**, **CreateOn**, Dataset, **ConfirmDisk**, Passphrase, PoolName, SshKey, Enabled |
+| `New-OS7BackupTarget` | Define where backups go — and, with -CreateOn, build it. | **Name**, **Pool**, **ComputerName**, **CreateOn**, Dataset, **ConfirmDisk**, Passphrase, PoolName, SshKey, Enabled |
 | `New-OS7BootEnvironment` | Clone the running boot environment into a new one, inactive. | Name, From, Release |
 | `New-OS7BootEnvironmentName` | The name of a new boot environment: os7_<release>_<yyyyMMddHHmm>. | Release, When |
 | `New-OS7KerberosTicket` | Obtain a Kerberos ticket for a principal. | **Principal**, Credential |
 | `New-OS7RemoteDesktopCertificate` | Generate the TLS certificate the RDP listener presents. | Days, Force |
 | `New-OS7Storage` | Create bpool and rpool and lay down the OS/7 dataset hierarchy. | **Root**, **RootDevice**, **BootDevice**, **BootEnvironment**, UserName |
+| `New-Service` | Writes a new service unit and asks systemd whether it loaded. | **Name**, **BinaryPathName**, DisplayName, Description, StartupType, DependsOn, Credential, SecurityDescriptorSddl |
 | `Register-OS7ScheduledTask` | Creates a scheduled task and reports it armed. | **Name**, Command, Execute, Arguments, Daily, Weekly, DayOfWeek, At, OnCalendar, User, Description, Persistent, RandomizedDelay, Disabled, Force |
 | `Remove-OS7ADGroup` | Delete a group, named the way an operator names one. | **Identity**, Session |
 | `Remove-OS7ADGroupMember` | Remove one or more members from a group. | **Identity**, **Member**, Session |
@@ -244,12 +247,17 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Remove-OS7Domain` | Leave the domain: delete the computer account and remove the credential. | **Domain**, UserName, Password |
 | `Remove-OS7KerberosTicket` | Destroy this session's Kerberos tickets. | *keine* |
 | `Remove-OS7RemoteDesktopUser` | Stop an account signing in over Remote Desktop. | **Name** |
+| `Remove-Service` | Removes a service unit this layer could have written. | **Name**, **InputObject** |
+| `Rename-Computer` | Renames this machine. | **NewName**, ComputerName, DomainCredential, LocalCredential, WsmanAuthentication, Force, Restart, PassThru |
 | `Rename-OS7ADObject` | Rename an object, leaving it where it is. | **DistinguishedName**, **NewName**, Session |
 | `Repair-OS7Domain` | Renew this machine's domain credential after it has gone stale. | Domain |
 | `Reset-OS7ADAccountPassword` | Set a user's password. | **Identity**, **NewPassword**, CurrentPassword, MustChangeAtNextLogon, Session |
+| `Restart-Computer` | Restarts this machine — and restarts it, rather than powering it off. | ComputerName, Credential, Force, Wait, Timeout, For, Delay, WsmanAuthentication, Message |
 | `Restart-OS7Service` | Restarts a service and reports what it became. | **Name** |
+| `Restart-Service` | Restarts a service and reports what it became. | **Name**, **DisplayName**, **InputObject**, Include, Exclude, Force, PassThru |
 | `Restore-OS7` | Roll the system back to a previous OS/7 boot environment. | BootEnvironment |
 | `Restore-OS7File` | Copy a file or folder back out of a snapshot. | **Path**, Snapshot, AsOf, Destination, Force |
+| `Resume-Service` | Thaws a frozen service's processes. | **Name**, **DisplayName**, **InputObject**, Include, Exclude, PassThru |
 | `Search-OS7AD` | Run a raw LDAP filter and get the rows back undecorated. | **Filter**, SearchBase, Scope, Property, Session |
 | `Set-OS7AccountLockout` | Turn the account lockout on or off, and set what it costs. | Attempts, LockoutMinutes, ResetMinutes, Disable |
 | `Set-OS7ADAccountExpiration` | Set or clear the date an account stops working. | **Identity**, **DateTime**, **Never**, Session |
@@ -261,20 +269,26 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Set-OS7BootEnvironment` | Make a boot environment the one this machine boots. | **Name**, SkipGrubUpdate |
 | `Set-OS7DomainLogonPolicy` | Grant a domain group the right to administer this machine. | **AdministratorGroup**, TargetRoot, SudoersPath |
 | `Set-OS7Mode` | STUB. Sets the OS/7 system mode. | **Mode** |
-| `Set-OS7NetworkAdapter` | Configures an adapter, applies it, checks that it worked â€” and puts the old configuration back when it did not. | **Name**, **Dhcp**, **Address**, Gateway, Nameserver, SearchDomain, TimeoutSeconds, Force |
-| `Set-OS7RemoteDesktopCertificate` | Use a certificate and key of your own â€” one issued by an enterprise CA. | **CertPath**, **KeyPath**, InPlace |
+| `Set-OS7NetworkAdapter` | Configures an adapter, applies it, checks that it worked — and puts the old configuration back when it did not. | **Name**, **Dhcp**, **Address**, Gateway, Nameserver, SearchDomain, TimeoutSeconds, Force |
+| `Set-OS7RemoteDesktopCertificate` | Use a certificate and key of your own — one issued by an enterprise CA. | **CertPath**, **KeyPath**, InPlace |
 | `Set-OS7RemoteDesktopCredential` | Rotate, or deliberately reveal, the machine-wide Remote Desktop credential. | Rotate, Reveal |
 | `Set-OS7Service` | Whether a service starts at boot. | **Name**, **StartupType** |
 | `Set-OS7Theme` | Switches this user's desktop between OS/7 Classic and stock GNOME. | **Name** |
 | `Set-OS7TimeSynchronization` | Points this machine at NTP servers. | NtpServer, Pool, Exclusive |
 | `Set-OS7TimeZone` | Sets this machine's time zone. | **Id** |
 | `Set-OS7UpdateChannel` | Point this machine at an OS/7 repository, and choose its channel. | Channel, Uri, Disable |
-| `Start-OS7Backup` | Snapshot now, replicate now, or both â€” without waiting for the timer. | Snapshot, Replicate, Target |
+| `Set-Service` | Changes whether a service starts at boot, or starts and stops it. | **Name**, **InputObject**, DisplayName, Description, StartupType, Status, Credential, SecurityDescriptorSddl, Force, PassThru |
+| `Set-TimeZone` | Sets this machine's time zone. | **Id**, **Name**, **InputObject**, PassThru |
+| `Start-OS7Backup` | Snapshot now, replicate now, or both — without waiting for the timer. | Snapshot, Replicate, Target |
 | `Start-OS7BackupReplication` | Send this machine's snapshots to its targets, and check they arrived. | Target, Force |
 | `Start-OS7ScheduledTask` | Runs a task now, waits for it, and reports what happened. | **Name** |
 | `Start-OS7Service` | Starts a service and reports what it became. | **Name** |
+| `Start-Service` | Starts a service and reports what it became. | **Name**, **DisplayName**, **InputObject**, Include, Exclude, PassThru |
+| `Stop-Computer` | Powers this machine off. | ComputerName, Credential, Force, WsmanAuthentication, Delay, Message |
 | `Stop-OS7RemoteDesktopSession` | Sign a Remote Desktop user out, ending everything they had open. | **Id**, Force |
 | `Stop-OS7Service` | Stops a service and reports what it became. | **Name** |
+| `Stop-Service` | Stops a service and reports what it became. | **Name**, **DisplayName**, **InputObject**, Include, Exclude, Force, NoWait, PassThru |
+| `Suspend-Service` | Freezes a service's processes — systemd's nearest thing to a paused Windows service. | **Name**, **DisplayName**, **InputObject**, Include, Exclude, PassThru |
 | `Sync-OS7Time` | Asks chrony to correct the clock now, and reports what it did. | SettleSeconds |
 | `Test-OS7Backup` | Check the backup layer's decisions, offline or against this machine. | Live |
 | `Test-OS7BackupTarget` | Is this target reachable, healthy, and holding what it should? | Name |
@@ -285,6 +299,6 @@ Die Produktschicht: Bootumgebungen, Releases, Sicherung, Verwaltung, Verzeichnis
 | `Test-OS7Update` | Check the update train's decisions. No ZFS, no repository, no VM. | *keine* |
 | `Unlock-OS7Account` | Clear an account's failed sign-in count, so it can be used again. | **Name** |
 | `Unlock-OS7ADAccount` | Unlock an account that lockout policy has locked. | **Identity**, Session |
-| `Unregister-OS7ScheduledTask` | Removes a task Register-OS7ScheduledTask created â€” and only such a task. | **Name** |
+| `Unregister-OS7ScheduledTask` | Removes a task Register-OS7ScheduledTask created — and only such a task. | **Name** |
 | `Update-OS7` | Apply the next curated OS/7 release into a new boot environment. | Version, Channel, Source, Stage, Reboot, Keep, AllowDevelopment, Force |
 

@@ -79,12 +79,19 @@ Was das praktisch bedeutet:
   Bootumgebungen, keine Releases und keine Richtlinien.
 * **`Get-OS7BootEnvironment` gibt es nur hier.** Alles mit `OS7` im Namen ist
   Produktwissen und stützt sich auf die Schicht darunter.
-* **Der Präfix `OS7` ist verbindlich.** Es gibt kein `Get-Service`, sondern
-  `Get-OS7Service`. Das ist Absicht: die Parameter dieser Cmdlets stimmen nicht
-  mit denen der gleichnamigen Windows-Cmdlets überein, und ein Befehl, der
-  denselben Namen trägt und ein Drittel der Parameter versteht, macht aus einem
-  kopierten Skript ein halb funktionierendes — was schlimmer ist als eines, das
-  in der ersten Zeile abbricht.
+* **Der Präfix `OS7` ist die verbindliche Oberfläche** — und die
+  Windows-Namen gibt es zusätzlich. `Get-OS7Service` ist das Cmdlet, das dieses
+  Handbuch lehrt: seine Parameter sind die von systemd, und `Healthy`
+  beantwortet vier Fragen statt einer. Daneben gibt es aber auch `Get-Service`,
+  `Start-Service`, `Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer` und
+  acht weitere Namen aus Microsofts `Microsoft.PowerShell.Management`, die
+  PowerShell unter Linux nicht mitbringt. Sie haben **Windows' Parameter und
+  Windows' Ausgabespalten**, damit ein von einem Windows-Rechner kopiertes
+  Skript hier läuft und nicht in der ersten Zeile abbricht.
+
+  Was ein solches Cmdlet auf dieser Plattform nicht leisten kann, **weist es
+  namentlich ab** und sagt, was statt dessen geht — es ignoriert den Parameter
+  nie stillschweigend. Anhang C listet alle vierzehn Namen.
 
 ## 1.5 Zwei Antworten statt einer
 

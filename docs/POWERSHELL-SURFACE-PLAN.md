@@ -60,7 +60,7 @@ keeps re-learning: "cannot tell" is not "clean".
 | present | absent |
 |---|---|
 | `Get-TimeZone` — works, returned `Etc/UTC`; .NET sees 419 zones | **`Set-TimeZone`** |
-| `Restart-Computer`, `Stop-Computer` | `Get-ComputerInfo`, `Rename-Computer` |
+| `Restart-Computer`, `Stop-Computer` — **present and `Restart-Computer` does the wrong thing**: both run `/usr/sbin/shutdown` with NO arguments, which is systemctl's compatibility interface defaulting to POWEROFF, so it powers the machine off and reports success (measured 2026-09-09 on a machine; upstream PowerShell/PowerShell#14684). Neither carries any parameter on Linux, so a copied `-Force` fails on the parameter first. OS/7 supplies both itself — P1a | `Get-ComputerInfo`, `Rename-Computer` |
 | `Enter-PSSession`, `Invoke-Command`, `New-PSSession` | — |
 | `Get-Process`, `Stop-Process`, `Get-Date`, `Set-Date`, `Test-Connection`, `Get-FileHash`, `Get-Credential`, `Get-Culture`, `Get-PSDrive`, `Get-Clipboard` | `Get-Service` and the entire service family, `Get-LocalUser`, `Get-LocalGroup`, `Get-WinEvent`, `Get-EventLog`, `Get-Disk`, `Get-Volume`, `Get-ScheduledTask`, `Get-HotFix`, `Get-BitLockerVolume`, `Resolve-DnsName`, every `Net*` |
 
@@ -163,6 +163,10 @@ writing SYSVOL's NT ACLs otherwise needs `CAP_SYS_ADMIN`.
 
 ### P1 — The `OS7` prefix is canonical. Decided 2026-08-27.
 
+> **Its last paragraph is superseded by P1a below (2026-09-09).** The prefix
+> is still canonical; the Windows names are no longer opt-in and are no
+> longer aliases.
+
 `Get-OS7Service`, `Set-OS7TimeZone`, `Get-OS7NetworkAdapter`. Not `Get-Service`,
 not `Set-TimeZone`, even where §1.1 shows the name to be free on Linux today.
 
@@ -187,6 +191,73 @@ aliases and only aliases, and which may only carry a name where the *common
 invocation* is genuinely equivalent. Each entry needs a row in a table that a
 test drives. An alias that is nearly right is the thing this decision exists to
 avoid, so shipping one carelessly under a compatibility banner would defeat it.
+
+#### P1a — the paragraph above is SUPERSEDED. Revised 2026-09-09.
+
+The three reasons still hold and the `OS7` prefix is still canonical. What was
+wrong was the last paragraph: **opt-in, and aliases only.** Both were revised
+after an administrator typed a documented Microsoft cmdlet at an OS/7 machine
+and was told the cmdlet does not exist.
+
+`powershell/OS7/OS7.Compat.Windows.ps1` is **dot-sourced by OS7.psm1 and
+therefore loaded by default**, and it contains **functions with Windows'
+parameters and Windows' output shape**, not aliases. Fourteen names:
+`Get-`/`Set-`/`New-`/`Remove-`/`Start-`/`Stop-`/`Restart-`/`Suspend-`/
+`Resume-Service`, `Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer`,
+`Restart-Computer` and `Stop-Computer`.
+
+**Why opt-in was wrong.** "The name resolves" and "a script copied off a Windows
+box runs" are different products, and a compatibility layer nobody has imported
+is the first one. An opt-in module answers a question the administrator does not
+know to ask: the failure they actually meet is `CommandNotFoundException`, which
+says nothing about a module that would have helped.
+
+**Why aliases were wrong.** Reason 2 above is the argument against them, not
+for them. `Get-Service` and `Get-OS7Service` do not have the same parameters, so
+an alias makes `Get-Service -Name ssh` fail at the parameter — which is P1's own
+"nearly right" failure, shipped under a compatibility banner. A function can
+carry Windows' parameter set, and each parameter it cannot honour can be
+**refused by name, with a reason and a pointer**, which is a better outcome than
+either an alias or a missing name.
+
+**What replaced "a row in a table that a test drives"**, because that
+requirement was right and is now met literally:
+`installer/testing/check-compat-windows.py`, 214 checks, no VM. Every parameter
+the real Windows cmdlet has must be declared; every parameter declared must be
+Windows' or a named OS/7 addition; every refusal must be reachable, real, and
+must actually throw. The Windows side of that comparison is **recorded from a
+real Windows pwsh 7.6.5** — the version OS/7 pins — so a difference is a
+platform difference and not a version one.
+
+**Reason 1 is not dismissed; it is made audible.** If a later PowerShell ships
+one of these names for real, the compatibility function warns on its first use
+in a session, names `Microsoft.PowerShell.Management\<name>` as the way to the
+real one, and says the shim exists because that cmdlet was absent. The check
+asserts this **in both directions**: it must warn on a host where the cmdlet
+exists and must stay silent where it does not — measured green on Windows
+(warns) and on an installed OS/7 machine (silent) on 2026-09-09.
+
+**And two of the fourteen shadow a cmdlet that EXISTS**, which reason 1 forbids
+in general and which is right here anyway, because what exists is broken.
+`Restart-Computer` and `Stop-Computer` on Linux both run `/usr/sbin/shutdown`
+with **no arguments**; on Ubuntu that is a symlink to `systemctl`, whose
+compatibility interface takes the action as a flag and defaults to POWEROFF
+without one. So the shipped `Restart-Computer` powers an OS/7 machine off and
+reports success — measured on a machine, whose console then said `Reached target
+poweroff.target` and `reboot: Power down`. Upstream has had it since 2021
+(PowerShell/PowerShell#14684). OS/7's own says `systemctl reboot`, and a machine
+asked to restart now restarts: `reboot: Restarting system`, measured on the same
+bench the same afternoon.
+
+**The one decision this layer makes rather than translating.**
+`Set-Service -StartupType Disabled` **masks** the unit. On Windows a disabled
+service cannot be started at all; systemd's `disable` only takes it out of boot
+and leaves it startable by hand, so mapping the word to `disable` would quietly
+grant what the script asked to forbid. It warns when it does this, and
+`-StartupType Manual` unmasks. Note that `Set-OS7Service` maps the same words
+differently and correctly for *its* audience: it has a fourth word, `Blocked`,
+for the mask, because an OS/7 administrator can say which one they mean and a
+copied script cannot.
 
 ### P2 — Subsystems get a generic module; OS/7 policy sits above it. Decided 2026-08-27.
 

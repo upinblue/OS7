@@ -74,7 +74,7 @@ def psm1_parts(text):
     m = re.search(r"foreach\s*\(\s*\$part\s+in\s+@\((.*?)\)\)\s*\{", text, re.S)
     if not m:
         sys.exit("could not find the dot-source foreach in OS7.psm1")
-    return set(re.findall(r"'(OS7\.[A-Za-z]+\.ps1)(?!xml)'", m.group(1)))
+    return set(re.findall(r"'(OS7\.[A-Za-z.]+\.ps1)(?!xml)'", m.group(1)))
 
 
 def hook_parts(text):
@@ -87,7 +87,7 @@ def hook_parts(text):
     m = re.search(r"for part in\s+(.*?);\s*do", text, re.S)
     if not m:
         sys.exit("could not find the `for part in` list in hook 0060")
-    return {p for p in re.findall(r"(OS7\.[A-Za-z]+\.ps1)(?!xml)", m.group(1))}
+    return {p for p in re.findall(r"(OS7\.[A-Za-z.]+\.ps1)(?!xml)", m.group(1))}
 
 
 def pkg_parts(text):
@@ -95,7 +95,7 @@ def pkg_parts(text):
     m = re.search(r"pkg_finish\s+os7-module\s+(.*?)\n\n", text, re.S)
     if not m:
         sys.exit("could not find pkg_finish os7-module in build-os7-packages.sh")
-    return set(re.findall(r"Modules/OS7/(OS7\.[A-Za-z]+\.ps1)(?!xml)", m.group(1)))
+    return set(re.findall(r"Modules/OS7/(OS7\.[A-Za-z.]+\.ps1)(?!xml)", m.group(1)))
 
 
 def on_disk():
@@ -105,7 +105,7 @@ def on_disk():
     part of the list.
     """
     return {f for f in os.listdir(MODDIR)
-            if re.fullmatch(r"OS7\.[A-Za-z]+\.ps1", f) and f != "OS7.psm1"}
+            if re.fullmatch(r"OS7\.[A-Za-z.]+\.ps1", f) and f != "OS7.psm1"}
 
 
 def exported(text):
@@ -124,14 +124,14 @@ def exported(text):
     rest = text[start:]
     nxt = re.search(r"\n\t(?=[A-Za-z])", rest[20:])
     seg = rest[:20 + nxt.start()] if nxt else rest
-    return set(re.findall(r"'([A-Za-z]+-OS7[A-Za-z]*)'", seg))
+    return set(re.findall(r"'([A-Za-z]+-[A-Za-z0-9]+)'", seg))
 
 
 def defined(paths):
     """Every function the parts define, by name."""
     names = set()
     for p in paths:
-        for m in re.finditer(r"^function\s+([A-Za-z]+-OS7[A-Za-z]*)\s*\{?",
+        for m in re.finditer(r"^function\s+([A-Za-z]+-[A-Za-z0-9]+)\s*\{?",
                              read(p), re.M):
             names.add(m.group(1))
     return names

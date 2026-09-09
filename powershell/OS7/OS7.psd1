@@ -109,9 +109,11 @@
 		# remote graphical login are ONE PAM service on this image (measured).
 		'Get-OS7AccountLockout', 'Set-OS7AccountLockout', 'Unlock-OS7Account',
 		# Implemented - services and the log, on the Systemd module. Get-Service
-		# does not exist on PowerShell for Linux (measured), so this is the verb
-		# an admin reaches for and does not find. Healthy is four questions, not
-		# one: is-active says active for a unit in a restart loop.
+		# does not exist on PowerShell for Linux (measured), and since
+		# 2026-09-09 OS/7 supplies that name too — see the compatibility block
+		# at the end of this list. These stay the canonical surface (P1): the
+		# parameters are systemd's, and Healthy is four questions rather than
+		# one, because is-active says active for a unit in a restart loop.
 		'Get-OS7Service', 'Start-OS7Service', 'Stop-OS7Service',
 		'Restart-OS7Service', 'Set-OS7Service', 'Get-OS7Log', 'Get-OS7InstallLog',
 		# Implemented - scheduled tasks, on the Systemd module's timer surface.
@@ -161,6 +163,28 @@
 		'Get-OS7Domain', 'Test-OS7Domain',
 		'Get-OS7DomainLogonPolicy', 'Set-OS7DomainLogonPolicy',
 		'Get-OS7KerberosTicket', 'New-OS7KerberosTicket', 'Remove-OS7KerberosTicket',
+		# Implemented — THE WINDOWS NAMES Microsoft.PowerShell.Management does
+		# not ship on Linux. Measured 2026-09-09 against the shipped ISO's own
+		# pwsh 7.6.5: 15 of that module's 62 documented cmdlets are absent, and
+		# what an administrator meets is a bare CommandNotFoundException. P1
+		# deferred them to an opt-in module of aliases and only aliases; the
+		# revision on 2026-09-09 makes them FUNCTIONS with Windows' parameters
+		# and Windows' output shape, loaded by default. Every Windows parameter
+		# is declared and either honoured or refused BY NAME with a reason —
+		# check-compat-windows.py drives that table against parameter sets
+		# recorded from a real Windows pwsh of the same version.
+		#
+		# Restart-Computer and Stop-Computer are the two that EXIST and are
+		# shadowed anyway: both run `/usr/sbin/shutdown` with no arguments,
+		# which is systemctl's compatibility interface defaulting to POWEROFF,
+		# so the shipped Restart-Computer powers an OS/7 machine off and
+		# reports success (upstream PowerShell/PowerShell#14684, open since
+		# 2021).
+		'Get-Service', 'Set-Service', 'New-Service', 'Remove-Service',
+		'Start-Service', 'Stop-Service', 'Restart-Service',
+		'Suspend-Service', 'Resume-Service',
+		'Set-TimeZone', 'Get-ComputerInfo', 'Rename-Computer',
+		'Restart-Computer', 'Stop-Computer',
 		# Stub — the command surface docs/DECISIONS.md documents
 		'Set-OS7Mode')
 	CmdletsToExport   = @()

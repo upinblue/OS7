@@ -283,9 +283,16 @@ Disable-OS7ScheduledTask sanoid.timer
 ## 9.6 What was not rebuilt
 
 OS/7 rebuilds nothing PowerShell on Linux already does. There is no
-`Get-OS7Process`, no `Get-OS7FileHash`, no `Restart-OS7Computer` and no
-`Test-OS7Connection` — `Get-Process`, `Get-FileHash`, `Restart-Computer` and
-`Test-Connection` work here normally.
+`Get-OS7Process`, no `Get-OS7FileHash` and no `Test-OS7Connection` —
+`Get-Process`, `Get-FileHash` and `Test-Connection` work here normally.
 
 The test for admission is not "would this be convenient" but "would an
 administrator otherwise have to type a Linux command".
+
+**`Restart-Computer` was in this paragraph until 2026-09-09**, as an example of
+something that already works. It does not: PowerShell's own version on Linux
+runs `/usr/sbin/shutdown` with no arguments at all, and that command's default
+action without a flag is **power off**. So it powered the machine off and
+reported success. OS/7 therefore supplies `Restart-Computer` and `Stop-Computer`
+itself. The test for admission has not changed; the answer to "can PowerShell
+already do this" was wrong.

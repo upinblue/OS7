@@ -73,12 +73,19 @@ What that means in practice:
   no policy.
 * **`Get-OS7BootEnvironment` exists only here.** Anything with `OS7` in the
   name is product knowledge and rests on the layer below it.
-* **The `OS7` prefix is canonical.** There is no `Get-Service`, there is
-  `Get-OS7Service`. That is deliberate: the parameters of these cmdlets do not
-  match those of the Windows cmdlets of the same name, and a command that takes
-  the same name and understands a third of the parameters turns a copied script
-  into one that half-works — which is worse than one that fails on its first
-  line.
+* **The `OS7` prefix is the canonical surface** — and the Windows names are
+  there as well. `Get-OS7Service` is the cmdlet this manual teaches: its
+  parameters are systemd's, and `Healthy` answers four questions rather than
+  one. Beside it, though, you will also find `Get-Service`, `Start-Service`,
+  `Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer` and eight more names
+  out of Microsoft's `Microsoft.PowerShell.Management` that PowerShell does not
+  ship on Linux. They carry **Windows' parameters and Windows' output
+  columns**, so that a script copied off a Windows machine runs here instead of
+  stopping on its first line.
+
+  Anything such a cmdlet cannot do on this platform it **refuses by name**,
+  saying what to use instead — it never ignores the parameter quietly. Appendix
+  C lists all fourteen.
 
 ## 1.5 Two answers, never one
 

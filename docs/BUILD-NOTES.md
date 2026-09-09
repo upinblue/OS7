@@ -7547,3 +7547,110 @@ lesson: a gate nobody runs is a gate that is red on average. Two of the
 twenty-two `check-*.py` in this repository were red when they were all run
 together for the first time in a while — this one, and `check-image.py arm64`,
 which was #140's binfmt registration going away with a Docker restart.
+
+---
+
+## #142 — `Restart-Computer` POWERS A LINUX MACHINE OFF and reports success, and the manual told operators to type it
+
+**Measured 2026-09-09**, on the x64 Windows host, against `OS7-1.0.0.193-amd64.iso`
+and an installed machine on the `gui` bench. It began as a user report of the
+opposite shape — "cmdlets from the Management module autocomplete and then say
+they do not exist" — and the autocomplete half turned out to be about a
+different set of names entirely.
+
+### The two findings, which are not the same finding
+
+**One: 15 of the 62 cmdlets the 7.6 `Microsoft.PowerShell.Management` reference
+documents are absent on Linux.** The whole service family (nine names),
+`Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer`, `Get-HotFix`,
+`Clear-RecycleBin`, `Restore-Computer`. Invoking one gives a plain
+`CommandNotFoundException`. Tab completion does **not** offer them — asked of
+`[CommandCompletion]::CompleteInput`, which is the code path Tab uses — because
+the Unix module manifest's `CmdletsToExport` does not list them. So "it
+completes and then fails" is not this, and chasing it as though it were would
+have found nothing.
+
+**Two, and much worse: `Restart-Computer` and `Stop-Computer` ARE present, and
+`Restart-Computer` does the wrong thing.** Both run
+
+```
+/usr/sbin/shutdown          (with NO arguments at all)
+```
+
+recorded by putting a recorder in place of every binary they might plausibly
+reach for — `/sbin/shutdown`, `/usr/sbin/shutdown`, `systemctl`, `reboot`,
+`poweroff`, `halt` — inside a throwaway overlay on the shipped ISO's own root.
+Both cmdlets produced the same single line, with an empty argument vector.
+
+On Ubuntu `/usr/sbin/shutdown` is a symlink to `systemctl`, and its
+compatibility interface says of itself:
+
+```
+  -H --halt      Halt the machine
+  -P --poweroff  Power-off the machine
+  -r --reboot    Reboot the machine
+```
+
+— one of which is to be GIVEN. Without a flag the action is poweroff. So
+`Restart-Computer` on an OS/7 machine schedules a **power off**, exits 0, and
+the machine's own console then says:
+
+```
+[  OK  ] Reached target poweroff.target - System Power Off.
+[  479.165454] reboot: Power down
+```
+
+That is the repo's signature failure shape with a twist: not "reported success
+and changed nothing" but **reported success and did something else**. A remote
+administrator who types it loses the machine.
+
+It is upstream, it is old, and it is not going to be fixed for us:
+[PowerShell/PowerShell#14684](https://github.com/PowerShell/PowerShell/issues/14684),
+"Restart-Computer performs shutdown on Ubuntu 18.04", reported January 2021 and
+still true in 7.6.5.
+
+### What made it expensive rather than merely wrong
+
+**The product's own documentation told operators to type it.** `docs/manual`
+§06, in both languages, ends its maintenance-window example with
+`Restart-Computer`; §09.6 listed it as an example of something PowerShell
+already does well enough that OS/7 deliberately did not rebuild it; and
+`POWERSHELL-SURFACE-PLAN.md` §1.1 had it in the **present** column, which was
+true and therefore never questioned. Four places agreed, and the agreement was
+about the wrong property: they all recorded that the *name resolves*.
+
+### The rules
+
+**A cmdlet that exists is not a cmdlet that works, and "present" is not a
+measurement.** §1.1's table asked `Get-Command` and wrote down the answer. The
+question worth asking of anything that acts on the machine is not whether the
+name binds but **what it runs** — which is answerable in seconds by standing a
+recorder where the real program should be, and which nobody had done in the
+eleven days that table had existed.
+
+**When a program shells out, the argument vector IS the behaviour.** An exit
+code cannot tell `shutdown -r` from `shutdown`. Neither can a log line, and
+neither can the cmdlet's own name.
+
+**And a compatibility name that defaults its action is a bug waiting for a
+symlink.** `shutdown` is a compatibility interface whose meaning depends on
+argv[0] and on a default; `systemctl reboot` cannot be re-interpreted by
+either. `Invoke-SystemdShutdown` therefore takes a mandatory `-Action` and
+never uses the flagless form — the defaulting is the defect, so the parameter
+is not defaulted.
+
+### What it changed
+
+`powershell/Systemd/` gained `Invoke-SystemdShutdown`, and
+`powershell/OS7/OS7.Compat.Windows.ps1` supplies twelve absent names plus
+`Restart-Computer` and `Stop-Computer` — the only two names in this product
+that deliberately shadow a working cmdlet's name, and neither of them works
+(P1a in [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md)).
+`installer/testing/check-compat-windows.py` is the regression test and it is
+proven to fire: plant `Action = 'PowerOff'` in `Restart-Computer` on a copy of
+`powershell/` via `OS7_MODULE_ROOT` and it goes RED with
+*"Restart-Computer asks for `systemctl reboot`"*.
+
+Verified on the machine the same afternoon: `Restart-Computer` on the `gui`
+bench, and the console said `reboot: Restarting system` with the VM still
+running a fresh kernel.

@@ -2706,9 +2706,16 @@ function Restore-OS7 {
 # import at all — so its position is free, and it is placed beside Time for
 # the same reason Time is where it is: both answer a question about the
 # machine rather than acting on it.
+#
+# OS7.Compat.Windows.ps1 is SECOND TO LAST, and the position is the same rule
+# once more: it is the only file here that calls across nearly all the others —
+# Get-OS7Service and its verbs, Set-OS7TimeZone, Get-OS7Domain, Get-OS7Version
+# and Import-OS7SystemdLayer — so it goes after every one of them, and still
+# before OS7.Update.ps1, which stays last.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
-		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1', 'OS7.Update.ps1')) {
+		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1',
+		'OS7.Compat.Windows.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -2825,4 +2832,21 @@ Export-ModuleMember -Function Get-OS7Version,
 	Join-OS7Domain, Remove-OS7Domain, Repair-OS7Domain,
 	Get-OS7Domain, Test-OS7Domain,
 	Get-OS7DomainLogonPolicy, Set-OS7DomainLogonPolicy,
-	Get-OS7KerberosTicket, New-OS7KerberosTicket, Remove-OS7KerberosTicket
+	Get-OS7KerberosTicket, New-OS7KerberosTicket, Remove-OS7KerberosTicket,
+	# THE WINDOWS NAMES Microsoft.PowerShell.Management does not ship on Linux
+	# — measured: 15 of its 62 documented cmdlets are absent, and the failure
+	# an administrator meets is a bare CommandNotFoundException. P1 deferred
+	# these to an opt-in module of aliases; that was revised on 2026-09-09 to
+	# functions with Windows' parameters, loaded by default, because "the name
+	# resolves" and "a script copied off a Windows box runs" are different
+	# products. OS7.Compat.Windows.ps1 has the reasoning and the refusal table.
+	#
+	# Restart-Computer and Stop-Computer are the two that DO exist and shadow
+	# them anyway: both run `/usr/sbin/shutdown` with no arguments, which is
+	# systemctl's compatibility interface defaulting to POWEROFF, so the
+	# shipped Restart-Computer powers an OS/7 machine off and reports success.
+	Get-Service, Set-Service, New-Service, Remove-Service,
+	Start-Service, Stop-Service, Restart-Service,
+	Suspend-Service, Resume-Service,
+	Set-TimeZone, Get-ComputerInfo, Rename-Computer,
+	Restart-Computer, Stop-Computer
