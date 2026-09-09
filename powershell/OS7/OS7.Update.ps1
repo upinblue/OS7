@@ -69,6 +69,24 @@ $script:OS7UpdateRoot  = '/run/os7-update'
 $script:OS7Keyring   = '/usr/share/keyrings/os7-archive-keyring.gpg'
 $script:OS7AptSource = '/etc/apt/sources.list.d/os7.sources'
 
+# AND THE CREDENTIAL, WHICH CANNOT LIVE IN THE SOURCE FILE.
+#
+# docs/RELEASE-PROCESS.md §4.2. OS/7's repository is served over WebDAV from a
+# Hetzner Storage Box, and EVERY transport that box speaks requires
+# authentication — measured 2026-09-02 (§4.1a): an anonymous GET of / is
+# answered 401, there is no public folder, and public links are a feature of a
+# different Hetzner product. A deb822 source has no field for a credential, so
+# apt takes one from /etc/apt/auth.conf.d/ and nowhere else.
+#
+# WHAT THIS CREDENTIAL IS AND IS NOT. Integrity is GPG's: `Signed-By` names
+# OS/7's keyring, so a credential cannot make apt trust anything, and the
+# content it fetches is a public product. The account is read-only and its
+# directory IS its root (§4.1a), so it reaches nothing else on the box. What it
+# is, is a shared secret with an owner and no rotation path yet — RP3, open —
+# which is the reason it is written by a named verb that can be re-run rather
+# than pasted into place by hand.
+$script:OS7AptAuthConf = '/etc/apt/auth.conf.d/os7.conf'
+
 # THE PIN, AND WHY THIS FILE READS IT RATHER THAN release.json.
 #
 # There are three files called release.json in this repository and they have
@@ -751,6 +769,237 @@ function Get-OS7Release {
 	}
 }
 
+function Get-OS7AptAuthHost {
+	<#
+	.SYNOPSIS
+		The host apt has to match a credential against, out of a repository
+		URI. Internal.
+
+	.DESCRIPTION
+		apt's auth.conf keys on `machine <host>[:port][/path]`, so the entry has
+		to name the URI's authority and not the URI. A `file:` URI has no
+		authority at all and needs no credential — that returns $null, and the
+		caller's job is then to write nothing rather than to write an entry that
+		can never match.
+	#>
+	param([Parameter(Mandatory)][AllowEmptyString()][string]$Uri)
+
+	$parsed = $null
+	if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsed)) {
+		return $null
+	}
+	if ($parsed.Scheme -notin @('http', 'https')) { return $null }
+	if ($parsed.IsDefaultPort) { return $parsed.Host }
+	return "$($parsed.Host):$($parsed.Port)"
+}
+
+function Get-OS7AptCredentialLogin {
+	<#
+	.SYNOPSIS
+		Which account this machine has a repository credential for. Internal.
+
+	.DESCRIPTION
+		The LOGIN only, never the password: "does this machine have a credential
+		and whose" is an operator's question, and the answer to it does not
+		require handing the secret to whatever is going to print the object.
+
+		It reads only the entry whose `machine` matches, because a machine
+		pointed at a second repository has two entries and the one that answers
+		is the one for the URI in force.
+	#>
+	param(
+		[AllowEmptyString()][AllowNull()][string]$MachineHost,
+		[string]$Path = $script:OS7AptAuthConf
+	)
+
+	if (-not $MachineHost) { return $null }
+	if (-not [System.IO.File]::Exists($Path)) { return $null }
+
+	$hit = $false
+	foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+		$t = $line.Trim()
+		if ($t.StartsWith('#')) { continue }
+		if ($t -match '^machine\s+(\S+)') {
+			$hit = ($Matches[1] -eq $MachineHost)
+			continue
+		}
+		if ($hit -and $t -match '^login\s+(\S+)') { return $Matches[1] }
+	}
+	return $null
+}
+
+function Write-OS7AptCredential {
+	<#
+	.SYNOPSIS
+		Put a repository credential where apt reads it. Internal.
+
+	.DESCRIPTION
+		docs/RELEASE-PROCESS.md §4.2, and the file is $script:OS7AptAuthConf.
+
+		EMPTY FIRST, THEN THE MODE, THEN THE CONTENT — the order Net's
+		Set-NetplanDocument uses for a pre-shared key and for the same measured
+		reason: a file that is world-readable for the microseconds between
+		create and chmod is world-readable.
+
+		AND 0600 IS OS/7'S DECISION, NOT SOMETHING apt ENFORCES. Measured
+		2026-09-09 in a clean ubuntu:26.04: an auth.conf.d entry at mode 0644 is
+		read and used without a warning, a notice or a line in any log —
+		`MaybeAddAuth: … from /etc/apt/auth.conf.d/os7.conf` under
+		`-o Debug::Acquire::netrc=1` and silence otherwise. So nothing downstream
+		would ever report a credential this machine had left readable, which is
+		exactly the shape of defect this repository keeps paying for. The mode is
+		set here and read back from the filesystem below.
+
+		THE PASSWORD IS NEVER RETURNED, LOGGED OR PUT IN AN ARGUMENT. It goes
+		from the PSCredential into the file and nowhere else — not through
+		Invoke-OS7Native (whose Write-OS7Step echoes the whole command line),
+		not into the object Set-OS7UpdateChannel hands back, and not into an
+		exception message.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$MachineHost,
+		[Parameter(Mandatory)][pscredential]$Credential,
+		[string]$Path = $script:OS7AptAuthConf
+	)
+
+	if (-not $PSCmdlet.ShouldProcess($Path, "write the credential for $MachineHost")) {
+		return $null
+	}
+
+	$dir = [System.IO.Path]::GetDirectoryName($Path)
+	if (-not [System.IO.Directory]::Exists($dir)) {
+		[void][System.IO.Directory]::CreateDirectory($dir)
+	}
+
+	# The multi-line netrc shape, because that is the one measured to work
+	# against the real server (installer/testing/check-storagebox.py, 2026-09-02).
+	$body = @(
+		'# OS/7 — the credential for OS/7''s own package repository.'
+		'# Written by Set-OS7UpdateChannel. docs/RELEASE-PROCESS.md §4.2.'
+		'#'
+		'# READ-ONLY, and it protects nothing that is not already public: what it'
+		'# fetches is a released product and its integrity is GPG''s, not this'
+		'# file''s. Mode 0600 even so — apt does not care, and the next reader of'
+		'# this machine should not have to wonder.'
+		"machine $MachineHost"
+		"login $($Credential.UserName)"
+		"password $($Credential.GetNetworkCredential().Password)"
+	) -join "`n"
+
+	[System.IO.File]::WriteAllText($Path, '')
+	if (-not $IsWindows) {
+		[System.IO.File]::SetUnixFileMode($Path,
+			[System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite)
+	}
+	[System.IO.File]::WriteAllText($Path, $body + "`n")
+
+	# ASK THE FILESYSTEM WHAT THE MODE IS. SetUnixFileMode on a path a container
+	# bind-mounted from Windows does not necessarily take (BUILD-NOTES #117 is
+	# the same class), and a credential that was meant to be 0600 and is not is
+	# worth a refusal rather than a hope.
+	# BY VALUE AND NOT BY ITS TEXT. UnixFileMode is a [Flags] enum and
+	# ToString() orders the names however the runtime feels: measured
+	# 2026-09-09 in pwsh 7.6.5 on Linux, a 0600 file reads back
+	# "UserWrite, UserRead" — so a string comparison against
+	# "UserRead, UserWrite" refuses a file whose mode is exactly right.
+	$mode = $null
+	if (-not $IsWindows) {
+		$want = [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite
+		$mode = (Get-Item -LiteralPath $Path -Force).UnixFileMode
+		if ($mode -ne $want) {
+			throw [System.InvalidOperationException]::new(
+				"wrote $Path and its mode reads '$mode' rather than 0600 " +
+				"(UserRead, UserWrite). The credential is on disk and readable by " +
+				'more than root; remove it or fix the mode before pointing this ' +
+				'machine at a repository.')
+		}
+	}
+
+	[pscustomobject]@{
+		Path        = $Path
+		MachineHost = $MachineHost
+		Login       = $Credential.UserName
+		Mode        = [string]$mode
+	}
+}
+
+function Test-OS7AptSourceFetched {
+	<#
+	.SYNOPSIS
+		Did apt actually fetch and verify THIS source? Internal.
+
+	.DESCRIPTION
+		`apt-get update` EXITS 0 WHEN A SOURCE COULD NOT BE FETCHED AT ALL. An
+		unreachable, refused or unverifiable source is a `W:`, not an `E:`, and
+		the process still returns 0 — measured 2026-09-02 against the real
+		Storage Box (docs/RELEASE-PROCESS.md §4.1a), where the first version of
+		that check read the exit code as success with the right credential AND
+		with a deliberately wrong one. A control that cannot fail.
+
+		So this reads WHICH LINE apt printed for our URI. `Get:`/`Hit:` mean the
+		index arrived and was verified; `Err:`/`Ign:` mean it did not, whatever
+		the exit code says. "Refused as it should be" and "never reached it" are
+		different outcomes and only one of them is evidence, so the verdict names
+		which.
+
+		NOT `-qq`. That is the flag the previous version of this read-back used,
+		and it suppresses the very lines that carry the answer — which is how a
+		source apt had rejected could be reported as accepted.
+
+		Verdicts: fetched · unauthorized · tls · notfound · errored · unfetched.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Uri,
+		[string[]]$AptArguments = @('update', '-o', 'Acquire::Retries=1')
+	)
+
+	# Reset, then read guarded (BUILD-NOTES #121): apt-get is a command that
+	# might be found and not startable, and an unguarded read would hand this
+	# function an earlier command's 0 and call an update that never ran a
+	# success.
+	$global:LASTEXITCODE = $null
+	$out = & apt-get @AptArguments 2>&1
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	$text = ($out | ForEach-Object { [string]$_ }) -join "`n"
+
+	if ($null -eq $code) {
+		return [pscustomobject]@{
+			Verdict = 'unfetched'; ExitCode = $null
+			Detail  = 'apt-get was found but could not be started'
+		}
+	}
+
+	$quoted  = [regex]::Escape($Uri.TrimEnd('/'))
+	$arrived = [bool]([regex]::IsMatch($text, "(?m)^(Get|Hit):\d+\s+$quoted"))
+	$errored = [bool]([regex]::IsMatch($text, "(?m)^(Err|Ign):\d+\s+$quoted"))
+
+	$detail = ''
+	foreach ($line in $text.Split("`n")) {
+		$s = $line.Trim()
+		if ($s -match '^(E:|W:|Err:)' -or $s -match '401|Unauthorized|certificate verify failed') {
+			$detail = if ($s.Length -gt 200) { $s.Substring(0, 200) } else { $s }
+			break
+		}
+	}
+
+	$verdict =
+		if ($text -match '401|Unauthorized') { 'unauthorized' }
+		elseif ($text -match 'certificate verify failed|SSL connection failed') { 'tls' }
+		elseif ($errored -and $text -match '404') { 'notfound' }
+		elseif ($arrived -and -not $errored) { 'fetched' }
+		elseif ($errored) { 'errored' }
+		else { 'unfetched' }
+
+	[pscustomobject]@{
+		Verdict  = $verdict
+		ExitCode = $code
+		Detail   = if ($detail) { $detail } else {
+			'apt printed neither Get: nor Err: for this source'
+		}
+	}
+}
+
 function Set-OS7UpdateChannel {
 	<#
 	.SYNOPSIS
@@ -780,12 +1029,29 @@ function Set-OS7UpdateChannel {
 	.PARAMETER Uri
 		The repository. Without it, whatever the machine already has.
 
+	.PARAMETER Credential
+		The credential apt needs for a repository that requires one — OS/7's own
+		is served over WebDAV and answers an anonymous request with 401
+		(docs/RELEASE-PROCESS.md §4.1a). It is written to
+		/etc/apt/auth.conf.d/os7.conf at mode 0600, keyed to the URI's host, and
+		it is never printed, returned or put in a command line.
+
+		Without it, whatever the machine already has: os7-release ships one for
+		the published repository, so an operator normally passes nothing. Pass
+		it to point a machine at a DIFFERENT repository, or after the published
+		credential has been rotated.
+
 	.PARAMETER Disable
 		Switch the source off again, leaving it declared. The honest state for a
-		machine that should not update.
+		machine that should not update. It leaves the credential in place —
+		removing a secret the operator supplied is not this switch's business,
+		and a re-enable would otherwise silently fetch nothing.
 
 	.EXAMPLE
 		Set-OS7UpdateChannel -Channel stable -Uri https://releases.example/os7
+
+	.EXAMPLE
+		Set-OS7UpdateChannel -Channel preview -Credential (Get-Credential)
 
 	.EXAMPLE
 		Set-OS7UpdateChannel -Disable
@@ -796,6 +1062,7 @@ function Set-OS7UpdateChannel {
 		[ValidateSet('stable', 'preview', 'development')]
 		[string]$Channel,
 		[string]$Uri,
+		[pscredential]$Credential,
 		[switch]$Disable
 	)
 
@@ -832,6 +1099,24 @@ function Set-OS7UpdateChannel {
 		"Enabled: $enabled"
 	) -join "`n"
 
+	# THE CREDENTIAL GOES DOWN BEFORE THE SOURCE, not after. The read-back below
+	# is a real `apt-get update`, so the first time apt ever reads this source it
+	# must already be able to authenticate — otherwise the verb's own
+	# verification fails on a machine that is correctly configured, and the
+	# operator is sent to look at the wrong file.
+	$authHost = Get-OS7AptAuthHost -Uri $Uri
+	$auth = $null
+	if ($Credential) {
+		if (-not $authHost) {
+			throw [System.InvalidOperationException]::new(
+				"a credential was given for '$Uri', which is not an http or https " +
+				'URI. apt keys auth.conf on a host, so there is nothing for this ' +
+				'credential to match and writing it would be a secret on disk that ' +
+				'can never be used.')
+		}
+		$auth = Write-OS7AptCredential -MachineHost $authHost -Credential $Credential
+	}
+
 	if ($PSCmdlet.ShouldProcess($script:OS7AptSource,
 			"point at $Uri, suite $suite, enabled=$enabled")) {
 		[System.IO.Directory]::CreateDirectory(
@@ -867,14 +1152,38 @@ function Set-OS7UpdateChannel {
 		}
 
 		# ASK apt, not the file. A source file that parses is not a source apt
-		# accepted: a bad Signed-By path, a suite with no Release file, or a URI
-		# that does not resolve all leave the file exactly as written and apt
-		# reporting nothing from it.
+		# accepted: a bad Signed-By path, a suite with no Release file, a URI
+		# that does not resolve or a credential the server refuses all leave the
+		# file exactly as written and apt reporting nothing from it.
+		#
+		# AND NOT BY ITS EXIT CODE, which is what this did until 2026-09-09:
+		# `apt-get -qq update` returns 0 for a source it could not fetch at all
+		# (§4.1a, measured), and -qq suppresses the Get:/Err: lines that say
+		# which happened. So the old version of this check passed for every
+		# reachable machine and for every unreachable one alike.
 		if (-not $Disable) {
-			try { Invoke-OS7Native -Command 'apt-get' -Arguments @('-qq', 'update') | Out-Null }
-			catch {
+			$fetch = Test-OS7AptSourceFetched -Uri $Uri
+			if ($fetch.Verdict -ne 'fetched') {
+				$why = switch ($fetch.Verdict) {
+					'unauthorized' {
+						'the server refused the credential (401). ' + $(if ($Credential) {
+							'The one just written is not accepted for this repository.'
+						} else {
+							'This repository needs one and this machine has none, or the ' +
+							'one it has is stale: pass -Credential.'
+						})
+					}
+					'tls'       { 'TLS verification failed, so apt never reached the repository.' }
+					'notfound'  { 'the server answered 404: the suite is not at this URI.' }
+					'errored'   { 'apt refused the source.' }
+					default     { 'apt reported nothing at all for this source.' }
+				}
 				throw [System.InvalidOperationException]::new(
-					"the source was written and apt will not read it:`n$($_.Exception.Message)")
+					"the source was written and apt did not fetch it — $why`n" +
+					"  verdict: $($fetch.Verdict) (apt-get exited $($fetch.ExitCode))`n" +
+					"  apt said: $($fetch.Detail)`n" +
+					"  the file is still $($script:OS7AptSource); fix the URI, the " +
+					'credential or the server and run this again.')
 			}
 		}
 	}
@@ -888,6 +1197,14 @@ function Set-OS7UpdateChannel {
 		Enabled    = (-not $Disable)
 		SourceFile = $script:OS7AptSource
 		Keyring    = $script:OS7Keyring
+		# THE CREDENTIAL IS REPORTED AND NEVER CARRIED. An operator needs to know
+		# whether this machine has one and which account it names; nothing needs
+		# the password, and an object that held it would put it in a transcript,
+		# a log and every `| Export-Csv` anybody ever runs on it.
+		AuthFile   = $(if ($authHost) { $script:OS7AptAuthConf } else { $null })
+		AuthHost   = $authHost
+		AuthLogin  = $(if ($auth) { $auth.Login }
+			else { Get-OS7AptCredentialLogin -MachineHost $authHost })
 	}
 }
 

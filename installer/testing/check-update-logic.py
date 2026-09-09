@@ -319,6 +319,46 @@ for x in sys.argv[1:]:
     a.append(x)
 verb = a[0] if a else ""
 root = os.environ.get("OS7_FAKE_ROOT", "")
+
+# `update` PRINTS WHAT apt PRINTS, AND EXITS 0 EITHER WAY.
+#
+# That last clause is the whole point of this branch. Measured 2026-09-02
+# against the real Storage Box (RELEASE-PROCESS §4.1a): a source apt could not
+# fetch — refused, unreachable, unverifiable — is a `W:` and rc 0, so the exit
+# code cannot tell the two apart and only the Get:/Err: line can. A fake that
+# printed nothing and exited 0 was a fake that could not distinguish
+# Set-OS7UpdateChannel's read-back working from it being absent, which is what
+# it was until 2026-09-09.
+#
+# OS7_FAKE_APT_UPDATE picks the outcome: fetched (default), 401, err, silent.
+if verb == "update":
+    uri, suite = "", "os7-1.0"
+    src = (root or "") + "/etc/apt/sources.list.d/os7.sources"
+    try:
+        for line in open(src):
+            t = line.strip()
+            if t.startswith("URIs:"):   uri = t.split(None, 1)[1].strip()
+            if t.startswith("Suites:"): suite = t.split(None, 1)[1].strip()
+    except Exception:
+        pass
+    mode = os.environ.get("OS7_FAKE_APT_UPDATE", "fetched")
+    if uri and mode == "fetched":
+        print("Get:1 %s %s InRelease [2412 B]" % (uri, suite))
+        print("Reading package lists...")
+    elif uri and mode == "401":
+        print("Err:1 %s %s InRelease" % (uri, suite))
+        print("  401  Unauthorized [IP: 65.108.1.1 443]")
+        print("Reading package lists...")
+        print("W: Failed to fetch %s/dists/%s/InRelease  401  Unauthorized"
+              % (uri, suite))
+        print("W: Some index files failed to download. They have been ignored, "
+              "or old ones used instead.")
+    elif uri and mode == "err":
+        print("Err:1 %s %s InRelease" % (uri, suite))
+        print("  404  Not Found [IP: 65.108.1.1 443]")
+        print("W: Some index files failed to download.")
+    sys.exit(0)
+
 if verb == "install":
     pkg = a[1] if len(a) > 1 else ""
     if "=" in pkg:
@@ -1000,6 +1040,121 @@ def main():
                    "OS7_FAKE_INITRD_CONTENTS": "bin/sh,scripts/local-top/os7-tpm2"})
     check(rc == 0, "and an initrd that carries it is accepted",
           (err.strip().splitlines() or [""])[-1][:100])
+
+    # -- the credential the published repository needs (RELEASE-PROCESS §4.2) --
+    #
+    # OS/7's repository is served over WebDAV and answers an anonymous request
+    # with 401, so a machine needs a credential in /etc/apt/auth.conf.d/ — and
+    # the verb that points a machine at a repository is the verb that has to
+    # write it. Two halves are checked here: the file, and the READ-BACK, which
+    # until 2026-09-09 was `apt-get -qq update` judged by its exit code and
+    # therefore could not fail.
+    #
+    # These write the container's REAL /etc/apt and /etc/os7. It is a throwaway
+    # --privileged container and the fakes are ahead of apt on PATH, so nothing
+    # here reaches a real archive; the paths are the module's own script-scope
+    # constants and redirecting them would test a copy of the decision.
+    print("\n  Set-OS7UpdateChannel and the credential apt reads (§4.2)")
+
+    AUTH = "/etc/apt/auth.conf.d/os7.conf"
+    SECRET = "nOt-tHe-ReAl-0ne-9134"
+    channel_env = dict(os.environ)
+    channel_env["PATH"] = bindir + os.pathsep + channel_env["PATH"]
+    channel_env["OS7_LOG"] = os.path.join(work, "calls.log")
+    channel_env["OS7_STATE"] = os.path.join(work, "state.json")
+    channel_env["OS7_LAYOUT"] = os.path.join(work, "layout.json")
+
+    def set_channel(args, *, apt="fetched"):
+        env = dict(channel_env)
+        env["OS7_FAKE_APT_UPDATE"] = apt
+        script = ("Import-Module /work/powershell/OS7/OS7.psd1 -Force; "
+                  "$c = New-Object System.Management.Automation.PSCredential("
+                  "  'u661569-sub2', (ConvertTo-SecureString '%s' -AsPlainText -Force)); "
+                  "try { Set-OS7UpdateChannel %s -Confirm:$false "
+                  "        | ConvertTo-Json -Depth 3 -Compress } "
+                  "catch { [Console]::Error.WriteLine('THREW: ' + $_.Exception.Message); "
+                  "        exit 3 }" % (SECRET, args))
+        got = sh(["pwsh", "-NoProfile", "-NonInteractive", "-c", script], env=env)
+        obj = {}
+        for line in reversed((got.stdout or "").strip().splitlines()):
+            try:
+                obj = json.loads(line)
+                break
+            except ValueError:
+                continue
+        return got.returncode, got.stdout or "", got.stderr or "", obj
+
+    if os.path.exists(AUTH):
+        os.remove(AUTH)
+    URI = "https://u661569-sub2.your-storagebox.de"
+
+    rc, out, err, obj = set_channel(
+        "-Channel preview -Uri %s -Credential $c" % URI)
+    check(rc == 0, "it takes a URI and a credential",
+          (err.strip().splitlines() or [""])[-1][:120])
+    check(os.path.exists(AUTH), "the credential is in %s" % AUTH)
+    mode = oct(os.stat(AUTH).st_mode & 0o777) if os.path.exists(AUTH) else "(absent)"
+    check(mode == "0o600", "at mode 0600 — apt does not require it, OS/7 does",
+          mode)
+    body = open(AUTH).read() if os.path.exists(AUTH) else ""
+    check("machine u661569-sub2.your-storagebox.de" in body,
+          "keyed to the URI's HOST, which is what apt matches on")
+    check("login u661569-sub2" in body and ("password " + SECRET) in body,
+          "with the login and the password apt needs")
+
+    # THE PASSWORD MUST NOT BE ANYWHERE ELSE. A cmdlet that returned it would
+    # put it in every transcript, log and Export-Csv anybody ran on the object.
+    check(SECRET not in out and SECRET not in err,
+          "and in no stream of the cmdlet — not stdout, not stderr")
+    check(SECRET not in json.dumps(obj),
+          "nor in the object it hands back", "AuthLogin=%s" % obj.get("AuthLogin"))
+    check(obj.get("AuthLogin") == "u661569-sub2" and obj.get("AuthHost") ==
+          "u661569-sub2.your-storagebox.de",
+          "which reports WHOSE credential this machine has, and for what host")
+
+    # THE READ-BACK, and the reason this section exists. apt exits 0 for a
+    # source it could not fetch, so this is the case the old exit-code check
+    # passed and must now fail.
+    rc, out, err, obj = set_channel("-Channel preview -Uri %s" % URI, apt="401")
+    check(rc != 0 and "401" in err,
+          "a credential the server REFUSES fails the verb (apt still exited 0)",
+          (err.strip().splitlines() or [""])[-1][:130])
+    check(rc != 0 and "-Credential" in err,
+          "and the message sends the operator to the credential, not to the URI")
+
+    rc, out, err, obj = set_channel("-Channel preview -Uri %s" % URI, apt="err")
+    check(rc != 0 and ("404" in err or "not at this URI" in err),
+          "a suite that is not there fails it too, as a different sentence",
+          (err.strip().splitlines() or [""])[-1][:130])
+
+    rc, out, err, obj = set_channel("-Channel preview -Uri %s" % URI, apt="silent")
+    check(rc != 0 and "nothing at all" in err,
+          "and so does apt saying nothing about the source at all",
+          (err.strip().splitlines() or [""])[-1][:130])
+
+    # AND THE CONTROL: the same call, the same fakes, apt answering the way a
+    # working server does. Without this the four refusals above could be a verb
+    # that refuses everything.
+    rc, out, err, obj = set_channel("-Channel preview -Uri %s" % URI)
+    check(rc == 0 and obj.get("Enabled") is True,
+          "the same call succeeds when apt fetches the source",
+          (err.strip().splitlines() or [""])[-1][:100])
+
+    # -Disable does not run the fetch check and does not remove the secret.
+    rc, out, err, obj = set_channel("-Disable", apt="401")
+    check(rc == 0 and obj.get("Enabled") is False,
+          "-Disable switches the source off without asking apt anything")
+    check(os.path.exists(AUTH),
+          "and leaves the credential in place — removing an operator's secret "
+          "is not that switch's business")
+
+    # A credential for a URI apt can never match it against is refused rather
+    # than written: a secret on disk that cannot be used is worse than none.
+    rc, out, err, obj = set_channel(
+        "-Channel development -Uri file:///usr/lib/os7/repo -Credential $c")
+    check(rc != 0 and "auth.conf" in err.replace("auth.conf.d", "auth.conf"),
+          "a credential for a file:// URI is refused, not written",
+          (err.strip().splitlines() or [""])[-1][:130])
 
     print()
     if bad:

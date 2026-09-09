@@ -343,19 +343,60 @@ before RP1 is answered, because a yes changes the answer.
 Until RP1 is answered, the repository half can proceed and the anonymous ISO
 half cannot.
 
-### 4.2 The credential, if the repository stays on WebDAV
+### 4.2 The credential — BUILT 2026-09-09, and both halves are as proposed
 
-Two code changes this implies, neither of which exists:
+Both code changes below were owed and neither existed; both exist now, for the
+1.0.0.201 preview, which is the first release whose `OS7_REPO_URI` names the
+real server.
 
-* **`Set-OS7UpdateChannel` cannot write a credential.** It writes the `.sources`
-  file and reads it back through apt. WebDAV needs it to also write
-  `/etc/apt/auth.conf.d/os7.conf` at mode 0600, with the same read-it-back
-  discipline — a file that was written is not a file apt accepted.
-* **The credential ships in the image** if `os7-release` carries it, which makes
-  rotation a fleet operation. It is not a secrecy problem — integrity is GPG's,
-  the content is public, and a leaked read credential compromises nothing — but
-  it is a shared secret with an owner, and it needs a stated rotation path
-  before the first machine carries it.
+* **`Set-OS7UpdateChannel -Credential`** writes `/etc/apt/auth.conf.d/os7.conf`
+  at mode 0600 — empty file first, then the mode, then the content, because a
+  file that is world-readable for the microseconds between create and chmod is
+  world-readable (Net's `Set-NetplanDocument` measured that for a pre-shared
+  key). It is keyed to the URI's **host**, which is what apt matches on; a
+  credential for a `file://` URI is refused rather than written, because a
+  secret on disk that can never be used is worse than none. The password
+  reaches the file and nothing else: not the returned object, not a stream, not
+  a command line.
+  **And 0600 is OS/7's decision, not apt's** — measured 2026-09-09 in a clean
+  `ubuntu:26.04`: an `auth.conf.d` entry at mode 0644 is read and used with no
+  warning, no notice and nothing in any log. So nothing downstream would ever
+  report a credential a machine had left readable.
+* **The read-back was the weaker half and is now the stronger.** It ran
+  `apt-get -qq update` and judged the exit code — and `apt-get update` exits 0
+  for a source it could not fetch at all (§4.1a), while `-qq` suppresses the
+  `Get:`/`Err:` lines that say which happened. So the check passed for every
+  reachable machine and every unreachable one alike. It now reads which line apt
+  printed **for this source** and names the outcome: `fetched`, `unauthorized`,
+  `tls`, `notfound`, `errored`, `unfetched` — each a different sentence,
+  because "refused as it should be" and "never reached it" send an operator to
+  different places.
+* **The credential ships in the image**, decided 2026-09-09. `os7-release`
+  carries it, injected at build time from the operator's
+  `~/.os7/storagebox.conf` (`make build-<arch>
+  OS7_REPO_CREDENTIAL=$HOME/.os7/storagebox.conf`) and **never from this
+  repository, which is public**. It is a conffile for the same reason
+  `os7.sources` is one: `Set-OS7UpdateChannel` rewrites it, and a plain file is
+  replaced on the next upgrade of the package. A build whose `OS7_REPO_URI`
+  needs authentication and was handed no credential **refuses** — the medium it
+  would produce installs machines that cannot reach the published repository and
+  say nothing about why — with `OS7_REPO_NO_CREDENTIAL=1` as the deliberate
+  opt-out. The mode is then read back **out of the built `.deb`**
+  (`dpkg-deb -c` must say `-rw-------`), because the staging tree sits on a bind
+  mount and a Windows host does not honour a `chmod` there (BUILD-NOTES #117):
+  the file would present as 0777, `pkg_finish`'s exact-0777 sweep would make it
+  0644, and a world-readable password would ship in a signed package with every
+  check green.
+* **What that costs, stated rather than solved.** The credential is extractable
+  from any published medium. It is read-only, its account's directory is its
+  root, and integrity is GPG's — so what it protects is not the content but the
+  bandwidth. **RP3 is still open**: rotation is now a fleet operation, and the
+  first release to ship it is the release that makes that true.
+
+Gated by `check-update-logic.py` ("Set-OS7UpdateChannel and the credential apt
+reads"), whose fake `apt-get` reproduces the measured trap — it prints a 401
+`Err:` line **and exits 0** — so the four refusals are proven to fire, with a
+control run in which apt fetches the source and the same call succeeds.
 
 ---
 
@@ -495,7 +536,7 @@ and the twin-version preference).
 |---|---|
 | **RP1** | Where the public ISO download is served from (§4.1), given that a self-run server is ruled out. Blocks the anonymous half of the website, and nothing before the first `stable`. |
 | ~~RP2~~ | **ANSWERED 2026-09-02 (§4.1a): yes.** apt reads the box over WebDAV with Basic auth, index verified, and the wrong-credential control is refused — `check-storagebox.py`, 5/5 against the real server. The Nextcloud `/public.php/webdav` idea in §4.1 is now only about RP1 and RP3, not about whether the transport works. |
-| **RP3** | The credential's rotation path, if the repository stays on WebDAV (§4.2). |
+| **RP3** | The credential's rotation path (§4.2). **Sharper since 2026-09-09, not answered:** the credential now ships in the image, so rotating it needs either a new medium or `Set-OS7UpdateChannel -Credential` typed on every machine — and the second is the reason that parameter exists. What is still unwritten is who rotates it, on what trigger, and how a machine that missed the rotation reports that rather than looking offline. |
 | **RP4** | Cadence. U5 proposes monthly `stable` plus out-of-band hotfixes; the number itself is a business decision and is still unmade. |
 | **RP5** | Support window per Major, and how long `attic/` keeps a withdrawn release. Both are needed before a customer asks, and neither is written anywhere. |
 | **RP6** | Whether the administrator manual is published per version on the site, and where it is generated from (§3 step 9). |

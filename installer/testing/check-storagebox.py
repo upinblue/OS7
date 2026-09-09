@@ -38,6 +38,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+REPO = str(Path(__file__).resolve().parent.parent.parent)
+
 SUITE_DEFAULT = "os7-1.0"
 KEYRING_IN_TREE = Path("out/os7-repo/keyring/os7-archive-keyring.gpg")
 CONTAINER = "ubuntu:26.04"
@@ -280,6 +282,42 @@ def main():
     note(f"read host    {host}   (a sub-account has its OWN vhost)")
     note(f"read user    {conf['OS7_SB_REPO_USER']}  (read-only sub-account)")
     print()
+
+    # 0. THE PIN AND THIS CONFIG MUST NAME THE SAME HOST.
+    #
+    # Since 2026-09-09 the pin's OS7_REPO_URI is the real server, and the
+    # medium ships a credential keyed to that URI's host (RELEASE-PROCESS §4.2).
+    # So the host is written down in two places: here, derived from the
+    # sub-account, and there, typed. If they disagree, every check below passes
+    # against a server no machine will ever contact — and a machine's failure
+    # is a 401, which §4.1a already measured is indistinguishable from a wrong
+    # password. Compared here because this is the one program that holds both.
+    print("  0. the pin points at the host this check probes")
+    pin_uri = ""
+    pin_path = os.path.join(REPO, "build", "config", "os7-release.conf")
+    try:
+        with open(pin_path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("OS7_REPO_URI="):
+                    pin_uri = line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError as exc:
+        note(f"could not read the pin: {exc}")
+    if not pin_uri:
+        bad("the pin names no OS7_REPO_URI", pin_path)
+    elif not pin_uri.startswith(("http://", "https://")):
+        note(f"the pin still names {pin_uri} — a pre-publication URI, so no "
+             "machine built from it reaches this box at all")
+    else:
+        pin_host = pin_uri.split("://", 1)[1].split("/", 1)[0]
+        if pin_host == host:
+            ok("OS7_REPO_URI names the read host", pin_uri)
+        else:
+            bad(f"the pin says {pin_host} and this check probes {host}",
+                "a medium built from that pin ships a credential keyed to a "
+                "host it will never talk to; the failure on the machine is a 401")
+        if pin_uri.rstrip("/") != f"https://{host}":
+            note(f"the pin's URI is {pin_uri} — the sub-account's directory IS "
+                 "its root, so a path here would make every fetch a 404")
 
     print("  1. the endpoint requires authentication")
     code = curl_code(host, "/")

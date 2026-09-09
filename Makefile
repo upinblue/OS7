@@ -98,12 +98,36 @@ KEYDIR   ?= $(OUT)/os7-gnupg
 # "signer only", which is what every build did before this line existed.
 OS7_RELEASE_PUBKEY ?=
 
-KEY_ARGS  = -v $(KEYDIR):/os7-gnupg -e OS7_REPO_GNUPGHOME=/os7-gnupg $(TRUST_ARGS)
+KEY_ARGS  = -v $(KEYDIR):/os7-gnupg -e OS7_REPO_GNUPGHOME=/os7-gnupg $(TRUST_ARGS) \
+            $(CRED_ARGS)
 ifneq ($(strip $(OS7_RELEASE_PUBKEY)),)
 TRUST_ARGS = -v $(OS7_RELEASE_PUBKEY):/os7-trust/release.pub:ro \
              -e OS7_REPO_TRUST_PUBKEYS=/os7-trust/release.pub
 else
 TRUST_ARGS =
+endif
+
+# THE REPOSITORY'S READ CREDENTIAL, WHICH THE MEDIUM CARRIES (§4.2).
+#
+# A HOST path to the operator's storagebox.conf — the file
+# scripts/setup-release-credentials.sh writes, outside both repositories —
+# mounted read-only so build-os7-packages.sh can put the read-only account in
+# /etc/apt/auth.conf.d/os7.conf inside os7-release. Same shape and same reason
+# as OS7_RELEASE_PUBKEY above: this repository is public.
+#
+#   make build-amd64 OS7_REPO_CREDENTIAL=$$HOME/.os7/storagebox.conf
+#
+# EMPTY IS NOT A QUIET DEFAULT. When the pin's OS7_REPO_URI needs
+# authentication — every http(s) URI does; §4.1a measured the box answering an
+# anonymous request with 401 — a build without this REFUSES, because the medium
+# it would produce installs machines that cannot reach the published repository
+# and say nothing about why. OS7_REPO_NO_CREDENTIAL=1 is the deliberate opt-out.
+OS7_REPO_CREDENTIAL ?=
+ifneq ($(strip $(OS7_REPO_CREDENTIAL)),)
+CRED_ARGS = -v $(OS7_REPO_CREDENTIAL):/os7-cred/storagebox.conf:ro \
+            -e OS7_REPO_CREDENTIAL_FILE=/os7-cred/storagebox.conf
+else
+CRED_ARGS = $(if $(strip $(OS7_REPO_NO_CREDENTIAL)),-e OS7_REPO_NO_CREDENTIAL=1,)
 endif
 
 .PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
@@ -122,6 +146,14 @@ help:
 	@echo "                    Works: the ISO boots, installs, and the installed"
 	@echo "                    disk boots on its own. Check it with"
 	@echo "                    installer/testing/check-image.py"
+	@echo "                    A RELEASE BUILD NEEDS TWO HOST PATHS handed in,"
+	@echo "                    both outside this public repository:"
+	@echo "                      OS7_RELEASE_PUBKEY=\$$HOME/.os7/os7-release-key.pub"
+	@echo "                      OS7_REPO_CREDENTIAL=\$$HOME/.os7/storagebox.conf"
+	@echo "                    The second is REQUIRED whenever the pin's"
+	@echo "                    OS7_REPO_URI is an http(s) one - the build refuses"
+	@echo "                    without it rather than ship a medium whose machines"
+	@echo "                    cannot reach the repository (RELEASE-PROCESS 4.2)."
 	@echo "  make repo-amd64   Build and SIGN OS/7's own package repository"
 	@echo "                    -> ./out/os7-repo  (C7). Not privileged."
 	@echo "                    Prove it with installer/testing/check-os7-repo.py,"

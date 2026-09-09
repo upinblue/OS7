@@ -94,6 +94,12 @@ emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/l
 emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
+# THE CREDENTIAL FOR THAT SOURCE (RELEASE-PROCESS §4.2), and its MODE.
+# The `machine` line is emitted and the password never is: this file is read
+# into a report that gets pasted into commits and sessions.
+emit os7.auth          bash -c 'sed -n "s/^machine /machine /p;s/^login /login /p" /mnt/sq/etc/apt/auth.conf.d/os7.conf 2>/dev/null || true'
+emit os7.auth.mode     bash -c 'stat -c %a /mnt/sq/etc/apt/auth.conf.d/os7.conf 2>/dev/null || echo "(absent)"'
+emit os7.auth.owner    bash -c 'chroot /mnt/root dpkg -S /etc/apt/auth.conf.d/os7.conf 2>/dev/null | cut -d: -f1 || echo UNOWNED'
 emit os7.staged.debs   bash -c 'ls /mnt/sq/usr/lib/os7/packages/ 2>/dev/null || echo "(gone)"'
 # The journal-flush ordering drop-in (BUILD-NOTES #109). Without it the flush
 # beats zfs-mount.service on every boot, journald flushes onto the boot
@@ -1031,6 +1037,48 @@ def main() -> None:
           " ".join(img.get("os7.sources", "").split())[-60:])
     check(int(img.get("os7.keyring") or 0) > 100,
           "the trust anchor ships", f"{img.get('os7.keyring')} bytes")
+
+    # -- the credential, and only when the shipped source needs one -----------
+    #
+    # RELEASE-PROCESS §4.2. The question the ARTEFACT can answer, which no
+    # build log can: this medium's own apt source names a host, and either the
+    # medium carries the credential for that host or every machine it installs
+    # cannot reach the repository and nothing on it says why.
+    #
+    # CONDITIONAL ON THE MEDIUM, not on how it was built. An http(s) URI needs
+    # authentication (§4.1a measured the box answering an anonymous request
+    # 401); a file:// URI is the pre-publication world and needs none. So a
+    # tree building for somewhere else is not failed for a credential it was
+    # right not to have — and OS/7's own published media cannot lose theirs
+    # quietly, which is what this check is for.
+    src_uri = next((l.split(None, 1)[1].strip()
+                    for l in img.get("os7.sources", "").splitlines()
+                    if l.strip().startswith("URIs:")), "")
+    if src_uri.startswith(("http://", "https://")):
+        want_host = src_uri.split("://", 1)[1].split("/", 1)[0]
+        auth = img.get("os7.auth", "")
+        check(f"machine {want_host}" in auth,
+              f"the credential ships, keyed to {want_host} — the host apt matches on",
+              " ".join(auth.split())[:70] or "(no credential in the image)")
+        # 0600 IS NOT COSMETIC HERE AND apt DOES NOT ENFORCE IT. Measured
+        # 2026-09-09: apt reads a 0644 auth.conf.d entry and uses it without a
+        # warning, so nothing on a running machine would ever report this. And
+        # the build stages onto a bind mount whose chmod a Windows host may not
+        # honour (#117), after which pkg_finish's exact-0777 sweep turns the
+        # file into 0644 — the one path that produces a world-readable password
+        # in a signed package with every other check green.
+        check(img.get("os7.auth.mode", "").strip() == "600",
+              "at mode 0600 in the shipped image, asked of the squashfs",
+              img.get("os7.auth.mode", "(not asked)").strip())
+        check(img.get("os7.auth.owner", "").strip() == "os7-release",
+              "and dpkg says os7-release owns it, so an update can replace it",
+              img.get("os7.auth.owner", "(not asked)").strip())
+        check("login " in auth,
+              "with a login in it", next((l for l in auth.splitlines()
+                                          if l.startswith("login ")), "(none)"))
+    else:
+        check(True, "the shipped source needs no credential",
+              f"URIs: {src_uri or '(none)'}")
     check(img.get("os7.staged.debs", "").strip() in ("(gone)", ""),
           "the staged .debs were consumed, not shipped",
           img.get("os7.staged.debs", "")[:80])

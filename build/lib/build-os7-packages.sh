@@ -399,6 +399,98 @@ build_os7_release() {
 	SOURCES
 	chmod 0644 "${stage}/etc/apt/sources.list.d/os7.sources"
 
+	# THE CREDENTIAL FOR THAT SOURCE, IF THIS BUILD WAS GIVEN ONE.
+	#
+	# docs/RELEASE-PROCESS.md §4.2. OS/7's repository is served over WebDAV from
+	# a Storage Box and every transport it speaks requires authentication
+	# (§4.1a, measured: an anonymous GET of / is answered 401). A deb822 source
+	# has no field for a credential, so it goes in /etc/apt/auth.conf.d/ and the
+	# machine must carry it — otherwise `Set-OS7UpdateChannel -Channel preview`
+	# cannot reach the published index and every preview machine needs an
+	# operator to hand-write a file.
+	#
+	# NOT FROM THIS REPOSITORY, EVER. It comes from a HOST path the operator
+	# hands in (OS7_REPO_CREDENTIAL_FILE, mounted read-only by the Makefile),
+	# the same shape OS7_RELEASE_PUBKEY already uses and for the same reason:
+	# this repository is public, and a .gitignore is one `git add -f` away from
+	# publishing a password.
+	#
+	# WHAT IT IS AND IS NOT: read-only, scoped to a sub-account whose directory
+	# is its root, for content that is a published product whose integrity is
+	# GPG's. It is extractable from any medium built with it, which is the cost
+	# of the convenience, and RP3 — its rotation path — is open and stated.
+	# A CONFFILE, for the same reason os7.sources is one: Set-OS7UpdateChannel
+	# rewrites it when an operator points the machine elsewhere, and a plain
+	# file would be replaced on the first upgrade of this package.
+	local auth_host="" auth_login="" auth_password=""
+	case "${OS7_REPO_URI}" in
+		http://*|https://*)
+			auth_host="${OS7_REPO_URI#*://}"
+			auth_host="${auth_host%%/*}"
+			;;
+	esac
+
+	if [[ -n "${auth_host}" && -n "${OS7_REPO_CREDENTIAL_FILE:-}" ]]; then
+		[[ -r "${OS7_REPO_CREDENTIAL_FILE}" ]] || {
+			echo "!!! os7-release: OS7_REPO_CREDENTIAL_FILE=${OS7_REPO_CREDENTIAL_FILE}" >&2
+			echo "!!! is not readable. It is mounted read-only into this container;" >&2
+			echo "!!! check the host path handed to make." >&2
+			exit 1
+		}
+		# In a SUBSHELL, so the credential never enters this script's own
+		# environment, where `export`ed generators further down would inherit it.
+		auth_login="$(
+			# shellcheck disable=SC1090
+			source "${OS7_REPO_CREDENTIAL_FILE}" >/dev/null 2>&1
+			printf '%s' "${OS7_SB_REPO_USER:-}"
+		)"
+		auth_password="$(
+			# shellcheck disable=SC1090
+			source "${OS7_REPO_CREDENTIAL_FILE}" >/dev/null 2>&1
+			printf '%s' "${OS7_SB_REPO_PASSWORD:-}"
+		)"
+		if [[ -z "${auth_login}" || -z "${auth_password}" ]]; then
+			echo "!!! os7-release: ${OS7_REPO_CREDENTIAL_FILE} names no" >&2
+			echo "!!! OS7_SB_REPO_USER / OS7_SB_REPO_PASSWORD. Run" >&2
+			echo "!!! scripts/setup-release-credentials.sh to create it." >&2
+			exit 1
+		fi
+
+		install -d -m 0755 "${stage}/etc/apt/auth.conf.d"
+		# umask FIRST: a file that is world-readable for the microseconds
+		# between create and chmod is world-readable, and this one is a
+		# password. Same order Set-OS7UpdateChannel and Set-NetplanDocument use.
+		( umask 077
+		  cat > "${stage}/etc/apt/auth.conf.d/os7.conf" <<-AUTH
+			# OS/7 — the credential for OS/7's own package repository.
+			# Shipped by os7-release; docs/RELEASE-PROCESS.md §4.2.
+			#
+			# READ-ONLY, and it protects nothing that is not already public:
+			# what it fetches is a released product and its integrity is GPG's.
+			# Set-OS7UpdateChannel -Credential replaces it.
+			machine ${auth_host}
+			login ${auth_login}
+			password ${auth_password}
+		AUTH
+		)
+		chmod 0600 "${stage}/etc/apt/auth.conf.d/os7.conf"
+		echo "    os7-release: credential for ${auth_host} (${auth_login}) shipped"
+	elif [[ -n "${auth_host}" && "${OS7_REPO_NO_CREDENTIAL:-}" != "1" ]]; then
+		echo "!!! os7-release: OS7_REPO_URI is ${OS7_REPO_URI}, which needs a" >&2
+		echo "!!! credential (RELEASE-PROCESS §4.1a: that server answers an" >&2
+		echo "!!! anonymous request with 401), and this build was handed none." >&2
+		echo "!!!" >&2
+		echo "!!! A medium built like this installs machines that cannot reach" >&2
+		echo "!!! the published repository at all, and nothing on them would say" >&2
+		echo "!!! why. Refusing rather than shipping that quietly." >&2
+		echo "!!!" >&2
+		echo "!!!   make build-${OS7_ARCH} OS7_REPO_CREDENTIAL=\$HOME/.os7/storagebox.conf" >&2
+		echo "!!!" >&2
+		echo "!!! Building for somewhere else? Point the pin's OS7_REPO_URI" >&2
+		echo "!!! there, or set OS7_REPO_NO_CREDENTIAL=1 to ship without one." >&2
+		exit 1
+	fi
+
 	# The firstboot migration runner — C10 §6'. The unit and the script come in
 	# from tree/; what is decided here is their MODES (a bind-mounted source
 	# tree on the Windows host reports whatever the mount feels like, so modes
@@ -486,7 +578,25 @@ build_os7_release() {
 
 	pkg_copyright os7-release "${stage}"
 	pkg_control  os7-release "${stage}" all
+
+	# The credential is required IN THE PACKAGE when this build wrote one, and
+	# absent from the list when it did not — the refusal above is what decides
+	# whether "did not" was allowed.
+	local -a extra_must=()
+	if [[ -s "${stage}/etc/apt/auth.conf.d/os7.conf" ]]; then
+		extra_must+=(./etc/apt/auth.conf.d/os7.conf)
+		# A CONFFILE, and DECLARED HERE rather than in
+		# build/packages/os7-release/conffiles, because that file is static and
+		# this one is conditional: dpkg complains about a conffile that is not
+		# in the package, so a build without a credential would ship a package
+		# that reports a problem about a file it was right not to carry.
+		# Conffile for the reason os7.sources is one — Set-OS7UpdateChannel
+		# rewrites it, and a plain file is replaced on every upgrade.
+		printf '/etc/apt/auth.conf.d/os7.conf\n' >> "${stage}/DEBIAN/conffiles"
+	fi
+
 	pkg_finish   os7-release "${stage}" all \
+		"${extra_must[@]+${extra_must[@]}}" \
 		./usr/lib/os7/release.conf \
 		./usr/lib/os7/build.conf \
 		./usr/lib/os7/release.json \
@@ -504,6 +614,25 @@ build_os7_release() {
 		./usr/libexec/os7-update-check \
 		./usr/share/keyrings/os7-archive-keyring.gpg \
 		./etc/apt/sources.list.d/os7.sources
+
+	# ASK THE BUILT PACKAGE WHAT MODE THE CREDENTIAL HAS, because the chmod
+	# above is not evidence. The staging tree sits on a bind mount, and a
+	# Windows host does not honour a chmod there (BUILD-NOTES #117): the file
+	# would present as 0777, pkg_finish's exact-0777 sweep would then set it to
+	# 0644, and a world-readable password would ship in a signed package with
+	# every check green. dpkg-deb -c prints the mode the archive actually holds.
+	if (( ${#extra_must[@]} )); then
+		local deb_mode
+		deb_mode="$(dpkg-deb -c "${OUT_DIR}/os7-release_${OS7_VERSION}_all.deb" \
+			| awk '$NF == "./etc/apt/auth.conf.d/os7.conf" { print $1 }')"
+		if [[ "${deb_mode}" != "-rw-------" ]]; then
+			echo "!!! os7-release: the credential is in the package as '${deb_mode}'" >&2
+			echo "!!! and not -rw-------. That is a password readable by every" >&2
+			echo "!!! account on every machine this medium installs." >&2
+			exit 1
+		fi
+		echo "    os7-release: credential ships ${deb_mode} (asked of the .deb)"
+	fi
 }
 
 # ---------------------------------------------------------------------------
