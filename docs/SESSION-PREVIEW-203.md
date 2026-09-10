@@ -332,42 +332,50 @@ with it.
 
 ---
 
-## 7. os7.org does not currently serve the site, and the release notes link to it
+## 7. I reported os7.org broken, and it was this machine's network — WITHDRAWN
 
-**Measured 2026-09-09, after the deploy succeeded.** The site is deployed and
-correct — every page is in the webspace's document root with a 22:55 timestamp,
-`manual/1.0.0.203/` holds both PDFs, and `iso/` holds both media with a
-`SHA256SUMS` read back off the server and identical to what
-`make-release-dir.py` measured. `check-sitemap.py` is 17 ok and
-`check-htaccess.py` 54 ok against a real Apache.
-
-**And the domain does not point at it:**
+**Written, then withdrawn the next morning.** This section claimed the release's
+download links pointed at a host with no HTTPS listener, on this evidence:
 
 | | |
 |---|---|
-| `os7.org` A record (asked of `1.1.1.1`, not this machine's resolver) | `80.158.111.94` |
-| the Hetzner webspace the site is deployed to | `167.235.125.41` |
-| `80.158.111.94:80` | open — answers `403` for `Host: os7.org` |
-| `80.158.111.94:443` | **closed** |
+| `os7.org` A record, asked of `1.1.1.1` | `80.158.111.94` |
+| `80.158.111.94:443` | closed |
+| `80.158.111.94:80` | open, `403` for `Host: os7.org` |
 | `https://os7.org/download` | connection timeout |
 
-So the download links this release publishes — in the GitHub release notes, on
-the download page itself, and in `releases.json` — resolve to a host that has no
-HTTPS listener and refuses HTTP. Nothing in this session touched DNS, and the
-webspace half of the publication is complete and verifiable; what is missing is
-the record that points the name at it. `os7-web`'s README says the site went
-live on `os7.org` on 2026-08-30 from Hetzner Webhosting, so this is a change
-since then rather than something that never worked.
+**The operator then said the download works, and it does.** DNS over HTTPS —
+which a resolver hijack on port 53 cannot touch — answers:
 
-**What that means for the release, stated rather than softened:** the apt
-repository is published, verified from outside over the real transport and
-usable by machines. The ISOs are on the webspace at the exact paths the pages
-name. The public *download* path is dead until the A record points at
-`167.235.125.41` (and the certificate follows), and until then the media are
-reachable only from the Storage Box, which needs a credential.
+```
+os7.org -> 167.235.125.41
+```
 
-**And the process lesson, which is mine:** I published links to a host I had not
-asked whether it answers. Every artefact in this release was verified by asking
-the thing itself; the one exception was the one an ordinary reader would try
-first. RELEASE-PROCESS §3 step 10 says to verify from outside — it names apt and
-`Get-OS7Release`, and it should name the download page too.
+which is the Hetzner webspace the site is deployed to. So the record is right,
+the site is served, and what this machine measured was its own network
+answering for `os7.org` with a filter that refuses HTTP and does not speak
+HTTPS at all. `github.com` resolved normally in the same breath, so the
+interception is selective rather than total — which is exactly why the answer
+looked like a fact about the domain.
+
+**Every claim in the withdrawn section about the WEBSPACE stands**, and it is
+the half that was actually verified by asking the thing itself: every page in
+the document root, both PDFs under `manual/1.0.0.203/`, both media in `iso/`
+with a `SHA256SUMS` read back off the server and identical to
+`make-release-dir.py`'s independent measurement, `check-sitemap.py` 17 ok and
+`check-htaccess.py` 54 ok against a real Apache.
+
+**What the mistake actually was, and it is the session's fourth of this shape.**
+#146 was a harness killed by the host's console codepage. #147 was a check that
+reported the repository unfetchable because Python translated its script's
+newlines. This was the same class again, one layer further out: a diagnostic
+that depended on the environment it ran in, and this time the environment was
+the corporate resolver. The first two crashed or said "not fetched"; this one
+produced a confident sentence about somebody else's DNS and I put it in three
+commit messages before anyone contradicted it.
+
+The check added to RELEASE-PROCESS §3 step 10 — curl the public download path by
+the name a reader will type — is still worth having. What it needs beside it is
+the rule this cost: **a failure of that check is not evidence until the resolver
+has been asked a second way.** `1.1.1.1` as a `-Server` argument is not a second
+way. DNS over HTTPS is.

@@ -229,15 +229,24 @@ index and each descriptor's hash before it lists anything.
 
 and **the public download path, by the name a reader will type** — not the
 webspace's own hostname, not the IP, and not a page served out of the checkout.
-That last one was added on 2026-09-09 because it was the one thing this process
-did not check and the one thing that was broken: 1.0.0.203 published download
-links to `https://os7.org`, whose A record pointed at a host with no HTTPS
-listener at all, while every page and both media sat correctly on the webspace
-(SESSION-PREVIEW-203.md §7).
 
 ```bash
 curl -sI https://os7.org/download                       # must be 200
 curl -sI https://os7.org/download/OS7-<version>-amd64.iso   # must be 200 or a 302 that is
+```
+
+**AND A FAILURE OF THAT CHECK IS NOT EVIDENCE UNTIL THE RESOLVER HAS BEEN ASKED
+A SECOND WAY.** Added 2026-09-09, having got it wrong: this process reported
+1.0.0.203's download links dead, on a timeout to `https://os7.org` and an A
+record of `80.158.111.94` with port 443 closed. The record is `167.235.125.41`.
+The build host's network was answering for that name with a filter, and asking
+`1.1.1.1` with `-Server` does not escape a hijack of port 53 — DNS over HTTPS
+does, and it gave the right answer immediately. `github.com` resolved correctly
+in the same breath, which is why the wrong answer looked like a fact about the
+domain (SESSION-PREVIEW-203.md §7).
+
+```bash
+curl -s -H 'accept: application/dns-json'   'https://cloudflare-dns.com/dns-query?name=os7.org&type=A'
 ```
 
 A release nobody has fetched over the real transport is a release whose
