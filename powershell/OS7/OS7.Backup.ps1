@@ -328,7 +328,13 @@ function Get-OS7BackupPolicy {
 			$snaps = @(if ($names) {
 					Get-ZfsSnapshot -Name $names | Where-Object { $_.SnapshotName -like 'autosnap_*' }
 				})
-			$newest = ($snaps | Sort-Object Creation | Select-Object -Last 1).Creation
+			# THE SELECTION IS NAMED BEFORE ITS PROPERTY IS READ (BUILD-NOTES
+			# #119). `(@() | Select-Object -Last 1)` is $null, and under the
+			# Set-StrictMode -Version Latest this module sets, reading a
+			# property off $null THROWS. A source with no autosnap snapshots
+			# yet is not an error case — it is every machine on its first day.
+			$newestSnap = $snaps | Sort-Object Creation | Select-Object -Last 1
+			$newest = if ($newestSnap) { $newestSnap.Creation } else { $null }
 
 			$s | Add-Member -NotePropertyName Exists -NotePropertyValue ([bool]$live.ContainsKey($s.Dataset))
 			$s | Add-Member -NotePropertyName Datasets -NotePropertyValue @($names | Sort-Object)
@@ -961,10 +967,20 @@ function Get-OS7BackupStatus {
 
 	$targets = if ($SkipTargets) { @() } else { @(Get-OS7BackupTarget) }
 
-	$newestLocal = ($policy.Sources | Where-Object Newest | Sort-Object Newest |
-		Select-Object -Last 1).Newest
-	$newestRemote = ($targets | Where-Object { $_.NewestReplicated } |
-		Sort-Object NewestReplicated | Select-Object -Last 1).NewestReplicated
+	# BOTH SELECTIONS ARE NAMED FIRST (BUILD-NOTES #119). Either collection is
+	# empty on an ordinary machine — no source has a snapshot yet, or
+	# -SkipTargets was passed and $targets is @() by construction eight lines
+	# above — and `$null.Newest` under Set-StrictMode is a terminating error,
+	# not a $null. This is the line that made `Get-OS7BackupStatus
+	# -SkipTargets` throw on every fresh install, including the one the
+	# administrator manual photographed.
+	$newestLocalSource = $policy.Sources | Where-Object Newest |
+		Sort-Object Newest | Select-Object -Last 1
+	$newestLocal = if ($newestLocalSource) { $newestLocalSource.Newest } else { $null }
+
+	$newestRemoteTarget = $targets | Where-Object { $_.NewestReplicated } |
+		Sort-Object NewestReplicated | Select-Object -Last 1
+	$newestRemote = if ($newestRemoteTarget) { $newestRemoteTarget.NewestReplicated } else { $null }
 
 	[pscustomobject]@{
 		PSTypeName                 = 'OS7.Backup.Status'

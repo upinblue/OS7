@@ -1,0 +1,72 @@
+#!/bin/sh
+# UL1 — re-seal the TPM2 disk unlock when the boot path's PCR 7 moved.
+#
+# THE CASE THIS EXISTS FOR (RELEASE-AND-UPDATE-PLAN UL1, C10's own example):
+# the LUKS key is sealed to PCR 7, which measures Secure Boot policy. A shim
+# or dbx update moves it, and every machine in the fleet then falls back to
+# the passphrase prompt at the next boot. S6 measured the failure — loud,
+# survivable, repairable by ONE systemd-cryptenroll against the new PCR 7 —
+# and BUILD-NOTES #69 is why the repair can only run HERE: sealing from
+# Update-OS7's chroot would seal against the chroot's PCR 7, which is the
+# defect this migration exists to fix, re-created. Firstboot is the first
+# moment the real boot path has produced the PCR 7 the seal must match.
+# 2026-08-28 measured the same shape at install: TpmEnrolStep seals from the
+# live session, the installed machine boots through shim, and the first boot
+# asks for the passphrase (docs/SESSION-VM-HARNESS-PORT.md).
+#
+# IDEMPOTENT BY ASKING THE THING ITSELF: the question is never "did I run"
+# but "does the seal open against THIS boot" — cryptsetup is asked to unlock
+# with tokens alone, no passphrase. A seal that opens means nothing to do,
+# however many times this runs (CL8).
+#
+# THE HONEST LIMIT — U8 IS OPEN. Re-enrolment needs an existing secret, and
+# no escrow exists, so on a machine where the seal is stale and no secret is
+# reachable this script CANNOT repair unattended. It says so, names the one
+# command an operator runs, and exits 0: the passphrase path works (S6), the
+# machine is functional, and a permanently red unit on every boot would bury
+# the message it is trying to deliver. When U8 closes, the escrow lookup goes
+# exactly here.
+set -u
+
+TAG="os7/50-tpm2-reseal"
+LUKS=/dev/disk/by-partlabel/os7-luks
+
+if [ ! -e "${LUKS}" ]; then
+	echo "${TAG}: no ${LUKS} — not an encrypted OS/7 install, nothing to re-seal"
+	exit 0
+fi
+if [ ! -e /sys/class/tpm/tpm0 ]; then
+	echo "${TAG}: no TPM on this machine — the passphrase is the unlock path"
+	exit 0
+fi
+if ! command -v systemd-cryptenroll >/dev/null 2>&1; then
+	echo "${TAG}: systemd-cryptenroll is missing — cannot manage the seal" >&2
+	exit 1
+fi
+
+# Does the current seal open against this boot's PCR 7? Tokens only, no
+# passphrase, no mapping — the same unlock the initramfs handler attempts.
+if cryptsetup open --test-passphrase --token-only "${LUKS}" >/dev/null 2>&1; then
+	echo "${TAG}: the TPM2 seal opens against this boot path — nothing to do"
+	exit 0
+fi
+
+echo "${TAG}: the TPM2 seal does not open here — PCR 7 moved (a Secure Boot"
+echo "${TAG}: policy update, or an install that sealed from the live session)."
+echo "${TAG}: re-enrolling against this boot's own PCR 7 …"
+if systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 \
+		"${LUKS}"; then
+	# The enrolment's exit code is a diagnostic; the seal opening is the fact.
+	if cryptsetup open --test-passphrase --token-only "${LUKS}" >/dev/null 2>&1; then
+		echo "${TAG}: re-sealed, and the new seal opens"
+		exit 0
+	fi
+	echo "${TAG}: re-enrolment reported success and the seal still does not open" >&2
+	exit 1
+fi
+
+echo "${TAG}: cannot re-seal unattended: enrolment needs an existing secret and"
+echo "${TAG}: no escrow exists (U8, open). The passphrase path still works; an"
+echo "${TAG}: operator restores auto-unlock with:"
+echo "${TAG}:   systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 ${LUKS}"
+exit 0

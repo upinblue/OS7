@@ -1,0 +1,88 @@
+# OS/7 — the CLIENT container `check-ad.py` drives against a real domain
+# controller (Dockerfile.ad-dc).
+#
+# WHY A CONTAINER OF ITS OWN, rather than os7img:<version>. BUILD-NOTES #93: a
+# container image made from an ISO is not the ISO, and it carries whatever
+# anybody did to it afterwards. This one is built from the pin, from nothing,
+# every time — so a green run says something about the RECIPE rather than about
+# one person's laptop. `check-ad.py --os7img os7img:116` runs the same checks
+# against a real image as a second opinion, and says NOT CHECKED when no such
+# image exists, which is check-ssh-login.py's rule.
+#
+# THE POWERSHELL VERSION IS NOT PINNED HERE. build/config/os7-release.conf is
+# the only place in this repository a version number or an archive URL may live
+# (CLAUDE.md), so check-ad.py reads the pin and passes it in, hash and all,
+# exactly as build hook 0020 does for the image itself.
+#
+# WHAT THIS IMAGE DELIBERATELY MIRRORS: the OS/7 image as docs/AD-PLAN.md
+# proposes it, not as it ships today. The three packages a domain join needs —
+# adcli, krb5-user, sssd-tools — are installed here because the plan adds them
+# there. Stage 1 must not need them, and check-ad.py proves that by moving them
+# out of PATH for the stage-1 checks rather than by asserting it in a comment.
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ldap-utils    ldapsearch/ldapwhoami: the INDEPENDENT witness at the protocol
+#               level. When OS/7's own client and this disagree, the defect is
+#               in OS/7; when they agree and the DC disagrees, it is not
+# adcli         the join. sssd/sssd-tools: what a join configures
+# krb5-user     kinit/klist/kvno — Stage 2 only, and the stage-1 checks hide them
+# openssl       reading the DC's certificate chain back, independently of .NET
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+      python3 curl ca-certificates util-linux coreutils findutils diffutils \
+      ldap-utils libsasl2-modules-gssapi-mit openssl \
+      adcli krb5-user sssd sssd-tools sssd-ad libsss-sudo \
+      dnsutils iproute2 \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG PWSH_VERSION
+ARG PWSH_SHA256_x64
+ARG PWSH_SHA256_arm64
+
+# The same tarball, the same hash check and the same destination as hook 0020.
+# A hash that does not match fails the build rather than producing a container
+# that runs the module under something nobody chose.
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+      amd64) pa=x64;   sha="${PWSH_SHA256_x64}" ;; \
+      arm64) pa=arm64; sha="${PWSH_SHA256_arm64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-${pa}.tar.gz"; \
+    curl -fsSL -o /tmp/pwsh.tar.gz "${url}"; \
+    echo "${sha}  /tmp/pwsh.tar.gz" | sha256sum -c -; \
+    mkdir -p /opt/microsoft/powershell/7; \
+    tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7; \
+    chmod +x /opt/microsoft/powershell/7/pwsh; \
+    ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh; \
+    rm /tmp/pwsh.tar.gz
+
+# PowerShell is a .NET application and aborts at startup without ICU. Resolved
+# from the archive rather than hardcoded, for hook 0020's reason: the soname
+# version changes between Ubuntu releases.
+#
+# The last line is not decoration. System.DirectoryServices.Protocols reaches
+# OpenLDAP through a P/Invoke, and the soname it looks for is not the one this
+# release ships under every version (BUILD-NOTES #64's shape: a binary named
+# rather than searched). If that ever stops resolving, this build fails here —
+# with the assembly named — instead of a hundred checks failing as "the LDAP
+# server is unavailable".
+RUN set -eu; \
+    apt-get update -qq; \
+    icu="$(apt-cache search --names-only '^libicu[0-9]+$' | awk '{print $1}' | sort -V | tail -n1)"; \
+    [ -n "${icu}" ] || { echo "no libicu in the archive" >&2; exit 1; }; \
+    apt-get install -y --no-install-recommends "${icu}"; \
+    rm -rf /var/lib/apt/lists/*; \
+    pwsh -NoProfile -c '$PSVersionTable.PSVersion.ToString()'; \
+    pwsh -NoProfile -c ' \
+      Add-Type -AssemblyName System.DirectoryServices.Protocols; \
+      $c = [System.DirectoryServices.Protocols.LdapConnection]::new( \
+             [System.DirectoryServices.Protocols.LdapDirectoryIdentifier]::new("127.0.0.1", 389)); \
+      try { $c.Bind() } catch { \
+        if ($_.Exception.InnerException -is [System.DllNotFoundException] -or \
+            $_.Exception.Message -match "DllNotFound|Unable to load shared library") { \
+          Write-Error "S.DS.Protocols cannot reach libldap"; exit 1 } }; \
+      "S.DS.Protocols reaches libldap"'

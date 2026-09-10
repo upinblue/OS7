@@ -1,0 +1,20 @@
+{
+  "Dn": "CN=OS7FixtureEmpty,CN=Users,DC=os7,DC=test",
+  "Attributes": {
+    "objectClass": ["top", "group"],
+    "cn": ["OS7FixtureEmpty"],
+    "instanceType": ["4"],
+    "whenCreated": ["20260827190804.0Z"],
+    "whenChanged": ["20260827190804.0Z"],
+    "uSNCreated": ["4326"],
+    "uSNChanged": ["4326"],
+    "name": ["OS7FixtureEmpty"],
+    "objectGUID": ["ph9rkjFeqUS9b+1BBKFVGQ=="],
+    "objectSid": ["AQUAAAAAAAUVAAAA2gnSpGzEwv3Oe1RWVAQAAA=="],
+    "sAMAccountName": ["OS7FixtureEmpty"],
+    "sAMAccountType": ["268435456"],
+    "groupType": ["-2147483646"],
+    "objectCategory": ["CN=Group,CN=Schema,CN=Configuration,DC=os7,DC=test"],
+    "distinguishedName": ["CN=OS7FixtureEmpty,CN=Users,DC=os7,DC=test"]
+  }
+}

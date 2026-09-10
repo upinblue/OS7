@@ -1,0 +1,24 @@
+StartupType  : enabled
+Result       : success
+RestartCount : 0
+MainPid      : 912
+ActiveSince  : 09/09/2026 17:47:50
+IsOS7        : True
+ServiceType  : oneshot
+Healthy      : True
+
+Name         : zfs-zed.service
+Description  : ZFS Event Daemon (zed)
+ActiveState  : active
+SubState     : running
+StartupType  : enabled
+Result       : success
+RestartCount : 0
+MainPid      : 1254
+ActiveSince  : 09/09/2026 17:47:52
+IsOS7        : True
+ServiceType  : simple
+Healthy      : True
+
+
+PS /home/os7admin>

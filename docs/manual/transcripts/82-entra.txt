@@ -1,0 +1,21 @@
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} authd
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} microsoft-identity-broker
+
+AuthdInstalled        : True
+AuthdVersion          : 0.6.1ubuntu0.1
+IdentityBrokerVersion : 3.0.2-resolute
+BrokerRegistered      : False
+Brokers               : {}
+BrokerDirectory       : /etc/authd/brokers.d
+PamConfigured         : True
+ServiceState          : active
+ServiceHealthy        : True
+Ready                 : False
+Detail                : authd is installed and PAM is wired to it, but /etc/aut
+                        hd/brokers.d is empty — there is no Entra broker for it
+                         to talk to, so a sign-in will fail as though the passw
+                        ord were wrong. See C8a: authd-msentraid is a snap and
+                        is not seeded into the image.
+
+
+PS /home/os7admin>

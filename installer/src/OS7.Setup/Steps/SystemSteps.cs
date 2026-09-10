@@ -42,6 +42,17 @@ internal static class SystemSteps
         new InitramfsStep(plan, target),
         new TpmEnrolStep(plan, target),
         new BootloaderStep(plan, target),
+        // AFTER EVERYTHING THAT CAN STILL FAIL, and that is an argument rather
+        // than a leftover. A join creates an object in somebody else's
+        // directory — the one thing this list does that `Executor`'s rollback
+        // cannot undo, because the rollback destroys pools and has no
+        // credential with which to delete a computer account. Putting it here
+        // means the machine is finished before the directory is touched, so a
+        // rolled-back install leaves no orphan behind. It must equally be after
+        // NetworkStep, which is what gives it a network, and before
+        // InstallLogStep, so its proof is in the record. All three bounds are
+        // asserted in --self-test; a reorder has no other symptom.
+        new DomainStep(plan, target),
         // LAST BEFORE TEARDOWN, and that position is the whole of what it can
         // promise. Everything after it is the disk being taken away, so its own
         // proof and TeardownStep's export check cannot be in the file it writes
@@ -132,6 +143,57 @@ internal sealed class UnsquashfsStep : IStep
     }
 
     /// <summary>
+    /// The "N inodes (M blocks) to write" line, which is the only total on
+    /// offer. Pure and static so the self-test can drive it with RECORDED
+    /// output instead of a three-gigabyte extraction.
+    /// </summary>
+    internal static bool TryParseTotal(string line, out int total)
+    {
+        total = 0;
+        if (!line.Contains("inodes", StringComparison.Ordinal)) return false;
+        if (!line.Contains("to write", StringComparison.Ordinal)) return false;
+        string first = line.TrimStart().Split(' ')[0];
+        return int.TryParse(first, out total) && total > 0;
+    }
+
+    /// <summary>
+    /// One extracted entry.
+    ///
+    /// THIS USED TO LOOK FOR A "create" PREFIX AND THAT WAS NEVER THE FORMAT —
+    /// or stopped being it long enough ago that nobody saw. Measured against
+    /// the shipped unsquashfs 4.7.5 (2026/03/01) unpacking the 1.0.0.148
+    /// image, `-i` prints the DESTINATION PATH of each inode, alone on its
+    /// line:
+    ///
+    ///     Parallel unsquashfs: Using 16 processors
+    ///     149226 inodes (163030 blocks) to write
+    ///
+    ///     /target
+    ///     /target/bin
+    ///     /target/boot/config-7.0.0-30-generic
+    ///     …
+    ///     created 121341 files
+    ///     created 16434 directories
+    ///
+    /// Of 165 671 lines, exactly SEVEN began with "create" — the summary block
+    /// at the very end. So the old rule counted 7 of 149 226 and the bar read
+    /// zero for the whole copy, then jumped. Anchoring on the destination root
+    /// cannot match the two header lines or the summary, because none of them
+    /// starts with it.
+    /// </summary>
+    internal static bool TryParseEntry(string line, string root, out string relative)
+    {
+        relative = "";
+        root = root.TrimEnd('/');
+        if (root.Length == 0) return false;
+        if (!line.StartsWith(root, StringComparison.Ordinal)) return false;
+        if (line.Length == root.Length) { relative = "/"; return true; }
+        if (line[root.Length] != '/') return false;
+        relative = line[root.Length..];
+        return true;
+    }
+
+    /// <summary>
     /// `unsquashfs`, reading its progress rather than waiting for it.
     ///
     /// §3.1's screen 10 has a bar and a filename under it, and neither can come
@@ -140,6 +202,15 @@ internal sealed class UnsquashfsStep : IStep
     /// with carriage returns, which is unreadable when captured. So: `-i`, no
     /// bar, and the percentage is derived from the file count against the total
     /// unsquashfs reports up front.
+    ///
+    /// THE DENOMINATOR IS SLIGHTLY SMALL, DELIBERATELY. "N inodes to write"
+    /// excludes directories while the printed lines include them — measured on
+    /// 1.0.0.148, 149 226 inodes against 165 660 paths, and the summary block
+    /// says why: 121341 files + 27747 symlinks + 8 devices + 130 hardlinks is
+    /// exactly 149 226, with 16 434 directories printed and not counted. So the
+    /// bar reaches 99% at about nine tenths of the way and sits there. That is
+    /// a bar that is honest about being an estimate; inventing a fudge factor
+    /// to make it land on 100 would not be.
     /// </summary>
     private void Extract(Executor x)
     {
@@ -172,18 +243,11 @@ internal sealed class UnsquashfsStep : IStep
             string? line;
             while ((line = p.StandardOutput.ReadLine()) is not null)
             {
-                // "N inodes (M blocks) to write" — the only total on offer.
-                if (total == 0 && line.Contains("inodes") && line.Contains("to write"))
-                {
-                    string first = line.TrimStart().Split(' ')[0];
-                    if (int.TryParse(first, out int n) && n > 0) total = n;
-                    continue;
-                }
-                if (!line.StartsWith("create", StringComparison.Ordinal)) continue;
+                if (total == 0 && TryParseTotal(line, out int n)) { total = n; continue; }
+                if (!TryParseEntry(line, _t.Root, out string relative)) continue;
 
                 done++;
-                int slash = line.LastIndexOf(_t.Root, StringComparison.Ordinal);
-                Current = slash >= 0 ? line[(slash + _t.Root.Length)..] : line;
+                Current = relative;
                 if (total > 0) Percent = Math.Min(99, (int)(done * 100L / total));
             }
         }) { IsBackground = true };
@@ -203,6 +267,21 @@ internal sealed class UnsquashfsStep : IStep
 
         Percent = 100;
         Log.Info($"unsquashfs wrote {done} entries" + (total > 0 ? $" of {total}" : ""));
+
+        // A COPY THAT SUCCEEDED WHILE THE BAR NEVER MOVED IS THE BUG THIS STEP
+        // SHIPPED WITH, and it is invisible from the outside: the extraction is
+        // fine, the install completes, and the operator watches a frozen 9% for
+        // several minutes with no way to tell it apart from a hang. So it is
+        // said out loud. An install is not failed over a cosmetic parse — but
+        // the next person to read a log will find the sentence, and
+        // `os7-setup --self-test` fails the BUILD before it can reach them.
+        if (done == 0)
+            Log.Warn("unsquashfs progress: matched no entry lines, so the bar did not "
+                     + $"move during the copy. The output format under -i changed; "
+                     + $"expected paths beginning {_t.Root}/.");
+        else if (total == 0)
+            Log.Warn("unsquashfs progress: counted entries but never found the "
+                     + "\"N inodes … to write\" line, so the bar had no denominator.");
     }
 }
 
@@ -284,9 +363,21 @@ internal sealed class TargetIdentityStep : IStep
         // ZFS datasets carry their own mountpoints, so only the ESP belongs
         // here. A generated fstab listing the datasets as well would mount them
         // twice and fight zfs-mount.service for them.
+        //
+        // x-systemd.requires=zfs-mount.service is load-bearing (BUILD-NOTES
+        // #104): /boot is a ZFS mount systemd knows nothing about, so without
+        // it boot-efi.mount races zfs-mount.service — and when the ESP mounts
+        // FIRST, the /boot dataset lands on top of it. The vfat stays in the
+        // mount table (the unit reads active, `systemctl start` is a no-op)
+        // while the PATH /boot/efi resolves into the ZFS mount's empty
+        // directory. Measured: a machine booted that way lost its cycle,
+        // update and rollback in one gate run. x-systemd.requires creates
+        // both Requires= and After=, so the ESP now always mounts onto the
+        // ZFS /boot, never under it.
         string uuid = Uuid(x, StorageSteps.EspPath);
         _t.Write(x, "etc/fstab",
-                 $"UUID={uuid}  /boot/efi  vfat  umask=0077,shortname=winnt  0  1\n");
+                 $"UUID={uuid}  /boot/efi  vfat  "
+                 + "umask=0077,shortname=winnt,x-systemd.requires=zfs-mount.service  0  1\n");
     }
 
     private void WriteLocaleAndTime(Executor x)

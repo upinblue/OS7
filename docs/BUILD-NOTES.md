@@ -28,20 +28,62 @@ that had not been pushed, and the other session read the state it had, which was
 correct and out of date. `git fetch` first — a commit nobody can see is the same
 as a conversation.
 
-*No number is currently claimed but unwritten.*
+**#97 through #107 are TAKEN**, written and committed on branch `update-train`
+in a separate worktree as of 2026-08-28, and invisible from `main` until that
+branch lands — which is exactly the case the rule above was written for. They
+are, in order: the gpg-agent socket on Windows bind mounts; apt's strict Depends
+resolving from candidates only; an amd64 installed machine silent on serial;
+the install-time PCR 7 seal against shim; a worktree gitdir unreadable to WSL
+git; MSYS path mangling eating `--device /dev/kvm`; noninteractive not answering
+conffile prompts; `boot-efi.mount` racing `zfs-mount.service`; `saved_entry`
+written before the point of no return; `KEY="value"` files without a trailing
+newline; and `Restore-OS7`'s "previous" being ancestry rather than age.
 
-**#79 was, for a few hours on 2026-08-26, and the mechanism worked.** Four
+**And this table cost a message to get right.** That session spells its headings
+`## #97 — <title>` while everything above spells them `## 97. <title>`, so a
+grep for `^## 97\.` found nothing and read as a gap. A claim you cannot see is
+the same as no claim — which is this rule's whole point, arriving from a
+direction it did not anticipate. **Grep for the number, not for the format.**
+
+**#79 was claimed and unwritten for a few hours on 2026-08-26, and the mechanism
+worked.** Four
 source comments cited it before the entry existed; a second session read this
 table, left it alone and took #80 instead. That is the first time this rule has
 been exercised on purpose rather than after a collision — worth recording,
 because the rule costs a commit and its value is invisible when it works.
 
-Everything below is written. Numbers above 94 are free.
+**#112, #113 and #114 were claimed and are now written** (branch `admin-manual`,
+2026-08-29). They are, in order: `Get-OS7BackupStatus` throwing on the two
+ordinary machines that have nothing to compare; `Get-OS7Service` pinning
+`Type = 'service'` so the unattended update TIMER is invisible to the cmdlet
+surface; and a captured terminal slice replayed at a different geometry than the
+guest believed it had.
 
-*(That line said 61 until 2026-08-26 and 81 until 2026-08-27, and both times it
-had been wrong for a dozen entries — it is the one line in this file nothing
-checks, and it is exactly the line a session reads in good faith before claiming
-a number. Update it in the same commit as the entry.)*
+**#115 and #116 were claimed and are now written** (the scheduled-task
+feature, 2026-08-29): the enable-without-start trap — `systemctl enable` on a
+timer arms the NEXT boot only, leaving a timer that is enabled, inactive, and
+never firing, with nothing reporting it — and the timer-listing traps: a timer
+that is neither enabled nor active is invisible to BOTH `list-timers --all`
+AND `list-units --all`, and `list-timers`' JSON `left`/`passed` fields are not
+the durations their names promise.
+
+Everything below is written. Numbers above 116 are free.
+
+*(#108 was claimed TWICE on 2026-08-28, and both claimants had already been
+committed — the Active Directory line took it for the installer/cmdlet
+parameter disagreement, and the update train's line took it for the missing
+journal, neither able to see the other. The reservation above works only
+between sessions that read this table; these two never shared a branch. `main`
+had it first, so the journal note is #109 here and every reference to it was
+rewritten with it. The earlier collisions cost a renumbering commit each; this
+one cost a merge resolution, which is the cheaper end of the same bill.)*
+
+*(That line said 61 until 2026-08-26 and had been wrong since #62 landed. It
+then said 81 until 2026-08-28 and had been wrong since #82 — twelve entries
+during which the file's own index of itself was stale. Twice is a pattern: it
+is the one line in this file nothing checks, and it is exactly the line a
+session reads in good faith before claiming a number. Update it in the same
+commit as the entry.)*
 
 ## What was kept, and what was dropped
 
@@ -4098,6 +4140,68 @@ top level. A rule about a caller is not a rule about everything the caller
 reaches. When the rule is "do not need an autoloaded cmdlet", the import path of
 every module in the image is inside the rule.
 
+### It happened again on 2026-08-28, and this time it became a check
+
+The merge that brought Active Directory and the update train onto one `main`
+produced a tree whose ISO build died in the same place, with the same sentence
+and a different cmdlet:
+
+```
+OS/7 hook 0060:   OS7: FAILED: The term 'Sort-Object' is not recognized as a name
+of a cmdlet, function, script file, or executable program.
+```
+
+`OS7.DirectoryObject.ps1` builds the attribute set a group membership is read
+with as the union of three lists, and did it with `| Sort-Object -Unique` in a
+statement at module scope. `Sort-Object` is `Microsoft.PowerShell.Utility`,
+autoloaded by name, and this note is about exactly that.
+
+**It was not the merge's doing.** The line is byte-identical on
+`pre-consolidation-main`, so `main` had been unable to build an ISO since the
+Active Directory commit — and nobody knew, because no ISO was built in
+between. That is this note's own first paragraph happening a second time, to a
+reader who had the note.
+
+### The reproduction, which is where the check came from
+
+The chroot condition is one variable:
+
+```powershell
+$PSModuleAutoLoadingPreference = 'None'
+Import-Module ./powershell/OS7/OS7.psd1 -Force -ErrorAction Stop
+```
+
+On the broken tree that returns the build's error **word for word**, in under a
+second, with no container and no ISO. On the fixed tree all six modules import.
+
+### The fix, and the guard
+
+The union is built with a `HashSet[string]` and a `List[string].Sort(comparer)`
+instead — .NET types are always present and are never looked up by name, which
+is the same move #82 already made for `[System.IO.Path]`. The value is unchanged
+and was diffed against the old one: 29 attributes, same order.
+
+`check-ps-traps.py` now holds this as its **third** trap, at baseline 0. It asks
+the parser for every `CommandAst` outside every `FunctionDefinitionAst`, then
+asks `Get-Command` which module the name belongs to and passes anything from
+`Microsoft.PowerShell.Core`. Two things are deliberately not lists in the file:
+the safe modules (asked of `Get-Command`) and the names the tree itself defines
+(collected by the parser in a pre-pass). A hand-written list of either would
+agree with the code instead of checking it.
+
+It was run against `pre-consolidation-main` before being trusted, and goes red:
+
+```
+  #82 - a cmdlet called at IMPORT scope, which the build chroot cannot autoload
+      OS7.DirectoryObject.ps1:70  Sort-Object  (Microsoft.PowerShell.Utility)
+      #82: WORSE — 1, baseline 0
+```
+
+**Three ISO builds have now been lost to this one rule.** The lesson the first
+two did not produce is that a rule which only lives in a note gets re-broken by
+somebody who has read the note; the scan costs a second and the note costs a
+build.
+
 ## 83. `ldconfig -p | grep -q` under `pipefail` is a race, and it failed a build over a library that was there
 
 **Measured on 2026-08-26.** Hook 0080 stopped an amd64 build with
@@ -4895,84 +4999,2912 @@ the artefact. It is measured now.
 
 ---
 
-## 94. A build-blind check asserted an amd64 package fact on every architecture, and every arm64 build failed on it
+## 94. `TryParseExact` handed a PowerShell array joins it into ONE format string, and every timestamp comes back `$null`
 
-**Hit on 2026-08-27**, on the first `make build-arm64` since hook 0070 landed on
-2026-08-26. The hook that guards #79's fix stopped the build at the last line of
-its own section 2:
+**Measured 2026-08-27**, by `Test-DirectoryModule` on its first run, while
+teaching the AD layer to read an LDAP generalized time (`20260827190803.0Z`).
 
-```
-OS/7 hook 0070:   29 of 62 exist in this image
-OS/7 hook 0070: unattended-upgrades.service is not in this image.
-OS/7 hook 0070: BUILD-NOTES #79 is about that unit; re-check the note.
-E: config/hooks/0070-installer-quiesce.hook.chroot failed (exit non-zero).
-```
+```powershell
+$formats = @('yyyyMMddHHmmss.fZ', 'yyyyMMddHHmmssZ', …)
+[datetime]::TryParseExact($text, $formats, …, [ref]$parsed)     # False
 
-The check is a good idea: masking 62 unit names is worth nothing if none of them
-is in the image, so something has to be **required** rather than counted. The
-unit it required is the one the OOM killer took in #79 — and #79 was measured on
-the shipped **amd64** squashfs.
-
-### The unit was never there, on this architecture
-
-Asked of the pinned snapshot rather than reasoned about
-(`os7-build:arm64`, `20260824T000000Z`, 175 752 package names in the cache):
-
-```
-unattended-upgrades:  Candidate: 2.12ubuntu9        <- it IS in the archive
-Reverse Depends: ubuntu-server, ubuntu-server-minimal, ubuntu-wsl,
-                 ubuntu-cloud-minimal, python3-software-properties, …
+[string[]]$formats = @('yyyyMMddHHmmss.fZ', 'yyyyMMddHHmmssZ', …)
+[datetime]::TryParseExact($text, $formats, …, [ref]$parsed)     # True
 ```
 
-**`ubuntu-standard` does not name it at any strength, and `ubuntu-standard` is
-what OS/7 installs.** So the unit is reachable and simply never reached: arm64
-has never had it, and the amd64 image gets it through the desktop stack that
-arm64 has no target for. The build's own scan says the same thing from the other
-side — 33 of the 62 names absent, and all 33 are desktop or server-role units
-(`cups`, `packagekit`, six `snapd` units, `apport`, `whoopsie`, `sssd`).
+Same input, same overload set, one cast between them.
 
-**The generator two files away already said so**, in the comment above its own
-list: *"A unit that is not installed on this architecture is harmless… arm64 is
-server-only and legitimately has no cups, no packagekit and no desktop."* The
-hook and the generator were written in the same commit, from the same finding,
-and only one of them knew the finding was per-architecture.
-
-### The first false-negative measurement, which is half the note
-
-The first attempt to measure the archive fact ran in a plain `ubuntu:26.04`
-container and answered, cleanly and in the expected shape:
+`TryParseExact` is overloaded on `(string, string, …)` and
+`(string, string[], …)`. A plain PowerShell `@(...)` is an **`object[]`**, which
+is not a `string[]`, so the array overload is not the exact match — but
+`object[]` *does* convert to `string`, by joining its elements with `$OFS`, a
+space. The binder therefore picks the SINGLE-format overload and the format
+becomes the literal
 
 ```
-  packages that would be installed: 0
-  -> unattended-upgrades is NOT among them
+yyyyMMddHHmmss.fZ yyyyMMddHHmmss.ffZ yyyyMMddHHmmss.fffZ yyyyMMddHHmmssZ yyyyMMddHHmmss.f\Z
 ```
 
-Both lines were artefacts. The container had no CA certificates, `apt-get
-update` had failed on TLS, and **an empty package cache answers every question
-with "no"** — including the question that was being asked, in exactly the
-direction the hypothesis wanted. The re-run asserts `apt-cache stats` reports
-more than 40 000 package names before it reads anything, and fails the
-measurement rather than reporting from an empty cache.
+which nothing on earth matches. There is no type error, no exception and no
+warning: `TryParseExact` returns `False` exactly as it would for a malformed
+date, the converter returns `$null`, and that reads as *this DC does not send
+`whenCreated`*.
 
-Same family as #90: *a check that cannot read its input is not a check that
-found nothing.*
+### Why the self-test nearly agreed with it
+
+The converter has two cases, and a permanently-failing parser **passes one of
+them**:
+
+```
+generalized time: rubbish is $null                        ← passes while broken
+generalized time: 20260827190803.0Z parses to 2026-08-27  ← the only one that fails
+```
+
+A negative case cannot fail when the answer is always `$null`. Write the
+positive case, or the suite agrees with the bug and reports a pass count. Same
+lesson as #92's section guard: **a count of passes is not a result unless
+something makes the passes mean something.**
+
+### What it would have cost, which is not a `$null` in a listing
+
+`Test-OS7Directory` measures the Kerberos skew against the domain controller's
+own `currentTime` out of the rootDSE — deliberately, because asking chrony would
+be asking the subsystem under suspicion whether it is well. It is written to
+skip what it could not ask:
+
+```powershell
+if ($rootDse -and $rootDse.CurrentTime) { $skewSeconds = … ; $clockOk = … }
+…
+$ready = ($reachable -eq $true) -and ($clockOk -ne $false) -and ($trusted -ne $false)
+```
+
+With `CurrentTime` permanently `$null` the block never runs, `$clockOk` stays
+`$null`, and `$null -ne $false` is **true** — so the only check that exists for
+the five-minute Kerberos limit is silently skipped and the machine reports
+`Ready`. The symptom of the skew it did not measure is a sign-in that says the
+password is wrong.
+
+### The guard
+
+`[string[]]` on the declaration, with the measurement in a comment beside it, in
+`powershell/Directory/Directory.psm1`. The cast belongs on the **variable**, not
+at the call site: the next caller of `$formats` gets the same guarantee, and a
+cast written inline is a cast the next line does not have.
+
+Family: #25 and #62. `setvtrgb.service` chose the palette, `--mode ubuntu` chose
+the kernel, the overload binder chose the signature — and in all three the code
+that was written is still there, still valid, and no longer the thing that
+decides. **Where a resolution would otherwise pick for you, write the type
+down.**
+
+---
+
+## 95. `catch [LdapException]` matches the inner exception, and `$_.Exception` inside the handler is still the wrapper
+
+**Measured 2026-08-27** against a real Samba AD DC, by the one check that types a
+deliberately wrong password. The handler written to explain the failure threw
+its own:
+
+```
+The property 'ErrorCode' cannot be found on this object.
+```
+
+When a .NET method call throws, PowerShell wraps the exception in a
+`MethodInvocationException` whose `InnerException` is the real one. `catch [T]`
+looks **through** the wrapper to decide whether to match — so the block is
+entered, which is the entire reason this is a trap and not a compile error. What
+it does not do is unwrap `$_.Exception`. Under `Set-StrictMode` a property that
+is not there is a terminating error rather than `$null`, so the first line of the
+handler dies.
+
+### Why this one is worse than an ordinary bug
+
+It is in the error path, and the error path only runs when something else is
+already wrong. AD returns LDAP result **49 for nine different conditions**, and
+the only thing separating "wrong password" from "locked out" is a
+three-hex-digit sub-code buried in the server's message:
+
+```
+80090308: LdapErr=DSID-0C0903A9, comment: AcceptSecurityContext error, data 775, v4563
+```
+
+`775` is locked out. So the code that exists specifically so an administrator
+does not reset a password that was never wrong is exactly the code that cannot
+run, and what the administrator gets instead is a PowerShell property error that
+names neither the account nor the cause.
+
+### How it was found, and how it nearly was not
+
+`installer/testing/check-ad.py`, in
+`'a wrong password is reported as a WRONG PASSWORD'` — which asserts on the
+**message**, not on the fact that something was thrown:
+
+```powershell
+if ($_.Exception.Message -notlike '*password is wrong*') {
+    throw "the refusal did not name the cause: …"
+}
+```
+
+A test that only required a refusal would have passed. Both a correct bind
+refusal and a crashed handler throw, and from outside they are the same shape.
+
+### The guard
+
+`Get-DirectoryLdapException` walks `InnerException` up to eight levels and hands
+back the `LdapException` or the original object, and **every** catch in the AD
+surface goes through it. It is exported from the generic module for the same
+reason the escaping helpers are: the OS/7 layer above catches the same
+exceptions and must not write a second unwrapper (#66 is one rule written twice
+taking two routes). It also asks
+`$current.PSObject.Properties['InnerException']` rather than reading the
+property, because under `Set-StrictMode` the absence of it is the error it is
+trying to survive.
+
+Family: the diagnostic that lies — #73's sanoid reporting a success it cannot
+have, #90's freshness check that could not read the date, #64's initramfs script
+that gave up without saying so. This is the sharpest version of it, because the
+subsystem the diagnostic depends on is **itself**: the only thing that can
+report a broken error handler is the error handler.
+
+---
+
+## 96. `.GetNewClosure()` BREAKS a test seam that has to reach module state, and this file already told you to use it
+
+**Measured 2026-08-27**, both ways in one run, after eleven cases of a brand-new
+check failed identically with:
+
+```
+You cannot call a method on a null-valued expression.
+```
+
+```
+with    .GetNewClosure()  ->  the fake's $script:__sent is $null
+without .GetNewClosure()  ->  the fake records, and the module sees it
+```
+
+The advice that produced the bug is in this file, is correct, and was followed
+on purpose. #76 and `powershell/Zfs` both say `.GetNewClosure()` is not
+optional: without it the scriptblock resolves its captured variables when it
+RUNS, by which time the defining scope is gone, and under `Set-StrictMode` that
+is an error rather than a silent `$null`. Four other checks in
+`installer/testing/` use it and are right to.
+
+### The two seams are not the same seam
+
+`check-network-logic.py`, `check-service-logic.py` and the `Time` and `Systemd`
+self-tests replace a **command runner**, and their fakes must carry LOCAL values
+— a fixture table written in the driver — into a block that runs later. Carrying
+values in is precisely what `GetNewClosure` is for.
+
+The Directory fake cannot do that. `SearchResultEntry`,
+`SearchResultEntryCollection` and `SearchResponse` have **zero public
+constructors**, so the seam sits above the .NET boundary rather than below it,
+and the requests the fake records have to live somewhere the fake and the module
+can both see — `$script:__sent`, in the Directory module's own session state,
+installed with `& (Get-Module Directory) { … }`. `.GetNewClosure()` rebinds the
+block to a fresh closure scope, `$script:` stops resolving to the module's
+session state, and every recorded call lands somewhere nobody reads. The fake
+then holds `$null`, and `.Add()` on it is the message above.
+
+**Carry values IN: closure. Reach state OUT: no closure.** That is the whole
+discriminator, and neither half is a property of the API.
+
+### Why the guard is a paragraph and not a check
+
+There is nothing here a parser can key on. #65 and #91 are in
+`check-ps-traps.py` because their AST signatures are unambiguous; this one is
+the same call with opposite verdicts, and which verdict applies depends on what
+the block must reach — which the syntax does not say. A rule for "always" and a
+rule for "never" would both be wrong, and a check that cries wolf is a check
+people delete (#92).
+
+What *is* checkable is the consequence, and it was: the fake records into a
+`[List[object]]` and the cases assert on **what was sent**, not only on what
+came back. A seam wired to nothing therefore fails every case loudly instead of
+quietly agreeing. It failed eleven at once, which is what made it look like a
+seam and not eleven bugs.
+
+Family: right advice, wrong context — the first entry of it here. #76 is its
+sibling and its opposite: same method, same file of advice, and the reason to
+call it in one place is the reason not to call it in the other. **When a rule in
+this file was learned in one seam, check which seam you are in before applying
+it.**
+
+---
+
+
+---
+
+## #97 — gpg cannot put its agent socket on a Windows bind mount, and the failure was invisible
+
+**2026-08-28.** The first ISO build that had to generate the signing key inside
+the container died at `make build-amd64` with no line naming gpg at all: the
+keygen sat inside `>/dev/null 2>&1`, and `set -e` took the build down on its
+exit code alone.
+
+The cause is the same one that moved the harness's QMP endpoint to TCP:
+**a unix socket cannot be created on Docker Desktop's Windows file sharing.**
+`GNUPGHOME` was a bind mount of `out/os7-gnupg` (it has to be — the ISO and
+the repository must share one key, so the key lives outside both containers),
+and gpg-agent's first act is to bind `S.gpg-agent` inside it. On a 9p/drvfs
+mount, bind(2) is refused and every gpg operation dies before it starts.
+
+GnuPG's own answer is the socket directory under `/run/user/<uid>`, which it
+uses automatically **when it exists** — and a build container has no logind to
+create it. `build/lib/os7-signing-key.sh` creates it and runs
+`gpgconf --create-socketdir` before touching the keyring, and the keygen's
+output is no longer discarded, because a silenced failure cost the whole build
+to learn one line.
 
 ### The rule
 
-**A package is an architecture fact, and a check written from one architecture's
-measurement must say which one it measured.** The fix makes the anchor per-arch:
-amd64 keeps `unattended-upgrades.service` unchanged — it is green there, and no
-amd64 image can be built on the host this was fixed on (#12/#23), so a new
-requirement nobody could test is how the first one got here. arm64 anchors on
-`networkd-dispatcher.service` (the **other** name in #79's two OOM lines),
-`apt-daily.timer` and `cron.service` — all three read out of the failing build's
-own scan of the real chroot. An anchor that is not in the generator's list now
-fails too, because an anchor nothing masks is an anchor about nothing.
+A directory that must be SHARED across containers cannot also be where a
+program wants a SOCKET. Give the program its socket on a container-local
+filesystem and keep only the STATE on the mount — the same split
+`vmhost-entry.sh` makes for swtpm.
 
-Five paths were run against a container holding exactly the 29 units the real
-arm64 chroot has, before the ISO was rebuilt: arm64 passes; arm64 with
-`networkd-dispatcher` or `cron` removed fails and names the unit; amd64 without
-`unattended-upgrades` still fails, and with it passes.
+## #98 — apt satisfies a strict `Depends (= old)` from CANDIDATE versions only
 
-And the absence is now **printed** on arm64 rather than fatal, so the next
-reader is told the fact instead of rediscovering it.
+**2026-08-28, measured by check-os7-repo.py.** With three releases of the OS/7
+suite in one pool, `apt-get install os7-server=1.0.0.130` fails:
+
+    os7-server:amd64=1.0.0.130 Depends os7-base (= 1.0.0.130)
+      but none of the choices are installable:
+      - os7-base:amd64=1.0.0.130 is not selected for install
+
+The version is IN the index — `apt-cache policy` lists it — but apt's resolver
+only considers each package's **candidate** (the newest, unless pinned) when
+satisfying dependencies. An exact-version metapackage whose members' candidates
+have moved on is therefore uninstallable by name alone, however complete the
+repository.
+
+The fix is a `preferences.d` pin (`Package: os7-* / Pin: version <v> /
+Pin-Priority: 1001`) for the duration of the operation — which is exactly the
+pin `Update-OS7` already writes for its own run, found independently by its
+review (SESSION-UPDATE-TRAIN §2a, "full-upgrade undid the pinned version").
+One apt fact, paid for twice, now written down once.
+
+## #99 — an installed amd64 machine says NOTHING on the serial line
+
+**2026-08-28.** The first amd64 `run-s5.py boot` hung for fifteen minutes on a
+machine that was booting perfectly: OVMF found shim, GRUB drew its menu into
+the serial console (via the firmware's ConOut), and then — silence. The kernel
+had put its console on tty0, and the passphrase prompt, the boot messages and
+the login all went to a display nothing was attached to.
+
+On arm64 nobody ever had to think about this: QEMU's `virt` machine hands the
+kernel a device tree whose `chosen` node names ttyAMA0, and Linux takes it as
+the console. **x86 has no such mechanism** — no `console=` on the command line
+means tty0, and the installed machine's command line is written by os7-setup,
+which (correctly) says nothing about serial consoles.
+
+The harness now gives the machine `console=ttyS0,115200` through its own
+`update-grub` after the install (`run-s5.py serialize`), inside
+`unshare --mount --propagation private` — the first attempt did the mounts in
+the shared namespace and re-measured #18: `zpool export` said "pool is busy"
+with nothing visibly mounted. Whether the PRODUCT should ship a serial console
+on the server image is a real question (§6 wants every cmdlet usable over
+serial) and is left open rather than decided by a test harness.
+
+## #100 — the install-time TPM seal did not open through shim, because the SEALING session had not booted through shim either (#69, measured twice)
+
+**2026-08-28, the first amd64 boot of a machine this repository installed.**
+The enrolment was perfect — token in slot 1, sealed to PCR 7, handler and
+libtss2 in the initramfs, ordered before cryptroot — and the machine asked for
+the passphrase anyway. `TpmEnrolStep` seals from the LIVE session, which QEMU
+boots via `-kernel`; the installed machine boots through `shimx64.efi`, which
+extends PCR 7. Same TPM, different measurement: exactly the road #69 named
+when it moved enrolment "to first boot", predicted and never before seen on a
+machine.
+
+arm64 never hit it because its live and installed boot paths measure alike on
+QEMU — which is why `run-s5.py boot` passed there with install-time sealing
+and would have kept passing forever.
+
+Two consequences, both built the same day: the harness performs S6's recovery
+(one `systemd-cryptenroll` on the booted machine; the NEXT boot must unlock
+with nothing typed, and did), and the UL1 firstboot migration
+(`50-tpm2-reseal`, shipped by os7-release, run by `os7-migrations-firstboot`)
+is the product's own version of the same move — it asks whether the seal opens
+against THIS boot and re-enrols when it does not. Unattended re-enrolment
+still needs a secret nobody escrows: U8 is open and the migration says so out
+loud instead of failing the boot.
+
+**2026-09-08 — AND THE CAUSE WAS THE VEHICLE, MEASURED.** `run-secureboot.py`
+boots the medium the way a person does: `-cdrom`, no `-kernel`, the firmware
+finding shim on the medium itself. Install from THAT live session, under
+Microsoft-keyed OVMF, and the installed machine's **first** boot unlocks from
+the TPM with nothing typed — the install-time seal opens.
+
+Which is what the physics says once both ends are looked at. PCR 7 measures
+the Secure Boot policy AND the certificate shim used to validate what it
+loaded; the live session's shim validates `gcdx64.efi` and the installed
+machine's shim validates `grubx64.efi`, both against the same Canonical
+certificate, so PCR 7 agrees. The BINARIES differ and land in PCR 4, which
+`--tpm2-pcrs=7` does not seal to. Under `-kernel` shim never runs at all,
+which is the different measurement #100 saw.
+
+So the sentence "the install-time seal does not open through shim" is too
+strong: it does not open when the SEALING session did not itself boot through
+shim. **UL1 keeps its job** — a shim or dbx update after the install moves
+PCR 7 for real, which is S6's finding and U8's question, and
+`run-secureboot.py policy` now measures that from the machine's own mouth:
+
+    OS/7 TPM: the TPM would not unlock os7_root - the passphrase still works
+    Please unlock disk os7_root: TPM policy does not match current system
+    state. Either system has been tempered with or policy out-of-date
+
+What changes is the ROUTINE case. A machine installed from a Secure-Boot-on
+medium onto Secure-Boot-on firmware needs no re-enrolment at all, and the
+harnesses that said otherwise were reporting their own `-kernel` boot.
+
+## #101 — a worktree made by Windows git is unreadable to WSL git
+
+**2026-08-28.** `make` on this box lives in WSL, and `make build-amd64` from a
+worktree died in `scripts/os7-source-facts.sh`: the worktree's `.git` is a
+FILE holding `gitdir: C:/Users/…/OS7/.git/worktrees/<name>` — an absolute
+WINDOWS path, which WSL's git resolves relative to the worktree and reports
+"not a git repository". #43's family, one layer up: not the container this
+time, but the OTHER operating system on the same machine.
+
+git accepts a RELATIVE gitdir pointer, and `gitdir: ../OS7/.git/worktrees/…`
+resolves under both roots. One line, and both worlds read the same repository.
+(The back-pointer in `.git/worktrees/<name>/gitdir` stays absolute and only
+matters to `git worktree` management commands run from the main checkout.)
+
+## #102 — Git Bash rewrites `--device /dev/kvm` into `--device C:/…`
+
+**2026-08-28.** `docker run --device /dev/kvm` from Git Bash (MSYS) fails with
+`error gathering device information while adding custom device "C"`: MSYS
+path conversion sees a leading `/` and helpfully turns `/dev/kvm` into a
+Windows path before docker ever sees it. The same command from PowerShell, or
+from Python's `subprocess` (no shell), passes the literal string and works —
+which is why the harness never hits this and an interactive probe does.
+`MSYS_NO_PATHCONV=1` or a doubled slash (`//dev/kvm`) are the escapes.
+
+## #103 — DEBIAN_FRONTEND=noninteractive does not answer dpkg's conffile prompt
+
+**2026-08-28, one check-os7-repo iteration.** The harness writes its own
+`/etc/apt/sources.list.d/os7.sources` before installing os7-release — which
+ships the same path as a CONFFILE since the same day — and the install died
+with
+
+    *** os7.sources (Y/I/N/O/D/Z) [default=N] ? dpkg: error processing
+    package os7-release (--configure):
+     end of file on stdin at conffile prompt
+
+`DEBIAN_FRONTEND=noninteractive` silences DEBCONF; dpkg's conffile prompt is
+dpkg's own, and with stdin at EOF it is an ERROR, not a default. The nine
+failures it produced downstream all described a machine that was never
+branded — none of them named the prompt. The answer is
+`Dpkg::Options { "--force-confdef"; "--force-confold"; }` (apt.conf, or
+`-o Dpkg::Options::=` per call), which is exactly what `Update-OS7`'s own apt
+runs have carried since their review — the production path never had the bug,
+only the harness that judges it did.
+
+## #104 — an activation that fails halfway keeps half its work, and the next boot is the half-activated pair
+
+**2026-08-28, the first end-to-end `Update-OS7` run.** The update built the
+new environment, upgraded it, and threw at activation step 6: "no ESP stub
+was rewritten — /boot/efi is not mounted". The catch said, as designed,
+*"os7_1.0.0.134… is built, INACTIVE and left in place; this machine still
+boots what it booted."* Both halves of that sentence were false.
+
+`Set-OS7BootEnvironment` had already run step 3 — canmount flipped across
+every environment, the target's datasets to `on` — before it threw. Nothing
+took the flips back. The environment was therefore not inactive but ARMED:
+on the next boot, `zfs mount -a` mounted the target's `bpool/BOOT` dataset
+**over the running system's /boot**, burying the ESP's vfat mount under it —
+`findmnt /boot/efi` still showed vfat (the shadowed mount entry survives in
+mountinfo) while the PATH resolved to an empty directory on the target's
+dataset. Measured directly:
+
+    556 … /efi /run/os7-update/boot/efi … zfs bpool/BOOT/os7_1.0.0.134_…
+
+— a `mount --bind /boot/efi` that carried the CLONE's empty efi directory,
+because /boot/efi no longer meant the ESP. That is §4.3's half-activated
+pair, reached by an activation that failed halfway and kept half its work,
+and it is the road "nothing checks" that the plan warned about.
+
+Three changes, one per layer:
+
+* **The flips are transactional now.** Every canmount change records the
+  value it replaced, and any throw between the flips and the end of
+  activation restores them before rethrowing — "left in place, INACTIVE" is
+  a promise the catch can keep.
+* **Every plain bind the update assembler makes is `--make-slave`d** the
+  moment it exists: on a systemd system every mount is shared, so a bind
+  JOINS ITS SOURCE'S PEER GROUP, and a scaffold must receive events, not
+  send them — the reasoning the rbinds carried all along.
+* **`Assert-OS7EspMounted`** runs before anything globs the ESP: an
+  unmounted /boot/efi reads as "grub-install never wrote one", and a
+  precondition that can be stated should not be inferred from an empty glob.
+  It asks systemd (`boot-efi.mount`, through the Systemd layer — P2-systemd's
+  baseline may not rise) to mount it where possible.
+
+WHAT WAS NOT PROVEN AT FIRST WRITING — why /boot/efi was unavailable at
+step 6 *within the failing run itself* — WAS MEASURED A DAY LATER, and it
+was never an in-session loss at all. **The machine had booted broken.**
+
+/boot is a ZFS mount (bpool/BOOT/&lt;be&gt;, mounted by zfs-mount.service), and
+systemd has no unit for it — this image ships no /etc/zfs/zfs-list.cache,
+so zfs-mount-generator emits nothing and the fstab-generated boot-efi.mount
+has NOTHING to order against. Every boot is a race. When the ESP mounts
+first, the /boot dataset lands ON TOP of it: mountinfo showed
+/boot/efi with a LOWER mount id than /boot — mounted earlier, buried under
+the later ZFS mount. The vfat stays in the mount table, so every
+diagnostic that reads the TABLE lies: `findmnt /boot/efi` lists it,
+`boot-efi.mount` reads active, `systemctl start` is a no-op that exits 0 —
+while every diagnostic that resolves the PATH tells the truth: `ls
+/boot/efi/EFI` finds nothing, and activation's glob finds no stubs. The
+"mechanism that moved between runs" was this race lost at boot and then
+misread as an in-session event — four probe runs "proved" the ESP survived
+assembly and disassembly by asking findmnt, the table, and never once the
+path. A diagnostic must be checked against the thing it claims to check;
+these four were checked against the mount table.
+
+The fix is ordering, in three places:
+
+* **Setup writes the ordering into fstab** for new machines:
+  `x-systemd.requires=zfs-mount.service` on the /boot/efi line —
+  systemd.mount(5) makes that Requires= and After=, so the ESP mounts onto
+  the ZFS /boot, never under it.
+* **Migration 60-fstab-esp-ordering** appends the same option on machines
+  installed before the fix, at their first boot after an update.
+* **`Assert-OS7EspMounted` heals a lost race at runtime**: EFI directory
+  missing while /boot is ZFS-served means the orphan shape — it takes the
+  whole /boot stack down (the orphaned vfat goes with it), remounts the
+  running environment's boot dataset, and then asks systemd, which has just
+  watched the umounts and now agrees the unit is dead and actually mounts
+  the ESP again.
+
+## #105 — the revert was transactional, and a file the catch never knew about voted anyway
+
+The end-to-end gate on the first fully packaged ISO (2026-08-28,
+[SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md)). Activation of a
+cloned boot environment threw at step 6 — the ESP was unmounted again, #104's
+still-open mechanism — and the #104 fix WORKED: all eight canmount flips were
+restored, the cmdlet said so, and nothing about the datasets had changed. The
+machine then rebooted into the half-activated pair anyway.
+
+The voter was `saved_entry`. Step 5 wrote it into the RUNNING system's
+grubenv — before step 6, on the argument that a machine that "never gets as
+far as step 6" should still boot what was asked for. That argument is
+backwards, and the gate measured why: the running grubenv takes effect THE
+MOMENT it is written, because until step 6 the ESP stub still points at the
+running environment's menu. So the failed activation left `GRUB_DEFAULT=saved`
+pointing at a clone whose canmount the catch had just carefully taken back,
+and the next boot assembled §4.3's pair from the menu side: / from the clone,
+/boot and /var/lib/dpkg from the origin. `run-s5.py` then reported "THE
+MACHINE BOOTED THE CLONE — ok", because the harness's own checks accepted a
+grubenv line as proof of a stub rewrite that had never happened.
+
+Three corrections:
+
+* **The running system's grubenv is written AFTER the stub rewrite.** The
+  stub rewrite is the point of no return; everything that takes effect
+  immediately now sits behind it. The target's own grubenv (step 5) stays
+  where it was — it is inert until the stub makes it the file GRUB loads.
+* **A failure after the point of no return leaves the activation STANDING.**
+  Reverting the flips once the ESP names the target would manufacture the
+  half-activated pair; the catch now says the activation stands and rethrows.
+  `Update-OS7`'s catch asks `Get-OS7BootEnvironment` whether the stub was
+  rewritten before claiming "this machine still boots what it booted".
+* **The harness now requires the activation's own success line** ("ESP
+  stub(s) now point at") and matches the stub's `/BOOT/<name>@` prefix line,
+  not any occurrence of the name — a grubenv entry is not a stub.
+
+A second, smaller defect fell out of the same boot: on the half-activated
+machine, /boot is ALREADY served by the rollback target's boot dataset, and
+step 4's `Copy-Item` of /boot/grub/grub.cfg into that same dataset refuses
+("cannot overwrite the item with itself") — so the one activation that would
+REPAIR the state was the one that could not run. The copy is now skipped,
+with a step line, when findmnt says /boot's source IS the target's dataset.
+
+The general rule, one more time and from a new side: a transaction is only as
+transactional as the LIST of things it undoes. The flips were recorded and
+restored; the grubenv write was in the same try block and in nobody's ledger.
+When a catch promises "nothing changed", every write above it must be in the
+ledger, or the promise is a claim about the ledger, not the machine.
+
+## #106 — a KEY="value" file written without a trailing newline corrupts on the first append
+
+`Set-OS7UpdateChannel` wrote `/etc/os7/update.conf` without a final newline.
+The unattended-check harness then did what any operator will do:
+`printf 'OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes"\n' >> update.conf`.
+The append glued onto the last line, and the file's channel became
+
+    OS7_UPDATE_CHANNEL="development"OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes"
+
+The module's conf parser stripped the OUTERMOST quote pair and returned
+`development"OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes` as the channel
+name; the unattended check went looking for an index file by that name, found
+nothing, and exited 1 — a corrupted CHANNEL out of an append that meant to
+set a FLAG, with both settings lost.
+
+Fixed at both layers, because each would have contained the other: the writer
+ends the file with a newline (a KEY=value file that invites `echo >>` must),
+and the parser treats a quoted value as ending at the NEXT matching quote —
+trailing garbage after the closing quote is now a loud `FormatException`
+naming the file and line, not a silently wrong value. The harness append
+starts with `\n` regardless, for images whose module predates the fix.
+
+The rule: a file format is defined by what will be APPENDED to it, not just
+by what is written into it. If the convention is "operators add KEY=value
+lines", the writer's last byte is load-bearing.
+
+## #107 — "previous" is ancestry, not age: Restore-OS7 rolled back to the experiment
+
+The second full gate run (2026-08-28): install, boot, cycle and timer all
+PASS, and update failed its LAST check — the machine rolled back from
+1.0.0.136 and came up in `os7_1.0.1.0_…`, the cycle phase's leftover clone,
+not in the 1.0.0.135 the update had been applied to. `Restore-OS7` without
+an argument picked "the newest boot environment older than the running one",
+which was the documented rule — and with a third environment on the machine
+the rule picked the experiment, because the experiment was newer than the
+environment the update actually came from. The one-word panic path landed a
+machine that meant "undo the update" on a clone with somebody's test package
+in it.
+
+The first fix read the ZFS `origin` — the snapshot the running environment
+was cloned from, a record rather than a heuristic — **and the THIRD gate run
+measured why that record is not enough**: UL9's retention step `zfs
+promote`s every environment an update activates (nothing could ever be
+pruned otherwise), and promote ROTATES the ancestry. Measured on the
+machine afterwards:
+
+    os7_1.0.0.137  origin: -                                    (the update, promoted)
+    os7_1.0.0.136  origin: os7_1.0.0.137@os7_1.0.0.137_…        (the PREDECESSOR, pointing FORWARD)
+    os7_1.0.1.0    origin: os7_1.0.0.137@os7_1.0.1.0_…          (a SIBLING clone, moved too)
+
+The origin of the updated environment is `-`, its predecessor's origin
+points AT it, and even an unrelated sibling's origin was re-parented to the
+promoted dataset. After one promote, `origin` no longer answers "what did
+this come from" for anything on the machine.
+
+So "previous" is now TWO records, in order: **`org.os7:previous`**, a user
+property Update-OS7 writes on the environment it activates, before the
+promote — a fact promote cannot rotate; then the ZFS origin **guarded by
+age** (a genuine predecessor is older than the running environment; a
+promote-rotated origin points at something newer, and without the guard a
+machine rolled back once would "roll back" FORWARD), for environments
+cloned by hand. Newest-older stays as the last resort only.
+
+The harness half, same shape as #105's: the check had matched `old_be`
+ANYWHERE in Restore-OS7's output — and the name appeared in the menu-fragment
+listing even when the cmdlet chose the clone, so "Restore-OS7 chose
+1.0.0.135" printed ok one boot before 8/8 measured the truth. It now
+requires the cmdlet's own step lines: "rolling back to the previous boot
+environment: <old>" and "ESP stub(s) now point at <old>".
+
+The rule is #16's, met a fourth way: never accept a marker the output would
+carry anyway. A name in a listing is not a decision; the line where the
+program SAYS what it decided is.
+
+---
+
+## 108. The installer and the cmdlet it calls disagreed about the spelling of a parameter, and six green checks had nothing to say about it
+
+**Measured 2026-08-28**, by a review of an uncommitted change, on the branch it
+was about to be pushed from.
+
+`os7-setup` shells out to PowerShell for the work the modules own. That is
+deliberate and it is #66's remedy: `New-OS7Storage` and `Join-OS7Domain` are
+written once, and the installer and the operator take the same road rather than
+two roads built from the same notes. `Steps/StorageSteps.cs` has done it since
+Phase 2 and `run-phase3.py` has passed over it many times.
+
+What nobody had ever checked is that the two halves agree on the **spelling**.
+
+`Steps/DomainSteps.cs` built:
+
+```
+Join-OS7Domain -Root '<target>' ... -PasswordFile '/run/os7-setup-domain.key'
+```
+
+and `powershell/OS7/OS7.Domain.ps1` declares `-TargetRoot` and
+`-Password [securestring]`. There is no `-Root`. There is no `-PasswordFile`.
+Neither is a prefix of anything. PowerShell fails **parameter binding**, before
+the cmdlet body runs and long before `adcli` is started:
+
+```
+A parameter cannot be found that matches parameter name 'Root'.
+```
+
+The step catches a non-zero exit as best-effort, by design, so that a bad
+password or an unreachable domain controller cannot destroy an install that is
+otherwise complete. The consequence is that **every domain join from the
+installer would have failed, on every machine, and left one line in a log.**
+
+### What was green while this was true
+
+* `dotnet publish` — clean. The command line is a string; C# has no opinion
+  about it.
+* `os7-setup --self-test` — clean, all ten known failures, which are absent
+  image files.
+* Five module self-tests — `Test-DirectoryModule` 42/42 among them.
+* `check-directory-logic.py` — 15/15 against a fake connection.
+* `check-ad.py` — **every case green against a real Samba domain controller**,
+  including a join.
+* `check-layering.py`, `check-ps-traps.py` — held.
+
+Every one of them exercises one side of the seam. None of them looks at the
+other side, and no check in this repository had ever read the installer's
+generated command lines at all. This is the family of #62 and #85: every
+declaration satisfied, and the thing they were about decided somewhere none of
+them looks.
+
+### The guard
+
+`installer/testing/check-installer-cmdlets.py`. It reads the C# for what will be
+typed and asks PowerShell what will bind, and requires them to agree — two
+independent sources of truth, compared, which is the shape `check-netplan-rule.py`
+already uses for the two netplan renderers. Seconds, no VM.
+
+### And the guard needed a guard
+
+**Its own first version reported the broken call as `ok`.** It took the string
+literal the cmdlet name appears in — and `DomainSteps.cs` builds the command by
+concatenating **one literal per parameter**:
+
+```csharp
+"Join-OS7Domain " +
+$"-Root '{_t.Root}' " +
+$"-Domain '{d.Realm}' " + ...
+```
+
+so the cmdlet's own literal contained no parameters at all. It printed
+`Join-OS7Domain (0 parameter(s))  ok`, three times, and would have gone on
+printing it for ever. The window had to become the C# *statement*, and then had
+to be narrowed again to the *PowerShell command*, because `try { Join-OS7Domain
+... } finally { Remove-Item -LiteralPath ... }` is one C# expression and the
+first correction attributed `Remove-Item`'s parameter to the join.
+
+It was only ever known to work because it was run against the known defect
+**before** the defect was fixed:
+
+```
+FAIL  DomainSteps.cs:349 calls Join-OS7Domain with -Root   [-Root -> -TargetRoot]
+```
+
+A diagnostic must be checked against the thing it claims to check, and the
+cheapest moment to do that is while the bug is still there. Write the check
+first, watch it go red, then fix.
+
+---
+
+## #109 — the machine with no journal: the flush beats zfs-mount, and the real /var/log buries what it wrote
+
+**2026-08-28, diagnosed on a machine installed for the purpose from
+OS7-1.0.0.134-amd64.iso** ([SESSION-MISSING-JOURNAL.md](SESSION-MISSING-JOURNAL.md)).
+The installed machine had NO systemd journal at all — `journalctl` said "No
+journal files were found" while journald read active, machine-id was
+populated, and BOTH journal roots existed, empty. It cost the #104 diagnosis
+its forensics: no journal on any boot to ask.
+
+The mechanism is #104's root cause producing its third symptom. `/var/log` is
+`rpool/DATA/log` (outside the boot environment, §4.4), the image ships no
+`/etc/zfs/zfs-list.cache`, so zfs-mount-generator emits nothing and NOTHING
+in systemd's graph knows /var/log is a filesystem —
+`systemd-journal-flush.service`'s own `RequiresMountsFor=/var/log/journal`,
+upstream's guard against exactly this, orders against nothing. Measured on
+boot 1 of the fresh machine, from systemd's own monotonic clock: flush
+finished at 8.24 s, zfs-mount ran at 9.35 s. In between, journald flushed the
+runtime journal into `/var/log/journal/<machine-id>` ON THE BOOT
+ENVIRONMENT'S ROOT DATASET — creating the whole chain itself, Storage=auto
+notwithstanding — and deleted `/run/log/journal/<machine-id>`. Then
+`zfs mount -a` put the real /var/log on top (`overlay=on` is the OpenZFS
+default, so mounting over the now-non-empty directory is silent). journald's
+fd 23 pointed at the shadowed file — 8 MiB and growing under a bind mount of
+/, invisible at every path journalctl checks. Every boot, deterministically:
+the flush takes ~0.2 s, the ZFS import chain ~1.2 s.
+
+Nothing errors, because nothing is wrong at the layer each tool checks:
+journald's writes succeed, the mount table is consistent, journalctl
+truthfully reports the visible roots empty, `systemctl is-active
+systemd-journald` truthfully says active. The one line the machine ever
+prints is journald's "Failed to open user journal file, falling back to
+system journal: No such file or directory" — in dmesg, the log that still
+works precisely because it is not journald's.
+
+The control that closed the diagnosis: `systemctl restart systemd-journald`
+on the running machine (mount now present, flushed flag standing) made the
+journal appear on the DATASET and `journalctl` return entries for the first
+time in the machine's life. Ordering is the whole defect.
+
+The fix is one drop-in, shipped by os7-release
+(`/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf`):
+`After=zfs-mount.service`. Ordering only, no Wants=; no new critical-path
+work, since zfs-mount is already Before=local-fs.target and tmpfiles-setup —
+which the flush precedes — is already After=local-fs.target. The runtime
+journal holds every early message until the real /var/log is there, which is
+what it is for. Verified on the machine: with the drop-in, the next boot's
+journal is on rpool/DATA/log and journalctl answers. `check-image.py` now
+requires the drop-in in the shipped squashfs.
+
+Two rules this paid for again: a subsystem that reports success is not a
+subsystem that worked (#73's shape — journald, the flush unit and zfs-mount
+all exited 0 on every affected boot); and the structural fix — shipping
+zfs-list.cache so EVERY dataset gets a real mount unit and RequiresMountsFor
+works as upstream designed — stays open beside this, as it did beside #104's
+fstab option.
+
+## #110 — GNOME's documented way to brand the login screen does nothing on Ubuntu, and does it silently
+
+**2026-08-29, measured out of the shipped `OS7-1.0.0.150-amd64.iso`**
+([SESSION-LOGIN-SCREEN.md](SESSION-LOGIN-SCREEN.md)). An OS/7 desktop that
+passed every check in hook 0090 and every desktop check in `check-image.py`
+greeted its user with the Ubuntu wordmark, an orange highlight ring and a
+Yaru-dark background. This is #85 in a second place: everything declared was
+true, and the thing it was about was decided somewhere nothing looked.
+
+**The greeter reads a different database, through a different profile, as a
+different user.** GNOME's System Administration Guide gives one instruction —
+put a keyfile in `/etc/dconf/db/gdm.d/` and run `dconf update` — and on Ubuntu
+26.04 that directory is read by nobody:
+
+```
+/etc/dconf/db/gdm.d/           does not exist
+/etc/dconf/profile/gdm         does not exist
+/usr/share/dconf/profile/gdm   user-db:user
+                               file-db:/var/lib/gdm3/greeter-dconf-defaults
+```
+
+There is no `system-db:gdm` in that profile, so there is nothing for a
+`gdm.d` tree to be compiled into. `dconf update` reads it, writes
+`/etc/dconf/db/gdm`, exits 0, and the greeter never opens the file. The
+extension point that DOES work is Debian's, and it is written down in the first
+six lines of `/usr/share/gdm/dconf/00-upstream-settings`: *"create your own file
+next to it with a higher numbered prefix"*. `gdm.service` has
+`ExecStartPre=/usr/share/gdm/generate-config`, which runs
+`dconf compile /var/lib/gdm3/greeter-dconf-defaults /usr/share/gdm/dconf` on
+**every start**. Sort order is precedence: `00-upstream-settings` (gdm3's),
+`90-debian-settings` (a symlink to the ucf conffile
+`/etc/gdm3/greeter.dconf-defaults`), then anything later.
+
+**And the Ubuntu logo is not a default nobody set — it is set, by name, in a
+package that cannot be removed.**
+
+```
+/usr/share/glib-2.0/schemas/10_ubuntu-settings.gschema.override
+    [org.gnome.login-screen]       logo='/usr/share/pixmaps/ubuntu-logo-text-dark.svg'
+    [org.gnome.desktop.interface]  accent-color = 'orange'
+```
+
+`ubuntu-settings` owns that file and `ubuntu-desktop-minimal` **Depends** on it,
+so hook 0035's purge cannot reach it and its APT pin must not. A gschema
+override sets the schema DEFAULT; a dconf database sets a VALUE; values win.
+So the fix does not remove Ubuntu's line, it out-ranks it — one keyfile,
+`/usr/share/gdm/dconf/95-os7-login-screen`, shipped by `os7-desktop-theme`.
+
+**The orange is a SETTING, not the theme.** Both shell themes on the image
+honour `org.gnome.desktop.interface accent-color` — 807 references to
+`-st-accent-color` inside gnome-shell's own `gnome-shell-theme.gresource`, 903
+inside Yaru's — so the ring around the highlighted user came from
+`accent-color='orange'` in the same override, applying to the whole system.
+The OS/7 desktop session had been drawing it too, under a theme whose entire
+point is that it does not look like Ubuntu.
+
+**Which stylesheet the greeter uses is an `update-alternatives` decision Ubuntu
+wins by priority**, and that one can be answered with dpkg's own mechanism
+rather than by replacing a file:
+
+```
+/var/lib/dpkg/alternatives/gdm-theme.gresource
+  link  /usr/share/gnome-shell/gdm-theme.gresource                       (auto)
+  10    /usr/share/gnome-shell/gnome-shell-theme.gresource               gnome-shell
+  15    /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource    yaru-theme-gnome-shell
+```
+
+`update-alternatives --set` selects gnome-shell's own and puts the link in
+manual mode, so an upgrade of either package cannot take it back — the same
+mechanism, and the same reasoning, as `x-terminal-emulator` in hook 0035 step
+5a. Ubuntu's greeter refinements go with Yaru; what is kept is a stylesheet
+that gnome-shell upgrades in lockstep with itself and that recolours from a
+setting.
+
+**The check that matters is a CONTROL, not a presence test.** Reading our own
+keyfile back proves nothing — both sides come from this repository — and the
+question is not "is the value there" but "does it beat the override". So hook
+0090, the package's postinst and `check-image.py` all compile
+`/usr/share/gdm/dconf` the way `generate-config` does, point a profile at the
+result and ask **GSettings**, which is the only thing that resolves an override
+against a dconf database. Then they compile the same directory with
+`95-os7-login-screen` removed and require the answer to come back as Ubuntu's.
+Measured, on the image, before any of this shipped:
+
+```
+with 95-os7-login-screen   logo = '/usr/share/pixmaps/os7-logo-login.svg'   accent = 'blue'
+without it                 logo = '/usr/share/pixmaps/ubuntu-logo-text-dark.svg'   accent = 'orange'
+```
+
+A test whose control also passes is a test that measures nothing — #16's rule
+about markers the command itself could have produced, applied to a setting.
+
+**Ubuntu's own greeter-background schema is a real lever and a distribution-
+specific one.** `com.ubuntu.login-screen` (`background-picture-uri`,
+`background-color`, `background-repeat`, `background-size`) is consumed by
+`/usr/lib/gnome-shell/libshell-18.so` and by nothing else on the image — it is
+a Canonical patch, not GNOME. It is the only way to set the greeter background
+without replacing a gresource, and if Ubuntu ever drops it the schema goes with
+it, hook 0090's schema check turns red at build time, and a shipped machine
+falls back to the stylesheet's dark grey. That is the correct failure mode for
+a cosmetic; the wrong one would have been a stale CSS file nobody notices.
+
+**What is still Ubuntu on that screen, stated so it is not rediscovered as a
+bug:** the session chooser lists "Ubuntu" and "Ubuntu on Xorg" because
+`ubuntu-session` ships those `.desktop` files and `gdm3` depends on it. The
+default is `gnome-classic` (the dconf key #85 added), but the names in the
+menu are Ubuntu's.
+
+## #111 — the login screen came up EMPTY, because the check rendered the logo with a tool the greeter does not use
+
+**2026-08-29, found by booting `OS7-1.0.0.153-amd64.iso` on a real machine**
+([SESSION-LOGIN-SCREEN.md](SESSION-LOGIN-SCREEN.md) §11). The first machine
+installed from the ISO that #110 fixed came up with the OS/7 blue background,
+a working top bar, and **no login dialog at all**. Nothing to type a password
+into. Every build check had been green, twice.
+
+**The mechanism.** `gnome-shell` loads `org.gnome.login-screen logo` through
+`St.TextureCache.load_file_sync`, which goes through **GdkPixbuf** — glycin on
+Ubuntu 26.04 — and GdkPixbuf decides whether a file is an image by **sniffing a
+fixed prefix**, not by parsing it. Measured on the shipped image by binary
+search against a known-good SVG with a padded comment:
+
+```
+'<svg' beginning at byte 256   ->  loads
+'<svg' beginning at byte 257   ->  "Couldn't recognize the image file format"
+```
+
+This repository writes long documentation headers. `os7-logo-login.svg` had a
+35-line one, which put `<svg` at **byte 2764**.
+
+**And the symptom is not a missing logo.** `load_file_sync` THROWS, inside
+`LoginDialog._updateLogoTexture`, *while the dialog is being constructed*. The
+background is painted by Ubuntu's `com.ubuntu.login-screen` patch elsewhere and
+the panel is a separate actor, so both survive — and what is left is a screen a
+user cannot log in from. A logo is cosmetic; the code path that loads it is not.
+
+**Why every check passed.** Hook 0035 already had `librsvg2-bin` installed for
+the plymouth mark, so it rasterised the greeter mark with `rsvg-convert` and
+reported it green. `rsvg-convert` parses the XML properly and does not sniff
+anything, so it renders the file perfectly. **It is simply not the loader the
+greeter uses.** This repository's own rule — *a diagnostic must be checked
+against the thing it claims to check* — broken by the person who had just
+written three negative controls for the same feature.
+
+The fix has three parts and the middle one is the durable one:
+
+1. Both SVGs put their documentation **inside** the `<svg>` element, so `<svg`
+   is at byte 39 whatever gets written about them later.
+2. The check moved to hook 0090 and asks **GdkPixbuf**, through `python3-gi`
+   (`Priority: important` on the image, with the GdkPixbuf typelib beside it) —
+   the same call the greeter makes, at natural size and at scale 2. The
+   rsvg-convert check in 0035 is **deleted**, not kept beside it: a check that
+   can go green while the machine is broken is worse than no check.
+3. `check-image.py` asks the same question of the finished ISO.
+
+**A second, independent trap on the way to the fix, worth its own paragraph
+because it produced a DIFFERENT error message.** Moving the comment inside the
+element is not enough if the comment contains `--`: two consecutive hyphens are
+**illegal inside an XML comment**, and a dashed rule (`-----`) used as a heading
+underline is exactly that. That file passes the byte-offset test and then fails
+to *parse*:
+
+```
+byte offset wrong  ->  "Couldn't recognize the image file format"   (sniffing)
+'--' in a comment  ->  "Failed to load image ... org.gnome.glycin.Error"  (parsing)
+```
+
+Both produce the same empty login screen. The check asks both questions for
+that reason.
+
+**The controls.** The new check was run against three files: the fixed marks
+(green), the file **exactly as 1.0.0.153 shipped it** (red, naming byte 2764),
+and a file with an illegal `--` (red, naming the parse error). A check that
+cannot fail on the artefact that caused the incident is not a fix.
+
+**And one more time, the general shape**, which is #62's and #85's and #73's:
+every declaration was satisfied, every check reported success, and the thing
+they were about was decided by a component nobody had asked. Here the component
+was the image loader, and the question that would have found it in one second is
+"which program actually opens this file?"
+
+## #112 — `Get-OS7BackupStatus` throws on the two machines that have nothing to compare
+
+**Found by writing a manual.** Chapter 12 needed a picture of the backup status,
+so the command was typed on a real installed machine. It did not print a status:
+
+```
+Get-OS7BackupStatus: The property 'NewestReplicated' cannot be found on this
+object. Verify that the property exists.
+```
+
+The machine was healthy. `Get-OS7BackupPolicy` on the same console, one command
+earlier, reported `Configured: True`, `Enabled: True`, two sources, eight and
+four snapshots taken minutes before — and `TargetCount: 0`, because no
+replication target had been created. That is an ordinary machine: snapshots are
+on by default and replication is opt-in (BACKUP-PLAN B4), so **every machine
+that has not opted in is this machine.**
+
+The cause is two lines in `Get-OS7BackupStatus`
+(`powershell/OS7/OS7.Backup.ps1`):
+
+```powershell
+$newestLocal  = ($policy.Sources | Where-Object Newest | Sort-Object Newest |
+    Select-Object -Last 1).Newest
+$newestRemote = ($targets | Where-Object { $_.NewestReplicated } |
+    Sort-Object NewestReplicated | Select-Object -Last 1).NewestReplicated
+```
+
+`Select-Object -Last 1` over an empty pipeline yields **`$null`**, and
+`OS7.psm1` line 53 sets `Set-StrictMode -Version Latest`, under which reading a
+property off `$null` is a terminating error rather than `$null`. `$targets` is
+`@()` whenever there is no target — and unconditionally so under `-SkipTargets`,
+which is the parameter offered for exactly the case of not having one.
+
+**Both lines have it, and the second one is the worse of the two.** `$newestLocal`
+survived here only because this machine had already taken snapshots. On a
+machine that has just been configured and whose first snapshot has not run,
+`$policy.Sources | Where-Object Newest` is empty as well, and the same command
+fails one line earlier — so the first status a new installation is asked for is
+the one that cannot be given.
+
+**The file already knew.** Sixty lines above, the same source carries a comment
+saying that under `Set-StrictMode` a missing property is an error and not
+`$null`, and that reading one unguarded throws *naming the property and not the
+cause* — which is precisely the message above. The knowledge was written down
+and the code below it did the other thing. Same shape as the P2-time paragraph
+in CLAUDE.md, and the same argument: a paragraph has nothing checking it.
+
+The fix is to take the value in two steps rather than as a property of a
+pipeline that may be empty, and `Test-OS7Backup` should gain the two states —
+no target, and no snapshot yet — because both are ordinary and neither was
+covered by 63 green assertions.
+
+**FIXED 2026-08-30, and the delay is the note's real lesson.** The paragraph
+above says "the fix is" and it was written on 2026-08-29; nothing was changed,
+and the defect was still in the product a day later, when
+`installer/testing/run-surface.py` typed `Get-OS7BackupStatus -SkipTargets` at
+a booted machine and got the identical message back. **A recommended fix in a
+note is not a fix**, and nothing in this repository was watching the
+difference — `Test-OS7Backup` stayed at 63 green, `check-image.py` stayed
+green, and the only reason this surfaced again is that a new tool asked the
+machine instead of asking the source.
+
+What was actually changed, in `powershell/OS7/OS7.Backup.ps1`: both lines take
+the selection into a variable first and read the property only if there is
+one. The same was done at `OS7.Backup.ps1:331` (`.Creation`, which is the site
+the manual's own picture caught) and `OS7.BackupRestore.ps1:409`, and the
+nine-fold ZFS-property form of the same idiom is now one private helper —
+see **#119**, which is that idiom rather than this instance.
+
+Proof, on the machine and not in a self-test: the cmdlet returns a status
+object and `exit 0`, with `NewestReplication` empty — the `$null` the code
+always meant — where it previously threw.
+
+## #113 — the cmdlet surface cannot see a timer, and the unattended update check is one
+
+`Get-OS7Service` is the only view of systemd units the OS/7 layer offers. It
+opens with:
+
+```powershell
+$splat = @{ Type = 'service' }
+```
+
+— pinned, with no parameter to widen it (`powershell/OS7/OS7.Service.ps1`). The
+generic layer underneath accepts any type: `Get-SystemdUnit -Type` passes
+`--type=` to `systemctl list-units`, and omitting it lists everything.
+
+So `Get-OS7Service -Name os7-update-check.timer` returns nothing at all, on a
+machine where that timer is installed. It is not a stale name:
+`build/packages/os7-release/tree/usr/lib/systemd/system/` holds
+`os7-update-check.timer` beside `os7-update-check.service`, and the timer is the
+half that does the work — `OnCalendar=daily`, `RandomizedDelaySec=3600`,
+`Persistent=true`, written against RELEASE-AND-UPDATE-PLAN §6, *"on a managed
+fleet nobody types `Update-OS7`."*
+
+**The failure mode is quiet and it is the wrong kind of quiet.** The `.service`
+half IS a service and appears normally, so an operator asking about the
+unattended check sees a unit that is `inactive/dead` — which is correct and
+completely uninformative, because a template service pulled by a timer is
+supposed to look like that. Whether the mechanism is *armed* is a property of
+the timer, and the surface has no way to ask. §6's whole promise is a check that
+happens without anyone typing anything; there is currently no cmdlet that can
+confirm it will.
+
+`Set-OS7Service -StartupType` has the same shape from the other side: it reaches
+`Set-SystemdUnitStartup`, which is type-agnostic, so **enabling the timer works
+and looking at it does not.** A surface where the write succeeds and the read
+returns nothing is worse than one where both fail.
+
+~~Until it is widened, the timer is inspected through the generic layer, and the
+manual says so rather than pretending otherwise:~~
+
+```powershell
+Get-SystemdUnit -Name os7-update-check.timer -Detailed
+```
+
+**Fixed 2026-08-29, as a NOUN rather than a widening** — the open decision this
+entry left ("either `Get-OS7Service -Type`, or a separate noun for timers")
+resolved to the separate noun, recorded as POWERSHELL-SURFACE-PLAN P9. Windows
+itself keeps services.msc and taskschd.msc apart, and `Get-Service` does not
+list scheduled tasks either: `Get-OS7Service` stays deliberately
+services-only, and `Get-OS7ScheduledTask` (with `Enable-/Disable-/Start-/
+Register-/Unregister-`) is where timers live, over the Systemd layer's new
+`Get-/New-/Remove-SystemdTimer`. The workaround paragraph above is superseded:
+`Get-OS7ScheduledTask os7-update-check.timer` answers, and its `Healthy` names
+the armed question this entry said no cmdlet could ask (including the
+enable-without-start state, #115). Verified by `check-scheduledtask-logic.py`
+(64 checks, recorded fixtures), `Test-SystemdModule` (76, recorded real
+output), the same cmdlets run against real systemd 259 in an os7img container
+(register → run → trap → refusal → unregister — and a mask refused with the
+mask intact, a `%` surviving to the filesystem literally — all asked back),
+and typed at an installed machine for the manual. The manual's chapter-6
+workaround text was rewritten with it.
+
+## #114 — a captured terminal slice must be replayed at the geometry the guest believed it had
+
+The manual's console pictures are made by capturing the bytes one command
+produced and replaying them into a terminal emulator, then painting the result
+with the PSF the image ships. Three runs of `shoot-manual.py` produced garbage
+before the pictures were right, and all three failures were the same mistake
+seen from different sides.
+
+**The mistake:** the emulator's size, and the slice's starting point, have to
+match what the guest thought was true when it emitted the bytes. PowerShell
+positions with ABSOLUTE cursor moves — `ESC[24;80H` before every repaint —
+because PSReadLine redraws the line being edited on each keystroke. Those
+coordinates are meaningful only against the screen the guest had.
+
+| what was wrong | what the picture showed |
+|---|---|
+| harness set the guest to 100x30 with `stty`; PowerShell's formatter took the 100 and PSReadLine kept positioning in 80x24 | the command at the bottom right of an otherwise empty screen |
+| slice started at the prompt AFTER `Clear-Host`, leaving the clear sequence outside it, so the replaying terminal never cleared | every absolute move landed on a screen that was not the one the machine had |
+| slice included the keystroke-by-keystroke echo of a wrapped command | a staircase of half-typed commands, scrolling the real output away |
+
+**What fixed it:** leave the console at its own 80x24 — which is also
+SETUP-PLAN §2.4's reference geometry, so the emulator, the guest and the font
+cell all agree; start the slice BEFORE the `Clear-Host` so the clear is inside
+it and erases its own echo; and drop the input echo entirely, cutting at the end
+of the last complete rendering of the command.
+
+**`Remove-Module PSReadLine` does not help** and the log says why: the module
+comes back for the next prompt. It was tried, the repaints continued, and the
+byte stream is the evidence.
+
+**And one that was not about rendering at all.** An earlier version ran `sudo
+stty`, which needs no privilege. sudo printed a password prompt, the harness was
+not waiting for one, and the NEXT COMMAND was typed into it — `sudo pwsh
+-NoLogo` is seventeen characters and the log shows seventeen asterisks and
+*"Authentication failed"* three times. Nothing reported that a command had been
+eaten; the run simply never reached a prompt. That is #16 again, in its third
+costume: **never send a second thing before the first one's acknowledgement has
+actually arrived.**
+
+## #115 — `systemctl enable` on a timer arms the NEXT boot only, and nothing says so
+
+Measured on systemd 259 (259.5-0ubuntu3.4), in a container with systemd as
+PID 1, while building the scheduled-task surface. A freshly written timer unit,
+`daemon-reload`ed and then **enabled but not started**:
+
+```
+UnitFileState=enabled     ActiveState=inactive
+NextElapseUSecRealtime=   (empty)
+list-timers --all → "next": null
+```
+
+`enable` creates the `timers.target.wants` symlink, which is a statement about
+the **next boot**. Until then the timer is enabled, inactive, and **never
+fires** — and no tool on the machine reports a problem, because every
+individual answer is correct: the unit file IS enabled, the unit IS inactive,
+and an inactive timer having no next elapse is normal. The trap is the
+combination, and the combination is exactly what an administrator produces by
+running the one command whose name says "turn this on".
+
+One `systemctl start` later the same timer is `active/waiting` with a real
+`next`. So:
+
+* `Enable-OS7ScheduledTask` enables **and starts**, deliberately both — a verb
+  that did only what systemd's `enable` does would hand the operator this trap
+  with an OS/7 name on it.
+* `Get-OS7ScheduledTask`'s `Healthy` is `$false` for `enabled` + not `active`,
+  because that state means "armed for a boot that has not happened, firing
+  never until it does".
+* The generic layer deliberately does NOT fold the two: `New-SystemdTimer`
+  writes and verifies, and enabling/starting stay separate verbs there, so the
+  distinction remains visible to anything built on it.
+
+`Test-SystemdModule` replays the recorded state
+(`systemctl-show-timer-enabled-inactive.txt`, captured from exactly this trap);
+`check-scheduledtask-logic.py` holds the `Healthy` conclusion; and the
+container run confirmed the whole road: disable, raw `systemctl enable`, ask —
+`Healthy=$false`, `NextRun` unset, on real systemd.
+
+## #116 — a disabled timer is invisible to `list-timers --all` AND `list-units --all`, and `left`/`passed` in the JSON are not durations
+
+Two listing facts from the same measured session, both of which a
+Windows-shaped "list the scheduled tasks" surface trips over:
+
+**1. systemd does not load units nothing references.** A valid timer+service
+pair, present in `/etc/systemd/system` and `daemon-reload`ed but neither
+enabled nor active, appears in **neither** `systemctl list-timers --all` nor
+`systemctl list-units --all --type=timer`:
+
+```
+list-timers --all --output=json "os7-task-idle.timer"  →  []
+list-units  --all --type=timer  "os7-task-idle.timer"  →  []
+list-unit-files --type=timer    "os7-task-idle.timer"  →  [{"unit_file":"os7-task-idle.timer","state":"disabled",…}]
+systemctl show os7-task-idle.timer -p LoadState        →  LoadState=loaded   (on-demand)
+```
+
+`--all` reads as "everything" and means "everything loaded". A task registered
+`-Disabled` — or disabled by an operator who intends to re-enable it — would
+simply vanish from a listing built on either command, which is #113's shape
+arriving a second time. `Get-SystemdTimer` is therefore a **union** of
+`list-timers` (elapses) and `list-unit-files` (existence), with a point query
+falling through to `systemctl show`, whose on-demand loader answers for
+anything.
+
+**2. `list-timers --output=json` names two fields for durations and fills them
+with something else.** `next` and `last` are microseconds since the epoch and
+are real (`last` is `0`, not null, for never-fired). `left` came back **equal
+to `next`, byte for byte** — an absolute timestamp under a name that promises
+a countdown — and `passed` was equally unrelated to any elapsed time on the
+clock. Nothing in this repository reads either field; anything that starts to
+should measure first.
+
+Unlike journalctl's JSON (#113's session, point 2 of the Systemd module
+header), list-timers' numbers ARE numbers — so the two JSON emitters in one
+tool family disagree about whether a timestamp is a string, which is its own
+small argument for recorded fixtures over remembered shapes.
+
+---
+
+## #117 — the BUILD HOST's filesystem decided the shipped permissions, and on Windows it lies: 27 world-writable paths in the ISO, two of them systemd unit directories
+
+Found 2026-08-30 on the x64 Windows host, within an hour of the workbench
+(`installer/testing/os7lab.py`) being able to ask an installed machine a
+question. `ls -la /etc/ssh` on a booted OS/7 machine showed `drwxrwxrwx`, and
+the trail led back past the installer, past the ISO, to `cp -a`.
+
+**The chain, every link measured.**
+
+1. `build/build.sh` stages the authored tree with `cp -a
+   "${SRC_CONFIG}/includes.chroot" "${WORK}/config/includes.chroot"`, and
+   `cp -a` preserves modes.
+2. On this host the repository is a **Docker Desktop bind mount**, and it
+   presents every path as `0777`. Asked inside the build container itself:
+
+   ```
+   stat -c "%a %n" /work/build/config/includes.chroot/etc  →  777 …/etc
+   ```
+
+3. live-build copies `config/includes.chroot/` into the image verbatim.
+4. So the shipped squashfs of **OS7-1.0.0.159-amd64.iso** carried **27**
+   world-writable files and directories — `find /mnt/sq -xdev \( -type f -o
+   -type d \) -perm -0002 ! -perm -1000` — and they are *exactly* the paths the
+   authored tree touches. `/opt`, `/var`, `/boot`, `/srv`, which it does not
+   touch, are a correct `755`.
+
+**What is in the 27.** `/`, `/etc`, `/usr`, `/etc/ssh`,
+`/etc/ssh/sshd_config.d` and the config file in it, `/etc/xdg/autostart` and
+two `.desktop` files in it — and
+
+```
+drwxrwxrwx  /usr/lib/systemd/system
+drwxrwxrwx  /usr/lib/systemd/system-generators
+```
+
+Any local user can write a unit or a generator into those, and systemd runs
+both **as root** on the next boot. That is a local privilege escalation in the
+shipped product, not a hygiene complaint.
+
+**Why nobody saw it.** A native mount carries real modes, so the Mac never
+produced this image, and amd64 ISOs have only been built on Windows since
+2026-08-28 (SESSION-AMD64-ON-WINDOWS.md). Seven checks were green on the
+affected ISOs because not one of them asked about a mode. `check-image.py` read
+the *content* of files out of the squashfs and never their permissions.
+
+**The rule, and it is the general one.** A build must not depend on what the
+host filesystem is willing to say about itself. `build.sh` now DECLARES the
+modes after staging — `find -type d -exec chmod 0755`, `find -type f -exec
+chmod 0644`, then the executables by name — and verifies its own work with
+`find -perm -0002`, refusing the build if anything is left. Two hosts must
+produce the same image, and that is only possible if neither of them is asked.
+
+**And the check that makes it stay fixed** is not the build's own. `git` is the
+one authority that reports the same mode on both hosts — it stores `100644` or
+`100755` and nothing else — so `check-image.py` asks git what each authored
+file should be and asks the SHIPPED squashfs what it is, plus a blanket "is
+anything world-writable". Both went red against 1.0.0.159 before the fix
+existed, which is the only reason to believe they check anything (the rule
+about a diagnostic being checked against the thing it claims to check).
+
+One deliberate exception is named there: hook 0075 chmods
+`/etc/update-motd.d/00-os7-header` to 0755 because `run-parts` only runs what
+is executable, and it verifies that itself.
+
+---
+
+## #118 — no installed OS/7 machine has SSH host keys, so sshd dies on every connection, and `ConditionFirstBoot` is why
+
+Measured 2026-08-30 on a machine installed by `run-s5.py install` from
+OS7-1.0.0.159-amd64.iso. `openssh-server` is in `os7-base.list.chroot` and
+installed (`1:10.2p1-2ubuntu3.5`); `ssh.socket` is enabled, `ssh.service` is
+socket-activated. The first connection attempt ever made to one of these
+machines produced:
+
+```
+sshd[2090]: sshd: no hostkeys available -- exiting.
+systemd[1]: ssh.service: Failed with result 'exit-code'.
+systemd[1]: ssh.service: Start request repeated too quickly.
+```
+
+`/etc/ssh/ssh_host_*` does not exist. **Remote access to an installed OS/7
+machine is impossible**, permanently, and nothing on the machine says so until
+something tries to connect.
+
+**The generator exists and never ran.** Ubuntu ships
+`sshd-keygen.service` — `ExecStart=ssh-keygen -A` — and it is `enabled`. Its
+status:
+
+```
+Active: inactive (dead)
+Condition: start condition unmet
+           └─ ConditionFirstBoot=yes was not met
+```
+
+This is **#33 in its quietest form**: an enabled unit whose condition fails has
+not failed, it is `inactive (dead)`, and nothing anywhere reports a problem.
+
+**And os7-setup is not the culprit — it does its half right.**
+`installer/src/OS7.Setup/Steps/SystemSteps.cs:327` writes an EMPTY
+`/etc/machine-id` into the target, with the correct reason recorded above it
+(a machine-id copied from the live medium would make every machine the same
+one), and the shipped squashfs carries an empty machine-id too (0 bytes,
+measured).
+
+**MEASURED ON A FIRST BOOT, 2026-08-30**, on a machine `os7lab.py install` had
+produced twenty minutes earlier — `journalctl -b` on the only boot it has had:
+
+```
+systemd[1]: Initializing machine ID from random generator.
+first-boot-complete.target … skipped, unmet condition ConditionFirstBoot=yes
+sshd-keygen.service        … skipped, unmet condition ConditionFirstBoot=yes
+/run/systemd/first-boot: No such file or directory
+```
+
+So systemd finds the machine ID uninitialised, initialises it — the first-boot
+path, in so many words — and does **not** raise the first-boot flag, in the
+same boot. The two are decided separately and they disagree.
+
+**The consequence is wider than sshd.** Nothing gated on `ConditionFirstBoot`
+runs on this product: `first-boot-complete.target` is skipped as well, and
+anything that later hangs itself off that target would be skipped with it.
+Why systemd does not raise the flag while taking the path that raises it is
+**still open**, and it is now cheap to investigate: the bench installs a
+machine and snapshots it before boot one.
+
+**FIXED 2026-08-30 without answering that question**, because the answer is not
+needed to stop relying on the flag. `os7-sshd-keygen.service` (in the
+`os7-release` package, shipped enabled by symlink) runs `ssh-keygen -A` under
+`ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key` — the condition OS/7's own
+first-boot units already use, and one this product controls rather than one
+systemd computes. `check-image.py` asserts three things about it: the unit is
+present, something wants it, and **the image ships no host keys of its own**,
+because baked-in keys would give every machine in the world the same identity —
+a far worse defect than the one being fixed.
+
+**What was green while this was true.** `check-ssh-login.py` passes, and it is
+not wrong: it runs a real sshd against an `os7img:*` **container** built from
+the ISO. #93 said a container made from an ISO is not the ISO; this extends it
+one step further — it is not the INSTALLATION either. What a container inherits
+from the image build, an installed machine gets from its own first boot, and
+those are different events.
+
+---
+
+## #119 — `(collection | Select-Object -Last 1).Property` is `$null.Property` when the collection is empty, and under `Set-StrictMode` that throws — the empty machine is the normal one
+
+`powershell/OS7/OS7.psm1:53` sets `Set-StrictMode -Version Latest`, which is
+right, and which turns reading a property off `$null` from a silent `$null`
+into a terminating error. The idiom that meets it is everywhere:
+
+```powershell
+$newestRemote = ($targets | Where-Object { $_.NewestReplicated } |
+    Sort-Object NewestReplicated | Select-Object -Last 1).NewestReplicated
+```
+
+When `$targets` is `@()` the pipeline produces nothing, `Select-Object -Last 1`
+produces `$null`, and the trailing `.NewestReplicated` throws:
+
+```
+Get-OS7BackupStatus: The property 'NewestReplicated' cannot be found on this
+object. Verify that the property exists.
+```
+
+**And the empty case is not the exotic one — it is a fresh install.** No
+replication targets, no snapshots, no backup history: that is every machine on
+its first day, and it is the machine an administrator is most likely to be
+looking at.
+
+**This is #112's idiom, and #112 had not been fixed at all.** That note —
+written the day before — diagnoses the same two lines correctly, ends with
+"the fix is to take the value in two steps", and no code was changed. So the
+first thing this note records is not a subtle recurrence but a plain one: a
+defect stayed shipped for a day with its own diagnosis sitting in the repository
+beside it, and what found it again was a tool that asked a MACHINE rather than
+a person re-reading the note.
+
+The second thing is the part #112 did not see. The two lines it names are not
+two mistakes, they are one idiom, and it appears eleven more times: `.Creation`
+at `OS7.Backup.ps1:331` — the site the administrator manual's own picture
+caught — `.Created` at `OS7.BackupRestore.ps1:409`, and **nine** occurrences of
+
+```powershell
+(Get-ZfsProperty -Name $d -Property canmount |
+    Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+```
+
+across `OS7.psm1`, `OS7.Update.ps1` and `OS7.BackupTarget.ps1`. Two of those
+nine already wrap themselves in `try { } catch { $null }` and one tests
+`if ($theirGuid)` on the very next line — the callers were all written
+expecting `$null`, and StrictMode was giving them a terminating error instead.
+Fixing an idiom at the site where it was caught leaves the idiom.
+
+**FIXED 2026-08-30 — the idiom, not the sites.** Thirteen occurrences, all
+gone:
+
+* `OS7.Backup.ps1:331, 965, 967` and `OS7.BackupRestore.ps1:409` name the
+  selection in a variable and read the property only if there is one. These
+  are the four over a genuinely optional collection.
+* The nine `Get-ZfsProperty … | Where-Object Name -eq X | Select -First 1).Value`
+  sites are now one private helper, `Get-OS7ZfsPropertyValue` in `OS7.psm1`.
+  Private — it is not in `OS7.psd1`'s `FunctionsToExport`, so the surface is
+  still 194 functions and P1/P4 are untouched: nobody types this. Z1 is
+  untouched too, because the ZFS call is still `Get-ZfsProperty`.
+
+Proof is on a machine, not in a self-test: the fixed module was pushed to a
+running bench with `os7lab.py push` and `Get-OS7BackupStatus -SkipTargets`
+returned a status object and `exit 0`, `NewestReplication` empty. **The
+self-test could not have shown this** — `Test-OS7Backup` was 63 green
+throughout, before and after, because it never calls the cmdlet on a machine
+with nothing in it.
+
+**How it was found, and why that matters.** Not by a check — by
+`installer/testing/run-surface.py`, which types every Get- and Test- cmdlet at
+a booted machine and records what came back. Seventy-seven functions, one
+pass, and `Get-OS7BackupStatus -SkipTargets` came back `error` with the message
+above. The module's own `Test-OS7Backup` is green (63 checks) and
+`check-image.py` is green, because neither of them calls the cmdlet on a
+machine with nothing in it.
+
+**It is already visible in a shipped document.** `docs/manual/transcripts/92-backup-status.txt`
+— the administrator manual's own picture of `Get-OS7BackupStatus -SkipTargets`,
+taken from a machine by `shoot-manual.py` on 2026-08-29 — is not output. It is
+this exception, at line 944. The manual ships a screenshot of the defect, which
+is what happens when pictures are taken from a machine and nothing reads them
+back.
+
+---
+
+## #120 — `Before=` on a socket that is `Before=sockets.target` builds an ordering cycle, and systemd breaks it by DELETING THE SOCKET
+
+Introduced and found on 2026-08-30, both within an hour, and the note is kept
+because the mistake is easy to make again and invisible from every angle except
+one.
+
+**The symptom.** After a boot, an installed machine listens on nothing:
+
+```
+ss -tlnp | grep :22                        ->  (no rows)
+systemctl is-active ssh.socket ssh.service ->  inactive / inactive
+systemctl is-enabled ssh.socket            ->  enabled
+journalctl -b -u ssh.socket                ->  -- No entries --
+```
+
+Enabled, wanted by an active `sockets.target`, its symlink in place since long
+before the boot — and **not one journal line about it**. It was never even
+skipped; no job for it was ever scheduled.
+
+**The cause, in systemd's own words**, found only by grepping the whole boot
+journal rather than the unit's:
+
+```
+sockets.target: Found ordering cycle: ssh.socket/start after
+  os7-sshd-keygen.service/start after basic.target/start after
+  sockets.target/start - after ssh.socket
+sockets.target: Job ssh.socket/start deleted to break ordering cycle
+```
+
+`os7-sshd-keygen.service` (#118's fix, written an hour earlier) said
+`Before=ssh.service ssh.socket`. A `.service` gets `After=basic.target` from
+DefaultDependencies; `basic.target` is after `sockets.target`; and `ssh.socket`
+itself declares `Before=sockets.target`. Naming the SOCKET in `Before=` closes
+the loop, and systemd's way out of a cycle is to delete one job from it — here,
+the socket's.
+
+**So the fix for #118 caused a worse version of #118.** Before it, sshd died
+per connection and `ssh-keygen -A` repaired the machine. After it, the socket
+never started at all, and no amount of key generation would help. The window
+where it looked fine is the nastiest part: whether the machine is reachable
+depends on which job systemd chooses to delete, so it worked on some boots.
+
+**The fix is Ubuntu's own ordering, which had it right.**
+`/usr/lib/systemd/system/sshd-keygen.service` says
+
+```
+Before=ssh.service sshd.service sshd@.service
+WantedBy=ssh.service sshd.service sshd@.service ssh.socket
+```
+
+— `Before=` names only the SERVICES, and the direction is `WantedBy`, not
+`Wants`. The socket may start whenever it likes; what must be true is that the
+keys exist before sshd RUNS, and sshd runs when the socket triggers it. Reading
+the unit that already solves the problem is cheaper than reasoning about which
+orderings are safe.
+
+**Measured after the change**, same machine, next boot: `ssh.socket` active,
+zero "ordering cycle" lines in the journal, ssh answering from outside with no
+intervention.
+
+**Two rules out of this.**
+
+1. **Never order a `.service` `Before=` a socket unit that is itself
+   `Before=sockets.target`.** Order before the service the socket triggers.
+2. **`journalctl -u <unit>` is not how you find out why a unit did not run.**
+   The decision to delete its job is logged against `sockets.target`, not
+   against the unit, so the unit's own journal is empty and reads as "nothing
+   happened". `journalctl -b | grep <unit>` is what finds it.
+
+`check-image.py` now asserts that this unit's `Before=` does not name
+`ssh.socket`, and that both `ssh.service.wants` and `ssh.socket.wants` carry
+its symlink.
+
+**Confirmed in a shipped image**, OS7-1.0.0.163-amd64.iso, built after the
+change — the whole `check-image.py` run is green and the three ssh assertions
+read:
+
+```
+ok  the image carries OS/7's ssh host key unit — present
+ok  and ssh.service and ssh.socket both want it, so it will actually run — enabled
+ok  and it does not order itself before ssh.socket (that cycle deletes the
+    socket, #120) — Before=ssh.service sshd.service sshd@.service
+```
+
+Two measurements, deliberately both: the machine one says the socket listens
+after a boot, and this one says the ISO carries the ordering that makes it so.
+The first without the second would have proved a hand-edited unit; the second
+without the first would have proved a file.
+
+## #121 — `$LASTEXITCODE` is rewritten only when a native command COMPLETES, so a bare read is either a StrictMode error or an EARLIER command's code
+
+Found on 2026-09-01 by running `check-be-logic.py` on the x64 Windows host,
+where its fake `zfs` — an extensionless script — is a file PowerShell finds but
+cannot start. The error was:
+
+```
+Invoke-ZfsNative: The variable '$LASTEXITCODE' cannot be retrieved because it has not been set.
+```
+
+— a message about a variable, from the one function whose job is to report what
+a command did.
+
+**Both failure shapes were then measured in one pwsh 7.6.5 session** rather
+than reasoned about:
+
+1. A command that does not exist **throws** `CommandNotFoundException` — that
+   path is fine and was never the problem.
+2. A command that is **found but cannot be started** (the extensionless file on
+   PATH) does **not throw**: the pipeline continues with empty output and
+   `$LASTEXITCODE` is left exactly as it was. In a fresh session that is
+   *unset*, and the next read is a terminating StrictMode error. After any
+   earlier native call it is that call's code — so `& zfs list` returned
+   `ExitCode = 0` with empty output, which every caller reads as **"the command
+   succeeded and there are no datasets"**. A verification step that never ran,
+   reporting success, is the exact bug shape this repository keeps paying for.
+
+**The repo half-knew.** `Get-OS7PackageDrift` and `Get-OS7OsReleaseField` have
+carried the guarded read since 2026-08-26, with a comment measuring the same
+engine behaviour against a `.cmd` shim — but the six command RUNNERS
+(`Invoke-ZfsNative`, `Invoke-OS7Native`, `Invoke-TimeCommand`,
+`Invoke-NetCommand`, `Invoke-SystemdCommand`, `Invoke-DirectoryCommand`), whose
+entire output is an exit code, all read it bare, and so did `Move-OS7Home`'s
+copy-verification `diff` — the worst possible site for shape 2.
+
+**The idiom, now everywhere a native exit code is read:**
+
+```powershell
+$global:LASTEXITCODE = $null          # reset: a stale code cannot be read as this command's
+$out = & $exe @argv 2> $errFile
+$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+```
+
+`$null` then means **"never completed through the pipeline"** and is its own
+outcome: the throwing runners raise `"<line>` never completed: `<exe>` was
+found but could not be started" (with stderr attached), the non-judging runners
+return `ExitCode = $null` — which compares unequal to 0, so every existing
+caller already treats it as a failure rather than a success.
+
+**The mechanism is `check-ps-traps.py` class five**, because #112 already
+proved a note is not a fix: any `$LASTEXITCODE` read outside the guard, in any
+module file, fails the check. Baseline 0. On the day it was added it confirmed
+all eight sites fixed and found no ninth.
+
+## #122 — a path Docker has bind-mounted comes back as "exists" to `mkdir` and "absent" to `stat`, and `exist_ok=True` does not save you
+
+Found on 2026-09-02 on the **x64 Windows host** (WSL2 + Docker Desktop) while
+cutting the 1.0.0.174 preview. It cost four attempts across three different
+tools before the pattern was visible, and the first diagnosis was wrong.
+
+The failure, three times, at three paths:
+
+```
+make repo-amd64
+  mkdir -p …/out/os7-repo …/out/os7-gnupg
+  mkdir: Already exists
+  make: *** [Makefile:212: repo-amd64] Error 1
+
+run-s5.py install
+  os.makedirs(self.dir, exist_ok=True)
+  FileExistsError: [Errno 17] File exists: '…/.vm/s5'
+
+run-s5.py install, next path
+  FileExistsError: [Errno 17] File exists: '…/.vm/s5/tpm'
+```
+
+Measured on `…/.vm/s5`, and this is the whole of it:
+
+```
+mkdir -p  …/.vm/s5            EEXIST
+stat      …/.vm/s5            ENOENT   (os error 2)
+Windows   Test-Path .vm\s5    False
+mkdir -p  …/.vm/zzz-probe     rc=0     (same parent, never bind-mounted)
+grep s5 /proc/mounts          nothing
+```
+
+**The path exists to the syscall that creates and does not exist to the syscall
+that looks**, Windows agrees it is not there, and it is not a mount entry. A
+sibling in the same directory that Docker has never touched works normally.
+
+**What the three affected paths have in common is that this repository
+bind-mounts them into containers** — `out/os7-repo` is `-v …/out/os7-repo:/out`
+in the Makefile's `BUILD_REPO`, and `.vm/s5` and `.vm/s5/tpm` are the bench and
+its swtpm state, mounted into `os7-vm:amd64`. That is the pattern; the mechanism
+below it is NOT established here and is not claimed.
+
+**`exist_ok=True` is no defence, and the reason is worth knowing.**
+`os.makedirs` swallows `FileExistsError` only if a following `path.isdir()`
+agrees the directory is there. Here `isdir()` says no, so the exception is
+re-raised — the flag is defeated by exactly the contradiction it looks like it
+should absorb. Every Python harness in `installer/testing/` uses that idiom.
+
+**The workaround is cheap: create the directory from WINDOWS.** PowerShell's
+`New-Item -ItemType Directory` succeeds, and WSL then sees it immediately and
+`mkdir -p` returns 0. `wsl --shutdown` would presumably drop whatever is cached,
+but it also stops Docker Desktop's distro and was not tried.
+
+**The first diagnosis was wrong and is recorded because it was plausible.**
+Ubuntu 26.04 ships **uutils** coreutils rather than GNU's, and `mkdir: Already
+exists` is uutils' wording — so the first conclusion was that uutils' `mkdir -p`
+is not idempotent over several operands on drvfs, and the Makefile was patched
+to split the call. The rerun refuted it: it failed again, and `gnumkdir` — GNU's,
+in the same image — fails at the same path. The patch was reverted. What made
+the wrong answer attractive is that the message names **no path at all**, so
+there was nothing in it to point at the one operand that was special.
+
+Two things follow for anything that builds here:
+
+* **`mkdir -p` is not reliably idempotent on `/mnt/c` for a path Docker has
+  mounted**, so a build step that assumes it can lose an hour to a message that
+  says a directory both exists and does not.
+* **"Already exists" for something that does not exist is the least helpful
+  message in this file**, and it is worth recognising on sight: check the
+  Windows side before believing either half of it.
+
+---
+
+## #123 — `[System.IO.Directory]` has no `SetUnixFileMode`, and the spelling that reads more correct is the one that throws
+
+Found on 2026-09-07 while implementing `OS7.RemoteDesktop.ps1`, by
+`installer/testing/check-remotedesktop-logic.py` running the certificate
+generation on a real Linux filesystem. It had been written correctly, then
+"corrected" into the defect during review, which is the part worth keeping.
+
+The code creates `/etc/os7/remote-desktop`, sets its mode, and then generates a
+private key inside it. The first version used `[System.IO.File]::SetUnixFileMode`
+on the directory. That looks wrong — a directory is not a file — so it was
+changed to `[System.IO.Directory]::SetUnixFileMode`, which reads better and does
+not exist:
+
+```
+Method invocation failed because [System.IO.Directory] does not contain
+a method named 'SetUnixFileMode'.
+```
+
+Asked of .NET in `os7img:175` rather than of intuition:
+
+```
+Directory has SetUnixFileMode:   False
+File::SetUnixFileMode on a DIRECTORY:
+    ok -> OtherExecute, OtherRead, GroupExecute, GroupRead, UserExecute, UserWrite, UserRead
+Directory.CreateDirectory(path, mode) overload:   True
+```
+
+`File.SetUnixFileMode` **is** `chmod(2)` and takes any path, directory included.
+`Directory` has only the `CreateDirectory(path, unixCreateMode)` overload, for
+the create-with-mode case. So the pair is asymmetric, and the symmetric-looking
+spelling is a `MethodInvocationException` at run time — not at parse time, which
+is why `check-ps-traps.py` cannot see it and only running the code can.
+
+**What made it cheap:** the failure was inside a `try`/`catch` that tolerated a
+`chown` failing in a container, so it produced no key and no error — the check
+reported "a key was generated to inspect: FAIL" and nothing else. Recording the
+swallowed exception in the result (`$r.key_generation_error`) turned one
+useless assertion into the message above. A `catch` that discards is a
+diagnostic that has been switched off.
+
+**The rule:** a .NET method that PowerShell resolves at run time is not checked
+by anything until it runs. Where one is used for a filesystem or platform
+operation, the check that covers it has to execute it on the platform, and the
+catch around it has to keep the exception.
+
+---
+
+## #124 — a systemd unit that has never been started is in NO list, so "is it running" comes back EMPTY rather than "no"
+
+Found on 2026-09-07 on a booted OS/7 machine, by reading
+`Get-OS7RemoteDesktop` on an installation where Remote Desktop had never been
+turned on. `Running` printed as blank where `False` was the truth.
+
+```
+Running is null:            True
+RunningReason:              (empty)
+Get-SystemdUnit returned:   0        # for gnome-remote-desktop.service
+```
+
+The unit file is on disk the whole time. systemd lists **loaded** units, and a
+unit that is disabled and has never been started is not loaded — so it is in
+neither `list-units` nor the default `Get-SystemdUnit` answer, and the cmdlet
+above it, written as `if ($unit) { $running = … }`, left its variable at the
+`$null` it was initialised to.
+
+**This is BUILD-NOTES #116 arriving in a third place.** The timer surface
+already had to merge `list-unit-files` with `list-timers` because a timer that
+is neither enabled nor active is invisible to both; the same fact about systemd
+reaches any cmdlet that asks "is this unit running" about a unit nobody has
+started yet, which for an opt-in feature is *every machine that has not opted
+in*.
+
+It matters because of the convention it breaks. `$null` means "could not be
+asked" everywhere in this surface (P6), and a machine reporting "cannot tell"
+about a daemon that is certainly not running sends an operator to look for a
+broken systemd. The three cases are now kept apart in `Get-OS7RemoteDesktop`:
+
+| what happened | answer |
+|---|---|
+| systemd threw | `$null` — it could not be asked |
+| no rows, and the unit file is on disk | `$false`, with the reason saying the unit has never been loaded |
+| no rows, and no unit file | `$null` — the question is about a machine this cmdlet does not understand |
+
+**The rule:** "systemd did not list it" is not "it is not there". Before writing
+`$null` for a unit, ask whether the unit file exists — the answer that is
+missing from the list is usually the answer the operator wants.
+
+---
+
+## #125 — `pam_faillock authfail` PREPENDED to a service breaks every login on it, and a prepend cannot wrap an `@include`
+
+Found on 2026-09-07 on a booted machine, by doing it: the allow-list and the
+lockout were written into `gdm-authd` as one block at the top of the auth
+stack, and afterwards the LOCAL console login — which had succeeded minutes
+before with the same password — failed three times in a row.
+
+What was written:
+
+```
+auth     required        pam_faillock.so preauth
+auth     required        pam_access.so   nodefgroup accessfile=…
+auth     [default=die]   pam_faillock.so authfail
+#%PAM-1.0                                              <- the service's own stack
+auth     [success=ok …]  pam_succeed_if.so user != root quiet_success
+auth     [success=1 …]   pam_authd.so
+```
+
+**`authfail` is meant to run AFTER the authentication modules** and record the
+failure they produced. Placed before them it runs before any password has been
+checked, and with `[default=die]` it ends the stack. `pam_access` was innocent:
+removing the two `pam_faillock` lines and changing nothing else made the same
+console login succeed and reach the desktop.
+
+The documented placement wraps the authentication modules:
+
+```
+auth  required           pam_faillock.so preauth
+@include common-auth                                   <- the modules
+auth  [default=die]      pam_faillock.so authfail
+auth  sufficient         pam_faillock.so authsucc
+```
+
+**and a block that is PREPENDED cannot wrap anything.** The service file ends in
+an `@include`; there is no position a prepending writer can reach that is after
+it. Ubuntu's answer is `pam-auth-update`, which edits `common-auth` itself — and
+that is every service on the machine, ssh and the text console included, which
+is a different and much larger decision.
+
+So v1 of the Remote Desktop feature ships the allow-list and **no lockout**, and
+says so in `Get-OS7RemoteDesktop` (`LockoutEnforced` is `$false`) and in
+`Test-OS7RemoteDesktop` rather than leaving a gap to be discovered.
+
+**The rule:** a PAM module whose documentation shows it wrapping other modules
+cannot be installed by a writer that only prepends. Check the shape of the
+insertion against the shape the module needs before writing the code, and test
+a login on the machine — a stack that parses is not a stack that authenticates.
+
+---
+
+## #126 — PAM has no trailing comments: a marker after a module's arguments IS an argument
+
+Found in the same session, in the same block, and it survived a working test
+because the module it was passed to ignored what it did not recognise.
+
+To make its own lines findable and removable, the code appended a marker:
+
+```
+auth  required  pam_access.so nodefgroup accessfile=/etc/security/os7-…  # os7-remote-desktop
+```
+
+`/etc/pam.d` is not a shell and not an ini file. A line is
+`type control module-path module-arguments`, and **everything after the module
+path is an argument** — so `pam_access` was handed `#` and `os7-remote-desktop`
+as two options. It happened to tolerate them; `pam_faillock` or a module with
+strict option parsing would not, and the failure would arrive as a login that
+does not work with nothing in the file that looks wrong.
+
+The fix is that a marker only ever occupies **its own comment line**, and OS/7's
+own module line is recognised by the file it names:
+
+```powershell
+$_ -notlike "*pam_access.so*$($script:OS7RdpAccessFile)*"
+```
+
+`check-remotedesktop-logic.py` asserts it directly — no module line the policy
+generates may contain a `#` at all — because this is invisible in a file that
+looks perfectly ordinary.
+
+**The rule:** every configuration format has its own idea of a comment, and
+three of them in this repository do not have one where it was assumed
+(`/etc/pam.d` here, `grd.conf`'s GKeyFile, and a PAM `access.conf` origin list).
+Put the marker on a line of its own, or identify the line by its content.
+
+---
+
+## #127 — a parameter the callee does not have, in the one call nobody had run
+
+Found 2026-09-07 by executing `Join-OS7Domain` for the first time. It called
+
+```powershell
+Set-SystemdUnitStartup -Name 'sssd' -Enabled -Confirm:$false
+```
+
+and that cmdlet takes `-Startup` with a `ValidateSet` of
+`Enabled`/`Disabled`/`Masked`. There is no `-Enabled`. PowerShell reports it at
+INVOCATION, not at parse time, so the file imports, the module loads, every
+other function works, and the defect exists only on the line nobody has
+executed.
+
+**What made it survive was the handling around it.** The call sits inside a
+`try` whose `catch` writes one line:
+
+```
+OS7-STEP sssd could not be started here: A parameter cannot be found that matches parameter name 'Enabled'.
+```
+
+That is one line among five in a successful join, it does not change the exit
+status, and the returned object still says `Joined = True`. And the machine
+looked right anyway, because this image ships `sssd` enabled already — so the
+step that did nothing was indistinguishable from the step that worked. On an
+image where sssd is not pre-enabled, the join would have left it un-enabled and
+the machine would have dropped out of the domain at the next boot, weeks later,
+with nothing to connect it to the join.
+
+Every other caller of that cmdlet in the repository was correct:
+`OS7.ScheduledTask.ps1` three times, `OS7.Service.ps1` once, all `-Startup`.
+The wrong one was in the only function that had never been executed.
+
+**Why no existing check caught it.** `check-installer-cmdlets.py` exists for
+exactly this class — it reads the C# for what `os7-setup` will type and asks
+PowerShell what will bind, and it found `-Root`/`-PasswordFile` against a
+cmdlet with `-TargetRoot`/`-Password` (#108). But its scope is the installer's
+calls into PowerShell. Nothing looked at PowerShell calling PowerShell, which
+is 194 functions calling each other.
+
+**The rule, now mechanised:** `check-ps-traps.py`'s sixth scan. For every call
+to a function the tree itself DEFINES, every `-Parameter` named in the call must
+resolve to a parameter that function declares — allowing PowerShell's own
+unambiguous-prefix rule (`-Start` for `-Startup`) and the common parameters. A
+call that splats is skipped, because its keys are not knowable from the source,
+and so is a callee with a `dynamicparam` block. Baseline 0.
+
+The scan was verified against the defect rather than trusted: the `-Enabled`
+call was re-introduced into a throwaway copy of the tree and the rule found it,
+naming file, line, callee and the parameter that does not exist.
+
+---
+
+## #128 — a password typed through a remote-desktop client is typed on the SERVER's keyboard layout, and a wrong one looks exactly like a rejected one
+
+Found on 2026-09-07, after it had already been written into a plan as a product
+defect and pushed to a public repository. That is the part worth keeping: the
+measurement was real, the reasoning was careful, and the conclusion was wrong.
+
+**The claim that was published.** A local account could sign in at the physical
+console GDM greeter and was rejected at the same greeter delivered over RDP.
+Both were measured going through the same PAM service (`gdm-authd`), the greeter
+logged `authd: Broker selected local` and `Sorry, that didn't work`, and
+`pam_unix(gdm-authd:auth): authentication failure` named the right user with the
+client's IP. The password field was photographed showing **exactly fifteen dots
+for a fifteen-character password**, which was taken as proof that the password
+had arrived intact. A defect was written up: "the authd local broker rejects a
+password the same account and the same PAM service accept at the console".
+
+**What was actually happening.** The password was `os7-s5-password`. The machine
+is installed with `XKBLAYOUT="de"` and the greeter has no GSettings input source,
+so it uses that. The test client was FreeRDP driven by `xdotool` into an Xvfb
+whose X keymap is US. **RDP carries SCANCODES, not characters**: the hyphen key
+of a US layout is `ß` on a German one. Fifteen keystrokes went in and fifteen
+dots appeared, and two of the characters underneath were not the ones typed.
+
+The whole thing collapsed in one test: the same account, the same client, the
+same everything, with the password changed to `alfabravo7` — letters and a digit
+only, no punctuation, no `y` or `z` (which German and US also swap). The login
+completed and the desktop came up over RDP, and `loginctl` showed
+
+```
+session 12: Name=os7admin Remote=yes RemoteHost=172.17.0.3
+            Service=gdm-authd Type=wayland Class=user State=active
+```
+
+**Why the dot count was not the check it looked like.** A password field shows
+one dot per keystroke and says nothing about which character each produced. It
+answers "did the keystrokes arrive", which was never in doubt, and reads as
+though it answers "did the password arrive", which was the question.
+
+**The rules this leaves.**
+
+1. **A credential used in an automated test across a keyboard boundary must be
+   layout-invariant** — ASCII letters excluding `y` and `z`, and digits. Where a
+   test must use a realistic password, the layouts on both sides have to be
+   pinned and asserted, not assumed.
+2. **Before writing up a rejected authentication as a defect of the
+   authenticator, prove the credential arrived.** Type it into a field that
+   echoes, or authenticate the same string through a path that shares nothing
+   with the one under test.
+3. **A product defect published is worse than a defect not found**, because it
+   is repeated. This one reached `docs/REMOTE-DESKTOP-PLAN.md` as RL14, HANDOFF
+   and a commit message before it was disproved, and the correction had to be
+   pushed to the same places.
+
+### The three log lines that were not evidence
+
+Read afterwards out of authd's own source and issue tracker (sourced, not
+measured here) — and this is the transferable half, because each of these read
+like a clue and none of them is one:
+
+* **`authd: Broker selected local` is the CORRECT outcome, not a symptom.** In
+  authd the "local" broker is a *sentinel, not an authenticator*: the manager
+  creates it first with an empty config and no D-Bus connection, and it exists
+  so authd can say "this user is not mine". It never verifies a password. With
+  `/etc/authd/brokers.d` empty — which OS/7 knows it is, C8a — every user
+  resolves to it. Reading this line as "authd tried and failed" is backwards.
+* **`Sorry, that didn't work. Please try again.` is GNOME Shell's own generic
+  message**, from the GDM JavaScript, logged by Ubuntu's shell/authd
+  integration. It names no module and carries no information about which one
+  failed. It appears in upstream reports whose actual cause was `pam_unix`
+  rejecting.
+* **`gkr-pam: stashed password to try later in open session` is emitted for a
+  correct and an incorrect password alike.** It records that an authtok
+  existed, not that it was right.
+
+And the line that WAS evidence, pointing the opposite way from how it was read:
+`pam_unix(gdm-authd:auth): authentication failure`. `pam_authd` returns
+`PAM_IGNORE` when only the local broker is available, and the control in
+`/etc/pam.d/gdm-authd` maps `ignore` to "carry on" — so that line proves the
+fall-through **worked** and authd was already out of the transaction. The module
+that rejected the password was `pam_unix`, the same module and the same
+`/etc/shadow` row that accept it at the console. That alone should have moved
+the search to the input path.
+
+One fact about the shipped image, worth knowing and NOT the cause here: OS/7
+carries authd **0.6.1** while upstream is at 0.6.4, and the gap contains
+`#1696`, which short-circuits the local-broker-only case to `PAM_IGNORE`
+earlier, and `#1713`, a mutex for the GDM conversation that is not
+goroutine-safe. Neither was implicated by any measurement above.
+
+---
+
+## #129 — `$x = if (…) { @() }` assigns NOTHING, so the empty branch is `$null` and `.Count` throws
+
+Found on 2026-09-07 on a booted machine, in a cmdlet that had just done its job
+correctly: `Unlock-OS7Account` cleared the account's tally, verified it, and then
+threw *"The property 'Count' cannot be found on this object"* on the way out.
+
+The code read:
+
+```powershell
+$still = if ($null -eq $after) { @() }
+         else { @($after | Where-Object { … }) }
+if ($still.Count) { throw … }
+```
+
+**An `if` used as an expression yields its branch through the PIPELINE, and a
+pipeline drops an empty collection.** `@()` written to the pipeline is nothing at
+all, so `$still` is `$null`, and `$null.Count` under
+`Set-StrictMode -Version Latest` is a terminating error. The same statement with
+a NON-empty branch works perfectly, which is why it survives every test where
+something is found.
+
+This is **BUILD-NOTES #92's mechanism in a third syntactic form**. #92 is the
+one about `return @($value)` unrolling on the way out of a function; #112/#119
+is the property read off a pipeline that may be empty. This is neither spelling
+and `check-ps-traps.py` sees none of them here, because the offending token is
+`if`.
+
+The same file carried it a second time, and there it was **silent**: 
+
+```powershell
+$lockedNames = if ($null -eq $locked) { $null }
+               else { @($locked | Where-Object { $_.Locked } | … ) }
+```
+
+On a machine where nobody is locked out the `else` branch yields an empty array,
+the assignment produces `$null`, and the cmdlet reports `LockedAccounts` as
+`$null` — which this surface reserves for *"could not be asked"*. A healthy
+machine would have read as an unanswerable one, with nothing throwing to say so.
+
+**The rule:** never let an empty collection travel through a pipeline to reach a
+variable. Assign the empty case directly and mutate:
+
+```powershell
+$still = @()
+if ($null -ne $after) { $still = @($after | Where-Object { … }) }
+```
+
+and read the count as `@($still).Count` if there is any doubt left. The three
+faces of this now cost this repository four separate debugging sessions.
+
+---
+
+## #130 — `return ,$collection` and `return $collection` are each wrong for one caller, and a CMDLET has a third option
+
+Found on 2026-09-07 in this module's own self-test, which reported the
+contradiction in one line:
+
+```
+FAIL  a session that vanished between list and show is SKIPPED   [ids=[10,c1] count=1]
+```
+
+Two sessions in the collection, and `.Count` of one. `Get-SystemdSession` ended
+with `return ,$out` — the comma that AD-PLAN **AL9** recommends for protecting an
+empty result from being unrolled into nothing. It does protect it, and it makes a
+NON-empty result a nested collection: the caller's `@(Get-SystemdSession)` sees
+one object (the list), while `Get-SystemdSession | ForEach-Object` still
+enumerates two. A cmdlet whose `.Count` and whose pipeline disagree is worse than
+either failure alone, because every quick check of it passes.
+
+The two spellings, and what each breaks:
+
+| | empty result | two results |
+|---|---|---|
+| `return $collection` | unrolls to **nothing**; `$x` is `$null` and `$x.Count` throws | two objects, correct |
+| `return ,$collection` | one empty collection, correct | **one** object that is a collection |
+
+AL9 records this as a dilemma with no safe spelling, and for a private helper
+that is true. **For a cmdlet it is not**, because a cmdlet has a caller contract
+the helper does not: emit the objects and let the caller write `@(...)`.
+
+```powershell
+return $out          # emits 0, 1 or many objects
+```
+
+`@(Get-SystemdSession)` is then an empty array for none and a two-element array
+for two, which is what every other `Get-` in these modules already does and what
+a PowerShell user expects. The rule is not "always use the comma" or "never" — it
+is that a function returning a collection must decide which contract it offers,
+and a cmdlet's is the pipeline's.
+
+This is the fourth face of the empty-collection family in this repository (#92
+the unroll on return, #112/#119 the property read off an empty pipeline, #129 the
+`if` used as an expression, and this). They share a cause: PowerShell has no way
+to say "a collection of zero things" through a pipeline.
+
+---
+
+## #131 — a git worktree made by Windows git cannot be built from WSL
+
+Found 2026-09-07, needing a reproducible build while another session edited the
+working tree. A `git worktree` at HEAD is the right answer to that, and #43
+already says how to build in one:
+
+> Build through the **Makefile**, which asks git on the host
+> (`scripts/os7-source-facts.sh`) and hands the three facts in.
+
+**On this host "the host" is two things.** Windows git created the worktree and
+wrote a Windows path into its `.git` file:
+
+```
+gitdir: C:/Users/BastianWirth/source/repos/OS7/.git/worktrees/os7-phase3-build
+```
+
+WSL git cannot follow `C:/…`. So `make build-amd64`, run through WSL's make,
+got nothing out of `os7-source-facts.sh`, handed no facts to the container, and
+`build.sh` refused:
+
+```
+!!! that path is outside this container. Build through the Makefile,
+!!! refusing to build an ISO whose version identifies nothing.
+```
+
+That refusal is #43's own guard and it worked exactly as intended — the
+alternative is the `1.0.0.0` ISO that made #43 necessary. The fix is one line:
+rewrite the pointer to the WSL form.
+
+```sh
+printf 'gitdir: /mnt/c/Users/…/OS7/.git/worktrees/<name>\n' > <worktree>/.git
+```
+
+**AND THE FIX HAS A REVERSE SIDE THAT BREAKS A CHECK.** With the WSL path in
+place, **Windows** git can no longer read the worktree, and anything run from
+PowerShell that asks git about it gets nothing. `check-image.py` reported
+
+```
+FAIL  the 0 authored includes.chroot files carry git's modes
+```
+
+Zero expected files — and the check is right to fail on that rather than pass,
+because `bool(want) and not wrong` refuses an empty expectation. Restoring the
+Windows pointer gave 12 files and a green run. So the pointer is a mode switch:
+the WSL form to build, the Windows form for everything driven from PowerShell.
+A worktree used from both sides needs it changed twice, which is worth knowing
+before an afternoon is spent on it.
+
+**The rule:** on a host where two gits disagree about what a path is, a
+worktree's `.git` file is a per-tool setting rather than a fact. Prefer the main
+checkout where possible, and when a worktree is genuinely needed — a build that
+must be reproducible while somebody edits the tree — set the pointer for the
+tool that is about to run and set it back afterwards.
+
+---
+
+## #132 — an installed amd64 machine has no serial console, so `run-phase3.py boot` cannot see it
+
+Found 2026-09-07, the first time `run-phase3.py` ran on the x64 Windows host.
+`install` passed and `walk` passed; `boot` timed out after 600 s with **398
+bytes** of serial output, ending at
+
+```
+BdsDxe: starting Boot0002 "OS/7" from HD(1,GPT,…)/\EFI\OS7\shimx64.efi
+```
+
+**The machine was fine.** Opened as an `os7lab` bench and photographed, it
+showed GRUB's branded menu, kernel messages, `Please unlock disk os7_root:`,
+and after the passphrase a login prompt, the right boot environment in the
+MOTD, and a PowerShell prompt. `/proc/cmdline` says why none of it was on the
+wire:
+
+```
+BOOT_IMAGE=/BOOT/os7_…@/vmlinuz-7.0.0-30-generic root=ZFS=rpool/ROOT/os7_… ro
+boot=zfs crashkernel=2G-4G:320M,…
+```
+
+**No `console=` at all.** The live medium gets `console=ttyS0` because the
+harness puts it on the direct-boot command line; the installed system inherits
+nothing, so it speaks to tty0 only. On arm64 the serial port is the primary
+console, the same harness sees everything, and this stayed invisible until the
+vmarch.py port was actually exercised on amd64.
+
+It is not a regression: `install`, which uses the same Setup, passed in the
+same run.
+
+**The trap is the shape, not the parameter.** A harness that observes a machine
+through one channel is asserting something about that channel as much as about
+the machine, and "nothing arrived" is indistinguishable from "nothing happened".
+600 seconds of silence read exactly like a machine that does not boot, and the
+only thing that separated them was looking at the screen.
+
+Two fixes, deliberately not chosen here: Setup could write a console onto every
+installed command line — defensible for a server product, and a D-level
+decision because it changes what the console IS on every machine — or the boot
+phase could observe the screen on amd64 as `walk` already does, which also
+needs a command channel for its ten assertions and would make the phase a
+different shape per architecture. docs/SESSION-PHASE3-ON-AMD64.md carries the
+measurements.
+
+## #133 — `readlink -f` on a built image's symlink answers about the READING system, exits 0, and can be right for the wrong file
+
+Found 2026-09-07 while making the install medium Secure-Boot-bootable. The
+loader has to come out of the squashfs the build just wrote, and the file to
+copy is
+
+```
+/usr/lib/shim/shimx64.efi.signed -> /etc/alternatives/shimx64.efi.signed
+                                 -> /usr/lib/shim/shimx64.efi.signed.latest
+```
+
+an **absolute** two-hop symlink through the alternatives system. Extracted to
+`/tmp/sb` and asked from the build container:
+
+```
+$ readlink    /tmp/sb/usr/lib/shim/shimx64.efi.signed
+/etc/alternatives/shimx64.efi.signed
+$ readlink -f /tmp/sb/usr/lib/shim/shimx64.efi.signed
+/etc/alternatives/shimx64.efi.signed          <- exit 0
+$ [ -e /etc/alternatives/shimx64.efi.signed ] ; echo $?
+1                                              <- and it is not there
+```
+
+**Exit 0, and a path that looks exactly like the answer.** It is the image's
+own namespace, so it reads as correct to anybody checking the output rather
+than the file; `[ -n "$x" ]` passes. Only opening it fails, and that is one
+`cp` later, in a build whose earlier lines all succeeded.
+
+**The worse case is the one that does not fail at all.** The build container is
+one `apt-get install shim-signed` away from having
+`/etc/alternatives/shimx64.efi.signed` itself — and then `readlink -f` returns
+a real, readable, correctly Microsoft-signed file: **the container's shim, not
+the product's.** Every check that asks "is this shim signed by Microsoft" says
+yes. The medium would ship a loader from a different snapshot than the machine
+it installs, and nothing in the build would have a word to say about it.
+
+So `build/lib/efi-remaster.sh` walks the chain itself, inside the extraction
+root, and never calls `readlink -f`:
+
+```sh
+while [ -L "${root}${p}" ]; do
+    t="$(readlink "${root}${p}")"
+    case "${t}" in /*) p="${t}" ;; *) p="$(dirname "${p}")/${t}" ;; esac
+done
+```
+
+which is the same resolution `grub-install` performs inside the installed
+system — so the medium's shim and the disk's shim are the same bytes, and
+`installer/testing/check-image.py` requires that rather than hoping for it.
+
+**The general rule: a path read out of one root must be resolved in that root.**
+It is why check-image.py chroots to run `os7-setup --version` instead of `cd`-ing
+into the squashfs (see its header), and it will bite anything that reads a built
+image from outside — `readlink -f`, `realpath`, `cp -L`, `install`, Python's
+`os.path.realpath`, all of them silently.
+
+## #134 — no harness could boot the install medium through its own bootloader, which is why an unsigned one lived on it for months
+
+Not a bug in any file — a hole in the observation, and the reason
+BUILD-NOTES has a #133 at all.
+
+Every VM harness in `installer/testing/` boots the live medium by handing QEMU
+`-kernel` and `-initrd` lifted out of the ISO (`vmscreen.py`, and `os7lab.py`
+whenever `--iso` is given, which sets a command line unconditionally). Three
+older scripts do `-cdrom … -boot d` (`run-zfs.py`, `run-backup.py`,
+`run-s3.py`) — and `vmarch.py` deliberately hands them the **non**-Secure-Boot
+OVMF, with a comment saying why: the medium's GRUB was unsigned, so the
+MS-keyed firmware would refuse it.
+
+The result: **the ISO's bootloader had never run in this repository**, on
+either host. `run-phase3.py boot` proves an installed disk boots; nothing
+proved the medium did, and the medium was the artefact being shipped. Under
+Secure Boot — the amd64 factory setting — a Microsoft-keyed firmware answered:
+
+```
+BdsDxe: failed to load Boot0002 "UEFI QEMU DVD-ROM QM00005 " …
+        : Access Denied -- rejected probably by Secure Boot
+>>Start PXE over IPv4.
+```
+
+measured 2026-09-07 on `OS7-1.0.0.175-amd64.iso`, and the fixed medium
+(1.0.0.192) reaches Setup's welcome screen under the same firmware.
+
+**Two things worth carrying.** First, the same shape as #132: a harness that
+observes through one channel asserts something about the channel too, and here
+the channel skipped the component under test entirely. Second, the medium is
+cheaper to observe than anybody assumed — **OVMF and GRUB both write to the
+serial line on amd64**, so the whole boot menu is legible as text without a
+single screendump:
+
+```
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00005 "
+GNU GRUB  version 2.14
+*Install OS/7 (amd64)
+ OS/7 (amd64) — live session, without installing
+ The highlighted entry will be executed automatically in 10s.
+```
+
+Anything asserting on the medium's boot can therefore assert on strings, which
+is what a harness should do; the screendump is only needed once the kernel has
+taken the console, because the installed system carries no `console=` (#132).
+
+## #135 — `expect` matches the ACCUMULATED buffer, so waiting twice for the same pattern returns instantly
+
+**2026-09-08, the first run of `run-secureboot.py policy`.** The phase waits
+for the passphrase prompt, types the passphrase, and waits again — for a login
+prompt, or for the passphrase prompt a second time, which would mean the
+keyslot did not open:
+
+```python
+i = c.expect([r"unlock disk", …], 900, "the passphrase prompt")   # matched
+c.send(PASSPHRASE)
+i = c.expect([r"\blogin:", r"unlock disk"], 600, "a login")       # matched at once
+```
+
+The second call returned **immediately with index 1**, out of the text the
+FIRST one had already matched, and the harness reported that the passphrase
+had been rejected on a machine that was about to accept it. There is no
+"still waiting" line in the log, which is the tell: the failure took no time
+at all.
+
+`Console.buf` accumulates until something calls `drop()`, and `ask()` drops
+before every command — which is why nothing else in the repository had hit
+this. A bare `expect` after another `expect` is the one place it bites.
+
+**The rule: `drop()` before waiting for something you have just waited for.**
+And it is worth waiting for the negative case explicitly rather than letting a
+timeout stand in for it — a rejected passphrase and a hung boot are different
+findings, and a 600-second silence does not distinguish them. This is #16's
+family: there the marker was one the typed command carried, here it is one the
+previous wait had already consumed.
+
+## #136 — booting through the firmware makes its NVRAM state, and `-boot d` does not overrule OVMF's BootOrder
+
+**2026-09-08, the first two `run-secureboot.py all` runs.** The phase that
+boots the install medium sat at
+
+```
+OS/7 TPM: no /dev/tpmrm0 - falling back to the passphrase
+Please unlock disk os7_root:
+```
+
+for a machine it was not about — and the run after that reached
+
+```
+BdsDxe: failed to load Boot0008 "OS/7" from HD(1,GPT,…)/\EFI\OS7\shimx64.efi: Not Found
+>>Start PXE over IPv4.
+```
+
+without ever trying the CD-ROM. Both are the same cause: `grub-install` writes
+an NVRAM boot entry during the install, that entry lives in the **firmware
+variable store**, and OVMF honours its own `BootOrder`. `-boot d` is a hint to
+QEMU's own boot logic, not an instruction to a UEFI firmware.
+
+So a variable store is not a scratch file. It carries the machine's boot
+options, which means:
+
+* a medium phase run after an install boots the **disk**;
+* the same phase run after the disk was wiped boots **nothing** and goes to
+  the network, because the entry survives the filesystem it names.
+
+`run-secureboot.py` therefore keeps THREE stores, and the reason each exists is
+in the code: one made fresh for the medium (which also attaches no disk), one
+made fresh at the start of an install and then carried into the disk phase
+BECAUSE the install's own NVRAM entry is what a real machine boots from, and a
+non-enforcing one for the policy control.
+
+**Every other harness here is immune, and that is the tell.** They hand QEMU
+`-kernel`, so the firmware is never asked what to boot and its NVRAM never
+matters — the same blind spot as #134, one layer further in. Anything that
+starts booting through the firmware inherits this.
+
+## #137 — a `str.replace()` that matches nothing changes nothing and says so cheerfully
+
+**2026-09-08.** A one-line fix to `run-secureboot.py` was applied with a Python
+script piped into `python -`, and the anchor it searched for contained an
+em-dash. It matched nothing, `replace()` returned the string unchanged, the
+script wrote the file and exited 0 — and the harness ran a 20-minute VM cycle
+with the fix absent. The grep that would have caught it was run and read too
+quickly: the call site simply was not in the output.
+
+The cause is narrow and worth knowing on this host: **Python reading a script
+from stdin does not necessarily decode it as UTF-8 on Windows**, so a non-ASCII
+character in the source of the search string is not the byte sequence the file
+holds. The fix in the file was UTF-8; the needle was not.
+
+Two rules, and the second is the general one:
+
+* **Anchor on ASCII** when scripting an edit, or read and write with an
+  explicit encoding on both ends.
+* **Assert the replacement happened.** `assert old in s` before replacing, or
+  compare lengths after. This is #13's shape and #66's — a tool that reports
+  success for having done nothing — arriving through the editor rather than
+  through live-build or unsquashfs.
+
+## #138 — a wall of "Couldn't download package" is an upstream 503, not your change
+
+**2026-09-08.** `make build-amd64` died with one warning per package —
+
+```
+W: Couldn't download package zlib1g (ver 1:1.3.dfsg+really1.3.1-1ubuntu3 arch amd64)
+   at https://snapshot.ubuntu.com/ubuntu/20260824T000000Z/pool/main/z/zlib/…
+E: Couldn't download packages: networkd-dispatcher libtext-wrapi18n-perl …
+P: Begin unmounting filesystems...
+chroot: failed to run command '/usr/bin/env': No such file or directory
+```
+
+— which reads as a broken chroot, and the last line reads as a broken image.
+Both are consequences. The `chroot: /usr/bin/env` line is the CLEANUP running
+in a chroot that was never populated, and every warning above it is the same
+fact repeated 300 times.
+
+The one measurement that separates "my change broke the build" from "the
+archive is away" is a single request:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://snapshot.ubuntu.com/ubuntu/20260824T000000Z/dists/resolute/Release
+```
+
+It answered **503** while `archive.ubuntu.com` answered 200, and **200 on the
+first retry twenty seconds later**. snapshot.ubuntu.com rate-limits or blips;
+the pin points every source at it (that is the point of the pin), so a blip is
+a total build failure and looks like nothing else.
+
+Debootstrap having succeeded is not evidence against this: the Release file and
+the early stages come from a different path than the pool, and the log's own
+shape says so — `Valid Release signature` appears *above* the 300 warnings.
+
+**Retry once before debugging anything.** And when a build fails, read the
+FIRST error rather than the last: here the last line is about `/usr/bin/env`
+and has nothing to do with the cause.
+
+**AND IT IS NOT A ONE-OFF — it was measured.** The retry brought the build to
+the Cascadia font fetch and died there the same way:
+
+```
+fetching https://snapshot.ubuntu.com/…/fonts-cascadia-code_2407.24-3_all.deb
+curl: (22) The requested URL returned error: 503
+curl: (22) The requested URL returned error: 503
+curl: (22) The requested URL returned error: 503
+curl: (22) The requested URL returned error: 503
+```
+
+Twelve requests to that exact URL answered **9 × 200 and 3 × failure (000,
+500, 502)** — roughly a quarter, spread out rather than bursty. A build makes
+hundreds of requests, so at that rate SOME fetch fails on nearly every build,
+and a fetch with four attempts is not enough.
+
+`build-os7-packages.sh` already knew this and the other three fetches did not:
+
+```
+curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors    # it
+curl -fsSL --retry 3                                                          # them
+```
+
+So `build-console-font.sh`, `build-installed-console-font.sh` and
+`build-desktop-theme.sh` were brought up to the repository's own best-known
+form (`--retry 6 --retry-delay 4 --retry-connrefused --retry-all-errors`).
+Plain `--retry` does cover 5xx; what it does not cover is a refused
+connection or a reset, and three attempts against a one-in-four failure rate
+is a coin toss. **The general shape: one hardened call site and three
+unhardened ones is the same defect as one specification written twice** — the
+knowledge was in the repository and not where it was needed.
+
+## #139 — `send_script` corrupts any file whose lines start with a TAB, because readline reads TAB as completion
+
+**2026-09-08.** `run-s5.py`'s `send_script()` writes a file into a guest by
+typing one line at a time:
+
+```python
+c.send(f"printf '%s\n' '{safe}' >> /tmp/{name}")
+```
+
+which is deliberate and documented — a heredoc would need `expect` to match a
+terminator the typed text itself contains, which is #16. It has worked for
+every script this repository pushes, and every one of those is a SHELL script
+indented with spaces.
+
+The first attempt to push a **PowerShell** file — `OS7.SecureBoot.ps1`, and the
+repository's PowerShell style indents with tabs — produced this on the serial
+line:
+
+```
+bash-5.3# printf '%s\n' '.$supported = $false' >> /tmp/OS7.SecureBoot.ps1
+./             .azure/        .bashrc        .gnupg/        .profile
+../            .bash_history  .cache/        .local/        .ssh/
+```
+
+**The guest's bash is interactive, so readline owns the TAB key.** A leading
+tab inside the single-quoted argument is typed at a readline that treats it as
+filename completion: the directory gets listed into the middle of the file, the
+line is mangled, and `wc -l` afterwards still reports a plausible number. The
+file that arrives is not the file that was sent, and nothing says so.
+
+`printf %s` is innocent here; the corruption happens before bash ever parses
+the line.
+
+**Base64 is the transport that has none of these properties** — no tabs, no
+quotes, no shell metacharacters, no line structure at all:
+
+```python
+for i in range(0, len(b64), 512):
+    c.send(f"printf %s {b64[i:i + 512]} >> /tmp/x.b64")
+ask(c, "base64 -d /tmp/x.b64 > /tmp/x.ps1")
+```
+
+and the arrival is then checked the only way that means anything: `sha256sum`
+on the machine against the hash of the bytes in the repository. A length check
+would have passed on the corrupted file, because the directory listing that
+replaced the indentation was about as long as the indentation.
+
+Anything pushing a non-shell file into a guest over a console should use that
+shape. `send_script` is fine for what it was written for and should say so.
+
+## #140 — arm64 ISOs CAN be built on the x64 host under emulation: #12/#23 has no mirror image
+
+**2026-09-09.** #12/#23 says amd64 ISOs cannot be built on Apple Silicon:
+debootstrap's tar hits ENOSYS under Docker's emulation and the build dies.
+The obvious inference is that the reverse fails too, and CLAUDE.md's host
+table has read that way since it was written — arm64 builds on the Mac, amd64
+on the Windows box, and neither crosses.
+
+**The reverse works.** `docker run --privileged --rm tonistiigi/binfmt
+--install arm64` registers the handler Docker Desktop was missing (before it,
+`docker run --platform linux/arm64` answers `exec format error`), and then
+
+    make build-arm64
+
+completes on the x64 Windows host and produces a working artefact:
+
+```
+>>> arm64 EFI: shim=shimaa64.efi.signed.latest (987440 B), grub=gcdaa64 (2533256 B)
+>>> Done: /work/out/OS7-1.0.0.194-arm64.iso
+```
+
+`check-image.py arm64` then passes on it — every check, including the Secure
+Boot chain with the `aa64` names, `mmaa64.efi`, the `$cmdpath` stub and the
+Canonical-signed kernel. That check needs the emulated container too and also
+runs here now.
+
+**Slow, not broken.** The build's own recorded timestamp to the finished ISO
+is about an hour and a half, against roughly five minutes native. Every
+package unpacks through qemu-user, and the six PowerShell module self-tests in
+`check-image.py` run interpreted twice over.
+
+This is an OBSERVATION, not an explanation: nothing here says why aarch64-on-
+x86_64 emulation survives what x86_64-on-aarch64 does not, and the syscall
+#12/#23 names may simply be one qemu-user target's gap. Do not turn it into a
+rule in the other direction without measuring.
+
+**What it changes.** The arm64 MEDIUM no longer needs a Mac — it can be built
+and read here, so it stops drifting behind amd64 the way it had (its ISO was
+1.0.0.175 while amd64 was at .193). What still needs the Mac is every arm64
+BOOT: HVF, and therefore `run-secureboot.py`, `run-phase3.py` and the spikes.
+
+**AND THE REGISTRATION DOES NOT SURVIVE A DOCKER DESKTOP RESTART** — measured
+2026-09-09, a few hours after the first paragraph was written. `binfmt_misc`
+handlers live in the Docker VM's kernel, and the VM is recreated when Docker
+Desktop restarts, so the arm64 capability quietly goes away. What it looks like
+is not a missing handler:
+
+```
+### the image, asked what it is (arm64)
+    reading OS7-1.0.0.194-arm64.iso
+could not read the image:
+exec /usr/bin/bash: exec format error
+```
+
+**In ZERO seconds** — which is the tell. A check that fails instantly failed
+before it did any work, and `exec format error` about `/usr/bin/bash` is the
+kernel refusing to run an aarch64 binary, not anything about the ISO. Re-run
+the `tonistiigi/binfmt --install arm64` line and the same check passes.
+
+So it is a per-session prerequisite on this host, not a setting. Anything
+scripted that depends on it should either register the handler itself or say
+what is missing — `docker run --platform linux/arm64 <img> uname -m` answers
+in a second and either prints `aarch64` or fails the same way.
+
+## #141 — a check that INHERITS a value from the pin goes red when the product changes, for a reason unrelated to what it checks
+
+**2026-09-09**, running every check on this host after Docker Desktop came
+back. `check-os7-repo.py` reported
+
+```
+  one tree, two architectures (§7.3)
+      ok    the Release names BOTH architectures — Architectures: amd64 arm64
+      ok    two descriptors at one version, each under its own architecture
+      FAIL  the index holds one entry per (version, architecture) — arm64
+      ok    and each entry names its own architecture's descriptor
+```
+
+which reads as a repository that lost an index entry. It had not. Asked of the
+built tree:
+
+```
+index/preview.json      1.0.0.196 amd64
+index/development.json  1.0.0.196 arm64
+```
+
+**The two architectures of one version were in two different CHANNELS.** The
+check's first build passed no `OS7_CHANNEL` and inherited the pin's; the
+second-architecture merge run hard-codes `development`; and the §7.3
+assertions read `development.json`. Those three agreed while the pin said
+`development` — it did at `f2a8217`, where the assertions were written and the
+commit message records them green — and stopped agreeing at `934eba0`,
+*"1.0.0 becomes a preview"*, which changed a value in
+`build/config/os7-release.conf` and nothing else.
+
+`git log -S 'OS7_CHANNEL='` does **not** find that commit, which is worth
+knowing on its own: `-S` counts occurrences of a string, and changing a
+value between the quotes leaves the count alone. `git show <rev>:<path>` is
+what answers "what was this set to then".
+
+**The rule: a check owns every value its assertions depend on.** The channel
+names are now a constant in the file and are passed to every build it makes,
+so the check is independent of the pin's maturity — which is correct, because
+what it checks is the repository's mechanics and not what the product calls
+itself this month.
+
+**And the cost was invisible for eleven days**, because nothing runs this check
+automatically and no session had a reason to. That is the second half of the
+lesson: a gate nobody runs is a gate that is red on average. Two of the
+twenty-two `check-*.py` in this repository were red when they were all run
+together for the first time in a while — this one, and `check-image.py arm64`,
+which was #140's binfmt registration going away with a Docker restart.
+
+### It happened again the same day, in the harness nobody had re-run
+
+**2026-09-09, cutting the 1.0.0.202 preview.** `run-s5.py`'s update phase built
+its test repository with no `OS7_CHANNEL` — so it took the pin's, `preview` —
+while pointing the machine at `-Channel development` on a hard-coded line three
+hundred lines away. The index landed in `index/preview.json`; the machine asked
+for `index/development.json`; `Update-OS7` refused with a message that was
+exactly right and was about the harness:
+
+```
+no release index for channel 'development' at http://10.0.2.2:8907. Either the
+channel is wrong or this machine is pointed at something that is not an OS/7
+repository — see Set-OS7UpdateChannel.
+```
+
+Then the `timer` phase failed the same way, reporting exit 1 where it asserts 2.
+**Four red checks, one stale word**, on a medium whose `install`, `boot` and
+`cycle` phases had all just passed — and the phase had not run since 2026-08-28,
+four days before the pin changed.
+
+The fix is the same shape: `UPDATE_CHANNEL` at the top of the file, read by the
+repository build and by both places that point the machine. Two harnesses in
+this repository build the real repository and **both** now name the channel they
+write; `check-update-logic.py` authors its own index in-process and controls it
+already. That closes the class rather than the instance.
+
+The cost is worth writing down, because it is the argument for running a gate
+before you need it: this was found by the release process, after the media had
+been built, so the fix moved `BUILD` and both architectures were rebuilt.
+
+---
+
+## #142 — `Restart-Computer` POWERS A LINUX MACHINE OFF and reports success, and the manual told operators to type it
+
+**Measured 2026-09-09**, on the x64 Windows host, against `OS7-1.0.0.193-amd64.iso`
+and an installed machine on the `gui` bench. It began as a user report of the
+opposite shape — "cmdlets from the Management module autocomplete and then say
+they do not exist" — and the autocomplete half turned out to be about a
+different set of names entirely.
+
+### The two findings, which are not the same finding
+
+**One: 15 of the 62 cmdlets the 7.6 `Microsoft.PowerShell.Management` reference
+documents are absent on Linux.** The whole service family (nine names),
+`Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer`, `Get-HotFix`,
+`Clear-RecycleBin`, `Restore-Computer`. Invoking one gives a plain
+`CommandNotFoundException`. Tab completion does **not** offer them — asked of
+`[CommandCompletion]::CompleteInput`, which is the code path Tab uses — because
+the Unix module manifest's `CmdletsToExport` does not list them. So "it
+completes and then fails" is not this, and chasing it as though it were would
+have found nothing.
+
+**Two, and much worse: `Restart-Computer` and `Stop-Computer` ARE present, and
+`Restart-Computer` does the wrong thing.** Both run
+
+```
+/usr/sbin/shutdown          (with NO arguments at all)
+```
+
+recorded by putting a recorder in place of every binary they might plausibly
+reach for — `/sbin/shutdown`, `/usr/sbin/shutdown`, `systemctl`, `reboot`,
+`poweroff`, `halt` — inside a throwaway overlay on the shipped ISO's own root.
+Both cmdlets produced the same single line, with an empty argument vector.
+
+On Ubuntu `/usr/sbin/shutdown` is a symlink to `systemctl`, and its
+compatibility interface says of itself:
+
+```
+  -H --halt      Halt the machine
+  -P --poweroff  Power-off the machine
+  -r --reboot    Reboot the machine
+```
+
+— one of which is to be GIVEN. Without a flag the action is poweroff. So
+`Restart-Computer` on an OS/7 machine schedules a **power off**, exits 0, and
+the machine's own console then says:
+
+```
+[  OK  ] Reached target poweroff.target - System Power Off.
+[  479.165454] reboot: Power down
+```
+
+That is the repo's signature failure shape with a twist: not "reported success
+and changed nothing" but **reported success and did something else**. A remote
+administrator who types it loses the machine.
+
+It is upstream, it is old, and it is not going to be fixed for us:
+[PowerShell/PowerShell#14684](https://github.com/PowerShell/PowerShell/issues/14684),
+"Restart-Computer performs shutdown on Ubuntu 18.04", reported January 2021 and
+still true in 7.6.5.
+
+### What made it expensive rather than merely wrong
+
+**The product's own documentation told operators to type it.** `docs/manual`
+§06, in both languages, ends its maintenance-window example with
+`Restart-Computer`; §09.6 listed it as an example of something PowerShell
+already does well enough that OS/7 deliberately did not rebuild it; and
+`POWERSHELL-SURFACE-PLAN.md` §1.1 had it in the **present** column, which was
+true and therefore never questioned. Four places agreed, and the agreement was
+about the wrong property: they all recorded that the *name resolves*.
+
+### The rules
+
+**A cmdlet that exists is not a cmdlet that works, and "present" is not a
+measurement.** §1.1's table asked `Get-Command` and wrote down the answer. The
+question worth asking of anything that acts on the machine is not whether the
+name binds but **what it runs** — which is answerable in seconds by standing a
+recorder where the real program should be, and which nobody had done in the
+eleven days that table had existed.
+
+**When a program shells out, the argument vector IS the behaviour.** An exit
+code cannot tell `shutdown -r` from `shutdown`. Neither can a log line, and
+neither can the cmdlet's own name.
+
+**And a compatibility name that defaults its action is a bug waiting for a
+symlink.** `shutdown` is a compatibility interface whose meaning depends on
+argv[0] and on a default; `systemctl reboot` cannot be re-interpreted by
+either. `Invoke-SystemdShutdown` therefore takes a mandatory `-Action` and
+never uses the flagless form — the defaulting is the defect, so the parameter
+is not defaulted.
+
+### What it changed
+
+`powershell/Systemd/` gained `Invoke-SystemdShutdown`, and
+`powershell/OS7/OS7.Compat.Windows.ps1` supplies twelve absent names plus
+`Restart-Computer` and `Stop-Computer` — the only two names in this product
+that deliberately shadow a working cmdlet's name, and neither of them works
+(P1a in [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md)).
+`installer/testing/check-compat-windows.py` is the regression test and it is
+proven to fire: plant `Action = 'PowerOff'` in `Restart-Computer` on a copy of
+`powershell/` via `OS7_MODULE_ROOT` and it goes RED with
+*"Restart-Computer asks for `systemctl reboot`"*.
+
+Verified on the machine the same afternoon: `Restart-Computer` on the `gui`
+bench, and the console said `reboot: Restarting system` with the VM still
+running a fresh kernel.
+
+## #143 — I inferred from the URI SCHEME what was true of one SERVER, and the refusal fired on the harness
+
+**Measured 2026-09-09, by `run-s5.py all` on the 1.0.0.201 medium**, in the
+update phase, after install, boot and cycle had all passed:
+
+```
+!!! os7-release: OS7_REPO_URI is http://10.0.2.2:8907, which needs a
+!!! credential (RELEASE-PROCESS §4.1a: that server answers an
+!!! anonymous request with 401), and this build was handed none.
+…
+the 1.0.0.202 repository did not build
+```
+
+The refusal is right to exist. RELEASE-PROCESS §4.2 requires that a build whose
+repository needs authentication cannot silently produce a medium without the
+credential, because such a medium installs machines that cannot reach the
+repository and say nothing about why. What was wrong is the **question it
+asked**: it keyed on the URI being `http(s)`, and treated that as meaning "this
+server requires authentication".
+
+**It does not. That is a fact about the Storage Box, not about the scheme.**
+§6.4 of CURATION-AND-DELIVERY-PLAN says the repository is a static tree
+"deliberately: it can be served from anything, mirrored into an air-gapped site
+by copying a directory" — so a plain HTTP mirror with no authentication is a
+supported deployment, and `run-s5.py` serves exactly one at
+`http://10.0.2.2:8907` in order to test the update train. The one measurement
+that had been taken — an anonymous `GET /` to `u661569-sub2.your-storagebox.de`
+answered 401 — was generalised into a property of every `http(s)` URI, which is
+the shape BUILD-NOTES #80 already records for `/etc/os-release`: never protect
+"the field they match on"; state the fact you actually measured.
+
+**The fix is to write the fact down where the URI is chosen.** The pin gains
+`OS7_REPO_AUTH`, a declaration by whoever picked the server, and the refusal
+keys on that. It also keys on the URI being **the pin's own**: a caller that
+replaced `OS7_REPO_URI` in the environment — which `run-s5.py` and
+`check-os7-repo.py` both do, and which the top of `build-os7-packages.sh`
+already handles as a first-class case — has replaced the server the pin's
+declaration was about, so the declaration does not travel with the override.
+
+`check-image.py`'s artefact-side check had the same defect and gets the same
+fix, answerable from the medium alone: the credential is required when the
+shipped `os7.sources` URI is the shipped `release.conf`'s `OS7_REPO_URI` **and**
+that file declares `OS7_REPO_AUTH=yes`.
+
+**Why nothing caught it before the gate did:** the three checks written for
+§4.2 the same morning covered the cmdlet (`check-update-logic.py`), the artefact
+(`check-image.py`) and the two-places-one-host consistency
+(`check-storagebox.py`). None covered the BUILDER's refusal — the one piece of
+new logic whose whole job is to fail — and `check-os7-repo.py`, which does
+exercise the builder, passes an overridden URI and so walked through the
+not-firing branch without ever visiting the other one. A refusal that has never
+been seen to fire is a refusal nobody has checked, and this one fired on the
+wrong input the first time it mattered. It is now checked in both directions.
+
+## #144 — two amd64 builds from one pin do NOT hold the same package set, and the number says they do
+
+**Measured 2026-09-09, by accident, cutting the 1.0.0.203 preview.** The 203
+medium came out **7 110 656 bytes smaller** than the 202 medium built one hour
+earlier from the same pin. The two package manifests differ in exactly ten
+lines: the nine OS/7 packages' own version numbers, and
+
+```
+- code   1.136.2-1788561671   amd64
++ code   1.137.0-1788902055   amd64
+```
+
+1510 packages both times, and Visual Studio Code moved upstream in the hour
+between the builds.
+
+**The cause is stated in the pin and its consequence was not.**
+`packages.microsoft.com` has no snapshot service, so
+build/config/os7-release.conf pins what it can by version AND hash — and it does
+that for **pwsh alone**. `microsoft-edge-stable`, `intune-portal`,
+`microsoft-identity-broker` and `code` are installed by
+`config/hooks-amd64/0030-microsoft-gui-stack.hook.chroot` with a plain
+`apt-get install` against the live repository. Four packages, unpinned, on every
+amd64 medium.
+
+**So the rule the pin's own header states is broken on amd64:** "a version
+number is only honest if the archive is pinned. `apt full-upgrade` against a
+live archive gives a different system depending on the day it ran, and two
+machines would then report the same number and hold different bits. That is
+worse than having no number, because a number gets trusted." Two media, one
+pin, one hour, different bits — and both would call themselves 1.0.0.x with the
+same authority.
+
+**Why S7 said otherwise, and why that was not wrong.** Spike S7 measured "two
+builds from one pin hold identical package sets, 549 packages, same manifest
+hash" (SESSION-RELEASE-IDENTITY.md). That was **arm64**, which is server-only
+and carries none of these four packages. The claim was true of what it measured
+and was then read as true of the product.
+
+**What IS honest today, and it is not nothing:** hook 0075 writes the MEASURED
+package manifest into the image and beside the ISO, so the artefact records
+exactly which Edge and which `code` it contains, and `check-image.py` reads that
+back. A support case can always establish what a given medium holds. What cannot
+be established is the reverse direction — a version number does not identify the
+contents on amd64.
+
+**Not fixed here.** The options are a local mirror-snapshot of
+packages.microsoft.com (the only one that makes the whole medium reproducible),
+pinning each of the four by version+hash the way pwsh is (honest, and turns
+every upstream Edge release into a release event — §3.4 says that is the
+intended shape), or stating the limit and living with it. Choosing costs a
+decision about how often OS/7 wants to cut a release, which is RP4 and unmade.
+Recorded here so the next person reads the number correctly.
+
+## #145 — `OS7_CHANNEL` is the fourth value the pin silently overwrites, and only three were on the list
+
+**Measured 2026-09-09**, in the `run-s5.py` update phase after #141's fix, from
+two lines of its own output one after the other:
+
+```
+>>> OS/7 repository os7-1.0 — 1.0.0.204 (development) / amd64
+>>> OS/7 packages 1.0.0.204 (preview) for amd64
+```
+
+One `docker run`, one `-e OS7_CHANNEL=development`, two different answers.
+`build-os7-repo.sh` honours the environment for the INDEX it writes;
+`build-os7-packages.sh` does not, for the packages' own `release.json`.
+
+**The cause is documented in the very file that has the defect.** Its header
+says, in capitals, "SOURCING THE PIN OVERWRITES THE ENVIRONMENT, SILENTLY", and
+explains that `docker run -e OS7_REPO_URI=…` followed by
+`source os7-release.conf` leaves the pin's value in place because a plain
+assignment in a sourced file wins over an exported variable. It then captures
+and restores exactly three values — `OS7_REPO_URI`, `OS7_REPO_ENABLED`,
+`OS7_SUITE` — and calls them "the three repository-facing values a caller
+legitimately overrides". `OS7_CHANNEL` is a fourth, it is now overridden by two
+harnesses, and it was not on the list.
+
+**What it does and does not break.** Nothing on a released medium: a release
+build passes no `OS7_CHANNEL`, so the pin's value reaches both the index and the
+packages and they agree. What it produces in a harness is a package whose
+declared maturity is `preview` listed in an index called `development` — which
+RELEASE-PROCESS §1.2 explicitly permits ("`OS7_CHANNEL` is the maturity of this
+build, a fact about the artefact; the index channel is which listing a machine
+reads, an intention about an audience") and just as explicitly says "must be a
+deliberate, stated act — never a default". Here it was a default, and nothing
+said so.
+
+`check-os7-repo.py` gets the same split for the same reason and passes for the
+same reason: its assertions are about the index.
+
+**The fix is one line and it is not made here** — the media of 1.0.0.203 were
+already built when this was found, and a commit moves BUILD. Add `OS7_CHANNEL`
+to the captured set, and have `build-os7-repo.sh` print the two channels
+together so a disagreement is visible rather than inferable from two lines
+forty apart.
+
+## #146 — a harness died on an ARROW, because a redirected stdout on Windows is cp1252
+
+**Measured 2026-09-09.** `run-phase3.py walk` reached its last assertion and then
+crashed:
+
+```
+UnicodeEncodeError: 'charmap' codec can't encode character '→'
+  File "…/run-phase3.py", line 900, in phase_walk
+    print(f"      ok    the copy bar advanced while copying "
+          f"({copy_percents[0]}% → {copy_percents[-1]}%, …")
+```
+
+The install it was checking had **succeeded**; the walk had got as far as
+watching the copy bar advance. What failed was printing the `→` in the success
+message, because the harness's stdout was redirected to a file and Python then
+picks the locale encoding — cp1252 on this host — instead of UTF-8. Run with the
+output on a terminal, or through PowerShell's `Tee-Object`, the same run is fine,
+which is why this had never appeared: every earlier invocation of these
+harnesses on this host was interactive.
+
+**It is worth a number because of what it looks like.** A `Traceback` in the
+last line of a two-phase VM harness reads as "the walk failed", and the walk had
+not failed — it had passed and could not say so. Two of this session's other
+findings were also defects in measuring instruments (#143, #141), and the cost
+of misreading this one would have been a third rebuild for nothing.
+
+`PYTHONUTF8=1` (or `PYTHONIOENCODING=utf-8`) in the invocation is the fix, and
+it belongs in the invocation rather than in the harnesses: the arrow is correct
+output and Windows' default codepage is the thing that is wrong about it. Every
+`installer/testing/*.py` run with redirected output on this host needs it.
+
+## #147 — a check reported the REPOSITORY broken because Python translated its script's newlines
+
+**Measured 2026-09-09**, publishing 1.0.0.203. `check-storagebox.py` — the
+outside verification RELEASE-PROCESS §3 step 10 requires — went red on the two
+checks that matter:
+
+```
+  4. apt, in a clean container, with the right credential
+      FAIL  URI /: not fetched — apt printed neither Get: nor Err: for the source
+  5. THE CONTROL — a wrong credential must be REFUSED, not merely fail
+      FAIL  the control cannot run — no URI fetched above
+```
+
+**The repository was fine.** Run by hand, apt in a clean `ubuntu:26.04` fetched
+`InRelease`, verified its signature, fetched `Packages` and reported
+`Candidate: 1.0.0.203`. What was broken was the check.
+
+`subprocess.run(cmd, input=script, text=True)` writes stdin through a
+`TextIOWrapper` whose newline translation follows the HOST. Measured on this
+box: every `\n` in the script reaches the container's bash as `\r\n`. bash then
+reads `umask 077\r` as "octal number out of range", `>/dev/null 2>&1\r` as
+"ambiguous redirect", and the heredocs as garbage — so **apt never ran**, the
+output contained no `Get:` line, and the function's verdict for "apt printed
+nothing" is `unfetched`. Which it renders as a failure about the server.
+
+**This is the third newline or encoding fault in one session** (#146 was the
+same family, and the release pin itself was silently converted to CRLF by a
+`pathlib.write_text` earlier the same day), and it is the worst of the three,
+because the other two crashed while this one produced a confident, wrong,
+product-shaped answer: "the published repository cannot be fetched".
+
+The fix is to hand the shell bytes — `input=script.encode("utf-8")`, decoding
+the output explicitly — so the container sees exactly what the file contains.
+After it: **6 ok, 0 failed**, including the control, which is what makes step 4
+mean anything.
+
+**And the standing lesson has a corollary.** "A diagnostic must not depend on
+the subsystem it is diagnosing" is in this file twice. Add: a diagnostic must
+not depend on the HOST's text conventions either, and on Windows that is not a
+theoretical concern — `git`, Python's text mode, PowerShell's redirection and
+the console codepage each have an opinion about bytes this repository ships to
+Linux.

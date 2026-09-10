@@ -1,0 +1,129 @@
+# OS/7 — check the update channel and stage what it offers. Unattended (§6).
+#
+# Run as `pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-update-check`
+# by os7-update-check.service, by an Intune remediation, or by an Azure Arc
+# run-command — the same file for all three, because three slightly different
+# unattended paths would be three sets of decisions drifting apart.
+#
+# THE EXIT-CODE CONTRACT (the unit repeats it, Intune and Arc read it):
+#   0  nothing to do — no channel configured/enabled, or already newest
+#   2  a release is staged; activation and a reboot are pending
+#   1  failure — including a CONFIGURED channel that cannot be answered,
+#      because a check that could not run must never read as a clean result
+#
+# NEVER -Reboot, never activation: §4.2 step 10 is the operator's. And NEVER a
+# silent -AllowDevelopment: C7a is open, every existing key is a development
+# key, and an unattended path that waved development releases through would
+# make the switch's whole ceremony meaningless. The operator says it ONCE, in
+# /etc/os7/update.conf (OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT="yes") — a
+# file inside the boot environment, so a rollback reverts the decision with
+# the system that made it.
+#
+# No shebang on purpose: invoked as `pwsh -File`, never executed (0644) — the
+# same convention as the os7-backup scripts, for the same reason.
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$updateConf = '/etc/os7/update.conf'
+$logFile    = '/var/log/os7/update.log'
+
+function Write-CheckLog {
+	param([string]$Message)
+	# The same file, the same shape, as Update-OS7's own lines. Never throws:
+	# the verdict matters more than the diary.
+	[Console]::Error.WriteLine("os7-update-check: $Message")
+	try {
+		$dir = [System.IO.Path]::GetDirectoryName($logFile)
+		if (-not [System.IO.Directory]::Exists($dir)) {
+			[System.IO.Directory]::CreateDirectory($dir) | Out-Null
+		}
+		$stamp = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+		[System.IO.File]::AppendAllText($logFile, "$stamp check: $Message`n")
+	} catch { }
+}
+
+function Get-ConfField {
+	param([string]$Name)
+	# KEY="value" lines, the pin-file shape. Parsed here rather than through
+	# the module's internal helper because this file is not the module.
+	if (-not [System.IO.File]::Exists($updateConf)) { return $null }
+	foreach ($line in [System.IO.File]::ReadAllLines($updateConf)) {
+		if ($line -match ('^\s*' + [regex]::Escape($Name) + '\s*=\s*"?([^"#]*?)"?\s*(#.*)?$')) {
+			return $Matches[1].Trim()
+		}
+	}
+	return $null
+}
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+}
+catch {
+	Write-CheckLog "FAILED: the OS7 module did not import: $($_.Exception.Message)"
+	exit 1
+}
+
+# Is there a channel to ask AT ALL? A machine that was never pointed at a
+# repository is the SHIPPED state (os7-release ships the apt source declared
+# and off), and a fleet of fresh machines must not be a fleet of red units —
+# so "no channel" is a quiet 0, said out loud in the log. A channel that IS
+# configured and does not answer is a different thing entirely and falls
+# through to the failure path below.
+$sourcesFile = '/etc/apt/sources.list.d/os7.sources'
+$enabled = $false
+if ([System.IO.File]::Exists($sourcesFile)) {
+	$body = [System.IO.File]::ReadAllText($sourcesFile)
+	$enabled = ($body -match '(?m)^URIs:\s*\S') -and ($body -notmatch '(?m)^Enabled:\s*no\b')
+}
+if (-not $enabled) {
+	Write-CheckLog 'nothing to do: no update channel is configured on this machine (Set-OS7UpdateChannel)'
+	exit 0
+}
+
+$allowDev = (Get-ConfField 'OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT') -eq 'yes'
+
+try {
+	$offered = @(Get-OS7Release -Available)
+	$target = $offered | Where-Object Applicable |
+		Sort-Object -Property @{ Expression = { [version]$_.Version } } |
+		Select-Object -Last 1
+	if (-not $target) {
+		Write-CheckLog 'nothing to do: this machine runs the newest release the channel offers'
+		exit 0
+	}
+	if ($target.Development -and -not $allowDev) {
+		Write-CheckLog ("FAILED: the channel offers $($target.Version), which is signed by a " +
+			'DEVELOPMENT key, and this machine is not configured to take those unattended. ' +
+			'Apply it by hand with Update-OS7 -AllowDevelopment, or say it once in ' +
+			"$updateConf (OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT=`"yes`").")
+		exit 1
+	}
+
+	# Already staged? Re-staging every day would mint a new boot environment
+	# per day for the same release. An environment named for the target version
+	# and complete IS the staged state; say so and stop.
+	$staged = @(Get-OS7BootEnvironment) |
+		Where-Object { $_.Release -eq $target.Version -and $_.Complete }
+	if ($staged) {
+		Write-CheckLog ("staged: $($target.Version) already waits in " +
+			"$($staged[0].Name); activation and a reboot are pending")
+		exit 2
+	}
+
+	Write-CheckLog "staging $($target.Version) from channel '$($target.Channel)'"
+	$result = Update-OS7 -Version $target.Version -Stage -Confirm:$false `
+		-AllowDevelopment:$allowDev
+	if (-not $result.Applied -or -not $result.Staged) {
+		Write-CheckLog ("FAILED: Update-OS7 returned without staging: " +
+			"$($result.Reason)")
+		exit 1
+	}
+	Write-CheckLog ("staged: $($result.To) into $($result.BootEnvironment); " +
+		'activation and a reboot are pending')
+	exit 2
+}
+catch {
+	Write-CheckLog "FAILED: $($_.Exception.Message)"
+	exit 1
+}

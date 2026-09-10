@@ -376,10 +376,13 @@ says that a probe cannot be withdrawn.
 
 ## 6. Layering
 
-`powershell/Hardware/` is the fifth generic Layer-2 module, cut like `Zfs`,
-`Net`, `Time` and `Systemd`: it knows sysfs, dkms, modprobe, ubuntu-drivers and
-hw-probe, and nothing about OS/7. `check-layering.py` gained a fifth rule,
-**`P2-hardware`, at a baseline of 0**.
+`powershell/Hardware/` is the **sixth** generic Layer-2 module, cut like `Zfs`,
+`Net`, `Time`, `Systemd` and `Directory`: it knows sysfs, dkms, modprobe,
+ubuntu-drivers and hw-probe, and nothing about OS/7. `check-layering.py` gained
+a **sixth** rule, **`P2-hardware`, at a baseline of 0**.
+
+*(It was the fifth of each when this was written. `Directory` landed on the same
+day, on another branch, and took fifth — see §9.)*
 
 It did not start at 0. Two sites were found by writing the rule:
 
@@ -431,8 +434,10 @@ Read this before quoting anything above as a fact about a computer.
 ## 8. Candidate BUILD-NOTES entries, not written
 
 `docs/BUILD-NOTES.md` had uncommitted work from another session while this one
-ran, so nothing was appended to it. Three findings here are the kind that file
-exists for, and the numbers above 94 were free:
+ran, so nothing was appended to it. That blocker is gone — the note in question
+landed upstream under a different number, and by the merge forward on 2026-09-10
+the file was at 116 with everything above free. The three findings below are
+still not written into it, and are still the kind that file exists for:
 
 * **`dkms status` has no word for a failed build** (§1.1) — the strongest
   instance yet of "a program reported success and the thing it was meant to
@@ -442,3 +447,76 @@ exists for, and the numbers above 94 were free:
   changes the shape of the output rather than the rows, and whose obvious
   reading passes a machine where nothing was built.
 * **`modprobe -R` gives the same error for "no index" and "no match"** (§1.5).
+
+---
+
+## 9. The merge forward, 2026-09-10
+
+The branch sat unpushed for two weeks while `main` moved **78 commits**. What
+came back out of that is worth recording, because most of it is what a feature
+branch costs rather than what this feature is.
+
+**Nobody had built a device manager meanwhile.** Checked first, before anything
+was merged: no `powershell/Hardware`, no `Get-OS7Device`, no dkms anywhere in
+the tree. The work was not duplicated.
+
+**Three numbers had been taken.** `P8` and `P9` — claimed here for the device
+manager and for wrapping Ubuntu's detection — were claimed upstream on the same
+day for the directory and, two days later, for timers. They are **P10 and P11**
+now; the decisions are unchanged and only the number moved. `C13` was still
+free. And the fourth commit on this branch was **dropped entirely**: it carried
+another session's hook-0070 fix and its BUILD-NOTES entry, both of which landed
+upstream independently, with the note under a different number — so `#94` in
+this repository is about `TryParseExact`, not about the quiesce hook.
+
+Two branches counting from the last number each could see is not a mistake
+either of them made. It is what a numbered list costs when work runs in
+parallel, and it is the second time this repository has paid it.
+
+**The delivery mechanism changed underneath the branch.** The PowerShell modules
+no longer reach an image through `build.sh` at all — since C7's second half they
+are installed from the `os7-module` package, and `stage_ps_module`, the function
+this branch called, does not exist any more. What survived the merge was the
+module's NAME, and it had to go into **four** lists rather than one: `build.sh`'s
+fixture loop, `build-os7-packages.sh`'s package loop, `check-module-parts.py`
+and `make-reference.py`. `build.sh`'s own comment had already warned that two of
+those lists are held equal by nothing but somebody reading them side by side —
+it was written when `Directory` arrived the same way.
+
+**Two traps this module violated did not exist when it was written.**
+`check-ps-traps.py` grew from two rules to six while the branch sat, and the
+merged code failed two of them at once:
+
+* **#121** — `Invoke-HardwareCommand` read `$LASTEXITCODE` bare. The engine
+  rewrites it only when a native command COMPLETES; one that is found and cannot
+  be started neither throws nor sets it, so the read is the PREVIOUS command's
+  code — zero included. In the one function in this module whose entire job is
+  reporting exit codes faithfully. Fixed to the documented
+  reset-then-guarded-read.
+* **#112/#119** — `Get-HwProbe` read a property off a pipeline that may be
+  empty. The `?.` there did guard the null, but the rule is a shape and not a
+  case: a scan cannot tell a safe instance of `(… | Select-Object -First 1).X`
+  from an unsafe one, and the unsafe form shipped thirteen times and put an
+  exception into the manual's own screenshot.
+
+Neither would have been found by re-reading the module. Both were found by
+running a check that had been written since.
+
+**What was fixed in passing, and why.** The layer diagram in the manual carried
+`Systemd 8` against a module that had grown to 21, and `95` for a product module
+at 147. Nothing checks that drawing. Adding a sixth generic layer beside two
+wrong numbers would have been worse than adding it beside none, so all three
+were corrected together and the box width is now derived from the band rather
+than a constant that happened to fit five. `check-module-parts.py`'s headline
+regex had `six modules` hardcoded and reported `<no count found>` for a seventh —
+a check that breaks when the thing it measures grows is a check that gets
+deleted, so it now reads the word and asserts it.
+
+**And the gate held.** `P2-hardware` was written against a tree that no longer
+exists and reports **0** against 78 commits of code written after it — the first
+time one of these layering rules has been asked about code its author never saw.
+`check-update-logic.py` drives step 6″ through the update train as it stands
+today, including the credential and `auth.conf` work that landed meanwhile, and
+the refusal still lands before `update-initramfs`.
+
+Nothing in §7 became less true. No OS/7 machine has run any of this.

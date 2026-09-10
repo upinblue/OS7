@@ -1,0 +1,15 @@
+Id=sanoid.timer
+Description=Run Sanoid Every 15 Minutes
+LoadState=loaded
+ActiveState=active
+SubState=waiting
+FragmentPath=/usr/lib/systemd/system/sanoid.timer
+UnitFileState=enabled
+Unit=sanoid.service
+TimersCalendar={ OnCalendar=*-*-* *:00/15:00 ; next_elapse=@1788033600 }
+NextElapseUSecRealtime=@1788033600
+NextElapseUSecMonotonic=0
+LastTriggerUSec=@1788032706
+Result=success
+RandomizedDelayUSec=0
+Persistent=yes

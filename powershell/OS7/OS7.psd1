@@ -72,17 +72,58 @@
 		# problem starts presenting as an authentication problem.
 		'Set-OS7TimeZone', 'Get-OS7Time', 'Get-OS7TimeSynchronization',
 		'Set-OS7TimeSynchronization', 'Sync-OS7Time',
+		# Implemented - Secure Boot. THREE outcomes per answer, because "not a
+		# UEFI machine", "no Secure Boot support in this firmware" and
+		# "supported but switched off" send an operator three different
+		# places. Reads the UEFI variable, not mokutil: measured 2026-09-08,
+		# mokutil answers "disabled" under one firmware and "doesn't support
+		# Secure Boot" under another, and only one of those can be turned on.
+		'Get-OS7SecureBoot',
 		# Implemented - remoting. Get-OS7Remoting answers from `sshd -T`, not
 		# from a file: sshd_config includes a whole directory and a Match block
 		# can change the answer per user, so the file says what somebody wrote
 		# and sshd says what it resolved.
 		'Get-OS7Remoting', 'Enable-OS7Remoting', 'Disable-OS7Remoting',
+		# Implemented - Remote Desktop (docs/REMOTE-DESKTOP-PLAN.md), amd64 GUI
+		# only. The daemon requires NLA against a MACHINE-WIDE credential before
+		# any screen exists, and the person then signs in at OS/7's own login
+		# screen delivered over RDP. Enable- refuses without a source scope,
+		# because v1 has no per-user allow-list and no lockout yet.
+		'Get-OS7RemoteDesktop', 'Enable-OS7RemoteDesktop', 'Disable-OS7RemoteDesktop',
+		'Set-OS7RemoteDesktopCredential',
+		'New-OS7RemoteDesktopCertificate', 'Get-OS7RemoteDesktopCertificate',
+		'Set-OS7RemoteDesktopCertificate', 'Test-OS7RemoteDesktop',
+		# Who may sign in over Remote Desktop. The group is this machine's
+		# equivalent of Windows' Remote Desktop Users; administrators are
+		# allowed without being in it, which Get- reports as a Reason.
+		'Get-OS7RemoteDesktopUser', 'Add-OS7RemoteDesktopUser',
+		'Remove-OS7RemoteDesktopUser',
+		# Who is connected, over the Systemd layer's session verbs. There is
+		# deliberately no Disconnect-: logind has one verb and it ENDS the
+		# session, so a cmdlet named for Windows' disconnect would lose the
+		# person's work while its name promised the opposite.
+		'Get-OS7RemoteDesktopSession', 'Stop-OS7RemoteDesktopSession',
+		# Implemented - the account lockout (Windows' Account lockout policy).
+		# ACCOUNT-WIDE and named so: it lives in common-auth and reaches ssh, the
+		# text console, sudo and both login screens, because the local and the
+		# remote graphical login are ONE PAM service on this image (measured).
+		'Get-OS7AccountLockout', 'Set-OS7AccountLockout', 'Unlock-OS7Account',
 		# Implemented - services and the log, on the Systemd module. Get-Service
-		# does not exist on PowerShell for Linux (measured), so this is the verb
-		# an admin reaches for and does not find. Healthy is four questions, not
-		# one: is-active says active for a unit in a restart loop.
+		# does not exist on PowerShell for Linux (measured), and since
+		# 2026-09-09 OS/7 supplies that name too — see the compatibility block
+		# at the end of this list. These stay the canonical surface (P1): the
+		# parameters are systemd's, and Healthy is four questions rather than
+		# one, because is-active says active for a unit in a restart loop.
 		'Get-OS7Service', 'Start-OS7Service', 'Stop-OS7Service',
 		'Restart-OS7Service', 'Set-OS7Service', 'Get-OS7Log', 'Get-OS7InstallLog',
+		# Implemented - scheduled tasks, on the Systemd module's timer surface.
+		# Get-ScheduledTask does not exist on PowerShell for Linux either, and
+		# BUILD-NOTES #113 is what happens without this noun: the unattended
+		# update timer was invisible to the whole cmdlet surface. Enable- both
+		# enables AND starts, because systemd's enable alone arms the next boot
+		# and the timer never fires until then (measured).
+		'Get-OS7ScheduledTask', 'Enable-OS7ScheduledTask', 'Disable-OS7ScheduledTask',
+		'Start-OS7ScheduledTask', 'Register-OS7ScheduledTask', 'Unregister-OS7ScheduledTask',
 		# Implemented - the management plane, READ only. Get-OS7IntuneEnrollment's
 		# Enrolled field is deliberately $null: intune-agent exposes no status
 		# interface (measured), and a guess about compliance is worse than a gap.
@@ -97,7 +138,54 @@
 		# Set-OS7UpdateChannel points the machine at a repository and switches on
 		# the apt source os7-release deliberately ships disabled.
 		'Update-OS7', 'Get-OS7Release', 'Set-OS7UpdateChannel', 'Test-OS7Update',
-		# Implemented — the device manager (docs/POWERSHELL-SURFACE-PLAN.md P8).
+		# Implemented — Active Directory, OUTBOUND AND CREDENTIAL-BASED
+		# (docs/AD-PLAN.md). NO domain join is required for any of these: the
+		# machine signs an administrator in to the directory, it does not
+		# become a member of it. Measured against a real DC 2026-08-27.
+		'Enter-OS7AdminSession', 'Exit-OS7AdminSession', 'Get-OS7AdminSession',
+		'Test-OS7Directory', 'Add-OS7DirectoryTrust',
+		'Get-OS7ADDomain', 'Get-OS7ADDomainController',
+		'Get-OS7ADUser', 'New-OS7ADUser', 'Set-OS7ADUser', 'Remove-OS7ADUser',
+		'Get-OS7ADGroup', 'New-OS7ADGroup', 'Set-OS7ADGroup', 'Remove-OS7ADGroup',
+		'Get-OS7ADGroupMember', 'Get-OS7ADPrincipalGroupMembership',
+		'Add-OS7ADGroupMember', 'Remove-OS7ADGroupMember',
+		'Get-OS7ADComputer',
+		'Get-OS7ADOrganizationalUnit', 'New-OS7ADOrganizationalUnit',
+		'Set-OS7ADOrganizationalUnit', 'Remove-OS7ADOrganizationalUnit',
+		'Enable-OS7ADAccount', 'Disable-OS7ADAccount', 'Unlock-OS7ADAccount',
+		'Reset-OS7ADAccountPassword', 'Set-OS7ADAccountExpiration',
+		'Move-OS7ADObject', 'Rename-OS7ADObject',
+		'Search-OS7AD', 'Get-OS7ADObject', 'Set-OS7ADObject', 'Remove-OS7ADObject',
+		# The domain JOIN — the separate, more expensive feature. NEVER RUN ON
+		# A MACHINE; check-ad.py joins a Samba DC in a container, which is the
+		# protocol and not a fleet.
+		'Join-OS7Domain', 'Remove-OS7Domain', 'Repair-OS7Domain',
+		'Get-OS7Domain', 'Test-OS7Domain',
+		'Get-OS7DomainLogonPolicy', 'Set-OS7DomainLogonPolicy',
+		'Get-OS7KerberosTicket', 'New-OS7KerberosTicket', 'Remove-OS7KerberosTicket',
+		# Implemented — THE WINDOWS NAMES Microsoft.PowerShell.Management does
+		# not ship on Linux. Measured 2026-09-09 against the shipped ISO's own
+		# pwsh 7.6.5: 15 of that module's 62 documented cmdlets are absent, and
+		# what an administrator meets is a bare CommandNotFoundException. P1
+		# deferred them to an opt-in module of aliases and only aliases; the
+		# revision on 2026-09-09 makes them FUNCTIONS with Windows' parameters
+		# and Windows' output shape, loaded by default. Every Windows parameter
+		# is declared and either honoured or refused BY NAME with a reason —
+		# check-compat-windows.py drives that table against parameter sets
+		# recorded from a real Windows pwsh of the same version.
+		#
+		# Restart-Computer and Stop-Computer are the two that EXIST and are
+		# shadowed anyway: both run `/usr/sbin/shutdown` with no arguments,
+		# which is systemctl's compatibility interface defaulting to POWEROFF,
+		# so the shipped Restart-Computer powers an OS/7 machine off and
+		# reports success (upstream PowerShell/PowerShell#14684, open since
+		# 2021).
+		'Get-Service', 'Set-Service', 'New-Service', 'Remove-Service',
+		'Start-Service', 'Stop-Service', 'Restart-Service',
+		'Suspend-Service', 'Resume-Service',
+		'Set-TimeZone', 'Get-ComputerInfo', 'Rename-Computer',
+		'Restart-Computer', 'Stop-Computer',
+		# Implemented — the device manager (docs/POWERSHELL-SURFACE-PLAN.md P10).
 		# Get-OS7Device's DEFAULT IS NOT EVERY DEVICE: it returns the ones that
 		# need attention, because a wall of forty working devices in equal
 		# weight is what `lspci -k` already is. -All is the other half.

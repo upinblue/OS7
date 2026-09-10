@@ -61,6 +61,42 @@ function Write-OS7Step {
 	[Console]::Error.WriteLine("OS7-STEP $Message")
 }
 
+function Get-OS7ZfsPropertyValue {
+	<#
+	.SYNOPSIS
+	One ZFS property's value, or $null when there is not one.
+
+	.DESCRIPTION
+	BUILD-NOTES #119. The idiom this replaces was written out nine times:
+
+	    (Get-ZfsProperty -Name $d -Property canmount |
+	        Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+
+	and when the pipeline yields nothing — the dataset went away between being
+	listed and being asked, a remote `zfs get` over ssh did not answer — that is
+	`$null.Value`, which under the Set-StrictMode -Version Latest set at the top
+	of this file is a TERMINATING error, not a $null. Every one of those six
+	callers was written expecting $null; one of them wraps itself in
+	try/catch to get it, and one tests `if ($theirGuid)` on the next line.
+
+	It is private (not in OS7.psd1's FunctionsToExport) because it is this
+	module tidying up after itself, not a surface an operator is offered —
+	P1/P4 admit a cmdlet only when an operator would otherwise type a Linux
+	command, and nobody types this.
+
+	Z1 is unaffected: the ZFS call is still Get-ZfsProperty and this only reads
+	what came back.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Property,
+		[hashtable]$Remote = @{}
+	)
+	$p = Get-ZfsProperty -Name $Name -Property $Property @Remote |
+		Where-Object Name -eq $Property | Select-Object -First 1
+	if ($p) { $p.Value } else { $null }
+}
+
 function Invoke-OS7Native {
 	<#
 	.SYNOPSIS
@@ -96,9 +132,19 @@ function Invoke-OS7Native {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
+		# $LASTEXITCODE is rewritten only when a native command COMPLETES
+		# through the pipeline (BUILD-NOTES #121). Reset it, or a command that
+		# is found but cannot be started reads an EARLIER command's exit code
+		# as its own — 0 included, which is a verification step reporting
+		# success for a command that never ran.
+		$global:LASTEXITCODE = $null
 		$out = & $Command @Arguments 2> $errFile
-		$code = $LASTEXITCODE
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 		$err = (Get-Content -Raw -ErrorAction SilentlyContinue $errFile)
+		if ($null -eq $code) {
+			throw [System.Management.Automation.RuntimeException]::new(
+				"$line`nnever completed: $Command was found but could not be started`n$err")
+		}
 		if ($code -ne 0) {
 			throw [System.Management.Automation.RuntimeException]::new(
 				"$line`nexited $code`n$err")
@@ -899,6 +945,22 @@ function New-OS7Storage {
 	& $mk 'rpool/DATA/lib/networkmanager' ([ordered]@{ mountpoint = '/var/lib/NetworkManager' })
 	& $mk 'rpool/DATA/lib/authd'          ([ordered]@{ mountpoint = '/var/lib/authd' })
 	& $mk 'rpool/DATA/lib/azcmagent'      ([ordered]@{ mountpoint = '/var/opt/azcmagent' })
+	# DOMAIN USERS' HOMES, and AD-PLAN A9 is this one line. sssd is told
+	# fallback_homedir = /var/lib/os7/domain-homes/%u, and until 2026-09-07 that
+	# path had no dataset — so it resolved to rpool/ROOT/<be> and Restore-OS7
+	# rolled every domain user's home back with the operating system. The
+	# document was right and the layout it depended on did not exist. Measured
+	# on an installed machine after a real join (docs/SESSION-AD-JOIN.md).
+	#
+	# THE MOUNT IS THE DOMAIN-HOME ROOT AND NOT /var/lib/os7, deliberately.
+	# /var/lib/os7 must stay inside the boot environment: the migration record
+	# Update-OS7 writes under /var/lib/os7/migrations/<version>/ relies on
+	# rolling back with the release, so that a machine which has rolled back
+	# genuinely has not run them (the migrations README's own argument, C10). A
+	# dataset one level down satisfies A9 and leaves that intact — the same
+	# shape as /var/lib/authd and /var/lib/snapd, which are datasets under a
+	# /var/lib that lives in the BE.
+	& $mk 'rpool/DATA/lib/os7-domain-homes' ([ordered]@{ mountpoint = '/var/lib/os7/domain-homes' })
 
 	# USERDATA is a SIBLING of ROOT, not a child. This is the decision the whole
 	# layout exists for: rolling back a bad release must not roll back the
@@ -999,6 +1061,90 @@ $script:OS7EspStubs = @(
 	'/boot/efi/EFI/BOOT/grub.cfg',
 	'/boot/efi/EFI/OS7/grub.cfg'
 )
+
+function Assert-OS7EspMounted {
+	<#
+	.SYNOPSIS
+		The ESP is mounted at /boot/efi, or systemd is asked to mount it.
+		Internal.
+
+	.DESCRIPTION
+		Everything that touches the ESP stubs globs under /boot/efi, and a
+		glob over an UNMOUNTED ESP quietly finds nothing — activation then
+		throws its zero-stubs-rewritten error about a partition that is
+		perfectly fine and merely not there. The first end-to-end update run
+		hit exactly that: the machine's own ESP had come unmounted during the
+		run (BUILD-NOTES #104), and the error named grub-install, which had
+		done nothing wrong.
+
+		So the precondition is made explicit, and self-healing where systemd
+		can heal it: `boot-efi.mount` is the systemd-escaped unit for the
+		fstab entry this layout ships, and starting it is a no-op when the
+		ESP is already mounted. Through the Systemd layer, not systemctl —
+		P2-systemd's baseline may fall and may not rise.
+	#>
+	# Derived from the stub list, not a second literal: check-be-logic.py
+	# points $script:OS7EspStubs at a temporary tree, and an assert that
+	# hard-coded /boot/efi would fail that harness against a tree where the
+	# stubs are demonstrably present.
+	$espRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $script:OS7EspStubs[0]))
+	$efiDir = [System.IO.Path]::Combine($espRoot, 'EFI')
+	if ([System.IO.Directory]::Exists($efiDir)) { return }
+	if ($espRoot -ne '/boot/efi') {
+		throw [System.InvalidOperationException]::new(
+			"the ESP at $espRoot carries no EFI directory.")
+	}
+	# THE ORPHANED CASE FIRST (#104, finally measured): `zfs set canmount=on`
+	# on an INERT boot dataset — step 3's own flip — makes something rebuild
+	# the /boot mount seconds later, asynchronously. The vfat that was mounted
+	# under the old /boot stays in the mount table (so `findmnt /boot/efi`
+	# still lists it, boot-efi.mount still reads active, and `systemctl start`
+	# is a no-op that exits 0) but the PATH /boot/efi now resolves into the
+	# fresh /boot mount, where efi/ is an empty directory. The heal is to take
+	# the whole /boot stack down — the orphan goes with it — and rebuild it:
+	# the running environment's boot dataset back on /boot, and systemd, which
+	# watched the umounts happen, now agrees the ESP unit is dead and actually
+	# mounts it again.
+	if (-not [System.IO.Directory]::Exists($efiDir)) {
+		$bootMnt = try {
+			[string](Invoke-OS7Native -Command 'findmnt' -Arguments @(
+				'-no', 'SOURCE,FSTYPE', $script:OS7BootDir))
+		} catch { '' }
+		$rootMnt = try {
+			[string](Invoke-OS7Native -Command 'findmnt' -Arguments @('-no', 'SOURCE', '/'))
+		} catch { '' }
+		if ($bootMnt -match '^(\S+)\s+zfs' -and
+			$rootMnt.Trim() -match "^$([regex]::Escape($script:OS7RootParent))/(\S+)$") {
+			$expected = "$($script:OS7BootParent)/$($Matches[1])"
+			Write-OS7Step ("the ESP entry under $($script:OS7BootDir) is stale (#104) — " +
+				"taking the stack down and remounting $expected")
+			try {
+				Invoke-OS7Native -Command 'umount' -Arguments @('-R', $script:OS7BootDir) | Out-Null
+				Invoke-OS7Native -Command 'mount' -Arguments @(
+					'-t', 'zfs', '-o', 'zfsutil', $expected, $script:OS7BootDir) | Out-Null
+			}
+			catch {
+				Write-OS7Step "note: rebuilding $($script:OS7BootDir) failed: $($_.Exception.Message)"
+			}
+		}
+	}
+	if ([System.IO.Directory]::Exists($efiDir)) { return }
+
+	Write-OS7Step 'the ESP is not mounted at /boot/efi — asking systemd to mount it'
+	try {
+		Import-OS7SystemdLayer
+		Start-SystemdUnit -Name 'boot-efi.mount' -Confirm:$false | Out-Null
+	}
+	catch {
+		Write-OS7Step "note: boot-efi.mount could not be started: $($_.Exception.Message)"
+	}
+	if (-not [System.IO.Directory]::Exists($efiDir)) {
+		throw [System.InvalidOperationException]::new(
+			'/boot/efi is not mounted and systemd could not mount it, so the ESP ' +
+			'stubs cannot be reached. Nothing about what this machine boots has ' +
+			'changed.')
+	}
+}
 
 # The running system's /boot. A variable rather than a literal so that
 # installer/testing/check-be-logic.py can point the whole of this at a temporary
@@ -1253,12 +1399,18 @@ function Get-OS7BootEnvironmentKernel {
 					Rel = $rel
 				}
 			}
-			return ($keyed | Sort-Object `
+			# BUILD-NOTES #119. A /boot with no vmlinuz- at all makes $keyed
+			# empty, and `$null.File` under Set-StrictMode throws a property
+			# error where the caller expects $null and reports "no kernel
+			# found" -- turning a legible failure into a mystifying one at the
+			# exact moment the machine is already in trouble.
+			$newest = $keyed | Sort-Object `
 				@{ Expression = { if ($_.N.Count -gt 0) { $_.N[0] } else { 0 } } },
 				@{ Expression = { if ($_.N.Count -gt 1) { $_.N[1] } else { 0 } } },
 				@{ Expression = { if ($_.N.Count -gt 2) { $_.N[2] } else { 0 } } },
 				@{ Expression = { if ($_.N.Count -gt 3) { $_.N[3] } else { 0 } } },
-				@{ Expression = { $_.Rel } } | Select-Object -Last 1).File
+				@{ Expression = { $_.Rel } } | Select-Object -Last 1
+			return $(if ($newest) { $newest.File } else { $null })
 		}
 		$k = & $pick 'vmlinuz-'
 		$i = & $pick 'initrd.img-'
@@ -1675,16 +1827,14 @@ function New-OS7BootEnvironment {
 		# `.Value` off the result is trusting the count; when more than one
 		# arrives, `.Value` is an ARRAY and every comparison against it is false
 		# without saying so.
-		$cm = (Get-ZfsProperty -Name $d.Name -Property canmount |
-			Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+		$cm = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'canmount'
 		if ([string]$cm -eq 'on') {
 			throw [System.InvalidOperationException]::new(
 				"$($d.Name) came out canmount=on. It would be mounted over the running " +
 				'system by the next `zfs mount -a`; the clone has not been made inactive.')
 		}
 	}
-	$rootMp = (Get-ZfsProperty -Name "$($script:OS7RootParent)/$Name" -Property mountpoint |
-		Where-Object Name -eq 'mountpoint' | Select-Object -First 1).Value
+	$rootMp = Get-OS7ZfsPropertyValue -Name "$($script:OS7RootParent)/$Name" -Property 'mountpoint'
 	if ([string]$rootMp -ne '/') {
 		throw [System.InvalidOperationException]::new(
 			"$($script:OS7RootParent)/$Name has mountpoint '$rootMp', not '/'. GRUB's " +
@@ -1716,12 +1866,22 @@ function Set-OS7BootEnvironment {
 		  3. flip canmount across both pairs — target on, everything else noauto
 		  4. copy the freshly generated menu into the target's own boot dataset,
 		     because the ESP stub is about to name it and GRUB will read the
-		     grub.cfg it finds THERE
-		  5. write saved_entry into BOTH grubenvs — the running one and the
-		     target's own
-		  6. rewrite both ESP stubs
+		     grub.cfg it finds THERE (skipped when /boot is already served by
+		     that dataset — the menu was generated straight into it)
+		  5. write saved_entry into the TARGET's grubenv — inert until step 6
+		     makes that the file GRUB loads
+		  6. rewrite both ESP stubs — the point of no return — and only THEN
+		     saved_entry in the running system's grubenv, which takes effect the
+		     moment it is written and must never name an environment the catch
+		     could still walk away from
 		  7. record com.ubuntu.zsys:last-used, which is what 10_linux_zfs sorts
 		     the menu by
+
+		Steps 4 to 7 are transactional around step 6: a failure BEFORE the stub
+		rewrite takes the canmount flips back and changes nothing; a failure
+		AFTER it leaves the activation standing, because the machine will boot
+		the target and reverting the flips then would hand it the half-activated
+		pair (§4.3) the revert exists to prevent.
 
 		WHY STEPS 0 AND 5 EXIST AT ALL, which is the mistake this design made
 		first: pointing the ESP stub at another environment changes which
@@ -1864,7 +2024,16 @@ exec cat $($script:OS7MenuFile)
 	}
 	Write-OS7Step "menu entry: $entry"
 
-	# 3 — canmount, across every environment, as one operation. Measured fact 5.
+	# 3 — canmount, across every environment, as one operation — AND UNDONE as
+	# one if anything after it fails. The first end-to-end update threw at
+	# step 6 (the ESP, #104) with these flips already applied, and the cmdlet's
+	# own catch then promised "this machine still boots what it booted" — while
+	# the target's datasets sat canmount=on, so the NEXT boot's `zfs mount -a`
+	# mounted the target's /boot over the running system's and buried the ESP
+	# under it: §4.3's half-activated pair, reached by an activation that
+	# failed halfway and kept half its work. Every flip is recorded with the
+	# value it replaced, and the catch below restores them before rethrowing.
+	$flipped = [System.Collections.Generic.List[object]]::new()
 	foreach ($be in $all) {
 		$want = if ($be.Name -eq $Name) { 'on' } else { 'noauto' }
 		foreach ($parent in @($script:OS7RootParent, $script:OS7BootParent)) {
@@ -1887,84 +2056,144 @@ exec cat $($script:OS7MenuFile)
 				if ([string]$p.Value -eq $set) { continue }
 				Set-ZfsProperty -Name ([string]$p.Dataset) -PropertyName canmount -Value $set `
 					-Confirm:$false | Out-Null
+				$flipped.Add(@{ Dataset = [string]$p.Dataset; Was = [string]$p.Value })
 			}
 		}
 	}
 
-	# 4 — the target's own copy of the menu.
-	New-Item -ItemType Directory -Force -Path $script:OS7BeScratch | Out-Null
+	# Steps 4 to 7 either all complete or the flips above are taken back —
+	# up to the stub rewrite in step 6. THAT is the point of no return: once
+	# the ESP names the target, taking the flips back would manufacture the
+	# very half-activated pair the revert exists to prevent, so a failure
+	# after it leaves the activation STANDING and says so.
+	$committed = $false
 	try {
-		Invoke-OS7Native -Command 'mount' -Arguments @(
-			'-t', 'zfs', '-o', 'zfsutil', $target.BootDataset, $script:OS7BeScratch) | Out-Null
-		$dest = Join-Path $script:OS7BeScratch 'grub/grub.cfg'
-		if (-not (Test-Path (Split-Path -Parent $dest))) {
+		# 4 — the target's own copy of the menu. On a machine where /boot is
+		# ALREADY served by the target's boot dataset — a rollback out of a
+		# half-activated state is exactly that machine — update-grub in step 2
+		# generated the menu into that dataset directly, and copying the file
+		# onto itself is an error, not a copy (measured: Copy-Item refuses).
+		$bootSource = try {
+			[string](Invoke-OS7Native -Command 'findmnt' -Arguments @(
+				'-no', 'SOURCE', $script:OS7BootDir))
+		} catch { '' }
+		New-Item -ItemType Directory -Force -Path $script:OS7BeScratch | Out-Null
+		try {
+			Invoke-OS7Native -Command 'mount' -Arguments @(
+				'-t', 'zfs', '-o', 'zfsutil', $target.BootDataset, $script:OS7BeScratch) | Out-Null
+			$dest = Join-Path $script:OS7BeScratch 'grub/grub.cfg'
+			if (-not (Test-Path (Split-Path -Parent $dest))) {
+				throw [System.InvalidOperationException]::new(
+					"$($target.BootDataset) has no grub directory — it is not a boot dataset")
+			}
+			if ($bootSource.Trim() -eq $target.BootDataset) {
+				Write-OS7Step ("$($script:OS7BootDir) is already served by " +
+					"$($target.BootDataset); the generated menu is already its own")
+			}
+			else {
+				Copy-Item -Force $script:OS7GrubCfg $dest
+				Write-OS7Step "menu copied into $($target.BootDataset)"
+			}
+
+			# 5 — the default, named. In the target's own grubenv, because the stub
+			# about to be rewritten makes THAT the one GRUB loads.
+			Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
+				(Join-Path $script:OS7BeScratch 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
+		}
+		finally {
+			# Tolerant on purpose: if the mount above failed, this one fails too, and
+			# an exception thrown out of a finally block replaces the real cause with
+			# "umount: not mounted".
+			try { Invoke-OS7Native -Command 'umount' -Arguments @($script:OS7BeScratch) | Out-Null }
+			catch { Write-OS7Step "note: $($script:OS7BeScratch) was not mounted" }
+		}
+
+		# 6 — the ESP stub. THE LINE THAT DECIDES WHICH MENU IS READ AT ALL. The
+		# ESP itself first (#104): a glob over an unmounted /boot/efi finds
+		# nothing and reads as "grub-install never wrote one".
+		Assert-OS7EspMounted
+		$rewrote = 0
+		foreach ($stub in $script:OS7EspStubs) {
+			if (-not (Test-Path $stub)) { continue }
+			$text = Get-Content -Raw $stub
+			$new = [regex]::Replace($text, "/BOOT/[^@']+@/grub", "/BOOT/$Name@/grub")
+			if ($new -ne $text) {
+				Set-Content -NoNewline -Path $stub -Value $new
+				$rewrote++
+			}
+			elseif ($text -match "/BOOT/$([regex]::Escape($Name))@/grub") {
+				$rewrote++
+			}
+		}
+		if ($rewrote -eq 0) {
 			throw [System.InvalidOperationException]::new(
-				"$($target.BootDataset) has no grub directory — it is not a boot dataset")
+				'no ESP stub was rewritten — /boot/efi is not mounted, or grub-install ' +
+				'never wrote one. Nothing about what this machine boots has changed.')
 		}
-		Copy-Item -Force $script:OS7GrubCfg $dest
-		Write-OS7Step "menu copied into $($target.BootDataset)"
+		Write-OS7Step "$rewrote ESP stub(s) now point at $Name"
+		$committed = $true
 
-		# 5 — the default, named. In the target's own grubenv, because the stub
-		# about to be rewritten makes THAT the one GRUB loads.
+		# …and saved_entry in the RUNNING system's grubenv too, so a machine
+		# whose firmware takes the other EFI path still boots what was asked
+		# for. AFTER the stub, deliberately: this file decides the next boot
+		# the moment it is written, because the stub still points at the
+		# running menu until step 6 — written before it, an activation that
+		# then failed at the stub left saved_entry naming a target whose
+		# canmount the catch below had just taken back, and the machine booted
+		# §4.3's half-activated pair through a file the catch never knew about.
+		# That is how the end-to-end gate's cycle failed on 2026-08-28.
 		Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
-			(Join-Path $script:OS7BeScratch 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
-	}
-	finally {
-		# Tolerant on purpose: if the mount above failed, this one fails too, and
-		# an exception thrown out of a finally block replaces the real cause with
-		# "umount: not mounted".
-		try { Invoke-OS7Native -Command 'umount' -Arguments @($script:OS7BeScratch) | Out-Null }
-		catch { Write-OS7Step "note: $($script:OS7BeScratch) was not mounted" }
-	}
+			(Join-Path $script:OS7BootDir 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
 
-	# …and in the running system's, so that a machine whose firmware takes the
-	# other EFI path — or which never gets as far as step 6 — still boots what
-	# was asked for rather than what it happens to list first.
-	Invoke-OS7Native -Command 'grub-editenv' -Arguments @(
-		(Join-Path $script:OS7BootDir 'grub/grubenv'), 'set', "saved_entry=$entry") | Out-Null
+		# 7 — when this environment was last made current. 10_linux_zfs sorts the
+		# menu by com.ubuntu.zsys:last-used and, where it is unset, by the mtime of
+		# /etc/machine-id inside the environment — which is the install date and
+		# therefore the same for a clone and its origin.
+		#
+		# IT DOES NOT REORDER THE MENU THAT WAS JUST GENERATED, and saying otherwise
+		# would be the kind of claim this repository exists to avoid: the generator
+		# hands the RUNNING environment the current time, so whatever is running is
+		# first in any menu it produces. This value is read the next time a menu is
+		# generated — from the other environment, where it is the only thing that
+		# distinguishes two datasets installed on the same day. The default entry
+		# does not depend on it; that is what saved_entry is for.
+		# ToUnixTimeSeconds rather than `Get-Date -UFormat %s`: the latter returns a
+		# string this code would have to parse back, and parsing a number out of a
+		# formatted date is culture-dependent — on a machine whose locale uses a
+		# comma it would throw, during a rollback, for a reason with nothing to do
+		# with rollback. OS/7 installs de_DE by default in this very harness.
+		Set-ZfsProperty -Name $target.RootDataset `
+			-PropertyName 'com.ubuntu.zsys:last-used' `
+			-Value ([string][System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) `
+			-Confirm:$false | Out-Null
 
-	# 6 — the ESP stub. THE LINE THAT DECIDES WHICH MENU IS READ AT ALL.
-	$rewrote = 0
-	foreach ($stub in $script:OS7EspStubs) {
-		if (-not (Test-Path $stub)) { continue }
-		$text = Get-Content -Raw $stub
-		$new = [regex]::Replace($text, "/BOOT/[^@']+@/grub", "/BOOT/$Name@/grub")
-		if ($new -ne $text) {
-			Set-Content -NoNewline -Path $stub -Value $new
-			$rewrote++
+	}
+	catch {
+		if ($committed) {
+			# The stub already names the target. Taking the flips back NOW would
+			# hand the next boot the target's root with the old environment's
+			# children — the half-activated pair — so the activation stands and
+			# the failure is reported for what it is: after the point of no
+			# return, on a machine that will boot the target.
+			Write-OS7Step ("the failure below happened AFTER the ESP was repointed; " +
+				"the activation of '$Name' STANDS and this machine will boot it")
+			throw
 		}
-		elseif ($text -match "/BOOT/$([regex]::Escape($Name))@/grub") {
-			$rewrote++
+		foreach ($flip in $flipped) {
+			try {
+				Set-ZfsProperty -Name $flip.Dataset -PropertyName canmount `
+					-Value $flip.Was -Confirm:$false | Out-Null
+			}
+			catch {
+				Write-OS7Step "note: could not restore canmount=$($flip.Was) on $($flip.Dataset)"
+			}
 		}
+		if ($flipped.Count) {
+			Write-OS7Step ("activation failed — canmount restored on $($flipped.Count) " +
+				'dataset(s); nothing about what this machine boots has changed')
+		}
+		throw
 	}
-	if ($rewrote -eq 0) {
-		throw [System.InvalidOperationException]::new(
-			'no ESP stub was rewritten — /boot/efi is not mounted, or grub-install ' +
-			'never wrote one. Nothing about what this machine boots has changed.')
-	}
-	Write-OS7Step "$rewrote ESP stub(s) now point at $Name"
-
-	# 7 — when this environment was last made current. 10_linux_zfs sorts the
-	# menu by com.ubuntu.zsys:last-used and, where it is unset, by the mtime of
-	# /etc/machine-id inside the environment — which is the install date and
-	# therefore the same for a clone and its origin.
-	#
-	# IT DOES NOT REORDER THE MENU THAT WAS JUST GENERATED, and saying otherwise
-	# would be the kind of claim this repository exists to avoid: the generator
-	# hands the RUNNING environment the current time, so whatever is running is
-	# first in any menu it produces. This value is read the next time a menu is
-	# generated — from the other environment, where it is the only thing that
-	# distinguishes two datasets installed on the same day. The default entry
-	# does not depend on it; that is what saved_entry is for.
-	# ToUnixTimeSeconds rather than `Get-Date -UFormat %s`: the latter returns a
-	# string this code would have to parse back, and parsing a number out of a
-	# formatted date is culture-dependent — on a machine whose locale uses a
-	# comma it would throw, during a rollback, for a reason with nothing to do
-	# with rollback. OS/7 installs de_DE by default in this very harness.
-	Set-ZfsProperty -Name $target.RootDataset `
-		-PropertyName 'com.ubuntu.zsys:last-used' `
-		-Value ([string][System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) `
-		-Confirm:$false | Out-Null
 
 	Get-OS7BootEnvironment -Name $Name
 }
@@ -2192,8 +2421,12 @@ function Set-OS7Theme {
 		}
 		else {
 			# The schema default, uncontaminated by any dconf database.
+			# Reset, then read guarded (BUILD-NOTES #121): $null lands in the
+			# skip branch, a stale 0 would apply a value nothing read.
+			$global:LASTEXITCODE = $null
 			$default = & env GSETTINGS_BACKEND=memory gsettings get $pair.Schema $pair.Key 2>$null
-			if ($LASTEXITCODE -ne 0 -or -not $default) {
+			$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+			if ($code -ne 0 -or -not $default) {
 				Write-OS7Step "skip: $($pair.Schema) $($pair.Key) - no schema default readable"
 				continue
 			}
@@ -2275,11 +2508,17 @@ function Restore-OS7 {
 		typing this has a machine that has just stopped working properly, and
 		asking them to name a dataset first is asking the wrong question.
 
-		WHAT "PREVIOUS" MEANS, and it is not "the one before it in the list":
-		the newest boot environment that is OLDER than the running one. On a
-		machine that has been updated three times and rolled back once, the list
-		is not in the order the machine used them — creation time is, and it is
-		what New-OS7BootEnvironmentName's stamp exists to make sortable.
+		WHAT "PREVIOUS" MEANS: ancestry, read from two records in order — the
+		`org.os7:previous` property Update-OS7 writes on the environment it
+		activates (UL9's promote rotates ZFS origins, so a property is the
+		record that survives), then the ZFS origin guarded by age, for
+		environments cloned by hand. Age alone ("the newest boot environment
+		older than the running one") is only the last resort. It used to be
+		the rule, and the end-to-end gate measured why it cannot be
+		(2026-08-28, BUILD-NOTES #107): an experiment's leftover clone sat
+		between an update and the environment the update came from, was newer
+		than both, and the one-word panic path landed the machine on the
+		experiment.
 
 		IT DOES NOT REBOOT. Every cmdlet here has to work over serial and SSH
 		(§6), and an unannounced reboot down a serial line is how an admin loses
@@ -2310,12 +2549,62 @@ function Restore-OS7 {
 
 	if (-not $BootEnvironment) {
 		$active = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
-		$older = if ($active) {
-			$all | Where-Object { $_.Created -lt $active.Created -and $_.Complete }
-		}
-		else { $all | Where-Object Complete }
 
-		$pick = $older | Select-Object -Last 1
+		# "Previous" is ANCESTRY before it is age — and ancestry is read from
+		# TWO records, in order, because ZFS's own record does not survive the
+		# update train's prune step:
+		#
+		#   1. `org.os7:previous`, the user property Update-OS7 writes on the
+		#      environment it activates. It exists because UL9's `zfs promote`
+		#      ROTATES origins: after it the new environment's origin is '-',
+		#      the old one's origin points AT the new, and even sibling
+		#      clones' origins move to the promoted dataset (all measured,
+		#      BUILD-NOTES #107). A property is a fact promote cannot rotate.
+		#   2. The ZFS origin — for environments made outside the update train
+		#      (New-OS7BootEnvironment by hand) — GUARDED BY AGE: a genuine
+		#      predecessor is older than the running environment, while a
+		#      promote-rotated origin points at something newer. Without the
+		#      guard, a machine rolled back once would "roll back" FORWARD.
+		#
+		# The newest-older rule is only the last resort. It picked the wrong
+		# machine on the end-to-end gate (2026-08-28): an experiment's
+		# leftover clone sat between the update and the environment it came
+		# from, was newer than both, and a rollback that meant "undo the
+		# update" landed on the experiment.
+		$pick = $null
+		if ($active) {
+			$recorded = try {
+				Get-OS7ZfsPropertyValue -Name $active.RootDataset -Property 'org.os7:previous'
+			} catch { $null }
+			if ($recorded -and "$recorded" -ne '-') {
+				$pick = $all | Where-Object { $_.Name -eq "$recorded" -and $_.Complete } |
+					Select-Object -First 1
+				if ($pick) {
+					Write-OS7Step "the update that made this environment recorded its previous: $($pick.Name)"
+				}
+			}
+		}
+		if (-not $pick -and $active) {
+			$originDs = try {
+				Get-OS7ZfsPropertyValue -Name $active.RootDataset -Property 'origin'
+			} catch { $null }
+			if ($originDs -and "$originDs" -match '@' ) {
+				$originName = ("$originDs" -split '@')[0].Split('/')[-1]
+				$pick = $all | Where-Object { $_.Name -eq $originName -and $_.Complete -and
+						$_.Created -lt $active.Created } |
+					Select-Object -First 1
+				if ($pick) {
+					Write-OS7Step "the running environment was cloned from $($pick.Name)"
+				}
+			}
+		}
+		if (-not $pick) {
+			$older = if ($active) {
+				$all | Where-Object { $_.Created -lt $active.Created -and $_.Complete }
+			}
+			else { $all | Where-Object Complete }
+			$pick = $older | Select-Object -Last 1
+		}
 		if (-not $pick) {
 			throw [System.InvalidOperationException]::new(
 				'no complete boot environment older than the running one. Name one with ' +
@@ -2399,14 +2688,45 @@ function Restore-OS7 {
 # backup files, so it could sit earlier; it does not, because "after everything
 # it does not depend on" is a rule that survives the next file being added and
 # "somewhere in the middle" is not.
+#
+# THE THREE DIRECTORY FILES sit between Management and Update, and the position
+# is the same rule again. OS7.Directory.ps1 defines Import-OS7DirectoryLayer
+# and Resolve-OS7AdminSession, which OS7.DirectoryObject.ps1 calls in every
+# function and OS7.Domain.ps1 calls in most; it also uses Import-OS7NetLayer
+# for the SRV lookup that finds a domain controller, which OS7.Network.ps1
+# defines sixth. So: after everything they depend on, and still before
+# OS7.Update.ps1, which stays last.
+#
+# OS7.ScheduledTask.ps1 sits after OS7.Service.ps1, whose Import-OS7SystemdLayer
+# and Test-OS7ServiceName it calls in every function — and still before
+# OS7.Update.ps1, which stays last.
+#
+# OS7.RemoteDesktop.ps1 sits beside them for the same reason: it calls
+# Import-OS7SystemdLayer for the unit state and the restart grdctl has no verb
+# for, and Invoke-OS7Native for openssl and chown — so after Service, and
+# still before OS7.Update.ps1, which stays last.
+#
+# OS7.SecureBoot.ps1 depends on nothing here — two sysfs reads and no layer
+# import at all — so its position is free, and it is placed beside Time for
+# the same reason Time is where it is: both answer a question about the
+# machine rather than acting on it.
+#
+# OS7.Compat.Windows.ps1 is SECOND TO LAST, and the position is the same rule
+# once more: it is the only file here that calls across nearly all the others —
+# Get-OS7Service and its verbs, Set-OS7TimeZone, Get-OS7Domain, Get-OS7Version
+# and Import-OS7SystemdLayer — so it goes after every one of them, and still
+# before OS7.Update.ps1, which stays last.
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
-		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.Management.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
+		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
+		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1',
+		'OS7.Compat.Windows.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
-			"$part is missing from $PSScriptRoot. The OS7 module is staged by copying the " +
-			'whole directory (build.sh stage_ps_module); a partial copy is what this looks ' +
-			'like.')
+			"$part is missing from $PSScriptRoot. The OS7 module reaches a machine as the " +
+			'os7-module .deb, which copies the whole directory; a partial copy is what ' +
+			'this looks like. build.sh no longer stages the module CODE at all: that was ' +
+			'stage_ps_module, and this message named it until the merge that deleted it.')
 	}
 	. $file
 }
@@ -2447,21 +2767,93 @@ Export-ModuleMember -Function Get-OS7Version,
 	# a clock problem - it reports that the password is wrong.
 	Set-OS7TimeZone, Get-OS7Time, Get-OS7TimeSynchronization,
 	Set-OS7TimeSynchronization, Sync-OS7Time,
+	# Secure Boot, which the Windows administrator this product is for asks
+	# about with Confirm-SecureBootUEFI. Reads the UEFI variable rather than
+	# mokutil's prose, and reports LOCKDOWN beside it because that is the
+	# consequence an operator collides with: no unsigned module loads.
+	Get-OS7SecureBoot,
 	# Remoting. TWO mechanisms, reported separately: the /etc/profile.d hand-off
 	# that makes an interactive ssh land in PowerShell, and the sshd SUBSYSTEM
 	# that Enter-PSSession needs. A machine can have either without the other.
 	Get-OS7Remoting, Enable-OS7Remoting, Disable-OS7Remoting,
+	# Remote Desktop (docs/REMOTE-DESKTOP-PLAN.md). RDP to the machine's own
+	# login screen, over the daemon the amd64 GUI image already ships. Two
+	# logins: a machine-wide credential at the door, then the person's own
+	# account at the greeter. The per-user allow-list and the session verbs
+	# are deliberately NOT here — their enforcement is an owed measurement.
+	Get-OS7RemoteDesktop, Enable-OS7RemoteDesktop, Disable-OS7RemoteDesktop,
+	Set-OS7RemoteDesktopCredential, New-OS7RemoteDesktopCertificate,
+	Get-OS7RemoteDesktopCertificate, Set-OS7RemoteDesktopCertificate,
+	Test-OS7RemoteDesktop,
+	Get-OS7RemoteDesktopUser, Add-OS7RemoteDesktopUser, Remove-OS7RemoteDesktopUser,
+	Get-OS7RemoteDesktopSession, Stop-OS7RemoteDesktopSession,
+	# The account lockout. ACCOUNT-WIDE, not Remote-Desktop-scoped: it reaches
+	Get-OS7AccountLockout, Set-OS7AccountLockout, Unlock-OS7Account,
 	# Services and the log. Get-OS7Log is the clearest argument for why this
 	# product's shell is PowerShell: a journal is already structured, and
 	# `journalctl | grep` is a text pipeline over structure.
 	Get-OS7Service, Start-OS7Service, Stop-OS7Service, Restart-OS7Service,
 	Set-OS7Service, Get-OS7Log, Get-OS7InstallLog,
+	# Scheduled tasks — the Task Scheduler question, answered over systemd
+	# timers. BUILD-NOTES #113 is why this is its own noun: the unattended
+	# update check is a TIMER, and Get-OS7Service answers for services, the
+	# same split Windows makes between services.msc and taskschd.msc.
+	Get-OS7ScheduledTask, Enable-OS7ScheduledTask, Disable-OS7ScheduledTask,
+	Start-OS7ScheduledTask, Register-OS7ScheduledTask, Unregister-OS7ScheduledTask,
 	# The management plane - the reason this product exists, and therefore the
 	# group where an honest "cannot tell" matters most. Get-OS7EntraStatus
 	# reports the thing C8a leaves broken: brokers.d is empty on every image
 	# built so far, so Entra sign-in cannot work.
 	Get-OS7EntraStatus, Get-OS7IntuneEnrollment, Get-OS7ArcStatus,
 	Get-OS7ManagementStatus,
+	# Active Directory, OUTBOUND AND CREDENTIAL-BASED (docs/AD-PLAN.md). The
+	# machine is not a member of the domain and does not need to be: an
+	# administrator signs in to the directory from here, works as themselves,
+	# and signs out. No machine account, no keytab, no new package.
+	Enter-OS7AdminSession, Exit-OS7AdminSession, Get-OS7AdminSession,
+	Test-OS7Directory, Add-OS7DirectoryTrust,
+	Get-OS7ADDomain, Get-OS7ADDomainController,
+	# Active Directory objects. Search-OS7AD and Get-/Set-OS7ADObject are the
+	# deliberate way out: anything this surface does not name is one raw LDAP
+	# call away rather than a dead end.
+	Get-OS7ADUser, New-OS7ADUser, Set-OS7ADUser, Remove-OS7ADUser,
+	Get-OS7ADGroup, New-OS7ADGroup, Set-OS7ADGroup, Remove-OS7ADGroup,
+	# Get-OS7ADPrincipalGroupMembership is the INVERSE of Get-OS7ADGroupMember,
+	# and it resolves the primary group that memberOf does not carry.
+	Get-OS7ADGroupMember, Get-OS7ADPrincipalGroupMembership,
+	Add-OS7ADGroupMember, Remove-OS7ADGroupMember,
+	Get-OS7ADComputer,
+	Get-OS7ADOrganizationalUnit, New-OS7ADOrganizationalUnit,
+	Set-OS7ADOrganizationalUnit, Remove-OS7ADOrganizationalUnit,
+	Enable-OS7ADAccount, Disable-OS7ADAccount, Unlock-OS7ADAccount,
+	Reset-OS7ADAccountPassword, Set-OS7ADAccountExpiration,
+	Move-OS7ADObject, Rename-OS7ADObject,
+	Search-OS7AD, Get-OS7ADObject, Set-OS7ADObject, Remove-OS7ADObject,
+	# The domain JOIN, which is a different feature with a different cost: five
+	# packages, a machine account, and an interaction with boot environments
+	# that nothing else here has. Repair-OS7Domain exists because /etc lives
+	# inside the boot environment and an AD machine password does not roll back.
+	Join-OS7Domain, Remove-OS7Domain, Repair-OS7Domain,
+	Get-OS7Domain, Test-OS7Domain,
+	Get-OS7DomainLogonPolicy, Set-OS7DomainLogonPolicy,
+	Get-OS7KerberosTicket, New-OS7KerberosTicket, Remove-OS7KerberosTicket,
+	# THE WINDOWS NAMES Microsoft.PowerShell.Management does not ship on Linux
+	# — measured: 15 of its 62 documented cmdlets are absent, and the failure
+	# an administrator meets is a bare CommandNotFoundException. P1 deferred
+	# these to an opt-in module of aliases; that was revised on 2026-09-09 to
+	# functions with Windows' parameters, loaded by default, because "the name
+	# resolves" and "a script copied off a Windows box runs" are different
+	# products. OS7.Compat.Windows.ps1 has the reasoning and the refusal table.
+	#
+	# Restart-Computer and Stop-Computer are the two that DO exist and shadow
+	# them anyway: both run `/usr/sbin/shutdown` with no arguments, which is
+	# systemctl's compatibility interface defaulting to POWEROFF, so the
+	# shipped Restart-Computer powers an OS/7 machine off and reports success.
+	Get-Service, Set-Service, New-Service, Remove-Service,
+	Start-Service, Stop-Service, Restart-Service,
+	Suspend-Service, Resume-Service,
+	Set-TimeZone, Get-ComputerInfo, Rename-Computer,
+	Restart-Computer, Stop-Computer,
 	# The device manager. FOUR STATES AND A DEFAULT THAT HIDES THE BORING ONE:
 	# `Get-OS7Device` with no arguments returns only what needs attention,
 	# because a wall of forty working devices is what Linux already gives you

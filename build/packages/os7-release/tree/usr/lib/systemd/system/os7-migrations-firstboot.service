@@ -1,0 +1,51 @@
+[Unit]
+# OS/7 — run the firstboot migrations an update left behind. C10 §6'.
+#
+# Update-OS7 builds the next release into a CLONED boot environment from a
+# chroot, and BUILD-NOTES #69 is why some migrations cannot run there: sealing
+# to PCR 7 from a chroot seals against the CHROOT's PCR 7 — the one
+# measurement that must come from the real boot path. So Update-OS7 records
+# those under /var/lib/os7/migrations/pending inside the new environment and
+# says out loud that it has left work behind. This unit is the other half: the
+# first boot OF that environment is the first moment the real boot path
+# exists, and this is where the recorded work runs.
+#
+# WHY A UNIT AND NOT MORE CONDITIONS. The condition below is only "is there
+# recorded work" — everything else (a live medium, a script that no longer
+# applies, one that already ran) is decided by the script, which can say WHY
+# it decided. A unit condition can only skip silently, and a skipped migration
+# that looks like a run one is this repository's most expensive failure shape.
+#
+# A ROLLBACK RE-ARMS THIS. The pending file and the run records live inside
+# the boot environment, so Restore-OS7 takes them back to the state before the
+# update — and a rollback followed by a re-update genuinely has not run the
+# migrations, so they run again. That is CL8's normal operation, and it is why
+# the contract requires every migration to be idempotent
+# (/usr/lib/os7/migrations/README).
+Description=OS/7 firstboot release migrations
+Documentation=file:///usr/lib/os7/migrations/README
+
+# After the datasets are there (the state directory is inside the boot
+# environment, the scripts are under /usr) and after the clock is plausible —
+# a migration touching the TPM or Kerberos-adjacent state on a machine whose
+# clock is at the epoch would make decisions it cannot take back.
+Requires=zfs.target
+After=zfs.target zfs-mount.service time-set.target
+
+ConditionPathExists=/var/lib/os7/migrations/pending
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=TZ=UTC
+ExecStart=/bin/sh /usr/libexec/os7-migrate-firstboot
+
+# The script exits 0 when there is nothing for it — a live medium, an empty
+# list — and non-zero when a migration FAILED, which must be a red unit in
+# `systemctl --failed`: exit 0 over a migration that did not run is the exact
+# shape BUILD-NOTES #13/#64/#72 keep finding, and the pending file is kept so
+# the next boot tries again.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

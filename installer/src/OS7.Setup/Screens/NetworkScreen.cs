@@ -277,7 +277,7 @@ internal sealed class NetworkScreen : Screen
     /// Where screen 9 goes, and where screen 8 comes in.
     ///
     /// The branch lives here rather than in each screen, so that the sequence
-    /// 9 → 9W → 9S → execute is written once and every entry point uses it.
+    /// 9 → 9W → 9S → 9D → execute is written once and every entry point uses it.
     /// Wireless first: a static address on a network you have not joined cannot
     /// be tested, so 9W runs before 9S.
     /// </summary>
@@ -289,10 +289,14 @@ internal sealed class NetworkScreen : Screen
             if (n.Kind == LinkKind.Wireless) return new WifiScreen(plan);
             if (n.Method == NetworkMethod.Static) return new StaticScreen(plan);
         }
-        // Start, not `new`: the whole-plan check lives behind that factory and
-        // the constructor is private. This is the last ENTER before a disk is
-        // written on every path that does not go through 9W or 9S.
-        return ExecuteScreen.Start(plan);
+        // 9D, and `Entry` rather than `new` for the reason ModeScreen.Next hands
+        // to this file's own Entry: whether there is anything to ask belongs to
+        // the screen that would ask it, and a domain join needs a network, an
+        // `adcli` on the medium and — most machines — nothing at all. The gate
+        // in front of the executor is behind that call either way, so this is
+        // still the last ENTER before a disk is written on every path that does
+        // not go through 9W or 9S.
+        return DomainScreen.Entry(plan);
     }
 
     /// <summary>
@@ -315,6 +319,9 @@ internal sealed class NetworkScreen : Screen
         Log.Info("network: none (no adapter on this machine; screen 9 skipped)");
         // The SAME door as every other path. A skipped screen must not also skip
         // the gate behind it — that is BUILD-NOTES #45 read from the other end.
-        return ExecuteScreen.Start(plan);
+        // 9D is on the far side of that door and skips itself for the same
+        // reason: a machine with no network cannot join a domain, and it says so
+        // in the log rather than leaving the plan at a default nobody chose.
+        return DomainScreen.Entry(plan);
     }
 }

@@ -1,0 +1,6 @@
+Ok       : False
+HasLink  : True
+DnsWorks : False
+
+
+PS /home/os7admin>

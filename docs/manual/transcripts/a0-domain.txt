@@ -1,0 +1,20 @@
+OS7-STEP directory layer: /usr/local/share/powershell/Modules/Directory/Director
+y.psd1
+
+ConfiguredDomains    : {}
+ConfigurationPresent : False
+KeytabPresent        : False
+KeytabPrincipal      : {}
+Krb5ConfPresent      : True
+SssdRunning          : False
+ProbeAccount         :
+ProbeResolved        :
+Joined               : False
+Detail               : {There is no /etc/sssd/sssd.conf, so this machine is not
+                        configured for any domain., A domain join does not make
+                        this machine manageable by Intune: enrolment goes throu
+                       gh Entra ID, and there is no hybrid join for Linux. Grou
+                       p Policy is not applied either.}
+
+
+PS /home/os7admin>

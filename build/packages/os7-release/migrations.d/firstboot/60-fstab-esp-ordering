@@ -1,0 +1,55 @@
+#!/bin/sh
+# #104 — order the ESP mount AFTER the ZFS /boot mount, in fstab.
+#
+# THE DEFECT: /boot is a ZFS mount (bpool/BOOT/<be>, mounted by
+# zfs-mount.service), and systemd has no unit for it — so the fstab-generated
+# boot-efi.mount has nothing to order against and RACES it at every boot.
+# When the ESP mounts first, the /boot dataset lands ON TOP of it: the vfat
+# stays in the mount table (boot-efi.mount reads active, `systemctl start`
+# is a no-op that exits 0), while the path /boot/efi resolves into the ZFS
+# mount's empty efi directory. A machine booted that way cannot rewrite its
+# ESP stubs: activation, update and rollback all fail at step 6, and the
+# failure names a partition that is perfectly fine and merely buried.
+# Measured on the end-to-end gate, 2026-08-28 (SESSION-UPDATE-DELIVERY.md).
+#
+# THE FIX, same as Setup now writes for new machines:
+# x-systemd.requires=zfs-mount.service on the /boot/efi line — systemd.mount(5)
+# turns that into Requires= AND After=, so the ESP always mounts onto the ZFS
+# /boot, never under it.
+#
+# IDEMPOTENT BY ASKING THE FILE: the option present means nothing to do.
+# The edit is a plain append to the option list of the one /boot/efi vfat
+# line; everything else in fstab is left untouched. Takes effect at the next
+# boot — which is exactly when the race would next run.
+set -u
+
+TAG="os7/60-fstab-esp-ordering"
+FSTAB=/etc/fstab
+OPT="x-systemd.requires=zfs-mount.service"
+
+if [ ! -f "${FSTAB}" ]; then
+	echo "${TAG}: no ${FSTAB} — nothing to order"
+	exit 0
+fi
+if ! grep -Eq '^[^#]+[[:space:]]/boot/efi[[:space:]]+vfat[[:space:]]' "${FSTAB}"; then
+	echo "${TAG}: ${FSTAB} carries no /boot/efi vfat line — not this layout, nothing to do"
+	exit 0
+fi
+if grep -Eq "^[^#]+[[:space:]]/boot/efi[[:space:]]+vfat[[:space:]]+[^[:space:]]*${OPT}" "${FSTAB}"; then
+	echo "${TAG}: the ESP line already orders after zfs-mount.service — nothing to do"
+	exit 0
+fi
+
+# Append the option to the fourth field of the one /boot/efi vfat line.
+if ! sed -Ei "s|^([^#][^[:space:]]*[[:space:]]+/boot/efi[[:space:]]+vfat[[:space:]]+[^[:space:]]+)|\\1,${OPT}|" \
+		"${FSTAB}"; then
+	echo "${TAG}: sed could not edit ${FSTAB}" >&2
+	exit 1
+fi
+# The edit is a claim; ask the file.
+if ! grep -Eq "^[^#]+[[:space:]]/boot/efi[[:space:]]+vfat[[:space:]]+[^[:space:]]*${OPT}" "${FSTAB}"; then
+	echo "${TAG}: edited ${FSTAB} and the option is still not on the ESP line" >&2
+	exit 1
+fi
+echo "${TAG}: /boot/efi now mounts after zfs-mount.service (from the next boot on)"
+exit 0

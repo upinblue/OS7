@@ -1,0 +1,4 @@
+# The HTML is what the browser prints from — a build intermediate, not a
+# source and not a deliverable. The Markdown is the source; the PDF is the
+# deliverable and is kept.
+manual-*.html

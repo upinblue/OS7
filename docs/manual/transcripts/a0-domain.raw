@@ -1,0 +1,22 @@
+C[6n[24;81H[24;80HCl[6n[24;82H[24;80HCle[6n[24;83H[24;80HClea[6n[24;84H[24;80HClear[6n[24;85H[24;80HClear-[6n[24;86H[24;80HClear-H[6n[24;87H[24;80HClear-Ho[6n[24;88H[24;80HClear-Hos[6n[24;89H[24;80HClear-Host[6n[24;90H
+[?1l[H[J[6n
+PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[24;83H[24;80HGet-[6n[24;84H[24;80HGet-O[6n[24;85H[24;80HGet-OS[6n[24;86H[24;80HGet-OS7[6n[24;87H[24;80HGet-OS7D[6n[24;88H[24;80HGet-OS7Do[6n[24;89H[24;80HGet-OS7Dom[6n[24;90H[24;80HGet-OS7Doma[6n[24;91H[24;80HGet-OS7Domai[6n[24;92H[24;80HGet-OS7Domain[6n[24;93H[24;80HGet-OS7Domain [6n[24;94H[24;80HGet-OS7Domain |[6n[24;95H[24;80HGet-OS7Domain | [6n[24;96H[24;80HGet-OS7Domain | F[6n[24;97H[24;80HGet-OS7Domain | Fo[6n[24;98H[24;80HGet-OS7Domain | For[6n[24;99H[24;80HGet-OS7Domain | Form[6n[24;100H[24;80HGet-OS7Domain | Forma[6n[24;101H[24;80HGet-OS7Domain | Format[6n[24;102H[24;80HGet-OS7Domain | Format-[6n[24;103H[24;80HGet-OS7Domain | Format-L[6n[24;104H[24;80HGet-OS7Domain | Format-Li[6n[24;105H[24;80HGet-OS7Domain | Format-Lis[6n[24;106H[24;80HGet-OS7Domain | Format-List[6n[24;107H
+[?1lOS7-STEP directory layer: /usr/local/share/powershell/Modules/Directory/Directory.psd1
+
+[32;1mConfiguredDomains    : [0m{}
+[32;1mConfigurationPresent : [0mFalse
+[32;1mKeytabPresent        : [0mFalse
+[32;1mKeytabPrincipal      : [0m{}
+[32;1mKrb5ConfPresent      : [0mTrue
+[32;1mSssdRunning          : [0mFalse
+[32;1mProbeAccount         : [0m
+[32;1mProbeResolved        : [0m
+[32;1mJoined               : [0mFalse
+[32;1mDetail               : [0m{There is no /etc/sssd/sssd.conf, so this machine is not
+                        configured for any domain., A domain join does not make
+                        this machine manageable by Intune: enrolment goes throu
+                       gh Entra ID, and there is no hybrid join for Linux. Grou
+                       p Policy is not applied either.}
+
+[6n
+PS /home/os7admin> [?1h[6n

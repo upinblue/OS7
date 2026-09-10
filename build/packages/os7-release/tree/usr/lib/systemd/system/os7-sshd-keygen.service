@@ -1,0 +1,85 @@
+[Unit]
+# OS/7 — generate the SSH host keys, because Ubuntu's own unit never runs here.
+# docs/BUILD-NOTES.md #118, and its ordering is #120.
+#
+# WHAT IS BROKEN WITHOUT THIS. An installed OS/7 machine has no
+# /etc/ssh/ssh_host_* at all, so the socket-activated ssh.service dies on every
+# single connection attempt with
+#
+#     sshd: no hostkeys available -- exiting.
+#
+# and nothing anywhere reports a problem until somebody tries to connect. There
+# is no remote access to any installed machine, permanently.
+#
+# WHY UBUNTU'S sshd-keygen.service DOES NOT COVER IT. It is present, it is
+# enabled, and its condition is `ConditionFirstBoot=yes` — which is never met on
+# this product. Measured on a machine installed 2026-08-30, on its very first
+# boot, journal of that boot:
+#
+#     systemd[1]: Initializing machine ID from random generator.
+#     first-boot-complete.target ... skipped, unmet condition ConditionFirstBoot=yes
+#     sshd-keygen.service ... skipped, unmet condition ConditionFirstBoot=yes
+#     /run/systemd/first-boot: does not exist
+#
+# So systemd initialises a machine ID it found uninitialised — the first-boot
+# path — and does not raise the first-boot flag, in the same boot. os7-setup is
+# not the cause: it writes an EMPTY /etc/machine-id on purpose and the ISO ships
+# an empty one too. Why the flag is not raised is recorded in #118; what is
+# settled is that nothing gated on ConditionFirstBoot may be relied on here —
+# first-boot-complete.target does not run either.
+#
+# WHY ConditionPathExists INSTEAD. It is the condition OS/7's own first-boot
+# units already use — os7-backup-firstboot keys on /etc/os7/backup.json and
+# os7-migrations-firstboot on /var/lib/os7/migrations/pending. A unit that asks
+# about the thing it is there to create needs no flag from anybody, and it is
+# right on the second boot as well: if the keys were removed, it makes them
+# again.
+#
+# ---------------------------------------------------------------------------
+# THE ORDERING IS UBUNTU'S, DELIBERATELY, AND #120 IS WHAT THE OTHER ONE COST.
+#
+# The first version of this unit said `Before=ssh.service ssh.socket` and
+# `Wants=ssh.socket`, which reads as "make the keys before anything ssh". It
+# builds an ordering CYCLE, and systemd said so in as many words:
+#
+#     sockets.target: Found ordering cycle: ssh.socket/start after
+#       os7-sshd-keygen.service/start after basic.target/start after
+#       sockets.target/start - after ssh.socket
+#     sockets.target: Job ssh.socket/start deleted to break ordering cycle
+#
+# A .service gets `After=basic.target` from DefaultDependencies; basic.target is
+# after sockets.target; and ssh.socket declares `Before=sockets.target`. Naming
+# ssh.socket in Before= closes the loop, and systemd breaks it by DELETING THE
+# SOCKET'S START JOB. The machine then listens on nothing — the very defect this
+# unit exists to prevent, arrived by a different road, and silent unless
+# somebody reads the boot journal.
+#
+# So: Before= names only the SERVICES. The socket may start whenever it likes;
+# what has to be true is that the keys exist before sshd RUNS, and sshd runs
+# when the socket triggers it. And the direction is WantedBy, not Wants — this
+# unit is pulled IN BY ssh.service and ssh.socket rather than pulling the socket
+# along behind it. Both are exactly what /usr/lib/systemd/system/sshd-keygen.service
+# does; only the condition differs, which is the whole point of #118.
+# ---------------------------------------------------------------------------
+Description=OS/7 SSH host key generation
+Documentation=man:ssh-keygen(1)
+
+Before=ssh.service sshd.service sshd@.service
+
+# The ed25519 key stands for all of them: `ssh-keygen -A` generates every type
+# that is missing, so one absent key means the set is incomplete and one
+# present key means the set was made.
+ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
+
+[Service]
+Type=oneshot
+# yes, like Ubuntu's: a oneshot that has done its work should read as done
+# rather than as inactive, or anything ordered after it runs again on every
+# trigger.
+RemainAfterExit=yes
+# -A: every host key type that is missing, and nothing else. It is what
+# Ubuntu's own sshd-keygen.service runs; only the condition differs.
+ExecStart=/usr/bin/ssh-keygen -A
+
+[Install]
+WantedBy=ssh.service ssh.socket

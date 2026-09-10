@@ -1,0 +1,5 @@
+Name  : rpool
+State : ONLINE
+
+
+PS /home/os7admin>

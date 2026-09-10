@@ -1,0 +1,93 @@
+#!/bin/sh
+# OS/7 — run the firstboot migrations Update-OS7 recorded. C10 §6'.
+#
+# THE CONTRACT (details in /usr/lib/os7/migrations/README):
+#
+#   * /var/lib/os7/migrations/pending names one script per line, as the
+#     absolute path Update-OS7 recorded — always under
+#     /usr/lib/os7/migrations/<version>/firstboot/. Anything else in the file
+#     is refused, not run: this list is an instruction to execute code as
+#     root, and it is data on a filesystem, so its entries are validated
+#     against the one directory os7-release owns rather than trusted.
+#   * A run is recorded at /var/lib/os7/migrations/<version>/<name>, the same
+#     stamp convention Update-OS7 uses for chroot migrations, so a boot that
+#     retries after a partial failure skips what already ran.
+#   * A FAILED migration keeps the pending file and fails this unit — loudly.
+#     No exit 0 over a migration that did not run. The record of what
+#     happened goes to /var/log/os7/update.log, the same file Update-OS7
+#     writes, because §6 wants one place Intune and Arc can both read.
+#   * The pending file is removed only when every listed migration has run or
+#     was already stamped. Idempotence of the migrations themselves is the
+#     contract's requirement, not this script's achievement (CL8: a rollback
+#     followed by a re-update runs them twice, as normal operation).
+#
+# On a live medium there is nothing to do and the answer is a quiet 0: the
+# unit's ConditionPathExists already keeps it from starting there, and the
+# check here is for the one who runs the script by hand.
+set -u
+
+PENDING=/var/lib/os7/migrations/pending
+STATE=/var/lib/os7/migrations
+MIGRATIONS=/usr/lib/os7/migrations
+LOG=/var/log/os7/update.log
+
+log() {
+	# To the journal via stdout AND to the update log. The log write must not
+	# be able to fail the migration run — /var/log may be read-only in odd
+	# recovery states, and the migrations matter more than the diary.
+	echo "os7-migrate-firstboot: $*"
+	mkdir -p "$(dirname "${LOG}")" 2>/dev/null || true
+	printf '%s firstboot: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" \
+		>> "${LOG}" 2>/dev/null || true
+}
+
+if grep -q 'boot=casper' /proc/cmdline 2>/dev/null; then
+	echo "os7-migrate-firstboot: live medium — not this machine's business"
+	exit 0
+fi
+if [ ! -s "${PENDING}" ]; then
+	echo "os7-migrate-firstboot: no pending migrations"
+	exit 0
+fi
+
+fail=0
+ran=""
+while IFS= read -r script; do
+	[ -n "${script}" ] || continue
+	case "${script}" in
+		"${MIGRATIONS}"/*/firstboot/*) ;;
+		*)
+			log "REFUSED pending entry outside ${MIGRATIONS}: ${script}"
+			fail=1
+			continue ;;
+	esac
+	# /usr/lib/os7/migrations/<version>/firstboot/<name>
+	version="$(printf '%s\n' "${script}" | awk -F/ '{print $6}')"
+	name="$(basename "${script}")"
+	stamp="${STATE}/${version}/${name}"
+	if [ -e "${stamp}" ]; then
+		log "skip ${version}/${name} — already ran in this environment"
+		continue
+	fi
+	if [ ! -f "${script}" ]; then
+		log "MISSING ${version}/${name} — pending names a script os7-release does not ship"
+		fail=1
+		continue
+	fi
+	if sh "${script}"; then
+		mkdir -p "${STATE}/${version}"
+		printf 'ran by os7-migrate-firstboot for %s\n' "${version}" > "${stamp}"
+		log "ran ${version}/${name}"
+		ran="${ran} ${version}/${name}"
+	else
+		rc=$?
+		log "FAILED ${version}/${name} exit ${rc} — pending kept, this unit is failed"
+		fail=1
+	fi
+done < "${PENDING}"
+
+if [ "${fail}" -eq 0 ]; then
+	rm -f "${PENDING}"
+	log "firstboot migrations complete:${ran:- none to run}"
+fi
+exit "${fail}"

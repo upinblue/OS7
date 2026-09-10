@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 128" width="240" height="128" role="img" aria-label="up in blue">
-  <title>up in blue</title>
-  <rect x="0" y="0" width="240" height="128" fill="#1289ff"/>
-  <rect x="9" y="9" width="222" height="110" fill="#ffffff"/>
-  <text x="120" y="92" text-anchor="middle"
-        font-family="Segoe UI, system-ui, -apple-system, Helvetica Neue, Arial, sans-serif"
-        font-size="72" font-weight="700" fill="#1289ff">uib</text>
-</svg>

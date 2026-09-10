@@ -25,8 +25,15 @@
 # Recorded real output is EVIDENCE and must stay byte-exact. run-zfs.py capture
 # writes these from a live ZFS; the serial-console harness speaks CR on purpose
 # (BUILD-NOTES #16). Never let an end-of-line filter edit a measurement.
-powershell/Zfs/tests/fixtures/**  -text
-docs/SESSION-*.md                 -text
+#
+# The Directory line names the same kind of evidence: `ldapsearch -o
+# ldif-wrap=no` output taken off a real domain controller, beside the JSON each
+# one was transcribed into. Without it `* text=auto` above decides those files'
+# line endings on the first checkout that ever sees them, and a filter that has
+# already run cannot be un-run from a .gitattributes.
+powershell/Zfs/tests/fixtures/**        -text
+powershell/Directory/tests/fixtures/**  -text
+docs/SESSION-*.md                       -text
 
 # Binaries, should any land here. `text=auto` guesses; these do not need to be
 # guessed at. Fonts and images are built into the ISO byte-for-byte.

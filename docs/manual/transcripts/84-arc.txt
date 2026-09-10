@@ -1,0 +1,15 @@
+OS7-STEP run: dpkg-query -W -f=${Status} ${Version} azcmagent
+
+Installed     : False
+Version       :
+StagedPackage : {azcmagent_1.67.03504.1320_amd64.deb}
+StagedIn      : /var/cache/os7/packages
+Raw           :
+Reason        :
+Connected     :
+Detail        : azcmagent is not installed; azcmagent_1.67.03504.1320_amd64.deb
+                 is staged in /var/cache/os7/packages for the installer to plac
+                e, which is deliberate — its postinst needs a running systemd
+
+
+PS /home/os7admin>

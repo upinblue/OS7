@@ -1,0 +1,3 @@
+OperationStopped: no boot environment called 'demo'
+
+PS /home/os7admin>

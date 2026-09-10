@@ -38,7 +38,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vmconsole import Console, live_login, to_plain_bash, qemu_prefix    # noqa: E402
+from vmconsole import Console, live_login, to_plain_bash                # noqa: E402
 from vmscreen import Lab                                                # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -71,8 +71,8 @@ lab = Lab("phase3b", target_gb=24, iso_as_disk=True, nic=True)
 
 CMDLINE = ("boot=casper os7.setup=1 systemd.wants=os7-setup.service systemd.unit=multi-user.target "
            "fbcon=font:TER16x32 fbcon=nodefer plymouth.enable=0 quiet loglevel=0 "
-           "console=ttyAMA0,115200")
-LIVE_CMDLINE = "boot=casper fbcon=nodefer quiet console=ttyAMA0,115200"
+           f"console={lab.arch.serial_tty},115200")
+LIVE_CMDLINE = f"boot=casper fbcon=nodefer quiet console={lab.arch.serial_tty},115200"
 
 TARGET = "/dev/disk/by-id/virtio-os7target"
 
@@ -167,16 +167,15 @@ def disk_only_args(vmdir, nic=True):
     assertion is about what the GUEST configured, not about whether this Mac has
     a network.
     """
-    pre = qemu_prefix()
-    code = os.path.join(pre, "share", "qemu", "edk2-aarch64-code.fd")
-    args = [
-        "qemu-system-aarch64",
-        "-machine", "virt,accel=hvf", "-cpu", "host",
+    # `vmdir` is not always the lab's own state — phase m1 boots a hand-cloned
+    # copy under .vm/m1 — so it is registered as a mount of its own.
+    lab.arch.mount(vmdir)
+    p = lab.arch.path
+    args = lab.arch.base_args() + [
         "-smp", lab.CPUS, "-m", lab.MEM,
-        "-drive", f"if=pflash,format=raw,file={code},readonly=on",
-        "-drive", f"if=pflash,format=raw,file={os.path.join(vmdir, 'edk2-vars.fd')}",
+    ] + lab.arch.firmware_args(os.path.join(vmdir, "edk2-vars.fd")) + [
         "-display", "none", "-monitor", "none", "-serial", "stdio",
-        "-drive", f"if=none,id=target,file={os.path.join(vmdir, 'target.qcow2')},format=qcow2",
+        "-drive", f"if=none,id=target,file={p(os.path.join(vmdir, 'target.qcow2'))},format=qcow2",
         "-device", "virtio-blk-pci,drive=target,serial=os7target",
     ]
     if nic:
@@ -186,7 +185,8 @@ def disk_only_args(vmdir, nic=True):
 
 def boot_installed(vmdir, label, passphrase, user, password):
     """Boot an installed disk alone and land on a shell. Returns the Console."""
-    c = Console(disk_only_args(vmdir), os.path.join(vmdir, f"{label}.serial.log"))
+    c = Console(lab.arch.command(disk_only_args(vmdir), name=lab.name),
+                os.path.join(vmdir, f"{label}.serial.log"))
     i = c.expect([r"unlock disk", r"Enter passphrase", r"passphrase for",
                   r"\(initramfs\)", r"Kernel panic", r"No bootable"],
                  600, "the passphrase prompt")

@@ -77,7 +77,15 @@ FONT_DEB="${WORK}/classicfonts.deb"
 FONT_URL="${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}/${OS7_CLASSICFONT_POOL}"
 
 echo "    fetching ${OS7_CLASSICFONT_POOL}"
-curl -fsSL --retry 3 -o "${FONT_DEB}" "${FONT_URL}"
+# --retry-all-errors AND --retry-connrefused, which is the form
+# build-os7-packages.sh already used and these three did not.
+# snapshot.ubuntu.com serves an intermittent 503/500/502 - measured
+# 2026-09-08 at 3 failures in 12 requests - and a build makes
+# hundreds of them, so one unlucky fetch is a total build failure
+# that reads like a broken tree (BUILD-NOTES #138). Plain --retry
+# does cover 5xx; what it does not cover is a connection refused or
+# a reset, and three attempts at a 25%% failure rate is not enough.
+curl -fsSL --retry 6 --retry-delay 4 --retry-connrefused --retry-all-errors -o "${FONT_DEB}" "${FONT_URL}"
 
 GOT="$(sha256sum "${FONT_DEB}" | cut -d' ' -f1)"
 if [[ "${GOT}" != "${OS7_CLASSICFONT_SHA256}" ]]; then
@@ -177,6 +185,15 @@ MUST=(
 	"./usr/lib/systemd/user/os7-theme-user-setup.service"
 	"./usr/lib/systemd/user/default.target.wants/os7-theme-user-setup.service"
 	"./etc/dconf/db/os7.d/00-os7-classic"
+	# THE LOGIN SCREEN, and it is listed here for the reason the whole list
+	# exists: these three arrive by `cp -a tree/.` and nothing else would
+	# notice a rename, a moved directory or a .gitignore swallowing them. The
+	# greeter keyfile is the one that matters - without it the login screen
+	# silently goes back to showing Ubuntu's logo, which is precisely the
+	# failure this package was changed to fix. docs/BUILD-NOTES.md #110.
+	"./usr/share/gdm/dconf/95-os7-login-screen"
+	"./usr/share/pixmaps/os7-logo-login.svg"
+	"./usr/share/pixmaps/upinblue-logo.svg"
 )
 CONTENTS="$(dpkg-deb -c "${DEB}")"
 missing=0

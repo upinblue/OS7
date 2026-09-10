@@ -1,0 +1,15 @@
+Name         : ssh.service
+Description  : OpenBSD Secure Shell server
+ActiveState  : inactive
+SubState     : dead
+StartupType  : disabled
+Result       : success
+RestartCount : 0
+MainPid      : 0
+ActiveSince  :
+IsOS7        : True
+ServiceType  : notify
+Healthy      : True
+
+
+PS /home/os7admin>

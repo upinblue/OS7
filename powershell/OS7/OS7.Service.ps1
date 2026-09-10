@@ -35,7 +35,13 @@ $script:OS7ServicePatterns = @(
 	# The management path this product exists for
 	'intune*', 'microsoft-identity-broker*', 'azcmagent*', 'himds*', 'gcad*', 'extd*',
 	# The things an OS/7 machine is unreachable or untrusted without
-	'ssh*', 'chrony*', 'systemd-resolved*', 'zfs-*'
+	'ssh*', 'chrony*', 'systemd-resolved*', 'zfs-*',
+	# The backup engine. The snapshot schedule IS sanoid's own timer
+	# (BACKUP-PLAN: OS/7 ships no competing one), so a list that answers
+	# "which schedules are this product's" without sanoid.timer would be
+	# BUILD-NOTES #113 in a second shape. Replication rides os7-backup-*,
+	# which os7-* already matches. Added 2026-08-29 with Get-OS7ScheduledTask.
+	'sanoid*'
 )
 
 function Import-OS7SystemdLayer {

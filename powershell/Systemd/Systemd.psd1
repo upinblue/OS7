@@ -39,11 +39,43 @@
 		# daemon-reload, which makes systemd re-read unit files; confusing them
 		# applies a change to systemd and not to the program it configures.
 		'Update-SystemdUnit',
+		# Timers. Get- is a UNION of list-timers and list-unit-files, because a
+		# timer that is neither enabled nor active is in NEITHER list-timers
+		# NOR list-units (measured on systemd 259) — only the unit-files list
+		# and the on-demand loader can see it. New-/Remove- author the
+		# timer+service pair as ONE thing, validate every calendar spec with
+		# systemd-analyze BEFORE writing, and ask systemd back afterwards.
+		'Get-SystemdTimer', 'New-SystemdTimer', 'Remove-SystemdTimer',
 		# The journal, typed. Timestamp is a [datetime] decoded from
 		# MICROSECONDS, Priority is a number and a name, and Unit comes from
 		# `_SYSTEMD_UNIT` — the field journald adds and a sender cannot forge —
 		# never from `UNIT`, which the sender supplies.
 		'Get-SystemdJournal',
+		# Sessions. `loginctl` is on check-layering.py's P2-systemd token
+		# list, so anything that wants to know who is signed in comes through
+		# here. Read as a TABLE and not as JSON: `list-sessions
+		# --output=json` accepts the option, prints the table and exits 0
+		# (measured on systemd 259).
+		'Get-SystemdSession', 'Stop-SystemdSession',
+		# The machine's own power state. The ACTION IS ALWAYS EXPLICIT here,
+		# because PowerShell's own Restart-Computer on Linux runs
+		# `/usr/sbin/shutdown` with no arguments at all — which on Ubuntu is
+		# systemctl's compatibility interface, whose flagless action is
+		# POWEROFF. Measured 2026-09-09; upstream since 2021.
+		'Invoke-SystemdShutdown',
+		# The freezer — the nearest thing systemd has to a paused service, and
+		# not the same thing. A frozen unit still reports ActiveState=active
+		# (measured), so the freezer is a field of its own or it is invisible.
+		'Get-SystemdUnitFreezerState', 'Suspend-SystemdUnit', 'Resume-SystemdUnit',
+		# Service units, authored the way the timer pair is: validated, written
+		# into one directory, and asked back from systemd. Remove- refuses
+		# anything that is not a plain file there — a mask is a symlink at
+		# exactly that path.
+		'New-SystemdService', 'Remove-SystemdService',
+		# The machine's name: static, transient and pretty are three names, and
+		# /etc/hosts is part of the operation — sudo resolves its own host name
+		# on every invocation.
+		'Get-SystemdHostName', 'Set-SystemdHostName',
 		# The self-test: recorded real systemctl and journalctl output,
 		# including a MESSAGE that is a byte array rather than a string.
 		'Test-SystemdModule'
@@ -57,7 +89,7 @@
 			Tags         = @('systemd', 'systemctl', 'journalctl', 'Linux', 'OS7')
 			LicenseUri   = 'https://github.com/upinblue/os7/blob/main/LICENSE'
 			ProjectUri   = 'https://github.com/upinblue/os7'
-			ReleaseNotes = 'v0: units and the journal, read and write. Timers, sockets and unit-file authoring are not here.'
+			ReleaseNotes = 'v1: units, the journal, and timers - read, write, and authoring of timer unit pairs. Sockets and general unit-file authoring are not here.'
 		}
 	}
 }

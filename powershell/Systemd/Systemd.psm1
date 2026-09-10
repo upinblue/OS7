@@ -39,6 +39,12 @@ Set-StrictMode -Version 3.0
 
 $script:SystemdCommandOverride = $null
 
+# Where New-SystemdTimer writes and Remove-SystemdTimer is willing to delete.
+# A VARIABLE rather than a literal so the self-test and the logic checks can
+# point it at a scratch directory — the same seam check-management-logic.py
+# uses on the OS7 module ($script:OS7AuthdBrokerDir and friends).
+$script:SystemdUnitDirectory = '/etc/systemd/system'
+
 # journald's priorities, which are syslog's. Kept here rather than inline
 # because they are read in two directions — a name to filter by, and a number
 # to report — and two hand-written copies of a table drift.
@@ -62,10 +68,15 @@ function Invoke-SystemdCommand {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
+		# Reset, then read guarded: $LASTEXITCODE is rewritten only when the
+		# command COMPLETES through the pipeline (BUILD-NOTES #121). ExitCode
+		# comes back $null — not a stale earlier code — when it never did,
+		# and $null compares unequal to 0, so callers treat it as a failure.
+		$global:LASTEXITCODE = $null
 		$out = & $Command @Arguments 2> $errFile
 		return [pscustomobject]@{
 			StdOut   = ($out -join "`n")
-			ExitCode = $LASTEXITCODE
+			ExitCode = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 			StdErr   = ((Get-Content -Raw -ErrorAction SilentlyContinue $errFile) ?? '')
 		}
 	}
@@ -362,16 +373,577 @@ function Set-SystemdUnitStartup {
 		touch the running unit — a distinction `systemctl` makes and nobody
 		remembers. The returned object shows both `StartupType` and
 		`ActiveState`, so the difference is visible rather than assumed.
+
+	.PARAMETER Startup
+		`Enabled`, `Disabled`, `Masked` — or `Unmasked`, which is the fourth
+		because `disable` DOES NOT UNMASK. A masked unit is a symlink to
+		/dev/null and `systemctl disable` leaves it exactly where it is, so a
+		caller walking a unit from Masked back to Disabled and never saying
+		`unmask` produces a unit that reports `disabled`, refuses to start, and
+		gives no reason connecting the two.
 	#>
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory)][string]$Name,
-		[Parameter(Mandatory)][ValidateSet('Enabled', 'Disabled', 'Masked')][string]$Startup
+		[Parameter(Mandatory)]
+		[ValidateSet('Enabled', 'Disabled', 'Masked', 'Unmasked')][string]$Startup
 	)
 
-	$verb = switch ($Startup) { 'Enabled' { 'enable' } 'Disabled' { 'disable' } 'Masked' { 'mask' } }
+	$verb = switch ($Startup) {
+		'Enabled' { 'enable' } 'Disabled' { 'disable' }
+		'Masked' { 'mask' } 'Unmasked' { 'unmask' }
+	}
 	if (-not $PSCmdlet.ShouldProcess($Name, "$verb at boot")) { return @(Get-SystemdUnit -Name $Name) }
 	Set-SystemdUnitState -Verb $verb -Name $Name
+}
+
+# ---------------------------------------------------------------------------
+# Timers
+#
+# FOUR THINGS MEASURED 2026-08-29, inside a container running real systemd 259
+# (259.5-0ubuntu3.4), and each one decides a piece of what follows:
+#
+#   1. `systemctl list-timers --all --output=json` is native JSON whose numbers
+#      ARE numbers — unlike journalctl's. `next` and `last` are MICROSECONDS
+#      since the epoch; `last` is `0` (not null) for a timer that has never
+#      fired, `next` is null for one that is not scheduled. `left` and
+#      `passed` are NOT the durations their names promise (`left` came back
+#      equal to `next`, byte for byte), so nothing here reads them.
+#
+#   2. A timer that is ENABLED BUT NOT STARTED never fires until the next
+#      boot, and nothing says so: `UnitFileState=enabled`, `ActiveState=
+#      inactive`, `next` null. `systemctl enable` arms the NEXT boot only —
+#      arming it NOW is a separate `start`. This is the trap the OS7 layer's
+#      `Healthy` exists to name.
+#
+#   3. A timer that is neither enabled nor active is invisible to BOTH
+#      `list-timers --all` AND `list-units --all` — systemd does not load
+#      units nothing references. `list-unit-files --type=timer` still lists
+#      it, and `systemctl show` loads it on demand. So the timer list below
+#      is a UNION of two commands, and a point query falls through to `show`.
+#
+#   4. With `--timestamp=unix`, timestamps come back as `@<seconds>` (empty
+#      when unset) but DURATIONS still come back human-readable — the same
+#      unit answered `RandomizedDelayUSec=10min`. Durations are therefore
+#      reported verbatim, not parsed: a suffix table maintained here would be
+#      a second implementation of systemd's.
+# ---------------------------------------------------------------------------
+
+function ConvertFrom-SystemdUsec {
+	<#
+	.SYNOPSIS
+		Internal. Microseconds since the epoch as a UTC [datetime], where 0 and
+		null both mean "never".
+	#>
+	param([AllowNull()]$Value)
+
+	$n = ConvertTo-SystemdInt $Value
+	if ($null -eq $n) { return $null }
+	return [System.DateTimeOffset]::FromUnixTimeMilliseconds([long]($n / 1000)).UtcDateTime
+}
+
+function ConvertFrom-SystemdAtSeconds {
+	<#
+	.SYNOPSIS
+		Internal. `systemctl show --timestamp=unix` renders a set timestamp as
+		`@<seconds>` and an unset one as the empty string.
+	#>
+	param([AllowNull()]$Value)
+
+	if ($null -eq $Value -or "$Value" -notmatch '^@(\d+)$') { return $null }
+	return [System.DateTimeOffset]::FromUnixTimeSeconds([long]$Matches[1]).UtcDateTime
+}
+
+function Get-SystemdUnitLoadState {
+	<#
+	.SYNOPSIS
+		Internal. `loaded`, `not-found`, `masked`, … — asked of systemd itself.
+
+	.DESCRIPTION
+		`Get-SystemdUnit` cannot answer this: it reads `list-units`, and a unit
+		that is neither enabled nor active is not IN `list-units` (measured —
+		point 3 above). `systemctl show` loads the unit on demand and answers
+		for anything, including a name that does not exist.
+	#>
+	param([Parameter(Mandatory)][string]$Name)
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @(
+		'show', $Name, '-p', 'LoadState', '--timestamp=unix')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl show $Name exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+	return (ConvertFrom-SystemdShow $r.StdOut)['LoadState']
+}
+
+function Get-SystemdTimer {
+	<#
+	.SYNOPSIS
+		The timers this machine has: what they will run, when they will next
+		run, and when they last did.
+
+	.DESCRIPTION
+		A UNION OF TWO COMMANDS, because neither alone answers "what runs on a
+		schedule here". `list-timers --all` knows next/last elapse but omits
+		any timer that is neither enabled nor active; `list-unit-files
+		--type=timer` knows every installed timer but nothing about elapses. A
+		timer only systemd's on-demand loader can see (present, disabled,
+		never started) is found by the point query's fall-through to
+		`systemctl show`.
+
+		`NextElapse` is `$null` for a timer that WILL NOT FIRE — which
+		includes the enabled-but-never-started state `systemctl enable` alone
+		leaves behind. `LastTrigger` is `$null` for one that never has; a
+		manual `systemctl start` of the SERVICE does not move it, because the
+		schedule did not fire (measured).
+
+		THE DETAIL FIELDS ARE `$null` UNTIL `-Detailed` IS ASKED FOR — the
+		same rule as `Get-SystemdUnit`. `RandomizedDelay` stays the string
+		systemd renders (`10min`), verbatim: durations come back
+		human-readable even under `--timestamp=unix`, and a suffix parser here
+		would be a second implementation of systemd's.
+
+	.PARAMETER Name
+		A timer, or a glob. `.timer` is appended to a bare name. Implies
+		-Detailed, because asking about one timer is asking for its detail.
+
+	.PARAMETER Detailed
+		Look up state, schedule, Persistent and the delay for every timer
+		listed. One `systemctl show` per timer, so it is a choice rather than
+		a default.
+
+	.EXAMPLE
+		Get-SystemdTimer | Sort-Object NextElapse
+
+	.EXAMPLE
+		Get-SystemdTimer -Name sanoid.timer | Format-List
+	#>
+	[CmdletBinding()]
+	param(
+		[string]$Name,
+		[switch]$Detailed
+	)
+
+	if ($Name -and $Name -notmatch '[*?\[]' -and -not $Name.EndsWith('.timer')) {
+		$Name = "$Name.timer"
+	}
+	if ($Name) { $Detailed = $true }
+
+	$argvFiles = @('--no-pager', 'list-unit-files', '--type=timer', '--output=json')
+	$argvArmed = @('--no-pager', 'list-timers', '--all', '--output=json')
+	if ($Name) { $argvFiles += $Name; $argvArmed += $Name }
+
+	$rf = Invoke-SystemdCommand -Command 'systemctl' -Arguments $argvFiles
+	if ($rf.ExitCode -ne 0 -and -not $rf.StdOut.Trim()) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl $($argvFiles -join ' ') exited $($rf.ExitCode): $($rf.StdErr.Trim())" +
+			' (is systemd running here?)')
+	}
+	$ra = Invoke-SystemdCommand -Command 'systemctl' -Arguments $argvArmed
+	if ($ra.ExitCode -ne 0 -and -not $ra.StdOut.Trim()) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl $($argvArmed -join ' ') exited $($ra.ExitCode): $($ra.StdErr.Trim())")
+	}
+
+	$files = @(); if ($rf.StdOut.Trim()) { $files = @($rf.StdOut | ConvertFrom-Json) }
+	$armed = @(); if ($ra.StdOut.Trim()) { $armed = @($ra.StdOut | ConvertFrom-Json) }
+
+	# The union, keyed by unit name: every installed timer, plus anything
+	# list-timers knows that has no unit file (a transient timer). ORDINAL
+	# keys, because `[ordered]@{}` compares case-insensitively and systemd
+	# unit names are case-sensitive — `Backup.timer` and `backup.timer` are
+	# two units, and folding them staples one's elapses onto the other's file
+	# state: an object describing a machine that cannot exist.
+	$rows = [System.Collections.Specialized.OrderedDictionary]::new([System.StringComparer]::Ordinal)
+	foreach ($f in $files) {
+		$rows[$f.unit_file] = @{ FileState = $f.state; Armed = $null }
+	}
+	foreach ($t in $armed) {
+		if ($rows.Contains($t.unit)) { $rows[$t.unit].Armed = $t }
+		else { $rows[$t.unit] = @{ FileState = $null; Armed = $t } }
+	}
+
+	# The fall-through measured as point 3 of the header: a point query for a
+	# timer that is in NEITHER list is answered by systemd's on-demand loader.
+	if ($Name -and $rows.Count -eq 0 -and $Name -notmatch '[*?\[]') {
+		if ((Get-SystemdUnitLoadState -Name $Name) -eq 'loaded') {
+			$rows[$Name] = @{ FileState = $null; Armed = $null }
+		}
+	}
+
+	foreach ($unit in @($rows.Keys)) {
+		$row = $rows[$unit]
+
+		$detail = @{}
+		if ($Detailed) {
+			$show = Invoke-SystemdCommand -Command 'systemctl' -Arguments @(
+				'show', $unit,
+				'-p', 'Id', '-p', 'Description', '-p', 'LoadState', '-p', 'ActiveState',
+				'-p', 'SubState', '-p', 'UnitFileState', '-p', 'FragmentPath', '-p', 'Unit',
+				'-p', 'TimersCalendar', '-p', 'TimersMonotonic',
+				'-p', 'NextElapseUSecRealtime', '-p', 'NextElapseUSecMonotonic',
+				'-p', 'LastTriggerUSec', '-p', 'Persistent', '-p', 'RandomizedDelayUSec',
+				'-p', 'Result',
+				'--timestamp=unix')
+			if ($show.ExitCode -eq 0) { $detail = ConvertFrom-SystemdShow $show.StdOut }
+		}
+
+		# The schedule, as systemd states it. TimersCalendar reads
+		# `{ OnCalendar=*-*-* *:00/15:00 ; next_elapse=@1788033600 }` and a
+		# monotonic timer's TimersMonotonic `{ OnStartupUSec=15min ;
+		# next_elapse=0 }` — one brace group per trigger. The spec is kept
+		# verbatim; the elapse half is already NextElapse.
+		$schedule = @()
+		if ($detail.ContainsKey('TimersCalendar')) {
+			foreach ($m in [regex]::Matches($detail['TimersCalendar'], 'OnCalendar=([^;]+?)\s*;')) {
+				$schedule += $m.Groups[1].Value.Trim()
+			}
+		}
+		if ($detail.ContainsKey('TimersMonotonic')) {
+			foreach ($m in [regex]::Matches($detail['TimersMonotonic'], '(On\w+USec)=([^;]+?)\s*;')) {
+				$schedule += "$($m.Groups[1].Value)=$($m.Groups[2].Value.Trim())"
+			}
+		}
+
+		# list-timers' microseconds are the first choice for the elapses; the
+		# show fall-backs carry seconds and cover the timers list-timers
+		# cannot see.
+		$next = $null; $last = $null
+		if ($row.Armed) {
+			$next = ConvertFrom-SystemdUsec $row.Armed.next
+			$last = ConvertFrom-SystemdUsec $row.Armed.last
+		}
+		if ($null -eq $next -and $detail.ContainsKey('NextElapseUSecRealtime')) {
+			$next = ConvertFrom-SystemdAtSeconds $detail['NextElapseUSecRealtime']
+		}
+		if ($null -eq $last -and $detail.ContainsKey('LastTriggerUSec')) {
+			$last = ConvertFrom-SystemdAtSeconds $detail['LastTriggerUSec']
+		}
+
+		[pscustomobject]@{
+			Name            = $unit
+			NextElapse      = $next
+			LastTrigger     = $last
+			Activates       = if ($row.Armed) { $row.Armed.activates }
+			elseif ($detail.ContainsKey('Unit')) { $detail['Unit'] } else { $null }
+			# From list-unit-files even without -Detailed — the summary is one
+			# call for the whole machine, and `enabled` vs `disabled` is half
+			# of the question "why is this not running".
+			StartupType     = if ($null -ne $row.FileState) { $row.FileState }
+			elseif ($detail.ContainsKey('UnitFileState')) { $detail['UnitFileState'] } else { $null }
+			# --- only with -Detailed; $null means "not asked", not "clean" ---
+			Description     = if ($detail.ContainsKey('Description')) { $detail['Description'] } else { $null }
+			ActiveState     = if ($detail.ContainsKey('ActiveState')) { $detail['ActiveState'] } else { $null }
+			SubState        = if ($detail.ContainsKey('SubState')) { $detail['SubState'] } else { $null }
+			Schedule        = if ($Detailed) { $schedule } else { $null }
+			Persistent      = if ($detail.ContainsKey('Persistent')) { $detail['Persistent'] -eq 'yes' } else { $null }
+			RandomizedDelay = if ($detail.ContainsKey('RandomizedDelayUSec')) { $detail['RandomizedDelayUSec'] } else { $null }
+			Result          = if ($detail.ContainsKey('Result')) { $detail['Result'] } else { $null }
+			UnitFile        = if ($detail.ContainsKey('FragmentPath')) { $detail['FragmentPath'] } else { $null }
+			Detailed        = [bool]$Detailed
+		}
+	}
+}
+
+function Test-SystemdUnitText {
+	<#
+	.SYNOPSIS
+		Internal. Refuses text that cannot go into a unit-file line.
+
+	.DESCRIPTION
+		A newline inside a Description or an ExecStart is not a value, it is
+		the NEXT DIRECTIVE — `-Description "x`n[Service]`nExecStart=/evil"`
+		would write a unit that does something other than what was asked.
+		Refused loudly rather than escaped, because systemd's unit syntax has
+		no escape that puts a literal newline into a value.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$What,
+		[AllowEmptyString()][string]$Value
+	)
+
+	if ($Value -match '[\r\n]') {
+		throw [System.ArgumentException]::new(
+			"$What contains a line break, which a unit file would read as the next " +
+			'directive rather than as part of the value.')
+	}
+}
+
+function New-SystemdTimer {
+	<#
+	.SYNOPSIS
+		Writes a timer and the service it activates, and asks systemd whether
+		it loaded them.
+
+	.DESCRIPTION
+		TWO FILES, ONE OPERATION. A `.timer` names a `.service` and systemd
+		will not schedule one without the other, so this writes the pair into
+		one directory (`/etc/systemd/system`) and treats them as one thing —
+		the same rule the boot-environment cmdlets apply to the rpool/bpool
+		pair.
+
+		EVERY `-OnCalendar` SPEC IS VALIDATED WITH `systemd-analyze calendar`
+		BEFORE ANYTHING IS WRITTEN — the visudo pattern from
+		Set-OS7DomainLogonPolicy: a spec systemd cannot parse becomes a timer
+		that never fires and reports nothing, and `systemd-analyze` is the
+		parser that will read it, not a second implementation here (measured:
+		exit 1 and a named error for garbage, exit 0 for anything the timer
+		will accept).
+
+		This function WRITES AND VERIFIES; it does not enable or start.
+		Enabling is `Set-SystemdUnitStartup`, arming it now is
+		`Start-SystemdUnit` on the timer, and running it once is
+		`Start-SystemdUnit` on the service — deliberately separate, because
+		`enable` alone leaves a timer that never fires until the next boot
+		(measured), and a function that hid that distinction would hide the
+		trap with it.
+
+		NO SECRETS IN -Command. The unit file is world-readable and the
+		command line shows in `systemctl show` — the same reason P7 keeps
+		passwords off argv everywhere else.
+
+	.PARAMETER Name
+		The unit pair's name, without suffix (`os7-task-nightly` writes
+		`os7-task-nightly.timer` and `os7-task-nightly.service`).
+
+	.PARAMETER Command
+		The service's `ExecStart=` line, verbatim — systemd's own vocabulary,
+		so the first word must be an absolute path, and `%` and `$` mean what
+		they mean THERE: `%m` is the machine id, `$VAR` is environment
+		substitution, and a literal percent or dollar is spelled `%%` and `$$`.
+		This layer passes the line through because a caller may want the
+		specifiers; a layer that promises "what you type is what runs" has to
+		escape them itself (Register-OS7ScheduledTask does).
+
+	.PARAMETER OnCalendar
+		One or more calendar specs, each validated by `systemd-analyze
+		calendar` before anything is written.
+
+	.PARAMETER User
+		Run the service as this account instead of root.
+
+	.PARAMETER Persistent
+		Catch up after downtime: a machine that was off at the elapse runs the
+		job when it returns.
+
+	.PARAMETER RandomizedDelay
+		Spread a fleet's elapses over this window.
+
+	.PARAMETER Force
+		Replace an existing unit pair of the same name. Without it, a pair
+		that already exists — hand-authored, or another operator's — is
+		refused rather than silently overwritten.
+
+	.EXAMPLE
+		New-SystemdTimer -Name os7-task-report -OnCalendar 'Mon..Fri 03:00' `
+			-Command '/usr/bin/pwsh -NoProfile -Command Get-Date'
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Command,
+		[Parameter(Mandatory)][string[]]$OnCalendar,
+		[string]$Description,
+		[string]$User,
+		[switch]$Persistent,
+		[timespan]$RandomizedDelay,
+		[switch]$Force
+	)
+
+	$base = $Name -replace '\.timer$', ''
+	# The leading '-' refusal is not taste: '-x' is a VALID systemd unit name,
+	# but every systemctl invocation in this module would then parse it as an
+	# option and fail with "invalid option" (measured on systemd 259) — a unit
+	# this module could write and never again address.
+	if ($base -notmatch '^[A-Za-z0-9:_.\\-]+$' -or $base.StartsWith('-') -or
+		$base -match '\.(service|socket|mount|target)$') {
+		throw [System.ArgumentException]::new(
+			"'$Name' cannot name a timer unit here. Letters, digits, ':', '_', '.', '\' and " +
+			"'-' only, not starting with '-', and no unit-type suffix other than .timer.")
+	}
+	if (-not $Description) { $Description = $base }
+
+	Test-SystemdUnitText -What '-Description' -Value $Description
+	Test-SystemdUnitText -What '-Command' -Value $Command
+	if ($User) { Test-SystemdUnitText -What '-User' -Value $User }
+	# The first word must be an absolute path — quoted or bare, both of which
+	# systemd's own ExecStart parsing accepts.
+	if ($Command.TrimStart() -notmatch '^"?/') {
+		throw [System.ArgumentException]::new(
+			'systemd runs ExecStart without a shell, so the first word of -Command must be ' +
+			"an absolute path. Got: $Command")
+	}
+
+	# The parser that will read the spec is the one that judges it — BEFORE a
+	# file exists that carries the mistake. The '--' is load-bearing: without
+	# it an option-shaped spec ('--version') is parsed as an OPTION, exits 0,
+	# and the validation waves through a line systemd will later drop with
+	# nothing but a journal warning (measured on systemd 259).
+	foreach ($spec in $OnCalendar) {
+		Test-SystemdUnitText -What '-OnCalendar' -Value $spec
+		$v = Invoke-SystemdCommand -Command 'systemd-analyze' -Arguments @('calendar', '--', $spec)
+		if ($v.ExitCode -ne 0) {
+			throw [System.ArgumentException]::new(
+				"systemd cannot parse the calendar spec '$spec': $($v.StdErr.Trim())")
+		}
+	}
+
+	$servicePath = Join-Path $script:SystemdUnitDirectory "$base.service"
+	$timerPath = Join-Path $script:SystemdUnitDirectory "$base.timer"
+
+	# A New- verb does not silently replace what exists (cf. New-Item). An
+	# existing pair may be hand-authored or another operator's task; -Force is
+	# the explicit way over it.
+	if (-not $Force) {
+		foreach ($existing in @($timerPath, $servicePath)) {
+			if ([System.IO.File]::Exists($existing)) {
+				throw [System.InvalidOperationException]::new(
+					"$existing already exists. -Force replaces it deliberately.")
+			}
+		}
+	}
+
+	if (-not $PSCmdlet.ShouldProcess("$timerPath + $servicePath", 'write timer unit pair')) {
+		return @(Get-SystemdTimer -Name "$base.timer")
+	}
+
+	$serviceText = @(
+		'[Unit]'
+		"Description=$Description"
+		''
+		'[Service]'
+		'Type=oneshot'
+		"ExecStart=$Command"
+	)
+	if ($User) { $serviceText += "User=$User" }
+
+	$timerText = @(
+		'[Unit]'
+		"Description=$Description"
+		''
+		'[Timer]'
+	)
+	foreach ($spec in $OnCalendar) { $timerText += "OnCalendar=$spec" }
+	if ($PSBoundParameters.ContainsKey('RandomizedDelay') -and $RandomizedDelay -gt [timespan]::Zero) {
+		# Invariant DECIMAL seconds, not [long]: a cast rounds (banker's) and
+		# turns a sub-second delay into `RandomizedDelaySec=0` — the requested
+		# jitter silently dropped. systemd parses fractional seconds.
+		$timerText += ('RandomizedDelaySec=' + $RandomizedDelay.TotalSeconds.ToString(
+				'0.###', [System.Globalization.CultureInfo]::InvariantCulture))
+	}
+	if ($Persistent) { $timerText += 'Persistent=true' }
+	$timerText += @('', '[Install]', 'WantedBy=timers.target')
+
+	[System.IO.File]::WriteAllText($servicePath, (($serviceText -join "`n") + "`n"))
+	[System.IO.File]::WriteAllText($timerPath, (($timerText -join "`n") + "`n"))
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	# Ask systemd back, per unit — the files existing proves nothing about
+	# whether systemd will schedule them.
+	foreach ($unit in @("$base.timer", "$base.service")) {
+		$state = Get-SystemdUnitLoadState -Name $unit
+		if ($state -ne 'loaded') {
+			throw [System.InvalidOperationException]::new(
+				"systemd did not load $unit (LoadState=$state). The written files are left " +
+				"in $script:SystemdUnitDirectory for inspection.")
+		}
+	}
+
+	return @(Get-SystemdTimer -Name "$base.timer")
+}
+
+function Remove-SystemdTimer {
+	<#
+	.SYNOPSIS
+		Removes a timer unit pair this module could have written, and asks
+		systemd whether it is gone.
+
+	.DESCRIPTION
+		ONLY FROM `/etc/systemd/system`. A timer whose unit file lives
+		anywhere else — `/usr/lib/systemd/system`, a package's — is refused by
+		name: deleting a package's unit file is dpkg's job, and the polite way
+		to silence one is `Set-SystemdUnitStartup -Startup Disabled` (or
+		Masked), which this deliberately is not.
+
+		AND ONLY THE PAIR. A mask — `systemctl mask` puts a symlink to
+		/dev/null at exactly the path this would delete — is refused, because
+		deleting it would not remove a timer, it would silently UNMASK a
+		package's. A lone `.timer` with no `.service` beside it (a `systemctl
+		edit --full` override, or a hand-authored unit) is refused too: the
+		pair is what `New-SystemdTimer` writes, and the pair is what this
+		removes.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param([Parameter(Mandatory)][string]$Name)
+
+	$base = $Name -replace '\.timer$', ''
+	$timerPath = Join-Path $script:SystemdUnitDirectory "$base.timer"
+	$servicePath = Join-Path $script:SystemdUnitDirectory "$base.service"
+
+	if (-not [System.IO.File]::Exists($timerPath)) {
+		$state = Get-SystemdUnitLoadState -Name "$base.timer"
+		if ($state -eq 'loaded') {
+			throw [System.InvalidOperationException]::new(
+				"$base.timer exists but its unit file is not in $script:SystemdUnitDirectory, " +
+				'so it is not one this module wrote. Deleting a package''s unit file is the ' +
+				'package manager''s job; to stop it, disable or mask it instead.')
+		}
+		throw [System.InvalidOperationException]::new(
+			"There is no $base.timer in $script:SystemdUnitDirectory and systemd reports " +
+			"LoadState=$state.")
+	}
+
+	# TWO REFUSALS BEFORE ANYTHING RUNS, both for files this module did not
+	# write. `systemctl mask` puts a SYMLINK to /dev/null at exactly this
+	# path — [System.IO.File]::Exists follows it and answers true (measured) —
+	# and deleting it would not remove a timer, it would UNMASK a package's:
+	# an administrator's suppression silently reverted. And a `systemctl edit
+	# --full` override of a package timer is a regular file here with NO
+	# .service beside it; the pair is what New-SystemdTimer writes, so a lone
+	# .timer is not ours to delete either.
+	if ($null -ne [System.IO.FileInfo]::new($timerPath).LinkTarget) {
+		throw [System.InvalidOperationException]::new(
+			"$timerPath is a symlink" +
+			" — that is a mask (or somebody's redirection), not a timer this module wrote. " +
+			'Deleting it would un-say the mask; systemctl unmask is the verb that means that.')
+	}
+	if (-not [System.IO.File]::Exists($servicePath)) {
+		throw [System.InvalidOperationException]::new(
+			"$timerPath exists but $servicePath does not. This module removes the PAIR it " +
+			'writes; a lone timer file here is an override or a hand-authored unit, and ' +
+			'deleting it is not this cmdlet''s to do.')
+	}
+
+	if (-not $PSCmdlet.ShouldProcess("$base.timer", 'stop, disable and remove')) {
+		return @(Get-SystemdTimer -Name "$base.timer")
+	}
+
+	# Stop and disable are best-effort — a timer that was never started makes
+	# `stop` a no-op and one that was never enabled makes `disable` one. The
+	# assertion that matters is systemd's own answer at the end.
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('stop', "$base.timer") | Out-Null
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('disable', "$base.timer") | Out-Null
+
+	[System.IO.File]::Delete($timerPath)
+	if ([System.IO.File]::Exists($servicePath)) { [System.IO.File]::Delete($servicePath) }
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	$state = Get-SystemdUnitLoadState -Name "$base.timer"
+	if ($state -ne 'not-found') {
+		throw [System.InvalidOperationException]::new(
+			"$base.timer was removed from $script:SystemdUnitDirectory but systemd still " +
+			"reports LoadState=$state — another unit file elsewhere is shadowing it.")
+	}
 }
 
 function Get-SystemdJournal {
@@ -499,6 +1071,777 @@ function Get-SystemdJournal {
 # ---------------------------------------------------------------------------
 # The self-test
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Sessions — logind, as objects
+#
+# `loginctl` is the third program this module owns, and it is here rather than
+# in powershell/OS7 for the reason check-layering.py's P2-systemd rule states:
+# `loginctl` is on its token list, so a cmdlet that wants to know who is signed
+# in has to come through here.
+#
+# THREE THINGS ABOUT loginctl THAT systemctl DOES NOT DO, all measured on
+# systemd 259 (OS7-1.0.0.163-amd64, 2026-09-07), and each of them decides code
+# below:
+#
+#   * `--output=json` IS ACCEPTED AND IGNORED. `loginctl list-sessions
+#     --output=json` prints the ordinary table, with the header and the
+#     "6 sessions listed." footer, and exits 0. A parser written against the
+#     JSON that systemctl's sibling commands emit would parse a table and find
+#     nothing, with no error anywhere. So the listing is read as a TABLE, and
+#     only for the session ids — every field that matters comes from
+#     `show-session`.
+#
+#   * `--timestamp=unix` IS NOT A loginctl OPTION AT ALL. `systemctl` has it and
+#     this module already relies on it (a localised timestamp is a parser that
+#     works where it was written and fails on a German desktop). loginctl exits
+#     1 with "unrecognized option". So `Timestamp` cannot be made
+#     locale-independent, and this module does not pretend otherwise: `Since` is
+#     a [datetime] when the string could be parsed and `$null` when it could
+#     not, with the raw text kept beside it in `SinceText`.
+#
+#   * KEYS ARE ABSENT RATHER THAN EMPTY. A remote session has no `TTY=` and no
+#     `Seat=` line at all; a local one has both. Reading a missing key as an
+#     empty string is the difference between "this session has no seat" and
+#     "this session's seat is the empty string", and only the first is true.
+# ---------------------------------------------------------------------------
+
+function ConvertFrom-SystemdSessionShow {
+	<#
+	.SYNOPSIS
+		Internal. `loginctl show-session` output as a typed object.
+
+	.DESCRIPTION
+		The booleans are logind's own `yes`/`no`, which are STRINGS and are
+		truthy either way in PowerShell — `if ('no')` is true. Converting them
+		is most of what this function is for.
+	#>
+	param([Parameter(Mandatory)][string]$Text)
+
+	$d = @{}
+	foreach ($line in ($Text -split "`n")) {
+		$i = $line.IndexOf('=')
+		if ($i -lt 1) { continue }
+		$d[$line.Substring(0, $i)] = $line.Substring($i + 1).TrimEnd()
+	}
+	if (-not $d.ContainsKey('Id')) { return $null }
+
+	$yn = {
+		param($v)
+		if ($null -eq $v) { return $null }
+		return ($v -eq 'yes')
+	}
+	# An absent key is $null, never ''. See the header.
+	$get = { param($k) if ($d.ContainsKey($k)) { $d[$k] } else { $null } }
+
+	$sinceText = & $get 'Timestamp'
+	$since = $null
+	if ($sinceText) {
+		# The one format loginctl is known to emit, parsed with the INVARIANT
+		# culture so the host's locale cannot change the answer. A failure is
+		# $null and the raw text survives in SinceText; it is never guessed at.
+		[datetime]$parsed = [datetime]::MinValue
+		$styles = [System.Globalization.DateTimeStyles]::AssumeLocal
+		$inv = [System.Globalization.CultureInfo]::InvariantCulture
+		foreach ($fmt in @('ddd yyyy-MM-dd HH:mm:ss zzz', 'ddd yyyy-MM-dd HH:mm:ss')) {
+			# The zone is an abbreviation (CEST), which no format string parses,
+			# so the attempt that succeeds is the one without it.
+			$stripped = ($sinceText -replace '\s+[A-Z]{2,5}$', '')
+			if ([datetime]::TryParseExact($stripped, $fmt, $inv, $styles, [ref]$parsed)) {
+				$since = $parsed
+				break
+			}
+		}
+	}
+
+	return [pscustomobject]@{
+		PSTypeName = 'Systemd.Session'
+		Id         = $d['Id']
+		Name       = & $get 'Name'
+		Uid        = ConvertTo-SystemdInt (& $get 'User')
+		Seat       = & $get 'Seat'
+		TTY        = & $get 'TTY'
+		VTNr       = ConvertTo-SystemdInt (& $get 'VTNr')
+		# The pair that separates a login over the network from one at the
+		# machine: Remote is logind's own verdict, RemoteHost is who.
+		Remote     = & $yn (& $get 'Remote')
+		RemoteHost = & $get 'RemoteHost'
+		RemoteUser = & $get 'RemoteUser'
+		# `wayland`, `tty`, `x11` or `unspecified`.
+		Type       = & $get 'Type'
+		# `user`, `greeter`, `manager`, `manager-early`, `background`.
+		Class      = & $get 'Class'
+		# The PAM service the session was opened through — `gdm-authd`, `sshd`,
+		# `login`. It is how a graphical login is told from an ssh one.
+		Service    = & $get 'Service'
+		Desktop    = & $get 'Desktop'
+		Scope      = & $get 'Scope'
+		Leader     = ConvertTo-SystemdInt (& $get 'Leader')
+		State      = & $get 'State'
+		Active     = & $yn (& $get 'Active')
+		IdleHint   = & $yn (& $get 'IdleHint')
+		LockedHint = & $yn (& $get 'LockedHint')
+		Since      = $since
+		SinceText  = $sinceText
+	}
+}
+
+function Get-SystemdSession {
+	<#
+	.SYNOPSIS
+		Who is signed in to this machine, and how.
+
+	.DESCRIPTION
+		logind's sessions as objects. `Remote`, `Type`, `Class` and `Service`
+		are what make the list answerable: a login over the network has
+		`Remote = $true` and a `RemoteHost`, a graphical one has
+		`Type = 'wayland'`, and a person's session is `Class = 'user'` while the
+		login screen's own is `Class = 'greeter'`.
+
+		THE LISTING IS READ AS A TABLE AND NOT AS JSON, and that is measured
+		rather than preferred: `loginctl list-sessions --output=json` ACCEPTS
+		the option, prints the ordinary table and exits 0 (systemd 259). Only
+		the session ids are taken from it; every field comes from
+		`show-session`, which is one call per session — sessions are counted in
+		single figures, unlike units, so there is no `-Detailed` switch to make
+		this a choice.
+
+		`Since` is `$null` when the timestamp could not be parsed rather than a
+		guess, because `loginctl` has no `--timestamp=unix` (measured; systemctl
+		does) and the string it prints carries a zone abbreviation no format
+		parses. `SinceText` keeps what logind actually said.
+
+	.PARAMETER Id
+		One session.
+
+	.PARAMETER User
+		Only this account's sessions.
+
+	.PARAMETER Remote
+		Only sessions opened over the network.
+
+	.PARAMETER Class
+		`user`, `greeter`, `manager` — logind's own word.
+
+	.EXAMPLE
+		Get-SystemdSession | Format-Table Id, Name, Remote, RemoteHost, Type, Class
+
+	.EXAMPLE
+		Get-SystemdSession -Remote -Class user
+	#>
+	[CmdletBinding()]
+	param(
+		[string]$Id,
+		[string]$User,
+		[switch]$Remote,
+		[string]$Class
+	)
+
+	$ids = @()
+	if ($Id) { $ids = @($Id) }
+	else {
+		$r = Invoke-SystemdCommand -Command 'loginctl' -Arguments @('list-sessions', '--no-legend')
+		if ($r.ExitCode -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"loginctl list-sessions exited $($r.ExitCode): $($r.StdErr)")
+		}
+		foreach ($line in ($r.StdOut -split "`n")) {
+			$t = $line.Trim()
+			if (-not $t) { continue }
+			# The first column is the session id. It is not always numeric —
+			# the seat sessions are `c1`, `c2` — so it is taken as a string.
+			$ids += ($t -split '\s+')[0]
+		}
+	}
+
+	$out = [System.Collections.Generic.List[object]]::new()
+	foreach ($sid in $ids) {
+		$s = Invoke-SystemdCommand -Command 'loginctl' -Arguments @('show-session', $sid)
+		# A session can END between being listed and being asked about, and that
+		# is an ordinary race rather than an error: skip it.
+		if ($s.ExitCode -ne 0) { continue }
+		$obj = ConvertFrom-SystemdSessionShow -Text $s.StdOut
+		if (-not $obj) { continue }
+		if ($User -and $obj.Name -ne $User) { continue }
+		if ($Remote -and $obj.Remote -ne $true) { continue }
+		if ($Class -and $obj.Class -ne $Class) { continue }
+		$out.Add($obj)
+	}
+	# EMITTED, NOT WRAPPED IN `,`. AD-PLAN's AL9 is the trap on both sides:
+	# `return $collection` unrolls, so an EMPTY one becomes nothing; `return
+	# ,$collection` protects the empty case and makes a NON-empty one a nested
+	# collection, where `@(Get-SystemdSession).Count` is 1 for two sessions
+	# while piping it still yields two. Measured here, in this module's own
+	# self-test, which reported `ids=[10,c1] count=1`.
+	#
+	# For a CMDLET the dilemma has an answer that a helper function does not
+	# have: emit the objects and let the caller write `@(...)`. Nothing then
+	# becomes an empty array and two things become two, which is the contract
+	# every other Get- in this module already keeps.
+	return $out
+}
+
+function Stop-SystemdSession {
+	<#
+	.SYNOPSIS
+		End a session: everything running in it is stopped.
+
+	.DESCRIPTION
+		`loginctl terminate-session`, and it is spelled `Stop-` rather than
+		`Disconnect-` because that is what logind can do. THERE IS NO
+		DISCONNECT-BUT-KEEP in logind's vocabulary: a session is running or it
+		is gone. A verb promising the other thing would end somebody's work
+		while claiming not to.
+
+		`-Force` uses `kill-session` with SIGKILL instead, for a session whose
+		processes will not go.
+
+		IT ASKS logind AFTERWARDS. `terminate-session` returns 0 for a request
+		that was accepted, and a session whose processes ignore SIGTERM is still
+		there afterwards — the same distinction `Start-SystemdUnit` draws
+		between a job and a unit.
+
+	.PARAMETER Id
+		The session to end.
+
+	.PARAMETER Force
+		SIGKILL rather than SIGTERM.
+
+	.EXAMPLE
+		Stop-SystemdSession -Id 12
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0)][string]$Id,
+		[switch]$Force
+	)
+
+	if (-not $PSCmdlet.ShouldProcess("session $Id", 'end this session and everything running in it')) {
+		return Get-SystemdSession -Id $Id
+	}
+
+	$argv = if ($Force) { @('kill-session', '--signal=SIGKILL', $Id) } else { @('terminate-session', $Id) }
+	$r = Invoke-SystemdCommand -Command 'loginctl' -Arguments $argv
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"loginctl $($argv[0]) exited $($r.ExitCode): $($r.StdErr)")
+	}
+
+	# Asked of logind, never of the exit code.
+	$still = @(Get-SystemdSession -Id $Id)
+	if ($still.Count -and $still[0].State -ne 'closing') {
+		Write-Warning "session $Id is still $($still[0].State); its processes have not gone yet"
+	}
+	return $still
+}
+
+# ---------------------------------------------------------------------------
+# The machine's own power state
+#
+# MEASURED 2026-09-09, and it is why this function exists rather than a caller
+# reaching for `shutdown` itself. PowerShell 7.6.5's own `Restart-Computer` and
+# `Stop-Computer` on Linux both run
+#
+#     /usr/sbin/shutdown          (with NO arguments at all)
+#
+# recorded by putting a recorder in place of every binary they might reach for,
+# inside the shipped ISO's own root. On Ubuntu `/usr/sbin/shutdown` is a symlink
+# to `systemctl`, whose compatibility interface says of itself that one of
+# `-H --halt`, `-P --poweroff` or `-r --reboot` is to be GIVEN — and without a
+# flag the action is poweroff. So `Restart-Computer` powers an OS/7 machine OFF
+# and reports success. Upstream has had it since 2021
+# (PowerShell/PowerShell#14684) and it is still true in 7.6.5.
+#
+# Therefore: the action is ALWAYS explicit here, and it goes through `systemctl
+# reboot` / `poweroff` / `halt` rather than the compatibility interface, because
+# those cannot be re-interpreted by an argv[0].
+# ---------------------------------------------------------------------------
+
+function Invoke-SystemdShutdown {
+	<#
+	.SYNOPSIS
+		Reboots, powers off or halts this machine — the action always spelled
+		out.
+
+	.DESCRIPTION
+		WHAT THIS CAN AND CANNOT VERIFY. An immediate action cannot be read
+		back: the process asking is one of the ones about to be killed. What it
+		CAN catch is the request being REFUSED — a non-root caller gets polkit's
+		"Access denied as the requested operation requires interactive
+		authentication" on stderr with a non-zero exit (measured on a machine),
+		and this throws it rather than returning quietly.
+
+		A DELAYED action can be read back, and is: `shutdown --show` is asked
+		afterwards, and a schedule systemd will not confirm is an error rather
+		than a hope.
+
+	.PARAMETER Action
+		`Reboot`, `PowerOff` or `Halt`. Mandatory and deliberately not
+		defaulted — a defaulted action is the upstream bug this routes around.
+
+	.PARAMETER Delay
+		Schedule it instead of doing it now. `shutdown`'s granularity is whole
+		MINUTES (its own `+m` argument), so this rounds UP to the next minute
+		and returns the scheduled time systemd reported back.
+
+	.PARAMETER Message
+		A wall message for the signed-in users. Only meaningful with -Delay —
+		in the immediate case there is nobody left to read it.
+
+	.EXAMPLE
+		Invoke-SystemdShutdown -Action Reboot
+
+	.EXAMPLE
+		Invoke-SystemdShutdown -Action PowerOff -Delay ([timespan]::FromMinutes(5)) -Message 'Maintenance'
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory)][ValidateSet('Reboot', 'PowerOff', 'Halt')][string]$Action,
+		[timespan]$Delay = [timespan]::Zero,
+		[string]$Message
+	)
+
+	$verb = switch ($Action) { 'Reboot' { 'reboot' } 'PowerOff' { 'poweroff' } 'Halt' { 'halt' } }
+
+	if ($Delay -le [timespan]::Zero) {
+		if (-not $PSCmdlet.ShouldProcess('this machine', $verb)) { return }
+		$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @($verb)
+		# 0 means the job was ACCEPTED and the machine is on its way down, so
+		# there is nothing left to ask. Anything else is a refusal, and a
+		# refusal that returns quietly is a machine that did not reboot.
+		if ($r.ExitCode -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"systemctl $verb exited $($r.ExitCode): $(($r.StdErr + ' ' + $r.StdOut).Trim())")
+		}
+		return
+	}
+
+	# The scheduling path, and the ONLY place this module uses `shutdown` — it
+	# is the only interface that takes a time. The flag is always given.
+	$flag = switch ($Action) { 'Reboot' { '-r' } 'PowerOff' { '-P' } 'Halt' { '-H' } }
+	$minutes = [int][math]::Ceiling($Delay.TotalMinutes)
+	$shutdownArgs = @($flag, "+$minutes")
+	if ($Message) { $shutdownArgs = $shutdownArgs + $Message }
+
+	if (-not $PSCmdlet.ShouldProcess('this machine', "$verb in $minutes minute(s)")) { return }
+
+	$r = Invoke-SystemdCommand -Command 'shutdown' -Arguments $shutdownArgs
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"shutdown $($shutdownArgs -join ' ') exited $($r.ExitCode): " +
+			"$(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+
+	# ASK, DO NOT ASSUME. `shutdown` exits 0 having merely parsed its arguments;
+	# what proves a schedule exists is systemd saying so.
+	$show = Invoke-SystemdCommand -Command 'shutdown' -Arguments @('--show')
+	$text = ($show.StdOut + $show.StdErr).Trim()
+	if (-not $text) {
+		throw [System.InvalidOperationException]::new(
+			"shutdown $($shutdownArgs -join ' ') exited 0 but 'shutdown --show' reports no " +
+			'pending shutdown, so nothing was scheduled.')
+	}
+	return [pscustomobject]@{
+		Action    = $Action
+		Minutes   = $minutes
+		Scheduled = $text
+	}
+}
+
+# ---------------------------------------------------------------------------
+# The freezer
+#
+# `systemctl freeze` suspends every process in a unit's cgroup; `thaw` resumes
+# them. It is the nearest thing systemd has to a paused Windows service and it
+# is NOT the same thing: Windows asks the service, which may decline; the
+# freezer does not ask.
+#
+# MEASURED on an installed OS/7 machine, 2026-09-09: freeze exits 0,
+# `FreezerState` becomes `frozen` — and `ActiveState` STAYS `active`. That last
+# one is why Get-SystemdUnit's state fields cannot answer this question, and why
+# an operator who cannot see the freezer sees a running service that has stopped
+# answering.
+# ---------------------------------------------------------------------------
+
+function Get-SystemdUnitFreezerState {
+	<#
+	.SYNOPSIS
+		`running`, `freezing`, `frozen` or `thawing` for one unit — or $null
+		when systemd would not say.
+
+	.DESCRIPTION
+		$null AND NEVER `running` WHEN THE ANSWER DID NOT ARRIVE. A unit that
+		does not exist, a systemd too old to have a freezer and a refused query
+		must all read differently from "this unit is not frozen".
+
+		One unit at a time on purpose: this is a `systemctl show` per unit, and
+		`Get-SystemdUnit` deliberately does not pay for it across a whole
+		machine's worth of units.
+	#>
+	param([Parameter(Mandatory)][string]$Name)
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @(
+		'show', $Name, '--property=FreezerState', '--value')
+	if ($r.ExitCode -ne 0) { return $null }
+	$v = $r.StdOut.Trim()
+	if (-not $v) { return $null }
+	# `frozen-by-parent` and `freezing-by-parent` exist too. A caller asking
+	# whether this unit is frozen wants yes; the reason stays in the raw word.
+	return $v
+}
+
+function Suspend-SystemdUnit {
+	<#
+	.SYNOPSIS
+		Freezes a unit's processes, and reads the freezer back.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([Parameter(Mandatory)][string]$Name)
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'freeze')) { return }
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('freeze', $Name)
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl freeze $Name exited $($r.ExitCode): $(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+	$state = Get-SystemdUnitFreezerState -Name $Name
+	if ($state -notlike 'frozen*') {
+		throw [System.InvalidOperationException]::new(
+			"systemctl freeze $Name exited 0 but FreezerState is '$state'.")
+	}
+	return $state
+}
+
+function Resume-SystemdUnit {
+	<#
+	.SYNOPSIS
+		Thaws a frozen unit's processes, and reads the freezer back.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([Parameter(Mandatory)][string]$Name)
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'thaw')) { return }
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('thaw', $Name)
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl thaw $Name exited $($r.ExitCode): $(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+	$state = Get-SystemdUnitFreezerState -Name $Name
+	if ($state -like 'frozen*') {
+		throw [System.InvalidOperationException]::new(
+			"systemctl thaw $Name exited 0 but FreezerState is still '$state'.")
+	}
+	return $state
+}
+
+# ---------------------------------------------------------------------------
+# Service units this module wrote
+#
+# New-SystemdTimer's rules applied to a lone `.service`: validate before
+# writing, write into $script:SystemdUnitDirectory only, daemon-reload, and ask
+# systemd whether it loaded what was written. Remove- refuses anything that is
+# not a plain file in that directory, for the reasons Remove-SystemdTimer
+# spells out — a mask IS a symlink at exactly that path, and removing a
+# package's unit file is dpkg's job.
+# ---------------------------------------------------------------------------
+
+function New-SystemdService {
+	<#
+	.SYNOPSIS
+		Writes a .service unit and asks systemd whether it loaded.
+
+	.PARAMETER Name
+		The unit name, with or without the `.service` suffix.
+
+	.PARAMETER Command
+		`ExecStart=`, verbatim in systemd's vocabulary — the first word must be
+		an absolute path, and `%` and `$` mean what they mean THERE.
+
+	.PARAMETER Description
+		`Description=`. Defaults to the name.
+
+	.PARAMETER DependsOn
+		Units this one needs, written as BOTH `Requires=` and `After=`.
+		`Requires` alone orders nothing, which is the trap that makes a
+		dependency look declared and behave as though it were not.
+
+	.PARAMETER User
+		Run as this account instead of root.
+
+	.PARAMETER Enabled
+		Also write `WantedBy=multi-user.target`, so that `systemctl enable` has
+		something to install. WITHOUT an [Install] section a unit cannot be
+		enabled at all — systemd calls that `static` and `enable` fails.
+
+	.PARAMETER Force
+		Overwrite a unit file this directory already holds.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Command,
+		[string]$Description,
+		[string[]]$DependsOn = @(),
+		[string]$User,
+		[switch]$Enabled,
+		[switch]$Force
+	)
+
+	$base = $Name -replace '\.service$', ''
+	if (-not $base -or $base -match '[/\s]') {
+		throw [System.ArgumentException]::new(
+			"'$Name' is not a unit name — a unit name carries no path separator and no whitespace.")
+	}
+
+	if (-not $Description) { $Description = $base }
+	Test-SystemdUnitText -What 'Description' -Value $Description
+	Test-SystemdUnitText -What 'Command' -Value $Command
+	if ($User) { Test-SystemdUnitText -What 'User' -Value $User }
+	foreach ($d in $DependsOn) { Test-SystemdUnitText -What 'DependsOn' -Value $d }
+
+	$path = Join-Path $script:SystemdUnitDirectory "$base.service"
+	if ([System.IO.File]::Exists($path) -and -not $Force) {
+		throw [System.InvalidOperationException]::new("$path already exists. -Force overwrites it.")
+	}
+
+	$lines = @('[Unit]', "Description=$Description")
+	if ($DependsOn.Count) {
+		$lines = $lines + "Requires=$($DependsOn -join ' ')"
+		$lines = $lines + "After=$($DependsOn -join ' ')"
+	}
+	$lines = $lines + @('', '[Service]', 'Type=simple', "ExecStart=$Command")
+	if ($User) { $lines = $lines + "User=$User" }
+	if ($Enabled) { $lines = $lines + @('', '[Install]', 'WantedBy=multi-user.target') }
+
+	if (-not $PSCmdlet.ShouldProcess("$base.service", 'write the unit file')) { return }
+
+	if (-not [System.IO.Directory]::Exists($script:SystemdUnitDirectory)) {
+		[System.IO.Directory]::CreateDirectory($script:SystemdUnitDirectory) | Out-Null
+	}
+	[System.IO.File]::WriteAllText($path, (($lines -join "`n") + "`n"))
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	# THE ASSERTION THAT MATTERS. The filesystem writes a unit with a syntax
+	# error happily, systemd refuses it, and `daemon-reload` exits 0 either way.
+	$state = Get-SystemdUnitLoadState -Name "$base.service"
+	if ($state -ne 'loaded') {
+		throw [System.InvalidOperationException]::new(
+			"$path was written but systemd reports LoadState=$state for $base.service.")
+	}
+
+	return @(Get-SystemdUnit -Name "$base.service")
+}
+
+function Remove-SystemdService {
+	<#
+	.SYNOPSIS
+		Removes a .service unit file this module could have written, and asks
+		systemd whether it is gone.
+
+	.DESCRIPTION
+		ONLY A PLAIN FILE IN $script:SystemdUnitDirectory. A package's unit
+		lives elsewhere and is the package manager's; a symlink at this path is
+		a MASK, and deleting it would un-say an administrator's suppression
+		rather than remove a service. Both are refused by name before anything
+		runs — Remove-SystemdTimer's rules, for the same reasons.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param([Parameter(Mandatory)][string]$Name)
+
+	$base = $Name -replace '\.service$', ''
+	$path = Join-Path $script:SystemdUnitDirectory "$base.service"
+
+	if (-not [System.IO.File]::Exists($path)) {
+		$state = Get-SystemdUnitLoadState -Name "$base.service"
+		if ($state -eq 'loaded') {
+			throw [System.InvalidOperationException]::new(
+				"$base.service exists but its unit file is not in $script:SystemdUnitDirectory, " +
+				'so it is not one this module wrote. Removing a package''s unit file is the ' +
+				'package manager''s job; to stop it, disable or mask it instead.')
+		}
+		throw [System.InvalidOperationException]::new(
+			"There is no $base.service in $script:SystemdUnitDirectory and systemd reports " +
+			"LoadState=$state.")
+	}
+	if ($null -ne [System.IO.FileInfo]::new($path).LinkTarget) {
+		throw [System.InvalidOperationException]::new(
+			"$path is a symlink — that is a mask (or somebody's redirection), not a unit this " +
+			'module wrote. Deleting it would un-say the mask; systemctl unmask is the verb ' +
+			'that means that.')
+	}
+
+	if (-not $PSCmdlet.ShouldProcess("$base.service", 'stop, disable and remove')) { return }
+
+	# Best-effort: a service that was never started makes `stop` a no-op and one
+	# that was never enabled makes `disable` one. systemd's own answer at the
+	# end is the assertion.
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('stop', "$base.service") | Out-Null
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('disable', "$base.service") | Out-Null
+	[System.IO.File]::Delete($path)
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+	$state = Get-SystemdUnitLoadState -Name "$base.service"
+	if ($state -ne 'not-found') {
+		throw [System.InvalidOperationException]::new(
+			"$base.service was removed from $script:SystemdUnitDirectory but systemd still " +
+			"reports LoadState=$state — another unit file elsewhere is shadowing it.")
+	}
+}
+
+# ---------------------------------------------------------------------------
+# The machine's name
+#
+# THREE NAMES AND NOT ONE, and knowing the difference is systemd's job: the
+# STATIC name in /etc/hostname, the TRANSIENT one the kernel carries, and the
+# PRETTY one, which may contain anything. `hostnamectl` sets the first two
+# together; writing /etc/hostname alone changes the machine's name at the next
+# boot and nothing about the machine now.
+# ---------------------------------------------------------------------------
+
+function Get-SystemdHostName {
+	<#
+	.SYNOPSIS
+		The static, transient and pretty host names, from the places that hold
+		them.
+
+	.DESCRIPTION
+		The kernel's name is read from `/proc/sys/kernel/hostname` rather than
+		from `hostnamectl` — a diagnostic must not depend on the subsystem it is
+		diagnosing, and this one gets asked precisely when hostnamectl may have
+		failed.
+	#>
+	[CmdletBinding()]
+	param()
+
+	$static = if ([System.IO.File]::Exists('/etc/hostname')) {
+		[System.IO.File]::ReadAllText('/etc/hostname').Trim()
+	}
+	else { $null }
+
+	$transient = if ([System.IO.File]::Exists('/proc/sys/kernel/hostname')) {
+		[System.IO.File]::ReadAllText('/proc/sys/kernel/hostname').Trim()
+	}
+	else { $null }
+
+	$pretty = $null
+	$r = Invoke-SystemdCommand -Command 'hostnamectl' -Arguments @('--pretty')
+	if ($r.ExitCode -eq 0) { $pretty = $r.StdOut.Trim() }
+
+	return [pscustomobject]@{
+		Static    = $static
+		Transient = $transient
+		Pretty    = $pretty
+	}
+}
+
+function Set-SystemdHostName {
+	<#
+	.SYNOPSIS
+		Sets the machine's name — static and transient together — and reads it
+		back from the kernel.
+
+	.DESCRIPTION
+		VALIDATED BEFORE ANYTHING IS WRITTEN. A host name is at most 63
+		characters of letters, digits and hyphens and may not begin or end with
+		one (RFC 1123). `hostnamectl` accepts things a resolver will not, and
+		the failure that leaves behind is a machine whose name nothing can look
+		up.
+
+		/etc/hosts IS PART OF THE OPERATION, which is the reason this exists
+		rather than a caller running hostnamectl: Debian and Ubuntu put
+		`127.0.1.1 <hostname>` there, sudo resolves its own host name on every
+		invocation, and a machine renamed without that line updated answers
+		`sudo: unable to resolve host` to every command afterwards.
+
+	.PARAMETER Name
+		The new static and transient host name.
+
+	.PARAMETER Pretty
+		The free-form name. Not used for resolution.
+
+	.PARAMETER SkipHostsFile
+		Leave /etc/hosts alone — for a caller that manages the file itself.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[string]$Pretty,
+		[switch]$SkipHostsFile
+	)
+
+	if ($Name.Length -gt 63 -or $Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$') {
+		throw [System.ArgumentException]::new(
+			"'$Name' is not a host name a resolver will accept: up to 63 letters, digits and " +
+			'hyphens, not starting or ending with a hyphen (RFC 1123).')
+	}
+	if ($Pretty) { Test-SystemdUnitText -What 'Pretty' -Value $Pretty }
+
+	if (-not $PSCmdlet.ShouldProcess($Name, 'set the host name')) { return @(Get-SystemdHostName) }
+
+	$before = Get-SystemdHostName
+
+	$r = Invoke-SystemdCommand -Command 'hostnamectl' -Arguments @('set-hostname', $Name)
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"hostnamectl set-hostname $Name exited $($r.ExitCode): " +
+			"$(($r.StdErr + ' ' + $r.StdOut).Trim())")
+	}
+	if ($Pretty) {
+		$p = Invoke-SystemdCommand -Command 'hostnamectl' -Arguments @(
+			'set-hostname', '--pretty', $Pretty)
+		if ($p.ExitCode -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"hostnamectl set-hostname --pretty exited $($p.ExitCode): " +
+				"$(($p.StdErr + ' ' + $p.StdOut).Trim())")
+		}
+	}
+
+	# ASK THE KERNEL, not hostnamectl: the read-back goes to the other side of
+	# the thing that was just changed.
+	$after = Get-SystemdHostName
+	if ($after.Transient -ne $Name) {
+		throw [System.InvalidOperationException]::new(
+			"hostnamectl exited 0 but the kernel still reports '$($after.Transient)'.")
+	}
+
+	if (-not $SkipHostsFile -and $before.Static -and [System.IO.File]::Exists('/etc/hosts')) {
+		# ONLY the loopback lines, and only a whole label: a machine called
+		# `os7` must not turn `os7-backup.example.com` on some other line into
+		# `newname-backup`. Done line by line rather than with one regex over
+		# the file, so what is and is not rewritten is readable.
+		$out = @()
+		$changed = $false
+		foreach ($line in [System.IO.File]::ReadAllLines('/etc/hosts')) {
+			if ($line -match '^\s*127\.0\.[01]\.1\s') {
+				$fields = $line -split '(\s+)'
+				for ($i = 0; $i -lt $fields.Count; $i++) {
+					if ($fields[$i] -eq $before.Static) { $fields[$i] = $Name; $changed = $true }
+					elseif ($fields[$i] -like "$($before.Static).*") {
+						$fields[$i] = $Name + $fields[$i].Substring($before.Static.Length)
+						$changed = $true
+					}
+				}
+				$out = $out + ($fields -join '')
+			}
+			else { $out = $out + $line }
+		}
+		if ($changed) { [System.IO.File]::WriteAllLines('/etc/hosts', $out) }
+	}
+
+	return @($after)
+}
 
 function Test-SystemdModule {
 	<#
@@ -656,6 +1999,286 @@ function Test-SystemdModule {
 			Get-SystemdJournal -Since ([datetime]::new(2026, 8, 27, 14, 5, 0)) | Out-Null
 			Check ($script:__sdSeen -match '--since 2026-08-27 14:05:00') `
 				'journal: -Since is rendered invariantly' $script:__sdSeen
+
+			# --- timers: the union of two lists ------------------------------
+			# list-timers knows elapses and misses disabled timers;
+			# list-unit-files knows every installed timer and no elapses.
+			# Recorded 2026-08-29 from a container running systemd 259, minutes
+			# after sanoid.timer had fired — so `last` is real in the fixture.
+			$timerLists = {
+				param($cmd, $a)
+				$out = if ($a -contains 'list-unit-files') { & $fx 'systemctl-list-unit-files.json' }
+				else { & $fx 'systemctl-list-timers.json' }
+				[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+			}.GetNewClosure()
+			$script:SystemdCommandOverride = $timerLists
+			$timers = @(Get-SystemdTimer)
+			Check ($timers.Count -ge 20) 'timers: the union came back' "$($timers.Count)"
+			$sanoid = $timers | Where-Object Name -eq 'sanoid.timer'
+			Check ($null -ne $sanoid) 'timers: a named timer is in it'
+			Check ($sanoid.NextElapse -is [datetime]) 'timers: NextElapse is a [datetime]'
+			Check ($sanoid.NextElapse.Year -eq 2026) `
+				'timers: MICROSECONDS decoded - seconds would say 1970' "$($sanoid.NextElapse)"
+			Check ($sanoid.LastTrigger -is [datetime]) `
+				'timers: LastTrigger is a [datetime] once it HAS fired'
+			Check ($sanoid.Activates -eq 'sanoid.service') 'timers: Activates names the service'
+			Check ($sanoid.StartupType -eq 'enabled') `
+				'timers: StartupType comes from list-unit-files without -Detailed'
+			Check ($null -eq $sanoid.Persistent) `
+				'timers: Persistent is $null without -Detailed, not $false'
+			# fstrim.timer is enabled and NOT scheduled in the fixture (its
+			# condition fails in a container) — `next` is null and must come
+			# back $null, never 1970.
+			$fstrim = $timers | Where-Object Name -eq 'fstrim.timer'
+			Check ($null -ne $fstrim -and $null -eq $fstrim.NextElapse) `
+				'timers: a null next elapse is $null'
+			# chrony-dnssrv@.timer is disabled: list-timers cannot see it at
+			# all, list-unit-files can — the reason this is a union.
+			$disabled = $timers | Where-Object Name -eq 'chrony-dnssrv@.timer'
+			Check ($null -ne $disabled -and $disabled.StartupType -eq 'disabled') `
+				'timers: a disabled timer is listed at all' "$($disabled.StartupType)"
+			Check ($null -eq $disabled.NextElapse -and $null -eq $disabled.LastTrigger) `
+				'timers: and has never fired and never will'
+
+			# --- one timer, detailed -----------------------------------------
+			$timerListsFor = {
+				param($name)
+				$all = (& $fx 'systemctl-list-timers.json') | ConvertFrom-Json
+				$kept = if ($name) { @($all | Where-Object unit -eq $name) } else { @($all) }
+				ConvertTo-Json $kept -Depth 6 -Compress -AsArray
+			}.GetNewClosure()
+			$script:SystemdCommandOverride = {
+				param($cmd, $a)
+				$out = if ($a -contains 'TimersCalendar') { & $fx 'systemctl-show-timer.txt' }
+				elseif ($a -contains 'list-unit-files') {
+					'[{"unit_file":"sanoid.timer","state":"enabled","preset":"enabled"}]'
+				}
+				else { & $timerListsFor 'sanoid.timer' }
+				[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+			}.GetNewClosure()
+			$st = @(Get-SystemdTimer -Name 'sanoid.timer')[0]
+			Check ($st.Schedule -contains '*-*-* *:00/15:00') `
+				'timer detail: the calendar spec, verbatim' "$($st.Schedule)"
+			Check ($st.Persistent -eq $true) 'timer detail: Persistent=yes becomes $true'
+			Check ($st.ActiveState -eq 'active' -and $st.SubState -eq 'waiting') `
+				'timer detail: a scheduled timer is active/waiting'
+			Check ($st.UnitFile -like '*sanoid.timer') 'timer detail: the unit file path'
+			Check ($st.RandomizedDelay -eq '0') `
+				'timer detail: durations stay verbatim - systemd renders them human-readable'
+
+			# --- THE TRAP: enabled and never started -------------------------
+			# `systemctl enable` alone arms the NEXT boot; until then the timer
+			# is enabled, inactive, and will never fire. Recorded from exactly
+			# that state. list-timers showed the unit with next=null while
+			# enabled; here the lists answer empty so the point query's
+			# fall-through to `systemctl show` is what is exercised — the road
+			# a disabled timer is found by.
+			$script:SystemdCommandOverride = {
+				param($cmd, $a)
+				$out = if ($a -contains 'TimersCalendar') { & $fx 'systemctl-show-timer-enabled-inactive.txt' }
+				elseif ($a -contains 'LoadState') { & $fx 'systemctl-show-loadstate-loaded.txt' }
+				else { '[]' }
+				[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+			}.GetNewClosure()
+			$trap2 = @(Get-SystemdTimer -Name 'os7-task-probe.timer')[0]
+			Check ($null -ne $trap2) 'trap: a timer in NEITHER list is still found by name'
+			Check ($trap2.StartupType -eq 'enabled' -and $trap2.ActiveState -eq 'inactive') `
+				'trap: enabled AND inactive - the state enable-without-start leaves'
+			Check ($null -eq $trap2.NextElapse) 'trap: and it will never fire' 'NextElapse $null'
+			Check ($trap2.RandomizedDelay -eq '10min') `
+				'trap: RandomizedDelayUSec=10min survives verbatim'
+
+			# --- writing a pair ----------------------------------------------
+			$unitDirBefore = $script:SystemdUnitDirectory
+			$lab = Join-Path ([System.IO.Path]::GetTempPath()) "os7-sd-test-$PID"
+			$null = [System.IO.Directory]::CreateDirectory($lab)
+			try {
+				$script:SystemdUnitDirectory = $lab
+				$script:__sdCalls = @()
+				# NO .GetNewClosure() on a block that writes $script: state —
+				# BUILD-NOTES #96: the fresh closure scope is where $script:
+				# stops resolving to the module's session state, and every
+				# recorded call becomes $null. $fx is still reachable through
+				# the call stack.
+				$script:SystemdCommandOverride = {
+					param($cmd, $a)
+					$script:__sdCalls += "$cmd $($a -join ' ')"
+					$out = if ($cmd -eq 'systemd-analyze') { 'Normalized form: *-*-* 03:00:00' }
+					elseif ($a -contains 'TimersCalendar') { & $fx 'systemctl-show-timer-enabled-inactive.txt' }
+					elseif ($a -contains 'LoadState') { & $fx 'systemctl-show-loadstate-loaded.txt' }
+					elseif ($a -contains 'list-unit-files' -or $a -contains 'list-timers') { '[]' }
+					else { '' }
+					[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+				}
+
+				# The same pair the fixtures were recorded from, name and all.
+				$made = @(New-SystemdTimer -Name os7-task-probe -Description 'OS/7 task: probe' `
+						-OnCalendar '*-*-* 03:00:00' -Command '/usr/bin/true' `
+						-Persistent -RandomizedDelay ([timespan]::FromMinutes(10)))[0]
+				$svcText = [System.IO.File]::ReadAllText((Join-Path $lab 'os7-task-probe.service'))
+				$tmText = [System.IO.File]::ReadAllText((Join-Path $lab 'os7-task-probe.timer'))
+				Check ($svcText -match '(?m)^ExecStart=/usr/bin/true$') 'write: ExecStart, verbatim'
+				Check ($svcText -match '(?m)^Type=oneshot$') 'write: the service is a oneshot'
+				Check ($tmText -match '(?m)^OnCalendar=\*-\*-\* 03:00:00$') 'write: the calendar spec'
+				Check ($tmText -match '(?m)^RandomizedDelaySec=600$') `
+					'write: -RandomizedDelay becomes whole seconds'
+				Check ($tmText -match '(?m)^Persistent=true$') 'write: -Persistent'
+				Check ($tmText -match '(?m)^WantedBy=timers\.target$') 'write: enablement has a target'
+				# The '--' is what stops an option-shaped spec ('--version')
+				# from being parsed as an OPTION and waved through (measured
+				# on systemd 259 — exit 0 without it, exit 1 with it).
+				Check ([bool](@($script:__sdCalls) -match '^systemd-analyze calendar -- ')) `
+					'write: the spec went past systemd-analyze first, behind --'
+				Check ([bool](@($script:__sdCalls) -match 'daemon-reload')) `
+					'write: systemd was told to re-read'
+				Check ($null -ne $made -and $made.Name -eq 'os7-task-probe.timer') `
+					'write: and the answer is the timer, asked back'
+
+				# A New- verb does not silently replace what exists.
+				$dup = $null
+				try {
+					New-SystemdTimer -Name os7-task-probe -OnCalendar '*-*-* 03:00:00' `
+						-Command '/usr/bin/true'
+				}
+				catch { $dup = $_.Exception.Message }
+				Check ($dup -like '*already exists*') `
+					'write: an existing pair is refused without -Force'
+				New-SystemdTimer -Name os7-task-probe -OnCalendar '*-*-* 04:00:00' `
+					-Command '/usr/bin/true' -Force | Out-Null
+				Check (([System.IO.File]::ReadAllText((Join-Path $lab 'os7-task-probe.timer'))) `
+						-match '(?m)^OnCalendar=\*-\*-\* 04:00:00$') `
+					'write: and -Force replaces it deliberately'
+
+				# A sub-second delay must not silently become
+				# RandomizedDelaySec=0 - systemd parses decimal seconds.
+				New-SystemdTimer -Name os7-task-jitter -OnCalendar 'daily' -Command '/usr/bin/true' `
+					-RandomizedDelay ([timespan]::FromMilliseconds(500)) | Out-Null
+				Check (([System.IO.File]::ReadAllText((Join-Path $lab 'os7-task-jitter.timer'))) `
+						-match '(?m)^RandomizedDelaySec=0\.5$') `
+					'write: a sub-second -RandomizedDelay survives as decimal seconds'
+
+				# A unit name systemd would parse as an OPTION can be written
+				# and never again addressed - refused up front (measured:
+				# `systemctl show -x.timer` exits 1, "invalid option").
+				$dash = $null
+				try { New-SystemdTimer -Name '-x' -OnCalendar 'daily' -Command '/usr/bin/true' }
+				catch { $dash = $_.Exception.Message }
+				Check ($dash -like '*cannot name a timer unit*') `
+					'refuse: a leading dash cannot name a unit here'
+
+				# THE ASK-BACK IS NOT DECORATION: when systemd does not load
+				# what was written, the write must throw, not exit 0 - this is
+				# the branch a fake that always answers 'loaded' leaves dead.
+				$script:SystemdCommandOverride = {
+					param($cmd, $a)
+					$out = if ($cmd -eq 'systemd-analyze') { 'Normalized form: *-*-* 03:00:00' }
+					elseif ($a -contains 'LoadState') { & $fx 'systemctl-show-loadstate-notfound.txt' }
+					else { '' }
+					[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+				}
+				$unloaded = $null
+				try { New-SystemdTimer -Name os7-task-ghost -OnCalendar 'daily' -Command '/usr/bin/true' }
+				catch { $unloaded = $_.Exception.Message }
+				Check ($unloaded -like '*did not load*') `
+					'verify: a written pair systemd will not load throws, not returns'
+
+				# A spec systemd cannot parse must refuse BEFORE anything is
+				# written — a broken timer on disk fires never and says nothing.
+				$script:SystemdCommandOverride = {
+					param($cmd, $a)
+					if ($cmd -eq 'systemd-analyze') {
+						return [pscustomobject]@{ StdOut = ''; ExitCode = 1
+							StdErr = "Failed to parse calendar specification 'garbage': Invalid argument" }
+					}
+					[pscustomobject]@{ StdOut = ''; ExitCode = 0; StdErr = '' }
+				}
+				$bad = $null
+				try { New-SystemdTimer -Name os7-task-bad -OnCalendar 'garbage' -Command '/usr/bin/true' }
+				catch { $bad = $_.Exception.Message }
+				Check ($bad -like '*cannot parse the calendar spec*') `
+					'refuse: an unparseable spec is refused with systemd''s own words'
+				Check (-not [System.IO.File]::Exists((Join-Path $lab 'os7-task-bad.timer'))) `
+					'refuse: and nothing was written'
+
+				# A line break in a value IS the next directive. Refused, not
+				# escaped - unit syntax has no escape for it.
+				$inj = $null
+				try {
+					New-SystemdTimer -Name os7-task-inj -OnCalendar 'daily' `
+						-Command "/usr/bin/true`n[Service]"
+				}
+				catch { $inj = $_.Exception.Message }
+				Check ($inj -like '*line break*') 'refuse: a newline cannot enter a unit file'
+
+				# --- removing the pair ---------------------------------------
+				$script:__sdCalls = @()
+				# Again no .GetNewClosure() — #96.
+				$script:SystemdCommandOverride = {
+					param($cmd, $a)
+					$script:__sdCalls += "$cmd $($a -join ' ')"
+					$out = if ($a -contains 'LoadState') { & $fx 'systemctl-show-loadstate-notfound.txt' }
+					else { '' }
+					[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+				}
+				Remove-SystemdTimer -Name os7-task-probe -Confirm:$false
+				Check (-not [System.IO.File]::Exists((Join-Path $lab 'os7-task-probe.timer'))) `
+					'remove: the timer file is gone'
+				Check (-not [System.IO.File]::Exists((Join-Path $lab 'os7-task-probe.service'))) `
+					'remove: and the service beside it'
+				Check ([bool](@($script:__sdCalls) -match 'daemon-reload')) 'remove: systemd was told'
+
+				# A timer whose unit file is a PACKAGE's is refused by name —
+				# recorded from sanoid.timer, whose FragmentPath is /usr/lib.
+				$script:SystemdCommandOverride = {
+					param($cmd, $a)
+					$out = if ($a -contains 'LoadState') { & $fx 'systemctl-show-loadstate-loaded.txt' }
+					else { '' }
+					[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+				}.GetNewClosure()
+				$vendor = $null
+				try { Remove-SystemdTimer -Name sanoid -Confirm:$false }
+				catch { $vendor = $_.Exception.Message }
+				Check ($vendor -like '*not in*' -or $vendor -like '*package*') `
+					'remove: a package''s timer is refused' $vendor
+
+				# A LONE .timer here is an override or a hand-authored unit -
+				# the pair is what New- writes, and the pair is what Remove-
+				# removes. (The MASK case - a symlink at this path - is
+				# refused by the same function and proven against real
+				# systemd in the container run: a symlink needs privileges
+				# this self-test does not have on every host.)
+				[System.IO.File]::WriteAllText((Join-Path $lab 'os7-task-lone.timer'), "[Timer]`n")
+				$lone = $null
+				try { Remove-SystemdTimer -Name os7-task-lone -Confirm:$false }
+				catch { $lone = $_.Exception.Message }
+				Check ($lone -like '*removes the PAIR*') `
+					'remove: a lone timer file is not ours to delete' $lone
+				Check ([System.IO.File]::Exists((Join-Path $lab 'os7-task-lone.timer'))) `
+					'remove: and it was left untouched'
+				[System.IO.File]::Delete((Join-Path $lab 'os7-task-lone.timer'))
+
+				# THE ASK-BACK, again: deletion that leaves the unit loaded
+				# (another file elsewhere shadows it) must throw, not exit 0.
+				[System.IO.File]::WriteAllText((Join-Path $lab 'os7-task-shadow.timer'), "[Timer]`n")
+				[System.IO.File]::WriteAllText((Join-Path $lab 'os7-task-shadow.service'), "[Service]`n")
+				$script:SystemdCommandOverride = {
+					param($cmd, $a)
+					$out = if ($a -contains 'LoadState') { & $fx 'systemctl-show-loadstate-loaded.txt' }
+					else { '' }
+					[pscustomobject]@{ StdOut = $out; ExitCode = 0; StdErr = '' }
+				}.GetNewClosure()
+				$shadow = $null
+				try { Remove-SystemdTimer -Name os7-task-shadow -Confirm:$false }
+				catch { $shadow = $_.Exception.Message }
+				Check ($shadow -like '*shadowing*') `
+					'remove: still loaded after deletion throws, not returns'
+			}
+			finally {
+				$script:SystemdUnitDirectory = $unitDirBefore
+				if ([System.IO.Directory]::Exists($lab)) {
+					[System.IO.Directory]::Delete($lab, $true)
+				}
+			}
 		}
 		catch {
 			Check $false 'the recorded section ran to the end' `
@@ -663,6 +2286,69 @@ function Test-SystemdModule {
 		}
 		finally { $script:SystemdCommandOverride = $null }
 	}
+
+	# --- sessions, against recorded loginctl output ------------------------
+	try {
+		$sfx = { param($f) Get-Content -Raw -LiteralPath (Join-Path $FixturePath $f) }
+
+		$rdp = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-rdp.txt')
+		Check ($rdp.Remote -eq $true) 'a remote session reads Remote as a BOOLEAN' "$($rdp.Remote)"
+		Check ($rdp.RemoteHost -eq '172.17.0.3') 'and carries the client address' $rdp.RemoteHost
+		Check ($rdp.Type -eq 'wayland' -and $rdp.Class -eq 'user') 'a graphical user session is typed as one'
+		Check ($rdp.Service -eq 'gdm-authd') 'the PAM service it was opened through is kept' $rdp.Service
+		# The whole point of the absent-key rule: a remote session has NO TTY
+		# line, and '' would claim it has a TTY whose name is empty.
+		Check ($null -eq $rdp.TTY) 'an ABSENT key is $null, not an empty string'
+		Check ($null -eq $rdp.Seat) 'and so is Seat on a session with no seat'
+		Check ($rdp.Since -is [datetime]) 'the localised timestamp parsed' "$($rdp.Since)"
+		Check ($rdp.SinceText -like '*2026*') 'and the raw text is kept beside it' $rdp.SinceText
+
+		$con = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-console.txt')
+		Check ($con.Remote -eq $false) 'a console session reads Remote $false — not the string "no"'
+		Check ($con.TTY -eq 'ttyS0') 'and its TTY is present' $con.TTY
+		Check ($con.Service -eq 'login') 'opened through login, not gdm' $con.Service
+
+		$gre = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-greeter.txt')
+		Check ($gre.Class -eq 'greeter') "the login screen's own session is a greeter, not a user" $gre.Class
+		Check ($gre.Seat -eq 'seat0') 'and it has a seat' $gre.Seat
+
+		$ssh = ConvertFrom-SystemdSessionShow -Text (& $sfx 'loginctl-show-ssh.txt')
+		Check ($ssh.Remote -eq $true -and $ssh.Type -eq 'tty') 'an ssh session is remote AND a tty'
+		Check ($ssh.Service -eq 'sshd') 'which is what tells it from a remote GRAPHICAL one' $ssh.Service
+
+		# Get-SystemdSession over a fake loginctl: the listing is a TABLE,
+		# because --output=json is accepted and ignored (measured).
+		$script:SystemdCommandOverride = {
+			param($cmd, $a)
+			if ($a -contains 'list-sessions') {
+				return [pscustomobject]@{ StdOut = (& $sfx 'loginctl-list-sessions.txt'); ExitCode = 0; StdErr = '' }
+			}
+			if ($a -contains 'show-session') {
+				$id = $a[-1]
+				$map = @{ '10' = 'loginctl-show-rdp.txt'; 'c1' = 'loginctl-show-greeter.txt' }
+				if ($map.ContainsKey($id)) {
+                    return [pscustomobject]@{ StdOut = (& $sfx $map[$id]); ExitCode = 0; StdErr = '' }
+				}
+				# Every other id: gone between being listed and being asked,
+				# which is an ordinary race and must be skipped, not thrown on.
+				return [pscustomobject]@{ StdOut = ''; ExitCode = 1; StdErr = 'No session ' + $id }
+			}
+			return [pscustomobject]@{ StdOut = ''; ExitCode = 0; StdErr = '' }
+		}
+		$all = @(Get-SystemdSession)
+		Check ($all.Count -eq 2) 'a session that vanished between list and show is SKIPPED, not fatal' "ids=[$(@($all | ForEach-Object { $_.Id }) -join ',')]"
+		$remote = @(Get-SystemdSession -Remote)
+		Check ($remote.Count -eq 1 -and $remote[0].Id -eq '10') '-Remote returns only the network login'
+		$greeters = @(Get-SystemdSession -Class greeter)
+		Check ($greeters.Count -eq 1 -and $greeters[0].Class -eq 'greeter') '-Class filters on logind''s own word'
+		$none = @(Get-SystemdSession -User 'nobody-at-all')
+		Check ($none.Count -eq 0) 'an empty result is an empty COLLECTION, not $null (BUILD-NOTES #92)'
+	}
+	catch {
+		Check $false 'the session section ran to the end' `
+			"$($_.Exception.Message) @ line $($_.InvocationInfo.ScriptLineNumber)"
+	}
+	finally { $script:SystemdCommandOverride = $null }
 
 	$pass = $script:__sdPass
 	$fail = @($script:__sdFail)
@@ -677,5 +2363,11 @@ function Test-SystemdModule {
 Export-ModuleMember -Function @(
 	'Get-SystemdUnit', 'Start-SystemdUnit', 'Stop-SystemdUnit', 'Restart-SystemdUnit',
 	'Set-SystemdUnitStartup', 'Update-SystemdUnit',
+	'Get-SystemdTimer', 'New-SystemdTimer', 'Remove-SystemdTimer',
 	'Get-SystemdJournal',
+	'Get-SystemdSession', 'Stop-SystemdSession',
+	'Invoke-SystemdShutdown',
+	'Get-SystemdUnitFreezerState', 'Suspend-SystemdUnit', 'Resume-SystemdUnit',
+	'New-SystemdService', 'Remove-SystemdService',
+	'Get-SystemdHostName', 'Set-SystemdHostName',
 	'Test-SystemdModule')

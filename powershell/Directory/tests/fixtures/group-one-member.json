@@ -1,0 +1,21 @@
+{
+  "Dn": "CN=OS7FixtureGroup,CN=Users,DC=os7,DC=test",
+  "Attributes": {
+    "objectClass": ["top", "group"],
+    "cn": ["OS7FixtureGroup"],
+    "instanceType": ["4"],
+    "whenCreated": ["20260827190803.0Z"],
+    "whenChanged": ["20260827190803.0Z"],
+    "uSNCreated": ["4324"],
+    "name": ["OS7FixtureGroup"],
+    "objectGUID": ["aSIAGQYTvkyywIsakocpDg=="],
+    "objectSid": ["AQUAAAAAAAUVAAAA2gnSpGzEwv3Oe1RWUwQAAA=="],
+    "sAMAccountName": ["OS7FixtureGroup"],
+    "sAMAccountType": ["268435456"],
+    "groupType": ["-2147483646"],
+    "objectCategory": ["CN=Group,CN=Schema,CN=Configuration,DC=os7,DC=test"],
+    "member": ["CN=Ada Lovelace,CN=Users,DC=os7,DC=test"],
+    "uSNChanged": ["4325"],
+    "distinguishedName": ["CN=OS7FixtureGroup,CN=Users,DC=os7,DC=test"]
+  }
+}

@@ -1,0 +1,152 @@
+#!/bin/sh
+# A9 — give the domain-home root a dataset of its own, so a rollback stops
+# taking domain users' home directories with it.
+#
+# THE DEFECT: sssd is configured with
+# fallback_homedir = /var/lib/os7/domain-homes/%u, and no code anywhere created
+# a dataset for that path. Measured on an installed machine after a real join
+# (docs/SESSION-AD-JOIN.md, 2026-09-07):
+#
+#     /var/lib/os7/domain-homes  ->  rpool/ROOT/os7_1.0.0.163_202608301351
+#
+# so it lived INSIDE the boot environment and Restore-OS7 rolled every domain
+# user's home back with the operating system — BUILD-NOTES #74 in a second
+# place, which is the exact outcome A9 was written to prevent. New machines get
+# the dataset from New-OS7Storage; this is the other half, for machines already
+# installed.
+#
+# THE MOUNT IS THE DOMAIN-HOME ROOT AND NOT /var/lib/os7. That is not tidiness:
+# the migration record Update-OS7 writes under /var/lib/os7/migrations/<version>/
+# is REQUIRED to roll back with the release, so that a machine which has rolled
+# back has genuinely not run them (this directory's README says so, from C10).
+# A dataset at /var/lib/os7 would make that record survive a rollback and the
+# machine would claim to have run migrations it has not. One level down
+# satisfies A9 and leaves C10 alone.
+#
+# WHY firstboot AND NOT chroot, when the README says a dataset layout change
+# belongs in chroot: the mountpoint. A dataset created from inside the assembled
+# boot environment would mount at the CHROOT's /var/lib/os7/domain-homes, which
+# is a different directory from the running machine's, and the homes that have
+# to be carried across live on the running machine. This needs the real mount
+# namespace, which only the booted system has.
+#
+# MOUNTING A DATASET OVER A POPULATED DIRECTORY HIDES WHAT IS THERE, and that is
+# BUILD-NOTES #78's shape: nothing fails, nothing warns, and the homes are
+# simply gone from view. So the content is copied into the dataset FIRST, the
+# old directory is moved aside rather than buried, and it is removed only after
+# the dataset is mounted and the content has been counted on the other side.
+#
+# IDEMPOTENT BY ASKING ZFS FOR THE STATE IT INTENDS TO CREATE, never for a
+# marker of its own: the dataset existing and mounted at the right path is the
+# whole test.
+set -u
+
+TAG="os7/70-domain-home-dataset"
+DATASET="rpool/DATA/lib/os7-domain-homes"
+MOUNT="/var/lib/os7/domain-homes"
+STAGING="/var/lib/os7/.domain-homes-migrating"
+ASIDE="${MOUNT}.pre-dataset"
+
+say() { echo "${TAG}: $*"; }
+
+# A machine without ZFS or without this pool is not a machine this applies to.
+# "Cannot tell" is not "failed": exit 0 and say which.
+if ! command -v zfs >/dev/null 2>&1; then
+    say "zfs is not on PATH, nothing to do"
+    exit 0
+fi
+if ! zpool list rpool >/dev/null 2>&1; then
+    say "no rpool on this machine, nothing to do"
+    exit 0
+fi
+
+# ---- already done? ---------------------------------------------------------
+if zfs list -H -o name "${DATASET}" >/dev/null 2>&1; then
+    have=$(zfs get -H -o value mountpoint "${DATASET}" 2>/dev/null || echo '')
+    if [ "${have}" != "${MOUNT}" ]; then
+        say "dataset exists but is mounted at '${have}'; moving it to ${MOUNT}"
+        zfs set mountpoint="${MOUNT}" "${DATASET}" || exit 1
+    fi
+    if [ "$(zfs get -H -o value mounted "${DATASET}" 2>/dev/null)" != "yes" ]; then
+        zfs mount "${DATASET}" || exit 1
+    fi
+    say "already present and mounted at ${MOUNT}"
+    exit 0
+fi
+
+# ---- how much is there to carry across? ------------------------------------
+before=0
+if [ -d "${MOUNT}" ]; then
+    before=$(find "${MOUNT}" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+fi
+say "creating ${DATASET}; ${before} entry(ies) to carry across"
+
+# ---- create it somewhere harmless first -------------------------------------
+rm -rf "${STAGING}"
+if ! zfs create -o mountpoint="${STAGING}" "${DATASET}"; then
+    say "could not create ${DATASET}"
+    exit 1
+fi
+
+# -a keeps ownership, mode and timestamps, which for home directories is the
+# whole point. The trailing /. copies the CONTENTS; an empty source is fine.
+if [ "${before}" -gt 0 ]; then
+    if ! cp -a "${MOUNT}/." "${STAGING}/"; then
+        say "copying the existing homes into the dataset failed; leaving everything as it was"
+        zfs destroy "${DATASET}" 2>/dev/null
+        rm -rf "${STAGING}"
+        exit 1
+    fi
+fi
+
+# ---- swap: aside, never buried ---------------------------------------------
+if [ -d "${MOUNT}" ]; then
+    rm -rf "${ASIDE}"
+    if ! mv "${MOUNT}" "${ASIDE}"; then
+        say "could not move the old directory aside"
+        zfs destroy "${DATASET}" 2>/dev/null
+        rm -rf "${STAGING}"
+        exit 1
+    fi
+fi
+
+if ! zfs set mountpoint="${MOUNT}" "${DATASET}"; then
+    say "could not set the mountpoint; restoring the old directory"
+    [ -d "${ASIDE}" ] && mv "${ASIDE}" "${MOUNT}"
+    exit 1
+fi
+if [ "$(zfs get -H -o value mounted "${DATASET}" 2>/dev/null)" != "yes" ]; then
+    zfs mount "${DATASET}" || true
+fi
+
+# ---- ASK THE RESULT, do not trust the exit codes ---------------------------
+if [ "$(zfs get -H -o value mounted "${DATASET}" 2>/dev/null)" != "yes" ]; then
+    say "the dataset is not mounted after all of that; restoring the old directory"
+    [ -d "${MOUNT}" ] && rmdir "${MOUNT}" 2>/dev/null
+    [ -d "${ASIDE}" ] && mv "${ASIDE}" "${MOUNT}"
+    exit 1
+fi
+source_now=$(findmnt -no SOURCE --target "${MOUNT}" 2>/dev/null || echo '')
+if [ "${source_now}" != "${DATASET}" ]; then
+    say "${MOUNT} is backed by '${source_now}', not ${DATASET}"
+    exit 1
+fi
+after=$(find "${MOUNT}" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+if [ "${after}" -lt "${before}" ]; then
+    say "${before} entry(ies) went in and ${after} came out; keeping ${ASIDE} and failing"
+    exit 1
+fi
+
+# Only now is the old copy redundant.
+rm -rf "${ASIDE}"
+# And the staging MOUNTPOINT DIRECTORY is left behind by `zfs set mountpoint`:
+# ZFS moves the mount and does not remove the directory it used to mount on.
+# Measured on the first run of this migration, which left an empty
+# /var/lib/os7/.domain-homes-migrating behind. rmdir and not rm -rf: if
+# anything is in there, something went somewhere it should not have and the
+# right move is to leave it for a person to look at.
+if [ -d "${STAGING}" ]; then
+    rmdir "${STAGING}" 2>/dev/null || say "WARNING: ${STAGING} is not empty and was left in place"
+fi
+say "done: ${MOUNT} is ${DATASET}, ${after} entry(ies), outside the boot environment"
+exit 0

@@ -1,0 +1,18 @@
+Renderer          : networkd
+RendererIsDefault : False
+Files             : {@{Path=/etc/netplan/01-os7-network.yaml; Mode=-rw-------;
+                    Bytes=331}, @{Path=/lib/netplan/00-network-manager-all.yaml
+                    ; Mode=-rw-------; Bytes=49}}
+Configured        : {@{Id=os7net; Kind=Ethernet; MatchMac=; MatchName=en*; Dhcp
+                    4=True; Dhcp6=True; Method=Dhcp; Addresses=System.Object[];
+                     Gateway=; Nameservers=System.Object[]; SearchDomains=Syste
+                    m.Object[]; Ssids=System.Object[]}}
+Effective         : {@{Name=enp0s2; Kind=Ethernet; MacAddress=52:54:00:12:34:56
+                    ; OperState=UP; Up=True; Carrier=True; Mtu=1500; IPv4Addres
+                    s=System.Object[]; IPv6Address=System.Object[]; Gateway=10.
+                    0.2.2; RadioBlocked=}}
+Disagreements     : {}
+Agrees            : True
+
+
+PS /home/os7admin>

@@ -60,7 +60,7 @@ keeps re-learning: "cannot tell" is not "clean".
 | present | absent |
 |---|---|
 | `Get-TimeZone` — works, returned `Etc/UTC`; .NET sees 419 zones | **`Set-TimeZone`** |
-| `Restart-Computer`, `Stop-Computer` | `Get-ComputerInfo`, `Rename-Computer` |
+| `Restart-Computer`, `Stop-Computer` — **present and `Restart-Computer` does the wrong thing**: both run `/usr/sbin/shutdown` with NO arguments, which is systemctl's compatibility interface defaulting to POWEROFF, so it powers the machine off and reports success (measured 2026-09-09 on a machine; upstream PowerShell/PowerShell#14684). Neither carries any parameter on Linux, so a copied `-Force` fails on the parameter first. OS/7 supplies both itself — P1a | `Get-ComputerInfo`, `Rename-Computer` |
 | `Enter-PSSession`, `Invoke-Command`, `New-PSSession` | — |
 | `Get-Process`, `Stop-Process`, `Get-Date`, `Set-Date`, `Test-Connection`, `Get-FileHash`, `Get-Credential`, `Get-Culture`, `Get-PSDrive`, `Get-Clipboard` | `Get-Service` and the entire service family, `Get-LocalUser`, `Get-LocalGroup`, `Get-WinEvent`, `Get-EventLog`, `Get-Disk`, `Get-Volume`, `Get-ScheduledTask`, `Get-HotFix`, `Get-BitLockerVolume`, `Resolve-DnsName`, every `Net*` |
 
@@ -89,11 +89,83 @@ Three findings out of that list matter more than the list:
   PowerShell's own half of it is present and working. The gap is one
   configuration line.
 
+### 1.3 The LDAP stack on Linux — one foundation and one trap, and they load alike
+
+Measured 2026-08-27 in pwsh 7.6.5 on the shipped amd64 image, and against a real
+Samba AD DC in a container (`installer/testing/Dockerfile.ad-dc`, realm
+`OS7.TEST`, Samba 4.23.6). §1.1 asked which nouns PowerShell already owns; this
+asks what is underneath the noun a Microsoft administrator cares about most.
+
+* **`System.DirectoryServices.Protocols` ships inside pwsh 7.6.5 and works.** It
+  resolves with no `Add-Type`, opens a socket and reaches `libldap` — which is
+  on every OS/7 image whether anybody planned it or not: `libldap2` is a
+  `Depends` of `libcurl4t64` and `curl` is in `os7-base.list.chroot`, on **both**
+  architectures. The client itself needs no new package. (Three were added to
+  the base list anyway — `ldap-utils`, `libsasl2-modules-gssapi-mit`,
+  `bind9-dnsutils` — and none of them is the client: they are the independent
+  witness, the GSSAPI mechanism plugin, and the SRV lookup that finds a domain
+  controller.)
+* **`System.DirectoryServices` — ADSI — loads, and then throws.** The assembly
+  resolves, the type resolves, and the first call says it is not supported on
+  this platform. One of these two namespaces is a foundation and the other is a
+  dead end; they are one word apart, they fail at different moments, and
+  **nothing tells them apart except running the code.** The AD scripts an
+  administrator arrives with are written against the second one.
+* **`AuthType.Negotiate` with an explicitly supplied credential returns LDAP
+  result 92, "not supported"** — with the GSSAPI plugin present. Negotiate works
+  from an **ambient** ticket, and then only with `rdns = false` in `krb5.conf`
+  *and* `SASL_NOCANON` on for OpenLDAP; otherwise the client canonicalises the
+  server through reverse DNS and asks the KDC for a principal that does not
+  exist. So a typed-in credential is a **simple bind**, which forces the next
+  finding.
+* **A simple bind on port 389 is refused by Active Directory** — "Strong
+  authentication is required" — and LDAPS on 636 is accepted. Windows answers
+  that with sign-and-seal, and **`SessionOptions.Sealing` throws on Linux**.
+  There is no third option, so TLS is the default and port 389 is opt-in.
+* **`SessionOptions.VerifyServerCertificate` throws as well.** There is no
+  certificate callback on this platform at all, so trust belongs to OpenLDAP,
+  and OpenLDAP's trust is **machine-wide** — a product decision taken by an
+  absent API rather than by anybody here (open question 8).
+* **`$env:LDAPTLS_CACERT` set from inside PowerShell does nothing**, and reads
+  back correctly while doing nothing. .NET on Unix keeps its own copy of the
+  environment block and never calls `setenv(3)`, so no native library ever sees
+  the value while `[Environment]::GetEnvironmentVariable` answers happily from
+  the copy. A real `setenv(3)` does work, and only before the first LDAP call in
+  the process. The failure presents as **"The LDAP server is unavailable"** — a
+  network message, about a server that is answering, for a trust problem.
+* **`SessionOptions.ProtocolVersion` reads back 2.** AD refuses LDAPv2 and the
+  refusal arrives as a failed bind, which reads as a wrong password. Version 3
+  has to be set explicitly on every connection.
+* **`ReferralChasing` defaults to `All`.** Every search against a domain root
+  returns three referrals, and chasing one opens a **second, unauthenticated**
+  connection to another server. Switching it off is not tuning; it is the
+  difference between asking as somebody and asking as nobody.
+* **`SearchResultEntry` has no public constructor** — none of the result types
+  do. A test cannot manufacture a directory reply, which is why the seam the
+  self-test replaces sits **above** the .NET boundary and not below it: a
+  testing decision forced by a sealed API. It is what lets
+  `Test-DirectoryModule` run 40 checks with no server while `check-ad.py` needs
+  a real one.
+* **And what a Windows administrator reaches for next is not there: WinRM.**
+  PowerShell on Linux answers "no supported WSMan client library was found".
+  §1.1's remoting row is SSH transport and only SSH transport.
+
+One measurement about the rig rather than the product, kept because the next
+person to build one would otherwise spend the same afternoon: on Ubuntu 26.04 the
+AD DC role is in **`samba-ad-dc`** and **`samba-ad-provision`**, not in `samba`;
+`samba-tool` arrives with `python3-samba`, which is only a `Suggests`; and
+provisioning inside a container needs the `posix:eadb` ACL backend, because
+writing SYSVOL's NT ACLs otherwise needs `CAP_SYS_ADMIN`.
+
 ---
 
 ## 2. Decisions
 
 ### P1 — The `OS7` prefix is canonical. Decided 2026-08-27.
+
+> **Its last paragraph is superseded by P1a below (2026-09-09).** The prefix
+> is still canonical; the Windows names are no longer opt-in and are no
+> longer aliases.
 
 `Get-OS7Service`, `Set-OS7TimeZone`, `Get-OS7NetworkAdapter`. Not `Get-Service`,
 not `Set-TimeZone`, even where §1.1 shows the name to be free on Linux today.
@@ -119,6 +191,73 @@ aliases and only aliases, and which may only carry a name where the *common
 invocation* is genuinely equivalent. Each entry needs a row in a table that a
 test drives. An alias that is nearly right is the thing this decision exists to
 avoid, so shipping one carelessly under a compatibility banner would defeat it.
+
+#### P1a — the paragraph above is SUPERSEDED. Revised 2026-09-09.
+
+The three reasons still hold and the `OS7` prefix is still canonical. What was
+wrong was the last paragraph: **opt-in, and aliases only.** Both were revised
+after an administrator typed a documented Microsoft cmdlet at an OS/7 machine
+and was told the cmdlet does not exist.
+
+`powershell/OS7/OS7.Compat.Windows.ps1` is **dot-sourced by OS7.psm1 and
+therefore loaded by default**, and it contains **functions with Windows'
+parameters and Windows' output shape**, not aliases. Fourteen names:
+`Get-`/`Set-`/`New-`/`Remove-`/`Start-`/`Stop-`/`Restart-`/`Suspend-`/
+`Resume-Service`, `Set-TimeZone`, `Get-ComputerInfo`, `Rename-Computer`,
+`Restart-Computer` and `Stop-Computer`.
+
+**Why opt-in was wrong.** "The name resolves" and "a script copied off a Windows
+box runs" are different products, and a compatibility layer nobody has imported
+is the first one. An opt-in module answers a question the administrator does not
+know to ask: the failure they actually meet is `CommandNotFoundException`, which
+says nothing about a module that would have helped.
+
+**Why aliases were wrong.** Reason 2 above is the argument against them, not
+for them. `Get-Service` and `Get-OS7Service` do not have the same parameters, so
+an alias makes `Get-Service -Name ssh` fail at the parameter — which is P1's own
+"nearly right" failure, shipped under a compatibility banner. A function can
+carry Windows' parameter set, and each parameter it cannot honour can be
+**refused by name, with a reason and a pointer**, which is a better outcome than
+either an alias or a missing name.
+
+**What replaced "a row in a table that a test drives"**, because that
+requirement was right and is now met literally:
+`installer/testing/check-compat-windows.py`, 214 checks, no VM. Every parameter
+the real Windows cmdlet has must be declared; every parameter declared must be
+Windows' or a named OS/7 addition; every refusal must be reachable, real, and
+must actually throw. The Windows side of that comparison is **recorded from a
+real Windows pwsh 7.6.5** — the version OS/7 pins — so a difference is a
+platform difference and not a version one.
+
+**Reason 1 is not dismissed; it is made audible.** If a later PowerShell ships
+one of these names for real, the compatibility function warns on its first use
+in a session, names `Microsoft.PowerShell.Management\<name>` as the way to the
+real one, and says the shim exists because that cmdlet was absent. The check
+asserts this **in both directions**: it must warn on a host where the cmdlet
+exists and must stay silent where it does not — measured green on Windows
+(warns) and on an installed OS/7 machine (silent) on 2026-09-09.
+
+**And two of the fourteen shadow a cmdlet that EXISTS**, which reason 1 forbids
+in general and which is right here anyway, because what exists is broken.
+`Restart-Computer` and `Stop-Computer` on Linux both run `/usr/sbin/shutdown`
+with **no arguments**; on Ubuntu that is a symlink to `systemctl`, whose
+compatibility interface takes the action as a flag and defaults to POWEROFF
+without one. So the shipped `Restart-Computer` powers an OS/7 machine off and
+reports success — measured on a machine, whose console then said `Reached target
+poweroff.target` and `reboot: Power down`. Upstream has had it since 2021
+(PowerShell/PowerShell#14684). OS/7's own says `systemctl reboot`, and a machine
+asked to restart now restarts: `reboot: Restarting system`, measured on the same
+bench the same afternoon.
+
+**The one decision this layer makes rather than translating.**
+`Set-Service -StartupType Disabled` **masks** the unit. On Windows a disabled
+service cannot be started at all; systemd's `disable` only takes it out of boot
+and leaves it startable by hand, so mapping the word to `disable` would quietly
+grant what the script asked to forbid. It warns when it does this, and
+`-StartupType Manual` unmasks. Note that `Set-OS7Service` maps the same words
+differently and correctly for *its* audience: it has a fourth word, `Blocked`,
+for the mask, because an OS/7 administrator can say which one they mean and a
+copied script cannot.
 
 ### P2 — Subsystems get a generic module; OS/7 policy sits above it. Decided 2026-08-27.
 
@@ -155,6 +294,18 @@ which get one.
 > `powershell/Time/` exists and `check-layering.py` gained a third rule. The
 > measurement corrected the plan rather than the other way round. What survives
 > of the clause is its point: ask per subsystem.
+
+> **And asked again on 2026-09-09, with the opposite answer: Secure Boot got NO
+> generic layer.** `Get-OS7SecureBoot` reads two paths under `/sys` — one
+> five-byte EFI variable and one line of text — and there is no second consumer
+> and no surface anybody would reuse. Writing `powershell/Firmware/` for that
+> would be the reflex this clause warns about, in the direction the time zone
+> did not go. The line where that changes is named in the code rather than left
+> to judgement: **enrolling keys, reading `dbx` or driving MOK** is a surface,
+> and the moment one of those is wanted the layer should be extracted. Until
+> then the cmdlet lives in `powershell/OS7/OS7.SecureBoot.ps1` and
+> `check-layering.py` has nothing to hold, because there is no subsystem
+> underneath it to reach around.
 
 ### P3 — The netplan renderer moves to PowerShell, in two steps. Decided 2026-08-27.
 
@@ -236,9 +387,115 @@ it were the only one. Any cmdlet taking a secret takes it as `[securestring]` or
 `ConvertTo-Json`, a log or a screen; and creates the file with its final mode
 before the content goes in, not after.
 
+### P8 — The directory is a subsystem; the domain is policy. Decided 2026-08-27.
+
+**`powershell/Directory/` speaks LDAP and realm membership and has never heard of
+OS/7; `powershell/OS7/` knows which domain this machine administers, whose
+credential the session is holding, which groups may sign in, and that a clock
+five minutes out is a Kerberos failure — which does not report itself as a clock
+problem, it reports that the password is wrong.**
+
+P2 applied to a fifth subsystem, and it passes P2's own test on the same grounds
+the network did: the subsystem has a vocabulary entirely its own — a DN, a search
+filter, `userAccountControl`, a keytab principal, an LDAP result code — and the
+product has a policy on top of it that cannot be said in that vocabulary at all.
+
+| module | knows | does not know |
+|---|---|---|
+| `powershell/Directory/` | `LdapConnection` and its TLS, paged search, add/modify/delete/move, `unicodePwd`, the escaping and DN rules, `adcli`, `kinit`, `klist`, `getent`, what an sssd stanza looks like | which domain, which groups, five minutes, boot environments, OS/7 at all |
+| `powershell/OS7/` | which domain this machine administers, whose credential the admin session holds, which groups may sign in, that Kerberos dies at five minutes' skew, every `OS7`-prefixed name | how to escape a filter, how to spell a DN, how to drive `adcli` |
+
+The cut falls where a socket is opened or a process is started: **both** of those
+are the generic module's, including realm membership, which is `adcli` and
+`kinit` and nothing more product-specific than that. Joining a Kerberos realm and
+configuring sssd is ordinary Ubuntu; *which* realm, and what a machine does about
+it afterwards, is not.
+
+The same line was drawn a second time in the other direction, and that one is
+worth naming: **finding a domain controller is an SRV lookup, and DNS belongs to
+the network, not to the directory.** `Resolve-NetSrvRecord` is therefore in
+`powershell/Net/`, and `dig`, `host` and `nslookup` joined **P2's** token list on
+the day this rule was written — where they measure 0. A line is cheapest to draw
+before anything has crossed it, which is the argument P2's own baseline already
+made once.
+
+**What this forbids: `powershell/OS7` may not name `adcli`, `kinit`, `klist`,
+`getent` or `ldapsearch`** — nor `realm`, `sssctl`, `kdestroy`, `ktutil` or the
+rest of the Kerberos and OpenLDAP client tools; the whole token list lives in the
+rule. `installer/testing/check-layering.py` gained a fifth rule, `P2-directory`,
+at a baseline of **1**, with that one site named in the rule itself rather than
+left to be found: `powershell/OS7/OS7.Home.ps1:122` asks `getent passwd` about a
+**local** account, which predates the directory layer and is the one question
+`getent` answers with no directory involved. Not 0 as P2 and P2-time managed by
+being written before there was any code to grandfather, and not deliberately
+above zero as P2-systemd's 2 is — just one call that was already there. A
+baseline may fall and may not rise.
+`getent` is in the token list regardless of that site, because the moment sssd is
+configured it becomes the canonical "is the join working" probe — and that call
+belongs to the Directory module.
+
+It forbids one more thing, quieter and more expensive: **`powershell/OS7` may not
+write its own filter escaping or DN handling.** The Directory module exports
+`ConvertTo-DirectoryFilterValue`, `ConvertTo-DirectoryDnValue`,
+`ConvertTo-DirectoryDomainDn` and `Split-DirectoryDn` for the layer above to
+call, which is not tidiness — a second implementation of an escaping rule is
+BUILD-NOTES #66 exactly, one specification taking two routes with nobody diffing
+them, and the failure it makes is a search that returns the wrong objects rather
+than an error. The directory's own design is
+[AD-PLAN.md](AD-PLAN.md); this decision is only where its layer boundary is
+recorded.
+
+### P9 — Timers are a noun, not a service type. Decided 2026-08-29.
+
+**`Get-OS7Service` stays deliberately services-only, and scheduled work gets its
+own noun: `Get-/Enable-/Disable-/Start-/Register-/Unregister-OS7ScheduledTask`,
+over the Systemd module's `Get-/New-/Remove-SystemdTimer`.**
+
+This resolves the decision BUILD-NOTES #113 left open — *"either
+`Get-OS7Service -Type`, or a separate noun for timers"* — and it resolves it the
+way Windows itself does: `Get-Service` does not list scheduled tasks, and
+services.msc and taskschd.msc are different tools because "is this program
+running" and "will this job run at three in the morning" are different
+questions. A `-Type` parameter would have answered #113's literal symptom and
+handed a Windows admin a `Get-OS7Service` whose objects are sometimes services
+and sometimes not.
+
+The noun carries the policy the generic layer deliberately does not:
+
+* **`Healthy` names the enable-without-start trap** (#115): `systemctl enable`
+  arms the next boot only, so `enabled` + `inactive` is a timer that never
+  fires and reports nothing. `Enable-OS7ScheduledTask` therefore enables AND
+  starts; the generic verbs stay separate so the distinction remains visible.
+* **The listing is a union** (#116): a disabled timer is invisible to
+  `list-timers --all` and `list-units --all` both, so `Get-SystemdTimer` merges
+  `list-unit-files` with `list-timers` and falls through to `systemctl show` —
+  a task registered `-Disabled` does not vanish from the inventory.
+* **Running a task now means starting the SERVICE** — starting the timer merely
+  arms the schedule, and a manual run moves `LastResult`, never `LastRun`
+  (measured; the schedule did not fire).
+* **`Unregister-` refuses anything not named `os7-task-*`**, by name and before
+  any systemd call: registered tasks are the operator's, `sanoid.timer` and
+  `os7-update-check.timer` are packages', and a package's schedule is disabled,
+  not deleted.
+* **A calendar spec is judged by `systemd-analyze calendar` before anything is
+  written** — the visudo pattern (A10): the parser that will read the file is
+  the one that validates it, and a spec systemd cannot parse would otherwise
+  become a timer that never fires and says nothing.
+
+What this deliberately does not do: no second snapshot schedule (the backup
+schedule IS sanoid's own timer, BACKUP-PLAN), no transient `systemd-run` jobs
+(`systemd-run` stays in P2-systemd's forbidden-token list), and no monotonic
+trigger authoring in v1 (`-OnCalendar` is the escape hatch; existing monotonic
+timers are still listed and their `OnStartupUSec=` shows in `Schedule`).
+
 ---
 
-### P8 — The device manager shows what is WRONG, not what is there. Decided 2026-08-27.
+### P10 — The device manager shows what is WRONG, not what is there. Decided 2026-08-27.
+
+*(Numbered P8 on the branch this arrived from, and renumbered on 2026-09-10:
+P8 and P9 had been taken meanwhile by the directory and by timers. The
+decision is unchanged; only the number moved, and it moved because two
+branches both counted from the last number they could see.)*
 
 `Get-OS7Device` with no arguments returns only the devices that need attention.
 `-All` returns the rest.
@@ -281,7 +538,7 @@ manager that identifies a problem and offers no next step has done the easy
 half. `NotSupported` is the exception and is honest about it: there is no fix,
 and what it offers instead is `Send-OS7HardwareProbe`.
 
-### P9 — Detection that Ubuntu already maintains is wrapped, never rebuilt. Decided 2026-08-27.
+### P11 — Detection that Ubuntu already maintains is wrapped, never rebuilt. Decided 2026-08-27.
 
 Deciding that an NVIDIA card would do more with `nvidia-driver-570` than with
 nouveau is a data problem: a table of modalias patterns against package names,
@@ -328,8 +585,34 @@ feature.
 | **Firewall** | `Get-/Set-OS7FirewallProfile`, `Get-/New-/Remove-OS7FirewallRule` |
 | **Remoting** | `Enable-/Disable-/Get-OS7Remoting` |
 | **Inventory** | `Get-OS7ComputerInfo`, `Get-OS7SecureBoot`, `Get-OS7Tpm` |
-| **Devices and drivers** | `Get-OS7Device`, `Get-OS7Driver`, `Get-OS7DeviceStatus`, `Install-OS7Driver`, `Repair-OS7Driver`, `Get-OS7DriverRegression`, `Send-OS7HardwareProbe` — `Hardware` + OS7 (P2, P8) |
+| **Devices and drivers** | `Get-OS7Device`, `Get-OS7Driver`, `Get-OS7DeviceStatus`, `Install-OS7Driver`, `Repair-OS7Driver`, `Get-OS7DriverRegression`, `Send-OS7HardwareProbe` — `Hardware` + OS7 (P2, P10) |
 | **Certificates** | `Get-/Import-/Remove-OS7Certificate`, `Test-OS7Certificate` |
+| **Directory** | `Enter-/Get-/Exit-OS7AdminSession`, `Get-OS7ADDomain`, `Get-OS7ADDomainController`, `Test-OS7Directory`, `Add-OS7DirectoryTrust`, `Get-OS7ADUser/Group/GroupMember/Computer/OrganizationalUnit/Object`, `Search-OS7AD`, `New-/Set-OS7ADUser`, `New-OS7ADGroup`, `Add-/Remove-OS7ADGroupMember`, `Enable-/Disable-/Unlock-OS7ADAccount`, `Reset-OS7ADAccountPassword`, `Move-/Rename-/Set-/Remove-OS7ADObject`, `Get-/Join-/Repair-/Remove-/Test-OS7Domain`, `Get-/Set-OS7DomainLogonPolicy`, `Get-/New-/Remove-OS7KerberosTicket` |
+
+**Directory is Tier 2, and the argument is written down because the row could be
+read into either neighbouring tier.**
+
+It is not Tier 1. Tier 1's test is whether §6's guarantee is *already* broken
+without the group, and on the machine OS/7 ships — whose management path is
+Entra, Intune and Arc — nothing about Active Directory arises at all. A machine
+with no directory in sight is not a broken machine.
+
+It is not Tier 3 either, and that is the sharper half. Tier 3 is completeness;
+this is what a Microsoft administrator does between nine and five. Without it the
+answer to "unlock that account" is a Windows box, and the answer *on this
+machine* is `ldapsearch` and `adcli` — Linux commands, which is exactly what §6
+promises an operator never has to type. The whole design is a workstation story:
+an administrator signs in to AD from an OS/7 machine with their own AD admin
+account and works as themselves, and **the machine is not a member of the domain
+and does not need to be.**
+
+The domain join shares the row and is the piece whose tier may move. For a joined
+machine `Test-OS7Domain` is the only thing that will say why nobody can log in,
+which is Tier 1's shape precisely. It is here instead because **no OS/7 machine
+has ever joined a domain** — the join is code plus a container test — and a tier
+is a claim about a machine that exists. If joining becomes a supported install
+mode, `Get-/Test-/Repair-OS7Domain` moves up with it, and this paragraph is what
+makes that a decision rather than a drift.
 
 `New-OS7User` is not a `useradd` wrapper. It is the only correct path on this
 product: the home has to be a USERDATA dataset (#74) and `useradd -m` will not
@@ -341,7 +624,7 @@ enrolment belongs on first boot, not in the installer, and no code owns that
 moment yet.
 
 The device group replaced the `Get-OS7Hardware` that used to sit in Inventory.
-That name described a dump; P8 is a decision that a dump is not what is wanted.
+That name described a dump; P10 is a decision that a dump is not what is wanted.
 
 `Get-OS7Certificate` must report the stores **separately**. The system store is
 not the only one: .NET, Edge and Firefox (NSS) and Java each keep their own, and
@@ -354,9 +637,11 @@ the browser still refuses.
 settings, and screen 3 collects both at install time with no runtime verb to
 match), `Get-/Set-OS7PowerPlan` (logind and GNOME set the same thing in two
 places and the winner is not the obvious one — the #85 shape),
-`Get-/Register-/Unregister-OS7ScheduledTask` over systemd timers,
 `Get-OS7PackageDrift` as a public verb for what `Get-OS7Version -CheckDrift`
-already computes privately.
+already computes privately. The scheduled-task group sat here until 2026-08-29;
+it was pulled forward by BUILD-NOTES #113 — the unattended update timer, the
+mechanism §6 of the release plan ships so nobody types `Update-OS7`, was
+invisible to the whole surface — and is built (P9, §3a).
 
 ### Not built — P4
 
@@ -380,10 +665,13 @@ The network group's READ half, in both layers. Nothing writes yet.
 | **Time** — `powershell/Time/`: `Get-ChronyTracking`, `Get-ChronySource`, `Get-/Set-ChronySourceFile`, `Sync-ChronyClock`, `Get-/Set-SystemTimeZone`, `Get-SystemClock` | **Done.** `Test-TimeModule`, 33 checks, green — against **recorded real `chronyc -c` output** in `powershell/Time/tests/fixtures/`, in both the synchronised and the unsynchronised state, plus a zone tree it builds. Run live against a real `chronyd -x`. |
 | **Time** — OS/7 layer: `Set-OS7TimeZone`, `Get-OS7Time`, `Get-/Set-OS7TimeSynchronization`, `Sync-OS7Time` | **Done.** `check-layering.py` gained a third rule (`P2-time`) and it holds at 0. |
 | **Remoting** — `Get-OS7Remoting`, `Enable-OS7Remoting`, `Disable-OS7Remoting`, plus the shipped drop-in `build/config/includes.chroot/etc/ssh/sshd_config.d/60-os7-powershell.conf` | **Done, and tested against a real sshd** — `installer/testing/check-ssh-login.py`, 15 checks. Two mechanisms, reported separately (see below). |
-| **Services and logs** — `powershell/Systemd/`: `Get-SystemdUnit`, `Start-/Stop-/Restart-SystemdUnit`, `Set-SystemdUnitStartup`, `Update-SystemdUnit`, `Get-SystemdJournal` | **Done.** `Test-SystemdModule`, 32 checks, against recorded real `systemctl`/`journalctl` output taken from a container running real systemd — including a journal MESSAGE that is a **byte array**. |
+| **Services and logs** — `powershell/Systemd/`: `Get-SystemdUnit`, `Start-/Stop-/Restart-SystemdUnit`, `Set-SystemdUnitStartup`, `Update-SystemdUnit`, `Get-SystemdJournal` — and, since 2026-08-29, `Get-/New-/Remove-SystemdTimer` | **Done.** `Test-SystemdModule`, 76 checks (32 until the timer surface landed), against recorded real `systemctl`/`journalctl` output taken from containers running real systemd — including a journal MESSAGE that is a **byte array** and the enabled-but-never-started timer state (#115). |
 | **Services and logs** — OS/7 layer: `Get-OS7Service`, `Start-/Stop-/Restart-/Set-OS7Service`, `Get-OS7Log`, `Get-OS7InstallLog` | **Done.** `installer/testing/check-service-logic.py`, 15 checks over ten unit states. `check-layering.py` gained a fourth rule, `P2-systemd`, at a baseline of **2** with both remaining sites named. |
+| **Scheduled tasks** — OS/7 layer: `Get-OS7ScheduledTask`, `Enable-/Disable-/Start-OS7ScheduledTask`, `Register-/Unregister-OS7ScheduledTask` (P9) | **Done 2026-08-29 — the fix for BUILD-NOTES #113.** `installer/testing/check-scheduledtask-logic.py`, 64 checks over the recorded systemd 259 fixtures, no VM; the same cmdlets run end to end against real systemd as PID 1 in an os7img container (register → run now → the #115 trap → the vendor refusal → unregister, every answer asked back from systemd); and typed at an installed machine for the manual. `Healthy` is `$false` for enabled-and-never-started (#115); disabled tasks stay listed (#116); `Unregister-` refuses non-`os7-task-*` names before any systemd call. P2-systemd still holds at 2. |
 | **Management plane** — `Get-OS7EntraStatus`, `Get-OS7IntuneEnrollment`, `Get-OS7ArcStatus`, `Get-OS7ManagementStatus` | **Done, READ only.** `installer/testing/check-management-logic.py`, 25 checks against a real image with systemd as PID 1. Registration (`Register-OS7Entra`, `Register-OS7Intune`, `Connect-OS7Arc`) is **not started**: it needs a tenant and credentials and cannot be checked here at all. |
 | The resolver, wireless scan/connect, proxy, hostname | **Not started.** `Get-NetResolver` is deliberately deferred: `resolvectl` needs dbus and could not be measured on the host that built this, and writing a parser for output nobody here has seen is the assertion this project does not make. |
+| **Directory** — `powershell/Directory/` and the OS7 layer above it: the admin session, discovery, `Test-OS7Directory`, the user/group/computer/OU surface, the domain join, logon policy, Kerberos tickets | **Done, and checked against a REAL DC** — `installer/testing/check-ad.py` against Samba 4.23.6 in a container, all green; `check-directory-logic.py` 15/15 with no DC and no VM; `Test-DirectoryModule` 40/40. `check-layering.py` gained a fifth rule, `P2-directory`, holding at its baseline of 1 (P8). **The join is code plus a container test: no OS/7 machine has ever joined a domain**, and a real Windows Server DC is owed (open question 7). |
+| Everything else in Tiers 1–3 — users, disks and encryption, firewall, inventory, certificates, the capstone, and the rest of Tier 3 (locale, keyboard, power plan, package drift) | **Not started.** |
 | **Devices and drivers** — `powershell/Hardware/`: `Get-HardwareDevice`, `Get-HardwareIdName`, `Get-/Resolve-/Add-KernelModule`, `Get-DkmsModule`, `ConvertFrom-DkmsStatus`, `Invoke-DkmsBuild`, `Get-UbuntuDriver`, `ConvertFrom-UbuntuDriversDevices`, `Install-UbuntuDriver`, `Get-/Install-/Send-HwProbe`, `Wait-UdevSettle` | **Done.** `Test-HardwareModule`, 52 checks, against a **recorded real sysfs dump** and **recorded dkms 3.2.2 output** — including a module whose build FAILED and which reads `added`. Devices come from sysfs, never from lspci. |
 | **Devices and drivers** — OS/7 layer: `Get-OS7Device`, `Get-OS7Driver`, `Get-OS7DeviceStatus`, `Install-OS7Driver`, `Repair-OS7Driver`, `Get-OS7DriverRegression`, `Send-OS7HardwareProbe` | **Done.** `installer/testing/check-device-logic.py`, 74 checks: the state rule case by case, the cmdlets end to end over a built sysfs tree, the update gate, and the write paths under `-WhatIf`. `check-layering.py` gained a fifth rule, `P2-hardware`, at **0**. Never run against real hardware — [SESSION-DEVICE-MANAGER.md](SESSION-DEVICE-MANAGER.md) §7. |
 | **The update gate** — `Update-OS7` step 6'' | **Done, and never run on a machine.** A DKMS driver that works on this machine now and did not build for the kernel the new environment boots **refuses** the activation; one that was already broken warns. `-IgnoreDriverRebuild` overrides. `check-update-logic.py` drives it against the real sequence with a fake dkms, and asserts the refusal lands before `update-initramfs`. |
@@ -601,7 +889,10 @@ about rfkill's device list.
    module of P1 is where this would be resolved, and it is not built yet.
 4. **Which module owns systemd**, and whether `Get-OS7Service` is a curated view
    or a rename. P2 says a generic module; the shape of the OS/7 layer above it is
-   not designed.
+   not designed. *Overtaken in two steps: `powershell/Systemd/` and
+   `Get-OS7Service`-as-curated-view exist since §3a's services row, and the
+   half this question could not see — where TIMERS live — was decided
+   2026-08-29 as P9: a separate noun, not a `-Type` on `Get-OS7Service`.*
 5. **Where the secrets go for `Register-OS7Entra` and `Connect-OS7Arc`.** P7 says
    how they are handled in flight; nothing says where a service principal's
    credential rests on an unattended machine.
@@ -614,3 +905,33 @@ about rfkill's device list.
    evidence that they exist and **not** evidence that they are the right or the
    complete set — Intune enrolment in particular is documented as needing more
    than one hostname.
+7. **Can an OS/7 machine reach a hardened Active Directory at all, when
+   sign-and-seal cannot be switched on from .NET on Linux?** §1.3 measured the
+   three walls in a row: `SessionOptions.Sealing` throws, a simple bind on 389 is
+   refused outright, and LDAPS on 636 is what is left. That is enough against a
+   domain controller with a certificate, and it is nothing at all against one
+   without — or against a forest whose policy requires LDAP signing and channel
+   binding, which is the configuration Microsoft has spent years pushing
+   customers towards. Channel binding has never been exercised here: Samba
+   speaks the protocol, it does not reproduce Windows' enforcement of it. The
+   answer is owed against a real Windows Server DC, and it decides whether this
+   surface works in the enterprises most likely to want it.
+8. **Should trusting one domain controller change what every program on the
+   machine trusts?** `Add-OS7DirectoryTrust` installs the DC's issuing CA into
+   the system store, because §1.3 leaves nowhere else to put it —
+   `VerifyServerCertificate` throws, and `LDAPTLS_CACERT` cannot be set from
+   inside the process. So the smallest available scope for one administrator's
+   LDAPS session is machine-wide, and `curl`, `apt` and Edge inherit it. Whether
+   an OS/7 machine should carry an enterprise root CA at all, and whether the
+   installer, Intune or this cmdlet is what puts it there, is undecided; what is
+   settled is only that the cmdlet reads the store back rather than believing
+   `update-ca-certificates`, which exits 0 for a file it skipped.
+9. **Is any of this true on arm64?** None of §1.3 was measured there, and the
+   packaging half is weaker than it looks: **there is no arm64 packages manifest
+   in `out/` at all**, so `libldap2` arriving behind `libcurl4t64` is an argument
+   from a dependency rather than a reading of an image. It matters more here than
+   elsewhere because the amd64 image had `ldap-utils` and its neighbours *by
+   accident* — they came in behind the desktop task that arm64, being
+   server-only, never installs. That is the same shape as open question 1, and
+   the same single act settles both: an arm64 image measured the way `os7img:116`
+   was.

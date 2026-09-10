@@ -3,6 +3,7 @@
 Ask a built ISO what it is — without booting it.
 
     ./installer/testing/check-image.py [arch]      (default arm64)
+    ./installer/testing/check-image.py --self-test (no ISO, no Docker, ~1s)
 
 Every other harness in this directory boots a VM, because what they check is
 behaviour. Everything here is a PROPERTY OF THE IMAGE, so it is read straight out
@@ -12,7 +13,7 @@ this case.
 WHAT IT IS FOR. The release identity (docs/RELEASE-AND-UPDATE-PLAN.md §3) is
 written by build hook 0075, which checks its own work. This checks it from
 outside, on the finished artefact, after live-build has had its way with the
-tree — and it checks three things the hook structurally cannot:
+tree — and it checks four things the hook structurally cannot:
 
   * `/etc/apt/sources.list` in the SHIPPED image. The hook runs mid-build, before
     live-build rewrites apt's configuration for the binary stage. An image whose
@@ -24,6 +25,12 @@ tree — and it checks three things the hook structurally cannot:
   * `os7-setup --version` and `--self-test`, run by CHROOTING INTO the image, so
     the binary resolves `/usr/lib/os7/release.json` against the image's root
     rather than the build container's.
+  * WHETHER SECURE BOOT FIRMWARE WOULD LOAD THE MEDIUM AT ALL (added 2026-09-07).
+    The signature chain is a property of the finished ISO's /EFI tree and of the
+    FAT image the El Torito entry points at, so no hook can see it; and it is
+    read with the IMAGE's own sbverify, because sbsigntool ships in the product
+    on both architectures. `--self-test` is the other half of that rule — see
+    secureboot_checks().
 
 The rule this file exists to serve: **ask the thing itself.** A build log saying
 the mirrors were pinned is a diagnostic. The sources.list in the image is the
@@ -71,9 +78,34 @@ mount -t proc proc /mnt/root/proc
 emit() { printf '<<<%s>>>\n' "$1"; shift; "$@" 2>&1 || true; }
 
 emit release.json      cat /mnt/sq/usr/lib/os7/release.json
+# What the image MEASURED itself to contain (hook 0075). release.json above is
+# what os7-release DECLARES; since the ISO installs the packages (2026-08-28)
+# the two are different files with different authors, on purpose.
+emit image.json        cat /mnt/sq/usr/lib/os7/image.json
 emit release.conf      cat /mnt/sq/usr/lib/os7/release.conf
 emit build.conf        cat /mnt/sq/usr/lib/os7/build.conf
 emit os-release        cat /mnt/sq/etc/os-release
+# WHO OWNS THE OS/7 HALF. Until 2026-08-28 every one of these files was staged
+# into the chroot unowned, and the update train could reach none of them (C7
+# §6.1). dpkg is asked, file by file, because "the hook ran" is not the fact —
+# the ownership is.
+emit dpkg.os7          bash -c 'chroot /mnt/root dpkg-query -W -f="\${db:Status-Abbrev} \${Package} \${Version}\n" "os7-*" 2>/dev/null || true'
+emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
+emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
+emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
+emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
+# THE CREDENTIAL FOR THAT SOURCE (RELEASE-PROCESS §4.2), and its MODE.
+# The `machine` line is emitted and the password never is: this file is read
+# into a report that gets pasted into commits and sessions.
+emit os7.auth          bash -c 'sed -n "s/^machine /machine /p;s/^login /login /p" /mnt/sq/etc/apt/auth.conf.d/os7.conf 2>/dev/null || true'
+emit os7.auth.mode     bash -c 'stat -c %a /mnt/sq/etc/apt/auth.conf.d/os7.conf 2>/dev/null || echo "(absent)"'
+emit os7.auth.owner    bash -c 'chroot /mnt/root dpkg -S /etc/apt/auth.conf.d/os7.conf 2>/dev/null | cut -d: -f1 || echo UNOWNED'
+emit os7.staged.debs   bash -c 'ls /mnt/sq/usr/lib/os7/packages/ 2>/dev/null || echo "(gone)"'
+# The journal-flush ordering drop-in (BUILD-NOTES #109). Without it the flush
+# beats zfs-mount.service on every boot, journald flushes onto the boot
+# environment's root dataset, and the real /var/log then buries the journal —
+# a machine with no journalctl output at all and no error anywhere.
+emit journal.dropin    bash -c 'cat /mnt/sq/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf 2>/dev/null || echo "(absent)"'
 # The identity as a PERSON meets it (docs/IDENTITY-PLAN.md §6). None of these is
 # derivable from os-release: the product line is OS/7's own file precisely so
 # that no user-facing surface depends on a field Microsoft's agents also read
@@ -83,6 +115,44 @@ emit issue             cat /mnt/sq/etc/issue
 emit issue.net         cat /mnt/sq/etc/issue.net
 emit motd.d            bash -c 'cd /mnt/sq/etc/update-motd.d 2>/dev/null && for f in *; do [ -f "$f" ] && printf "%s %s\n" "$f" "$(stat -c %A "$f")"; done || true'
 emit motd-news         bash -c 'cat /mnt/sq/etc/default/motd-news 2>/dev/null || true'
+# WHAT IS WORLD-WRITABLE IN THE SHIPPED IMAGE (BUILD-NOTES #117).
+#
+# Not a hygiene sweep — a regression test for a specific defect that shipped.
+# live-build copies config/includes.chroot/ verbatim, and on the x64 Windows
+# host Docker Desktop presents every bind-mounted path as 0777, so the modes
+# `cp -a` preserved were the mount's invention. OS7-1.0.0.159-amd64.iso carried
+# 27 world-writable paths, among them /usr/lib/systemd/system and
+# /usr/lib/systemd/system-generators: a local user could drop in a unit or a
+# generator that systemd then runs as root.
+#
+# Symlinks are excluded because a symlink is always 0777 and says nothing, and
+# the sticky ones (/tmp, /var/tmp) are excluded because 1777 is correct there.
+emit perms.worldwritable bash -c 'find /mnt/sq -xdev \( -type f -o -type d \) -perm -0002 ! -perm -1000 -printf "%M %p\n" 2>/dev/null | sed "s|/mnt/sq||" | sort'
+# And the same question from the other side: does each file the authored tree
+# ships carry the mode GIT records for it? The paths and the expected modes are
+# git's answer, substituted in by read_image, so a file added to
+# includes.chroot is covered the moment it is committed.
+# stat -c %a:%F UNQUOTED, deliberately: this whole line reaches the container as
+# one `bash -c` argument inside another, and a nested pair of double quotes did
+# not survive the trip -- every file came back MISSING, which reads as an image
+# defect and is a quoting bug in the probe. The format string has no whitespace,
+# so it needs no quotes.
+emit perms.includes    bash -c 'for p in INCLUDESPATHS; do if [ -L /mnt/sq/$p ]; then k=symlink; else k=file; fi; printf "%s %s %s\n" "$(stat -c %a /mnt/sq/$p 2>/dev/null || echo MISSING)" "$k" "$p"; done'
+# THE SSH HOST KEYS, and the unit that makes them (BUILD-NOTES #118).
+#
+# Three questions, because two of them can be right while the machine is still
+# unreachable: is OS/7's unit there, is it ENABLED (a unit nothing wants is a
+# unit that never runs), and does the image ship no host keys of its own --
+# which it must not, or every OS/7 machine in the world would share one.
+emit ssh.keygen.unit   bash -c 'test -f /mnt/sq/usr/lib/systemd/system/os7-sshd-keygen.service && echo present || echo ABSENT'
+emit ssh.keygen.wanted bash -c 'test -L /mnt/sq/usr/lib/systemd/system/ssh.service.wants/os7-sshd-keygen.service && test -L /mnt/sq/usr/lib/systemd/system/ssh.socket.wants/os7-sshd-keygen.service && echo enabled || echo NOT-ENABLED'
+# AND THE ORDERING THAT #120 COST. Naming ssh.socket in Before= closes an
+# ordering cycle (the unit is After=basic.target, basic.target is after
+# sockets.target, ssh.socket is Before=sockets.target) and systemd breaks it by
+# deleting the SOCKET's start job -- a machine listening on nothing. The unit
+# must order itself before the SERVICES only.
+emit ssh.keygen.before bash -c 'grep -E "^Before=" /mnt/sq/usr/lib/systemd/system/os7-sshd-keygen.service 2>/dev/null || echo "(none)"'
+emit ssh.hostkeys      bash -c 'ls /mnt/sq/etc/ssh/ssh_host_* 2>/dev/null | wc -l'
 emit sources.list      cat /mnt/sq/etc/apt/sources.list
 emit sources.list.d    bash -c 'cat /mnt/sq/etc/apt/sources.list.d/*.sources 2>/dev/null || true'
 emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
@@ -112,6 +182,57 @@ emit desktop.kept      bash -c 'for p in ubuntu-desktop-minimal gnome-shell gdm3
 emit desktop.pin       bash -c 'cat /mnt/sq/etc/apt/preferences.d/os7-desktop-exclusions.pref 2>/dev/null || true'
 emit desktop.pinforce  bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin apt-cache policy gnome-initial-setup firefox ubuntu-report 2>/dev/null || true'
 emit desktop.logo      bash -c 'ls -l /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png /mnt/sq/usr/share/plymouth/themes/spinner/bgrt-fallback.png.distrib 2>&1 || true'
+
+# THE LOGIN SCREEN — the surface every check above is blind to.
+#
+# The greeter does not read /etc/dconf/db/os7. It reads
+# /var/lib/gdm3/greeter-dconf-defaults, compiled from /usr/share/gdm/dconf by
+# gdm.service's ExecStartPre, through a profile with no system-db in it at all
+# — so GNOME's documented /etc/dconf/db/gdm.d/ is inert on Ubuntu and a keyfile
+# put there is read by nobody (BUILD-NOTES #110). Everything `desktop.dconf`
+# above proves was true of an image whose login screen said Ubuntu.
+#
+# And the value it has to beat is a gschema override in a package that cannot
+# be removed, so PRESENCE of our keyfile answers nothing. This compiles the
+# directory the way gdm does, inside the image's own root, and asks GSettings —
+# the one thing that resolves an override against a dconf database — what the
+# greeter would draw.
+cat > /mnt/root/tmp/os7-greeter-probe.sh <<'GREETER'
+#!/bin/sh
+d=$(mktemp -d) || exit 0
+dconf compile "$d/db" /usr/share/gdm/dconf 2>/dev/null || exit 0
+printf 'file-db:%s/db\n' "$d" > "$d/profile"
+get() { DCONF_PROFILE="$d/profile" gsettings get "$1" "$2" 2>/dev/null; }
+echo "logo=$(get org.gnome.login-screen logo)"
+echo "accent=$(get org.gnome.desktop.interface accent-color)"
+echo "font=$(get org.gnome.desktop.interface font-name)"
+echo "background=$(get com.ubuntu.login-screen background-color)"
+echo "theme=$(readlink -f /usr/share/gnome-shell/gdm-theme.gresource)"
+echo "icons=$(readlink -f /usr/share/gnome-shell/gdm-icons.gresource)"
+# THE MARK, ASKED OF THE LOADER THAT WILL LOAD IT. Not rsvg-convert, which is
+# what the build hook used for one build while the login screen came up EMPTY:
+# gnome-shell's St.TextureCache goes through GdkPixbuf, GdkPixbuf sniffs a
+# 256-byte prefix rather than parsing, and a documentation header put `<svg`
+# at byte 2764. load_file_sync then THROWS inside LoginDialog, mid-construction,
+# and there is no dialog to log in from. docs/BUILD-NOTES.md #111.
+python3 - <<'PYPROBE' 2>/dev/null
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+for path in ("/usr/share/pixmaps/os7-logo-login.svg",
+             "/usr/share/pixmaps/upinblue-logo.svg"):
+    tag = path.split("/")[-1].split(".")[0]
+    try:
+        off = open(path, "rb").read().find(b"<svg")
+        pb = GdkPixbuf.Pixbuf.new_from_file(path)
+        print("%s=OK %dx%d off=%d" % (tag, pb.get_width(), pb.get_height(), off))
+    except BaseException as exc:
+        print("%s=FAIL %s" % (tag, " ".join(str(exc).split())[:90]))
+PYPROBE
+GREETER
+emit desktop.greeter   bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin sh /tmp/os7-greeter-probe.sh 2>&1 || true'
+emit desktop.greeterdir bash -c 'ls /mnt/sq/usr/share/gdm/dconf/ 2>&1 || true'
+emit desktop.greeterlogo bash -c 'ls -l /mnt/sq/usr/share/pixmaps/os7-logo-login.svg /mnt/sq/usr/share/pixmaps/upinblue-logo.svg 2>&1 || true'
 # `grep -c` prints 0 AND exits 1 when nothing matches, so `$(grep -c … || echo 0)`
 # yields TWO lines and the parser on the other side gets a row with one field.
 # grep -q in an if, which answers the question that was actually asked.
@@ -244,6 +365,26 @@ chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/p
 echo "EXIT=$rc" >> /tmp/systemd.txt
 emit systemd.selftest  bash -c 'tail -30 /tmp/systemd.txt'
 
+# THE Directory MODULE'S SELF-TEST. Offline by construction: everything it
+# checks sits ABOVE the module's one .NET seam, so no socket is opened, no bind
+# is attempted and no TLS is negotiated -- which is what lets it run in a chroot
+# with no network and no domain controller.
+#
+# This chroot is the environment the module was SHAPED for, not merely a
+# convenient one. BUILD-NOTES #38/#82: a cmdlet that has to autoload by name
+# does not resolve here, and `Add-Type -AssemblyName ...` is
+# Microsoft.PowerShell.Utility. The module therefore never calls Add-Type and
+# reaches System.DirectoryServices.Protocols as a bare type literal, because
+# the assembly ships beside pwsh. If that ever stops being true, the module
+# loads and the first LDAP type reference fails -- and this is the only check
+# in the repository that asks the question in the chroot where it bites.
+#
+# The case it exists for is BUILD-NOTES #94: SessionOptions.ProtocolVersion
+# reads back 2. A connection that binds without setting 3 speaks LDAPv2, which
+# Active Directory refuses, and the refusal presents as a bad password.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Directory/Directory.psd1 -Force; Test-DirectoryModule' >/tmp/directory.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/directory.txt
+emit directory.selftest bash -c 'tail -30 /tmp/directory.txt'
 # The Hardware module, asked to check itself. Same trade as the four above and
 # one more reason: this module's fixtures include `dkms status` output in which
 # a module whose build FAILED reads `added` — the same word a module nobody has
@@ -306,8 +447,130 @@ emit zfs.modprobe      bash -c 'grep -rh "zfs" /mnt/sq/etc/modprobe.d/ /mnt/sq/u
 emit volume            bash -c 'blkid -o value -s LABEL /iso/ISONAME'
 emit grub.cfg          bash -c 'cat /mnt/iso/boot/grub/grub.cfg 2>/dev/null | head -40'
 
+# THE SECURE BOOT CHAIN ON THE MEDIUM (D1, installer/SETUP-PLAN.md §5).
+#
+# The chain the product decided on is Microsoft -> shim -> Canonical-signed
+# GRUB -> Canonical-signed kernel, and on the INSTALLED disk it is there:
+# measured 2026-09-07 out of an os7-setup install's ESP, without booting it.
+# The MEDIUM is the half nobody had asked, and the answer matters most on
+# amd64, where firmware ships with Secure Boot ON and therefore refuses an
+# unsigned loader outright.
+#
+# TWO SIDES ARE READ, because firmware picks one and different firmware picks
+# differently: the ISO9660 tree's /EFI/BOOT, and the FAT image the El Torito
+# entry actually points at (boot/grub/efiboot.img). A medium whose two sides
+# disagree boots differently depending on the machine, which is the shape of a
+# defect that reproduces on one bench and nowhere else.
+mkdir -p /mnt/esp
+mount -o loop,ro /mnt/iso/boot/grub/efiboot.img /mnt/esp 2>/dev/null || true
+emit sb.iso.efidir     bash -c 'ls -l /mnt/iso/EFI/BOOT/ 2>&1'
+emit sb.esp.efidir     bash -c 'ls -l /mnt/esp/EFI/BOOT/ 2>&1'
+emit sb.cfg            bash -c 'for f in /mnt/iso/EFI/BOOT/grub.cfg /mnt/esp/EFI/BOOT/grub.cfg /mnt/esp/boot/grub/grub.cfg; do if [ -f "$f" ]; then echo "== $f"; sed "s/^/    /" "$f"; else echo "== $f (absent)"; fi; done'
+
+# The candidates are copied where the IMAGE's OWN sbverify can reach them,
+# which is inside the chroot. Two reasons it has to run there and neither is
+# convenience:
+#
+#   * sbsigntool ships IN the product (both architectures, read out of the
+#     shipped package manifest), so the tool that answers is the one on the
+#     medium rather than whatever the build container happens to carry.
+#   * /usr/lib/shim/shim<arch>.efi.signed is an ABSOLUTE symlink into
+#     /etc/alternatives. Read from the container it resolves against the
+#     CONTAINER's root and answers about a file that is not the product's -
+#     the same class of mistake as running os7-setup with `cd` instead of
+#     chroot, which is what the header of this file is about.
+mkdir -p /mnt/root/sb
+for f in /mnt/iso/EFI/BOOT/*; do [ -f "$f" ] && cp "$f" "/mnt/root/sb/iso.$(basename "$f")" || true; done
+for f in /mnt/esp/EFI/BOOT/*; do [ -f "$f" ] && cp "$f" "/mnt/root/sb/esp.$(basename "$f")" || true; done
+# GLOBBED, because the file is /casper/vmlinuz-<abi>-generic and the name
+# moves with every kernel. Naming it would have made this check answer
+# "<not on the medium>" about a kernel that is there - which is the wrong
+# failure and the expensive kind, since it reads as a broken medium.
+for f in /mnt/iso/casper/vmlinuz*; do [ -f "$f" ] && cp "$f" /mnt/root/sb/iso.casper.vmlinuz || true; done
+cat > /mnt/root/tmp/os7-sb-probe.sh <<'SBP'
+#!/bin/sh
+# $1 = the EFI arch suffix (x64 | aa64), $2 = the grub target (x86_64 | arm64).
+# gcd<arch> is the CD-media build and grub<arch> the disk one; they differ in
+# exactly one thing that decides whether a medium boots - the prefix compiled
+# into them, /boot/grub against /EFI/ubuntu - so both are hashed here and the
+# checking side says which one the medium is carrying.
+for name in shim gcd grub; do
+    case $name in
+        shim) p=/usr/lib/shim/shim$1.efi.signed ;;
+        gcd)  p=/usr/lib/grub/$2-efi-signed/gcd$1.efi.signed ;;
+        grub) p=/usr/lib/grub/$2-efi-signed/grub$1.efi.signed ;;
+    esac
+    r=$(readlink -f "$p" 2>/dev/null)
+    if [ -f "$r" ]; then
+        echo "image $name $(sha256sum "$r" | cut -d' ' -f1) $(stat -c %s "$r") $r"
+    else
+        echo "image $name MISSING 0 $p"
+    fi
+done
+for f in /sb/*; do
+    [ -f "$f" ] || continue
+    echo "medium $(basename "$f") $(sha256sum "$f" | cut -d' ' -f1) $(stat -c %s "$f")"
+done
+for f in /sb/*; do
+    [ -f "$f" ] || continue
+    echo "verify $(basename "$f")"
+    sbverify --list "$f" 2>&1 | sed 's/^/    /'
+done
+SBP
+emit sb.chain          bash -c 'chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin sh /tmp/os7-sb-probe.sh EFIARCH GRUBTARGET 2>&1'
+
+# /mnt/esp on its own line and allowed to fail: an ISO with no El Torito FAT
+# image never got it mounted, and that is a finding for the checking side to
+# report - not a reason for this probe to exit non-zero and take every other
+# answer in this run with it.
+umount /mnt/esp 2>/dev/null || true
 umount /mnt/root/proc /mnt/root/dev /mnt/root /mnt/rw /mnt/sq /mnt/iso
 """
+
+
+def includes_modes(arch: str) -> dict[str, str]:
+    """What mode each file of the authored includes tree SHOULD have, per git.
+
+    git is the authority rather than the working tree because the working tree
+    cannot be one: on the Windows host every file in it reads 0777 through
+    Docker's mount and 0666 or 0777 through Python's stat, depending on which
+    layer is asked. git stores one bit — 100644 or 100755 — and stores it the
+    same on both hosts, which is exactly the property a cross-host build needs.
+
+    Returns image paths (`etc/ssh/...`) mapped to octal modes.
+    """
+    out = subprocess.run(["git", "ls-files", "-s", "build/config/includes.chroot",
+                          f"build/config/includes.chroot-{arch}"],
+                         capture_output=True, text=True, cwd=REPO)
+    modes = {}
+    for line in out.stdout.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        gitmode = parts[0].split()[0]
+        path = parts[1]
+        for prefix in (f"build/config/includes.chroot-{arch}/",
+                       "build/config/includes.chroot/"):
+            if path.startswith(prefix):
+                modes[path[len(prefix):]] = "755" if gitmode == "100755" else "644"
+                break
+    return modes
+
+
+def efi_arch(arch: str) -> str:
+    """The suffix UEFI file names carry: BOOTX64.EFI, shimaa64.efi.signed.
+
+    Debian's is the naming everything here has to match, because the files are
+    the ARCHIVE's and not ours — shim looks for its second stage by a compiled
+    -in name, so a medium that calls the file something else is a medium shim
+    cannot chain from.
+    """
+    return "x64" if arch == "amd64" else "aa64"
+
+
+def grub_target(arch: str) -> str:
+    """The grub target directory name: /usr/lib/grub/<target>-efi-signed."""
+    return "x86_64" if arch == "amd64" else "arm64"
 
 
 def read_image(arch: str) -> dict[str, str]:
@@ -319,16 +582,32 @@ def read_image(arch: str) -> dict[str, str]:
     real = os.path.basename(os.path.realpath(iso))
     print(f"    reading {real}")
 
+    probe = (PROBE.replace("ISONAME", real)
+                  .replace("INCLUDESPATHS",
+                           " ".join(sorted(includes_modes(arch))) or "/dev/null")
+                  .replace("EFIARCH", efi_arch(arch))
+                  .replace("GRUBTARGET", grub_target(arch)))
     out = subprocess.run(
         ["docker", "run", "--rm", "--privileged", "--platform", f"linux/{arch}",
          "-v", f"{os.path.join(REPO, 'out')}:/iso:ro", f"os7-build:{arch}",
-         "bash", "-c", PROBE.replace("ISONAME", real)],
+         "bash", "-c", probe],
         capture_output=True, text=True)
     if out.returncode != 0:
         sys.exit(f"could not read the image:\n{out.stderr[-2000:]}")
 
-    sections, key = {}, None
-    for line in out.stdout.splitlines():
+    return parse_sections(out.stdout)
+
+
+def parse_sections(text: str) -> dict[str, str]:
+    """Split `emit`'s `<<<key>>>` framing into a dict.
+
+    Its own function so that --self-test reads a RECORDED probe through the
+    same parser the live one goes through. Anything before the first marker is
+    dropped, which is what lets a fixture carry a header explaining itself.
+    """
+    sections: dict[str, list[str]] = {}
+    key: str | None = None
+    for line in text.splitlines():
         if line.startswith("<<<") and line.endswith(">>>"):
             key = line[3:-3]
             sections[key] = []
@@ -387,7 +666,259 @@ def generated_scripts(log: str) -> dict[str, list[str]]:
     return scripts
 
 
+def secureboot_checks(img: dict[str, str], arch: str, check) -> None:
+    """Would Secure Boot firmware load this medium? (D1)
+
+    A FUNCTION RATHER THAN A BLOCK IN main() FOR ONE REASON: on the ISO this
+    was written against, every check here is red, and a block of checks whose
+    GREEN path has never executed is a block that can be unsatisfiable
+    without anybody noticing. Out here it can be handed the readings from a
+    medium that IS assembled correctly - the installed ESP was used, which
+    carries the real chain - and required to pass. That is the same rule as
+    check-ps-traps.py's OS7_SCAN_ROOT: a rule is worth having once it has
+    been shown both to fire and to stay quiet.
+    """
+    #
+    # THE CHAIN IS FOUR LINKS AND THE MEDIUM IS THE ONLY ONE NOBODY CHECKED.
+    # Microsoft's UEFI CA signs shim, Canonical's signs GRUB and the kernel;
+    # on the INSTALLED disk all four are in place, measured 2026-09-07 out of
+    # an os7-setup install's ESP with no boot at all. The medium was built by
+    # grub-mkstandalone instead, which produces an image nobody has signed, so
+    # firmware with Secure Boot ON refuses it - and on amd64 that is the
+    # factory setting. build/lib/efi-remaster.sh says so in its own header and
+    # calls it an open item; this is the check that stops it being one.
+    #
+    # It is deliberately not one check. "Unsigned" and "signed by the wrong
+    # authority" and "the right authority, but the disk build of GRUB whose
+    # prefix points at a directory this medium does not have" are three
+    # different mediums, and only the first is obvious from a failed boot.
+    MS_CA = "Microsoft Corporation UEFI CA 2011"
+    CANONICAL_CA = "Canonical Ltd. Master Certificate Authority"
+
+    chain_img: dict[str, tuple[str, int, str]] = {}
+    chain_med: dict[str, tuple[str, int]] = {}
+    verify: dict[str, str] = {}
+    cur: str | None = None
+    for line in img.get("sb.chain", "").splitlines():
+        if line.startswith("    ") and cur:
+            verify[cur] += line.strip() + " "
+            continue
+        f = line.split()
+        cur = None
+        if f[:1] == ["image"] and len(f) >= 5:
+            chain_img[f[1]] = (f[2], int(f[3]), f[4])
+        elif f[:1] == ["medium"] and len(f) >= 4:
+            chain_med[f[1]] = (f[2], int(f[3]))
+        elif f[:1] == ["verify"] and len(f) >= 2:
+            cur = f[1]
+            verify[cur] = ""
+
+    cfgs: dict[str, str] = {}
+    key: str | None = None
+    for line in img.get("sb.cfg", "").splitlines():
+        if line.startswith("== "):
+            key = line[3:].strip()
+            cfgs[key] = ""
+        elif key is not None:
+            cfgs[key] += line.strip() + " "
+
+    def med(prefix: str, name: str):
+        """(sha256, size) of one file on one side of the medium, or None.
+
+        Case-insensitively, because the two sides do not agree on case and
+        cannot: the ISO9660 tree carries the name as written and FAT hands
+        back a short name in upper case for anything that fits in 8.3.
+        """
+        want = f"{prefix}.{name}".lower()
+        for k, v in chain_med.items():
+            if k.lower() == want:
+                return v
+        return None
+
+    def signed_by(prefix: str, name: str, ca: str):
+        want = f"{prefix}.{name}".lower()
+        for k, text in verify.items():
+            if k.lower() == want:
+                return ca in text, " ".join(text.split())[:110] or "<sbverify said nothing>"
+        return False, "<not on the medium>"
+
+    loader = f"BOOT{efi_arch(arch).upper()}.EFI"
+    grubefi = f"grub{efi_arch(arch)}.efi"
+    mmefi = f"mm{efi_arch(arch)}.efi"
+    img_shim = chain_img.get("shim", ("MISSING", 0, ""))
+    img_gcd = chain_img.get("gcd", ("MISSING", 0, ""))
+    img_grub = chain_img.get("grub", ("MISSING", 0, ""))
+
+    # THE SOURCE FIRST. Everything below asks whether the medium carries these
+    # files; this asks whether the product has them to carry. It is the check
+    # that notices shim-signed or grub-efi-<arch>-signed leaving a package
+    # list - which would take Secure Boot off the installed disk too, and
+    # nothing else in this file would say a word about it.
+    absent = [n for n, v in (("shim", img_shim), ("gcd", img_gcd), ("grub", img_grub))
+              if v[0] == "MISSING"]
+    check(not absent,
+          "the image ships the signed loaders the medium is assembled from",
+          ", ".join(f"{n} absent at {chain_img[n][2]}" for n in absent) or
+          f"shim {img_shim[1]}B, gcd {img_gcd[1]}B, grub {img_grub[1]}B")
+
+    for prefix, human in (("iso", "the ISO9660 tree"),
+                          ("esp", "the El Torito FAT image")):
+        ok, detail = signed_by(prefix, loader, MS_CA)
+        check(ok, f"{human}'s {loader} is shim, signed by Microsoft's UEFI CA",
+              detail)
+
+        got = med(prefix, loader)
+        check(bool(got) and got[0] == img_shim[0],
+              "and it is the shim THIS image ships, byte for byte",
+              f"medium {got[0][:16] if got else '<absent>'} vs image {img_shim[0][:16]}")
+
+        ok, detail = signed_by(prefix, grubefi, CANONICAL_CA)
+        check(ok, f"and {grubefi} beside it is GRUB, signed by Canonical",
+              detail)
+
+        # gcd, NOT grub. The two differ in the prefix compiled into them -
+        # measured 2026-09-07: /boot/grub in gcd<arch>.efi.signed and
+        # /EFI/ubuntu in grub<arch>.efi.signed - and /EFI/ubuntu is a
+        # directory no OS/7 medium has. A medium carrying the disk build is
+        # signed correctly, chains correctly, and lands at a GRUB prompt.
+        got = med(prefix, grubefi)
+        check(bool(got) and got[0] == img_gcd[0],
+              "and it is the CD-media build (gcd), whose prefix is /boot/grub",
+              "the DISK build (grub), prefix /EFI/ubuntu"
+              if got and got[0] == img_grub[0] else
+              f"medium {got[0][:16] if got else '<absent>'} vs gcd {img_gcd[0][:16]}")
+
+        # Where a verification failure goes. shim launches MokManager from its
+        # own directory when it cannot verify what it was asked to load; with
+        # no mm<arch>.efi there the failure path is a dead end, and what the
+        # operator gets is a machine that stops with nothing to act on.
+        check(med(prefix, mmefi) is not None,
+              f"and MokManager ({mmefi}) is beside it, so a refusal has somewhere to go",
+              "absent" if med(prefix, mmefi) is None else "")
+
+        # AND THAT GRUB CAN FIND ITS CONFIGURATION. Ubuntu's GRUB reads the
+        # grub.cfg next to the binary it was loaded from ($cmdpath), which is
+        # not folklore here: it is the mechanism the installed ESP already
+        # depends on - /EFI/BOOT/grub.cfg is the file that names which boot
+        # environment's menu is read (docs/SESSION-BOOT-ENVIRONMENTS.md).
+        beside = ""
+        for k, v in cfgs.items():
+            if k.startswith(f"/mnt/{prefix}/EFI/BOOT/grub.cfg") and "(absent)" not in k:
+                beside = v
+        check(bool(beside.strip()),
+              "and a grub.cfg sits beside the loader, where that GRUB looks for it",
+              " ".join(beside.split())[:90] or "absent")
+
+    iso_loader, esp_loader = med("iso", loader), med("esp", loader)
+    check(bool(iso_loader) and iso_loader == esp_loader,
+          "both sides of the medium carry the same loader",
+          f"iso {iso_loader[0][:12] if iso_loader else '<absent>'} vs "
+          f"esp {esp_loader[0][:12] if esp_loader else '<absent>'}")
+
+    # THE LINK THAT IS ALREADY RIGHT, and it is here to prove the machinery
+    # rather than to pass: the kernel on the medium comes signed out of the
+    # archive, so this reads ok on the ISO that fails everything above it. A
+    # block of checks that is uniformly red says nothing about which of them
+    # would have caught a regression.
+    ok, detail = signed_by("iso", "casper.vmlinuz", CANONICAL_CA)
+    check(ok, "the kernel the medium boots is signed by Canonical", detail)
+
+    # AND THE MENU HAS TO BE WRITTEN FOR A SIGNED GRUB. Under Secure Boot the
+    # signed image refuses to load a module from disk, so every command the
+    # menu uses must already be built into it. `insmod` is the one that reads
+    # as harmless and is not: on firmware with Secure Boot off it works, so
+    # this cannot be found by booting the bench the medium was developed on.
+    menu = img.get("grub.cfg", "")
+    insmods = [ln.strip() for ln in menu.splitlines() if ln.strip().startswith("insmod")]
+    check(bool(menu) and not insmods,
+          "the medium's menu loads no GRUB module from disk (a signed GRUB will not)",
+          "; ".join(insmods) if insmods else ("<no grub.cfg on the medium>" if not menu else ""))
+
+    # NOT A CHECK, AND NOW FOR A BETTER REASON THAN WHEN IT WAS WRITTEN.
+    #
+    # gcd's compiled-in prefix is /boot/grub, so a stub there inside the FAT
+    # image would make the prefix resolve whatever $root starts as - a belt
+    # against $cmdpath not applying on El Torito the way it does on the
+    # installed ESP. It turned out not to be needed: 1.0.0.192 carries no such
+    # stub and booted to Setup's welcome screen under Microsoft-keyed OVMF with
+    # Secure Boot on, measured 2026-09-07. So this stays a report rather than
+    # becoming a requirement - and if a firmware is ever found that needs it,
+    # the line above is where its absence will already have been visible.
+    fatstub = any(k.startswith("/mnt/esp/boot/grub/grub.cfg") and "(absent)" not in k
+                  for k in cfgs)
+    print(f"      note  the El Torito image {'carries' if fatstub else 'carries no'} "
+          f"/boot/grub/grub.cfg, the stub gcd's compiled-in prefix would resolve to")
+
+
+def self_test() -> int:
+    """Run secureboot_checks() over a RECORDED correct medium and require green.
+
+    No ISO, no Docker, no arch: this is the half of the Secure Boot rule that
+    the artefact cannot exercise, because no OS/7 medium satisfies it yet. It
+    runs on either host in a second, and it is what stops the rule from being
+    one nobody could ever pass.
+    """
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "secureboot-good.probe")
+    if not os.path.exists(fixture):
+        print(f"      FAIL  the recorded medium is missing at {fixture}")
+        return 1
+    img = parse_sections(open(fixture, encoding="utf-8").read())
+    bad = 0
+
+    def check(ok, what, detail=""):
+        nonlocal bad
+        print(f"      {'ok  ' if ok else 'FAIL'}  {what}" + (f" — {detail}" if detail else ""))
+        if not ok:
+            bad += 1
+
+    print("\n### check-image.py's own Secure Boot rule, over a recorded correct medium")
+    secureboot_checks(img, "amd64", check)
+    print()
+    if bad:
+        print(f"{bad} of the Secure Boot checks cannot be satisfied by a correct "
+              f"medium — the RULE is wrong, not the image.")
+        return 1
+    print("The Secure Boot rule passes on a correctly assembled medium.")
+    return 0
+
+
+def record_secureboot(arch: str) -> int:
+    """Re-record fixtures/secureboot-good.probe from a real medium.
+
+    A verb rather than a shell recipe, for the same reason run-zfs.py has
+    `capture`: the fixture is only worth what its provenance is worth, and a
+    fixture reproducible by one command cannot quietly become something
+    somebody assembled by hand. Run it against an ISO the checks PASS on.
+    """
+    img = read_image(arch)
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "secureboot-good.probe")
+    real = os.path.basename(os.path.realpath(os.path.join(REPO, "out", f"os7-{arch}.iso")))
+    with open(fixture, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"""\
+# check-image.py --self-test: the readings a CORRECTLY assembled medium
+# produces, for secureboot_checks(). Recorded from {real}
+# by `check-image.py --record-secureboot {arch}` — do not edit by hand.
+#
+# That ISO is a medium that BOOTS with Secure Boot on: Microsoft-keyed OVMF,
+# shim -> gcd -> Canonical-signed kernel -> Setup's welcome screen, measured
+# 2026-09-07 (docs/SESSION-SECUREBOOT-MEDIUM.md). So this is a recording of a
+# real artefact and not a construction — which matters, because the job of the
+# fixture is to prove the rule is satisfiable at all.
+""")
+        for key in ("sb.chain", "sb.cfg", "grub.cfg"):
+            fh.write(f"<<<{key}>>>\n{img.get(key, '')}\n")
+    print(f"    recorded {fixture} from {real}")
+    return 0
+
+
 def main() -> None:
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(self_test())
+    if "--record-secureboot" in sys.argv[1:]:
+        rest = [a for a in sys.argv[1:] if a != "--record-secureboot"]
+        sys.exit(record_secureboot(rest[0] if rest else "arm64"))
     arch = sys.argv[1] if len(sys.argv) > 1 else "arm64"
     print(f"\n### the image, asked what it is ({arch})")
     img = read_image(arch)
@@ -400,12 +931,29 @@ def main() -> None:
             bad += 1
 
     # -- the manifest -------------------------------------------------------
+    # TWO FILES SINCE THE ISO INSTALLS THE PACKAGES (2026-08-28), and the split
+    # is C9's: /usr/lib/os7/release.json is what os7-release DECLARES the
+    # release to be; /usr/lib/os7/image.json is what hook 0075 MEASURED this
+    # materialisation to contain. The declared file answers identity questions,
+    # the measured one answers content questions, and the two must agree where
+    # they overlap.
     try:
         rel = json.loads(img.get("release.json", ""))
     except Exception as exc:
         check(False, "release.json parses", str(exc))
         print(f"\n{bad} problem(s). The image carries no usable manifest.")
         sys.exit(1)
+    try:
+        imgj = json.loads(img.get("image.json", ""))
+    except Exception as exc:
+        check(False, "image.json parses", str(exc))
+        print(f"\n{bad} problem(s). The image carries no usable measurement.")
+        sys.exit(1)
+    check(imgj.get("version") == rel.get("version")
+          and (imgj.get("base") or {}).get("archive_snapshot")
+              == (rel.get("base") or {}).get("archive_snapshot"),
+          "the declared release and the measured image agree",
+          f"declared {rel.get('version')}, measured {imgj.get('version')}")
 
     version = rel.get("version", "")
     check(bool(version) and version != "0.0.0.0", "the image knows its version", version)
@@ -451,7 +999,7 @@ def main() -> None:
         print(f"      note  NOT built from a clean source tree (commit={src}). Expected "
               f"on a {rel.get('channel')} build; would be fatal on a stable one.")
 
-    comp = rel.get("components") or {}
+    comp = imgj.get("components") or {}
     check(bool(comp.get("kernel")), "kernel recorded", str(comp.get("kernel")))
     check(comp.get("zfs") not in (None, ""), "zfs recorded", str(comp.get("zfs")))
     check(comp.get("os7_module") == version, "the OS7 module carries the product version",
@@ -460,6 +1008,106 @@ def main() -> None:
 
     lines = int(img.get("packages.count") or 0)
     check(lines > 200, "the package manifest is populated", f"{lines} packages")
+
+    # -- the OS/7 half belongs to dpkg (C7, the 2026-08-28 switch) ------------
+    #
+    # Asked of dpkg's records in the image, never of the build log: an ISO on
+    # which `dpkg -S` cannot name an owner for pwsh, the module, os7-setup, the
+    # console font and the release facts is the pre-C7 image, whatever the
+    # hooks printed. The staged .debs themselves must be GONE — they are build
+    # inputs, and a squashfs still carrying them shipped ~150 MB for nothing.
+    dpkg_os7 = img.get("dpkg.os7", "")
+    meta = "os7-desktop" if arch == "amd64" else "os7-server"
+    for pkg in ("os7-release", "os7-console", "os7-powershell", "os7-module",
+                "os7-backup", "os7-setup", "os7-base", meta):
+        check(f"ii  {pkg} {version}" in dpkg_os7,
+              f"{pkg} is installed at {version}",
+              next((l for l in dpkg_os7.splitlines() if f" {pkg} " in l), "(absent)"))
+    owners = dict(
+        line.split(" -> ", 1) for line in img.get("dpkg.owners", "").splitlines()
+        if " -> " in line)
+    for path_, owner in (
+            ("/opt/microsoft/powershell/7/pwsh", "os7-powershell"),
+            ("/usr/local/share/powershell/Modules/OS7/OS7.psd1", "os7-module"),
+            ("/usr/lib/os7-setup/os7-setup", "os7-setup"),
+            ("/usr/share/consolefonts/os7-console-16x32.psf.gz", "os7-console"),
+            ("/usr/lib/os7/release.json", "os7-release"),
+            ("/etc/apt/sources.list.d/os7.sources", "os7-release"),
+            ("/etc/profile.d/95-os7-powershell.sh", "os7-powershell"),
+            ("/usr/libexec/os7-migrate-firstboot", "os7-release")):
+        check(owners.get(path_, "").strip() == owner,
+              f"dpkg -S: {path_} belongs to {owner}",
+              owners.get(path_, "(not asked)").strip())
+    check("os7-release" in img.get("dpkg.divert", ""),
+          "/usr/lib/os-release is diverted by os7-release (UL10)",
+          img.get("dpkg.divert", "")[:90])
+    check("Enabled: no" in img.get("os7.sources", ""),
+          "the shipped apt source is declared and OFF — nothing is published",
+          " ".join(img.get("os7.sources", "").split())[-60:])
+    check(int(img.get("os7.keyring") or 0) > 100,
+          "the trust anchor ships", f"{img.get('os7.keyring')} bytes")
+
+    # -- the credential, and only when the shipped source needs one -----------
+    #
+    # RELEASE-PROCESS §4.2. The question the ARTEFACT can answer, which no
+    # build log can: either this medium carries the credential its own apt
+    # source needs, or every machine it installs cannot reach the repository
+    # and nothing on it says why.
+    #
+    # NOT FROM THE SCHEME. That was BUILD-NOTES #143: `http(s)` does not mean
+    # "requires authentication" — that is a fact about one server, and C7 §6.4
+    # makes a plain unauthenticated mirror a supported deployment. The medium
+    # carries the declaration instead: release.conf's OS7_REPO_AUTH. It applies
+    # only when the shipped source still points at the URI that file names — a
+    # build handed a different one replaced the server the declaration is
+    # about, which is exactly what run-s5.py and check-os7-repo.py do.
+    src_uri = next((l.split(None, 1)[1].strip()
+                    for l in img.get("os7.sources", "").splitlines()
+                    if l.strip().startswith("URIs:")), "")
+    pin = {}
+    for line in img.get("release.conf", "").splitlines():
+        if "=" in line and not line.strip().startswith("#"):
+            k, v = line.split("=", 1)
+            pin[k.strip()] = v.strip().strip('"').strip("'")
+    needs_auth = (pin.get("OS7_REPO_AUTH", "no") == "yes"
+                  and src_uri == pin.get("OS7_REPO_URI", "")
+                  and src_uri.startswith(("http://", "https://")))
+    if needs_auth:
+        want_host = src_uri.split("://", 1)[1].split("/", 1)[0]
+        auth = img.get("os7.auth", "")
+        check(f"machine {want_host}" in auth,
+              f"the credential ships, keyed to {want_host} — the host apt matches on",
+              " ".join(auth.split())[:70] or "(no credential in the image)")
+        # 0600 IS NOT COSMETIC HERE AND apt DOES NOT ENFORCE IT. Measured
+        # 2026-09-09: apt reads a 0644 auth.conf.d entry and uses it without a
+        # warning, so nothing on a running machine would ever report this. And
+        # the build stages onto a bind mount whose chmod a Windows host may not
+        # honour (#117), after which pkg_finish's exact-0777 sweep turns the
+        # file into 0644 — the one path that produces a world-readable password
+        # in a signed package with every other check green.
+        check(img.get("os7.auth.mode", "").strip() == "600",
+              "at mode 0600 in the shipped image, asked of the squashfs",
+              img.get("os7.auth.mode", "(not asked)").strip())
+        check(img.get("os7.auth.owner", "").strip() == "os7-release",
+              "and dpkg says os7-release owns it, so an update can replace it",
+              img.get("os7.auth.owner", "(not asked)").strip())
+        check("login " in auth,
+              "with a login in it", next((l for l in auth.splitlines()
+                                          if l.startswith("login ")), "(none)"))
+    else:
+        check(True, "the shipped source declares no credential requirement",
+              f"OS7_REPO_AUTH={pin.get('OS7_REPO_AUTH', '(unset)')}, "
+              f"URIs: {src_uri or '(none)'}")
+    check(img.get("os7.staged.debs", "").strip() in ("(gone)", ""),
+          "the staged .debs were consumed, not shipped",
+          img.get("os7.staged.debs", "")[:80])
+    # One line of config, and without it the machine has no journal AT ALL:
+    # /var/log is a ZFS dataset with no mount unit, so unordered, the journal
+    # flush lands on the boot environment's root dataset and zfs mount -a
+    # buries it (BUILD-NOTES #109, measured on a booted machine).
+    check("After=zfs-mount.service" in img.get("journal.dropin", ""),
+          "the journal flush is ordered after zfs-mount.service (#109)",
+          img.get("journal.dropin", "(absent)").strip().splitlines()[-1][:70])
 
     # -- what the image is CURATED to contain, and not to ---------------------
     #
@@ -780,6 +1428,39 @@ def main() -> None:
               "the Systemd module parses the systemctl and journalctl output it ships with",
               sdetail)
 
+    # -- the Directory module, asked to check itself ------------------------
+    #
+    # Read like the Net, Time and Systemd ones, three outcomes included: an
+    # image built before this module existed has no Directory directory, and
+    # "not on the image" must not be reported as "this chroot could not
+    # answer". The distinction is worth more here than in the three above,
+    # because the Directory module is the newest thing build.sh stages and a
+    # staging that missed it is the likeliest of the two causes.
+    dt = img.get("directory.selftest", "")
+    dran = "Directory self-test:" in dt
+    dabsent = ("no valid module file" in dt) or ("was not loaded" in dt)
+    if dabsent:
+        check(False, "the Directory module is on the image",
+              "not at /usr/local/share/powershell/Modules/Directory -- an ISO "
+              "built before the LDAP layer, or build.sh did not stage it")
+    elif not dran:
+        print("      note  the Directory self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine, or "
+              "./installer/testing/check-directory-logic.py against the source tree.")
+    else:
+        dsummary = next((l.strip() for l in dt.splitlines()
+                         if l.strip().startswith("Directory self-test:")
+                         and "passed" in l), "")
+        # The three blocks above fall back to a 'FAILED:' line. This module
+        # does not write one -- it prints `  FAIL  <case>` per case and lists
+        # them again under the summary -- so copying that marker here would
+        # have produced a fallback that can never fire, which is the shape of
+        # defect this file exists to catch rather than to contain.
+        ddetail = dsummary or next(
+            (l.strip() for l in dt.splitlines() if l.strip().startswith("FAIL  ")), "")
+        check("EXIT=0" in dt,
+              "the Directory module escapes, decodes and pages the LDAP it ships with",
+              ddetail)
     # -- the Hardware module, asked to check itself -------------------------
     #
     # Read exactly like the Systemd one, three outcomes included: an image built
@@ -977,6 +1658,74 @@ def main() -> None:
         check(listed("bgrt-fallback.png.distrib"),
               "and plymouth's Ubuntu logo is diverted out of the boot splash")
 
+        # THE LOGIN SCREEN. Three claims, and the first is the one that has
+        # actually been wrong: an OS/7 machine whose every check above was
+        # green still greeted its user with the Ubuntu wordmark, because the
+        # greeter reads a database nothing in this file used to look at.
+        #
+        # `desktop.greeter` is not a file listing. It is GSettings' own answer,
+        # obtained inside the image's root, after compiling /usr/share/gdm/dconf
+        # exactly the way gdm.service does — so what it reports is what the
+        # login screen draws, override and all.
+        greeter = {}
+        for line in img.get("desktop.greeter", "").splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                greeter[k.strip()] = v.strip().strip("'")
+
+        check(greeter.get("logo") == "/usr/share/pixmaps/os7-logo-login.svg",
+              "the login screen shows the OS/7 mark, not Ubuntu's",
+              greeter.get("logo") or "<gsettings said nothing — is gdm3 installed?>")
+        check(greeter.get("accent") == "blue",
+              "and its accent is OS/7 blue, not Ubuntu orange",
+              greeter.get("accent") or "<unset>")
+        check(greeter.get("background") == "#0057ad",
+              "and its background is the Setup field colour",
+              greeter.get("background") or "<unset>")
+
+        # Yaru is not a neutral theme that happens to be installed — it IS
+        # Ubuntu's brand, and yaru-theme-gnome-shell cannot be removed
+        # (ubuntu-session Depends on it). Hook 0035 step 9 moves the greeter
+        # off it with update-alternatives; this asks the link in the image.
+        gres = [greeter.get("theme", ""), greeter.get("icons", "")]
+        check(all(g and "Yaru" not in g for g in gres),
+              "and the greeter's stylesheet is GNOME's, not Yaru's",
+              " ".join(g or "<unresolved>" for g in gres))
+
+        # PRECEDENCE IS SORT ORDER in that directory: 00-upstream-settings is
+        # gdm3's, 90-debian-settings is the ucf conffile, and `dconf compile`
+        # takes the last writer. A file that stops sorting last stops applying
+        # without anything failing.
+        gdir = sorted(f for f in img.get("desktop.greeterdir", "").split()
+                      if f and f != "locks")
+        check(bool(gdir) and gdir[-1] == "95-os7-login-screen",
+              "and OS/7's greeter defaults sort last in /usr/share/gdm/dconf",
+              " ".join(gdir) or "<empty>")
+
+        def greeter_listed(name: str) -> bool:
+            for line in img.get("desktop.greeterlogo", "").splitlines():
+                if name in line and not line.startswith("ls:"):
+                    return True
+            return False
+
+        check(greeter_listed("os7-logo-login.svg") and greeter_listed("upinblue-logo.svg"),
+              "and both marks the greeter names are in the image",
+              " ".join(img.get("desktop.greeterlogo", "").split())[:120])
+
+        # AND THAT THE GREETER CAN ACTUALLY LOAD THEM. This is not the same
+        # question as "is the file there", and the difference cost a machine:
+        # OS7-1.0.0.153 shipped a mark that rsvg-convert rendered happily and
+        # GdkPixbuf refused, because GdkPixbuf sniffs a 256-byte prefix and a
+        # documentation header had pushed `<svg` to byte 2764. The greeter's
+        # load_file_sync throws mid-construction, so what the user sees is a
+        # background, a top bar, and nothing to log in with. BUILD-NOTES #111.
+        for tag, human in (("os7-logo-login", "the greeter mark"),
+                           ("upinblue-logo", "the vendor mark")):
+            got = greeter.get(tag, "")
+            check(got.startswith("OK"),
+                  f"and GdkPixbuf — the loader gnome-shell uses — loads {human}",
+                  got or "<python3-gi said nothing>")
+
         auto = {}
         for line in img.get("desktop.autostart", "").splitlines():
             parts = line.split()
@@ -1019,9 +1768,75 @@ def main() -> None:
               f"an interactive login lands in PowerShell {want_pwsh or '?'}",
               handoff.replace("\n", " ")[-80:] if handoff else "<no reply>")
 
+    # -- can this machine ever accept an ssh connection (BUILD-NOTES #118) ---
+    check(img.get("ssh.keygen.unit") == "present",
+          "the image carries OS/7's ssh host key unit",
+          img.get("ssh.keygen.unit", "<no reply>"))
+    check(img.get("ssh.keygen.wanted") == "enabled",
+          "and ssh.service and ssh.socket both want it, so it will actually run",
+          img.get("ssh.keygen.wanted", "<no reply>"))
+    before = img.get("ssh.keygen.before", "")
+    check("ssh.socket" not in before,
+          "and it does not order itself before ssh.socket (that cycle deletes "
+          "the socket, #120)", before)
+    # ZERO IS THE PASS. Host keys baked into an image would be the same keys on
+    # every machine installed from it -- a far worse defect than the one #118
+    # is about. The unit above is what makes them per-machine, on first boot.
+    check(img.get("ssh.hostkeys", "").strip() == "0",
+          "and the image itself ships no host keys, so every machine gets its own",
+          img.get("ssh.hostkeys", "<no reply>"))
+
+    # -- what anyone may write to (BUILD-NOTES #117) -------------------------
+    ww = [ln for ln in img.get("perms.worldwritable", "").splitlines() if ln.strip()]
+    check(not ww, "nothing in the image is world-writable",
+          f"{len(ww)}: " + ", ".join(ln.split()[-1] for ln in ww[:6]) if ww else "")
+    if ww and len(ww) > 6:
+        for ln in ww:
+            print(f"              {ln}")
+
+    want = includes_modes(arch)
+    # ONE FILE IS DELIBERATELY NOT GIT'S MODE, and naming it here is cheaper
+    # than pretending it is. Hook 0075 chmods /etc/update-motd.d/00-os7-header
+    # to 0755 because run-parts only runs what is executable — and it verifies
+    # the chmod afterwards, refusing the build if the file is still not
+    # executable. Two checks above already assert that it IS executable in the
+    # shipped image, so dropping it here loses nothing.
+    want.pop("etc/update-motd.d/00-os7-header", None)
+    # THREE FIELDS, AND THE KIND IS ONE WORD ON PURPOSE. The first version
+    # emitted `stat -c %a:%F`, whose %F is "symbolic link" -- two words -- so
+    # splitting mode from path put "link" at the front of every path and the
+    # lookup matched nothing. Every file then read MISSING, which is a report
+    # that the IMAGE is broken produced entirely inside this check.
+    got = {}
+    for ln in img.get("perms.includes", "").splitlines():
+        parts = ln.split(None, 2)
+        if len(parts) == 3:
+            got[parts[2]] = (parts[0], parts[1])
+    # A SYMLINK HAS NO MODE OF ITS OWN. GNU stat does not dereference by
+    # default, so a link reads `777:symbolic link` -- and /etc/default/console-setup
+    # IS one in the shipped image (a hook replaces the regular file git tracks
+    # with a link to /usr/share/os7/console-setup). Reporting that as a
+    # permission defect would be this check failing the thing it checks for.
+    wrong = []
+    for p, m in sorted(want.items()):
+        mode, kind = got.get(p, ("MISSING", "file"))
+        # A symlink has no mode of its own -- GNU stat does not dereference by
+        # default, so it always reads 777 -- and /etc/default/console-setup IS
+        # one in the shipped image, where a hook replaces the regular file git
+        # tracks with a link to /usr/share/os7/console-setup.
+        if kind == "symlink":
+            continue
+        if mode != m:
+            wrong.append(f"{p} is {mode}, git says {m}")
+    check(bool(want) and not wrong,
+          f"the {len(want)} authored includes.chroot files carry git's modes",
+          "; ".join(wrong[:4]) if wrong else "")
+
     # -- the medium --------------------------------------------------------
     check(img.get("volume", "") == f"OS7-{version}-{arch}",
           "the ISO volume carries the version", img.get("volume", ""))
+
+    secureboot_checks(img, arch, check)
 
     print()
     if bad:

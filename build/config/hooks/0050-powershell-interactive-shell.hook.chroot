@@ -1,7 +1,11 @@
 #!/bin/bash
-# OS/7 — make PowerShell the visible interactive shell, without displacing bash.
+# OS/7 — PROVE PowerShell is the visible interactive shell. Verify-only since
+# 2026-08-28: the profile drop-in ships in the os7-powershell PACKAGE (hook
+# 0022 installs it), and the heredoc this hook used to carry was the second of
+# two copies of the same five guards — the drift check-os7-repo.py compared
+# byte for byte to contain, closed by deleting this one.
 #
-# README "Shell", and the reason this is a profile drop-in rather than a chsh:
+# README "Shell", and the reason it is a profile drop-in rather than a chsh:
 #   bash stays the actual system/login shell. cron, systemd units, dpkg
 #   maintainer scripts and Intune's bash-based custom compliance scripts all
 #   assume bash is there and working. Changing the login shell breaks them.
@@ -12,41 +16,22 @@
 
 set -euo pipefail
 
-echo "OS/7 hook 0050: installing the PowerShell interactive-shell drop-in"
-install -d -m 0755 /etc/profile.d
+echo "OS/7 hook 0050: verifying the PowerShell interactive-shell drop-in"
 
-cat > /etc/profile.d/95-os7-powershell.sh <<'DROPIN'
-# OS/7: hand interactive human sessions over to PowerShell 7.
-#
-# Every guard here exists to avoid breaking something specific. Removing any of
-# them will break that thing.
+# The package's file, not this hook's. dpkg is asked who owns it, because an
+# unowned copy at the right path is exactly the state the 2026-08-28 switch
+# ended.
+if [[ ! -s /etc/profile.d/95-os7-powershell.sh ]]; then
+	echo "OS/7 hook 0050: FAIL: /etc/profile.d/95-os7-powershell.sh is missing -" >&2
+	echo "OS/7 hook 0050:   os7-powershell should have shipped it (hook 0022)" >&2
+	exit 1
+fi
+if ! dpkg -S /etc/profile.d/95-os7-powershell.sh 2>/dev/null | grep -q '^os7-powershell:'; then
+	echo "OS/7 hook 0050: FAIL: the drop-in is not owned by os7-powershell:" >&2
+	dpkg -S /etc/profile.d/95-os7-powershell.sh >&2 || echo "  (no owner at all)" >&2
+	exit 1
+fi
 
-# 1. Interactive shells only. Without this, scp/sftp, `ssh host command`, cron
-#    and dpkg hooks would all get exec'd into pwsh and break.
-case $- in
-	*i*) ;;
-	*) return ;;
-esac
-
-# 2. A non-interactive ssh command still sets this; belt and braces with (1).
-[ -n "${SSH_ORIGINAL_COMMAND:-}" ] && return
-
-# 3. Re-entry guard. pwsh itself can start a login bash; without this the two
-#    would exec each other forever.
-[ -n "${OS7_PWSH_ACTIVE:-}" ] && return
-
-# 4. Never strand a user without a shell if PowerShell is missing or broken.
-[ -x /usr/bin/pwsh ] || return
-
-# 5. Opt-out, so an admin can get plain bash without editing system files.
-[ -n "${OS7_NO_PWSH:-}" ] && return
-
-OS7_PWSH_ACTIVE=1
-export OS7_PWSH_ACTIVE
-exec /usr/bin/pwsh -NoLogo
-DROPIN
-
-chmod 0644 /etc/profile.d/95-os7-powershell.sh
 
 # ---------------------------------------------------------------------------
 # PROVE IT. Not "the file was written" - that is a diagnostic about a `cat`.
@@ -66,7 +51,7 @@ chmod 0644 /etc/profile.d/95-os7-powershell.sh
 # its own version. If it does not, bash reads them and fails.
 #
 # This runs under chroot(2), where PowerShell's module DISCOVERY is broken
-# (hook 0020 documents that at length). $PSVersionTable is an automatic
+# (BUILD-NOTES #14). $PSVersionTable is an automatic
 # variable compiled into the binary, not a cmdlet from the module tree, so it is
 # one of the things that does work there - verified against the shipped
 # OS7-1.0.0.109 image before this check was written.

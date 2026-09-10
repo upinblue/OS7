@@ -29,6 +29,15 @@ measured, on a real machine, and written down as BUILD-NOTES #63. A fake that
 got this wrong would make the module look correct while it shipped the bug the
 fake was written to model, which is the standing hazard with any mock and the
 reason this one models exactly one thing.
+
+ON WINDOWS IT RE-RUNS ITSELF IN A CONTAINER — the same one check-home-logic.py
+builds. The fakes are POSIX programs on PATH (the zfs is python3, the GRUB
+tools are /bin/sh), and the grub.d script under test is EXECUTED by the fake
+update-grub, so a host that cannot start an extensionless script cannot run
+this check natively. Running it there anyway is what found BUILD-NOTES #121:
+pwsh finds the fake, cannot start it, and reads a $LASTEXITCODE nothing set.
+On macOS and Linux nothing changes: the check runs on the host, as it always
+has.
 """
 import json
 import os
@@ -37,8 +46,14 @@ import subprocess
 import sys
 import tempfile
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
 MODULE = os.path.join(REPO, "powershell", "OS7", "OS7.psd1")
+
+# The container is check-home-logic.py's, shared deliberately: it holds exactly
+# the three interpreters the fakes need — the PINNED pwsh, python3 and sh — and
+# a second Dockerfile with the same contents would be a second pin that rots.
+IMAGE = "os7-check-home"
 
 # The layout New-OS7Storage creates, with the property SOURCES that matter:
 # name: (canmount, mountpoint, canmount source, mountpoint source)
@@ -187,7 +202,47 @@ exit 0
 '''
 
 
+def pin(name):
+    """A value out of build/config/os7-release.conf — the one place a version
+    may live. Passed into the container build so its PowerShell is the image's
+    PowerShell rather than a second pin that rots quietly."""
+    conf = os.path.join(REPO, "build", "config", "os7-release.conf")
+    for line in open(conf):
+        if line.startswith(name + "="):
+            return line.split("=", 1)[1].strip().strip('"')
+    sys.exit(f"{name} is not in {conf}")
+
+
+def relaunch():
+    """Build the shared check container and run this file inside it."""
+    if not shutil.which("docker"):
+        sys.exit("docker is needed on Windows: the fakes are POSIX scripts. "
+                 "See the header.")
+    print("    building the check container (first run only) …")
+    subprocess.run(
+        ["docker", "build", "-q", "-t", IMAGE,
+         "-f", os.path.join(HERE, "Dockerfile.check-home"),
+         "--build-arg", f"PWSH_VERSION={pin('OS7_PWSH_VERSION')}",
+         "--build-arg", f"PWSH_SHA256_x64={pin('OS7_PWSH_SHA256_x64')}",
+         "--build-arg", f"PWSH_SHA256_arm64={pin('OS7_PWSH_SHA256_arm64')}",
+         HERE],
+        check=True, stdout=subprocess.DEVNULL)
+    # No --privileged and no unshare: unlike check-home-logic.py, nothing here
+    # mounts anything — the fakes only write files.
+    return subprocess.run(
+        ["docker", "run", "--rm",
+         "-v", f"{REPO}:/repo:ro", IMAGE,
+         "python3", "/repo/installer/testing/check-be-logic.py"]).returncode
+
+
 def main():
+    # The fakes are POSIX programs and the grub.d script under test is
+    # EXECUTED — a Windows host cannot start either, so there the check runs
+    # itself inside the container instead (header). Inside, os.name is
+    # 'posix', so this cannot recurse.
+    if os.name == "nt":
+        sys.exit(relaunch())
+
     if not shutil.which("pwsh"):
         sys.exit("pwsh not found. This check runs the real module, so it needs "
                  "PowerShell 7 on the host: brew install --cask powershell")

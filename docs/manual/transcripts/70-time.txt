@@ -1,0 +1,11 @@
+OS7-STEP time layer: /usr/local/share/powershell/Modules/Time/Time.psd1
+
+LocalTime      : 09/09/2026 19:50:02
+UtcTime        : 09/09/2026 17:50:02
+TimeZone       : Europe/Berlin
+RtcInLocalTime : False
+RtcIsDefault   : True
+RtcSource      : /etc/adjtime
+
+
+PS /home/os7admin>

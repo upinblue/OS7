@@ -84,6 +84,24 @@ $script:OS7UpdateRoot  = '/run/os7-update'
 $script:OS7Keyring   = '/usr/share/keyrings/os7-archive-keyring.gpg'
 $script:OS7AptSource = '/etc/apt/sources.list.d/os7.sources'
 
+# AND THE CREDENTIAL, WHICH CANNOT LIVE IN THE SOURCE FILE.
+#
+# docs/RELEASE-PROCESS.md §4.2. OS/7's repository is served over WebDAV from a
+# Hetzner Storage Box, and EVERY transport that box speaks requires
+# authentication — measured 2026-09-02 (§4.1a): an anonymous GET of / is
+# answered 401, there is no public folder, and public links are a feature of a
+# different Hetzner product. A deb822 source has no field for a credential, so
+# apt takes one from /etc/apt/auth.conf.d/ and nowhere else.
+#
+# WHAT THIS CREDENTIAL IS AND IS NOT. Integrity is GPG's: `Signed-By` names
+# OS/7's keyring, so a credential cannot make apt trust anything, and the
+# content it fetches is a public product. The account is read-only and its
+# directory IS its root (§4.1a), so it reaches nothing else on the box. What it
+# is, is a shared secret with an owner and no rotation path yet — RP3, open —
+# which is the reason it is written by a named verb that can be re-run rather
+# than pasted into place by hand.
+$script:OS7AptAuthConf = '/etc/apt/auth.conf.d/os7.conf'
+
 # THE PIN, AND WHY THIS FILE READS IT RATHER THAN release.json.
 #
 # There are three files called release.json in this repository and they have
@@ -208,9 +226,18 @@ function Get-OS7ReleaseConfField {
 		if ($eq -lt 1) { continue }
 		if ($t.Substring(0, $eq).Trim() -ne $Name) { continue }
 		$v = $t.Substring($eq + 1).Trim()
-		if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or
-				($v[0] -eq "'" -and $v[-1] -eq "'"))) {
-			$v = $v.Substring(1, $v.Length - 2)
+		if ($v.Length -ge 1 -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
+			# A quoted value ends at the NEXT matching quote, and anything after
+			# it makes the line malformed — loudly. Stripping only the outermost
+			# pair turned a glued line (an append onto a file with no trailing
+			# newline) into the channel name 'development"OS7_UPDATE_…' and sent
+			# the unattended check hunting for an index that cannot exist.
+			$close = $v.IndexOf($v[0], 1)
+			if ($close -lt 0 -or $v.Substring($close + 1).Trim().Length -gt 0) {
+				throw [System.FormatException]::new(
+					"$($Path): malformed line for ${Name}: $t")
+			}
+			$v = $v.Substring(1, $close - 1)
 		}
 		return $v
 	}
@@ -442,6 +469,21 @@ function Get-OS7ReleaseIndex {
 
 	$doc = ConvertFrom-Json ([System.IO.File]::ReadAllText($json))
 
+	# The file was FETCHED by channel name and the document SAYS which channel
+	# it is, and the two must agree. A signed index served under the wrong name
+	# is not a corrupt file — the signature verifies — it is a stable channel
+	# answering with a development listing, or the reverse, and every decision
+	# downstream (Applicable, the operator's own reading) would be made against
+	# the wrong population. Channels became real on 2026-08-28; before that
+	# there was only one and this could not fire.
+	$docChannel = [string](Get-OS7ManifestField $doc 'channel')
+	if ($docChannel -ne $Channel) {
+		throw [System.InvalidOperationException]::new(
+			"the index fetched as channel '$Channel' says it is channel '$docChannel'. " +
+			'A mislabelled index is refused: its signature proves who wrote it, not ' +
+			'that it is the channel it was asked for.')
+	}
+
 	# Freshness, and it is checked HERE rather than left to the caller because a
 	# reader that returns a stale index has already answered the question.
 	$validUntil = [string](Get-OS7ManifestField $doc 'valid_until')
@@ -517,7 +559,16 @@ function Get-OS7ReleaseDescriptor {
 	$version = [string](Get-OS7ManifestField $IndexEntry 'version')
 	$path    = [string](Get-OS7ManifestField $IndexEntry 'manifest')
 	$want    = [string](Get-OS7ManifestField $IndexEntry 'manifest_sha256')
-	if (-not $path) { $path = "releases/$version/release.json" }
+	if (-not $path) {
+		# The builder always writes `manifest`; this reconstructs its layout
+		# for an entry that lost the field. The architecture joined the path
+		# when two of them started sharing one repository (RELEASE-PROCESS
+		# §7.3); an entry too old to name its architecture predates that
+		# layout, so it gets the flat one.
+		$entryArch = [string](Get-OS7ManifestField $IndexEntry 'architecture')
+		$path = if ($entryArch) { "releases/$version/$entryArch/release.json" }
+		else { "releases/$version/release.json" }
+	}
 
 	$file = [System.IO.Path]::Combine($WorkDir, "os7-release-$version.json")
 	if (-not (Copy-OS7RepoFile -BaseUri $BaseUri -Path $path -Destination $file)) {
@@ -595,9 +646,13 @@ function Get-OS7Release {
 		trust path and not a convenience.
 
 		`Applicable` is the property to read before `Update-OS7`: it is $false
-		for a release that is not newer than this machine, and for one that
-		would cross a Major — which C12 says this train must refuse rather than
-		attempt.
+		for a release that is not newer than this machine, for one that would
+		cross a Major — which C12 says this train must refuse rather than
+		attempt — and for one built for another architecture, which becomes
+		possible the moment one repository URL serves both (RELEASE-PROCESS.md
+		§7.3). Each reason is also its own property (`Newer`, `CrossesMajor`,
+		`ForeignArchitecture`, `Hotfix`), because "not applicable" for four
+		different reasons is four different conversations with the operator.
 
 	.PARAMETER Available
 		List what the channel offers. Present because §6 names the cmdlet
@@ -652,20 +707,57 @@ function Get-OS7Release {
 			$major = ([version]$version).Major
 			$newer = $mine -and (Compare-OS7Version -Left $version -Right $mine) -gt 0
 
+			# The hotfix form (§7): a release that overlays a BASE release and
+			# is applicable only to a machine ON that base. The base is read
+			# from the signed index's entry and cross-checked against the
+			# descriptor the entry's hash binds — the two are one author
+			# (build-os7-repo.sh derives the entry from the descriptor), so a
+			# difference is tampering or a builder defect, and both are
+			# refusals rather than judgement calls.
+			$entryHotfixBase = [string](Get-OS7ManifestField $entry 'hotfix_base')
+			$descHotfix      = Get-OS7ManifestField $descriptor 'hotfix'
+			$descHotfixBase  = if ($null -ne $descHotfix) {
+				[string](Get-OS7ManifestField $descHotfix 'base') } else { '' }
+			if ($entryHotfixBase -ne $descHotfixBase) {
+				throw [System.InvalidOperationException]::new(
+					"release $version names hotfix base '$entryHotfixBase' in the index and " +
+					"'$descHotfixBase' in its descriptor. The two have one author; a " +
+					'difference means one of them is not the file that was published.')
+			}
+			$onBase = (-not $entryHotfixBase) -or
+				($mine -and (Compare-OS7Version -Left $entryHotfixBase -Right $mine) -eq 0)
+
+			# THE ARCHITECTURE IS COMPARED, not assumed. Harmless while every
+			# repository serves one architecture; wrong the moment one URL
+			# serves both (RELEASE-PROCESS.md §7.3): an amd64 machine would
+			# list an arm64 release as Applicable and Update-OS7 would fail
+			# late, inside apt, about packages rather than about the reason.
+			# Only a POSITIVE mismatch blocks — a side that does not state its
+			# architecture is today's single-arch world, not a refusal.
+			$entryArch = [string](Get-OS7ManifestField $entry 'architecture')
+			$myArch    = [string]$here.Architecture
+			$foreignArch = [bool]($entryArch -and $myArch -and $entryArch -ne $myArch)
+
 			[pscustomobject]@{
 				PSTypeName   = 'OS7.Release'
 				Version      = $version
 				Channel      = [string](Get-OS7ManifestField $index 'channel')
 				Released     = [string](Get-OS7ManifestField $entry 'released')
-				Architecture = [string](Get-OS7ManifestField $entry 'architecture')
+				Architecture = $entryArch
 				Suite        = [string](Get-OS7ManifestField $entry 'os7_suite')
 				Snapshot     = [string](Get-OS7ManifestField $entry 'archive_snapshot')
-				# Whether Update-OS7 would take it. Both halves are said, because
-				# "not applicable" for two different reasons is two different
-				# conversations with the operator.
-				Applicable   = ($newer -and $major -eq $myMajor)
+				# Whether Update-OS7 would take it. Every half is said
+				# separately, because "not applicable" for four different
+				# reasons is four different conversations with the operator.
+				Applicable   = ($newer -and $major -eq $myMajor -and $onBase -and -not $foreignArch)
 				Newer        = [bool]$newer
 				CrossesMajor = ($major -ne $myMajor)
+				ForeignArchitecture = $foreignArch
+				# §7: a hotfix moves the Build field alone and overlays exactly
+				# the base release it names. On any other machine it is listed
+				# and not applicable — the operator updates to the base first.
+				Hotfix       = [bool]$entryHotfixBase
+				HotfixBase   = $(if ($entryHotfixBase) { $entryHotfixBase } else { $null })
 				# C7a is open, so this is load-bearing rather than informational:
 				# Update-OS7 refuses a development release without
 				# -AllowDevelopment, and this is where an operator sees why.
@@ -689,6 +781,237 @@ function Get-OS7Release {
 	}
 	finally {
 		[System.IO.Directory]::Delete($work, $true)
+	}
+}
+
+function Get-OS7AptAuthHost {
+	<#
+	.SYNOPSIS
+		The host apt has to match a credential against, out of a repository
+		URI. Internal.
+
+	.DESCRIPTION
+		apt's auth.conf keys on `machine <host>[:port][/path]`, so the entry has
+		to name the URI's authority and not the URI. A `file:` URI has no
+		authority at all and needs no credential — that returns $null, and the
+		caller's job is then to write nothing rather than to write an entry that
+		can never match.
+	#>
+	param([Parameter(Mandatory)][AllowEmptyString()][string]$Uri)
+
+	$parsed = $null
+	if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsed)) {
+		return $null
+	}
+	if ($parsed.Scheme -notin @('http', 'https')) { return $null }
+	if ($parsed.IsDefaultPort) { return $parsed.Host }
+	return "$($parsed.Host):$($parsed.Port)"
+}
+
+function Get-OS7AptCredentialLogin {
+	<#
+	.SYNOPSIS
+		Which account this machine has a repository credential for. Internal.
+
+	.DESCRIPTION
+		The LOGIN only, never the password: "does this machine have a credential
+		and whose" is an operator's question, and the answer to it does not
+		require handing the secret to whatever is going to print the object.
+
+		It reads only the entry whose `machine` matches, because a machine
+		pointed at a second repository has two entries and the one that answers
+		is the one for the URI in force.
+	#>
+	param(
+		[AllowEmptyString()][AllowNull()][string]$MachineHost,
+		[string]$Path = $script:OS7AptAuthConf
+	)
+
+	if (-not $MachineHost) { return $null }
+	if (-not [System.IO.File]::Exists($Path)) { return $null }
+
+	$hit = $false
+	foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+		$t = $line.Trim()
+		if ($t.StartsWith('#')) { continue }
+		if ($t -match '^machine\s+(\S+)') {
+			$hit = ($Matches[1] -eq $MachineHost)
+			continue
+		}
+		if ($hit -and $t -match '^login\s+(\S+)') { return $Matches[1] }
+	}
+	return $null
+}
+
+function Write-OS7AptCredential {
+	<#
+	.SYNOPSIS
+		Put a repository credential where apt reads it. Internal.
+
+	.DESCRIPTION
+		docs/RELEASE-PROCESS.md §4.2, and the file is $script:OS7AptAuthConf.
+
+		EMPTY FIRST, THEN THE MODE, THEN THE CONTENT — the order Net's
+		Set-NetplanDocument uses for a pre-shared key and for the same measured
+		reason: a file that is world-readable for the microseconds between
+		create and chmod is world-readable.
+
+		AND 0600 IS OS/7'S DECISION, NOT SOMETHING apt ENFORCES. Measured
+		2026-09-09 in a clean ubuntu:26.04: an auth.conf.d entry at mode 0644 is
+		read and used without a warning, a notice or a line in any log —
+		`MaybeAddAuth: … from /etc/apt/auth.conf.d/os7.conf` under
+		`-o Debug::Acquire::netrc=1` and silence otherwise. So nothing downstream
+		would ever report a credential this machine had left readable, which is
+		exactly the shape of defect this repository keeps paying for. The mode is
+		set here and read back from the filesystem below.
+
+		THE PASSWORD IS NEVER RETURNED, LOGGED OR PUT IN AN ARGUMENT. It goes
+		from the PSCredential into the file and nowhere else — not through
+		Invoke-OS7Native (whose Write-OS7Step echoes the whole command line),
+		not into the object Set-OS7UpdateChannel hands back, and not into an
+		exception message.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$MachineHost,
+		[Parameter(Mandatory)][pscredential]$Credential,
+		[string]$Path = $script:OS7AptAuthConf
+	)
+
+	if (-not $PSCmdlet.ShouldProcess($Path, "write the credential for $MachineHost")) {
+		return $null
+	}
+
+	$dir = [System.IO.Path]::GetDirectoryName($Path)
+	if (-not [System.IO.Directory]::Exists($dir)) {
+		[void][System.IO.Directory]::CreateDirectory($dir)
+	}
+
+	# The multi-line netrc shape, because that is the one measured to work
+	# against the real server (installer/testing/check-storagebox.py, 2026-09-02).
+	$body = @(
+		'# OS/7 — the credential for OS/7''s own package repository.'
+		'# Written by Set-OS7UpdateChannel. docs/RELEASE-PROCESS.md §4.2.'
+		'#'
+		'# READ-ONLY, and it protects nothing that is not already public: what it'
+		'# fetches is a released product and its integrity is GPG''s, not this'
+		'# file''s. Mode 0600 even so — apt does not care, and the next reader of'
+		'# this machine should not have to wonder.'
+		"machine $MachineHost"
+		"login $($Credential.UserName)"
+		"password $($Credential.GetNetworkCredential().Password)"
+	) -join "`n"
+
+	[System.IO.File]::WriteAllText($Path, '')
+	if (-not $IsWindows) {
+		[System.IO.File]::SetUnixFileMode($Path,
+			[System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite)
+	}
+	[System.IO.File]::WriteAllText($Path, $body + "`n")
+
+	# ASK THE FILESYSTEM WHAT THE MODE IS. SetUnixFileMode on a path a container
+	# bind-mounted from Windows does not necessarily take (BUILD-NOTES #117 is
+	# the same class), and a credential that was meant to be 0600 and is not is
+	# worth a refusal rather than a hope.
+	# BY VALUE AND NOT BY ITS TEXT. UnixFileMode is a [Flags] enum and
+	# ToString() orders the names however the runtime feels: measured
+	# 2026-09-09 in pwsh 7.6.5 on Linux, a 0600 file reads back
+	# "UserWrite, UserRead" — so a string comparison against
+	# "UserRead, UserWrite" refuses a file whose mode is exactly right.
+	$mode = $null
+	if (-not $IsWindows) {
+		$want = [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite
+		$mode = (Get-Item -LiteralPath $Path -Force).UnixFileMode
+		if ($mode -ne $want) {
+			throw [System.InvalidOperationException]::new(
+				"wrote $Path and its mode reads '$mode' rather than 0600 " +
+				"(UserRead, UserWrite). The credential is on disk and readable by " +
+				'more than root; remove it or fix the mode before pointing this ' +
+				'machine at a repository.')
+		}
+	}
+
+	[pscustomobject]@{
+		Path        = $Path
+		MachineHost = $MachineHost
+		Login       = $Credential.UserName
+		Mode        = [string]$mode
+	}
+}
+
+function Test-OS7AptSourceFetched {
+	<#
+	.SYNOPSIS
+		Did apt actually fetch and verify THIS source? Internal.
+
+	.DESCRIPTION
+		`apt-get update` EXITS 0 WHEN A SOURCE COULD NOT BE FETCHED AT ALL. An
+		unreachable, refused or unverifiable source is a `W:`, not an `E:`, and
+		the process still returns 0 — measured 2026-09-02 against the real
+		Storage Box (docs/RELEASE-PROCESS.md §4.1a), where the first version of
+		that check read the exit code as success with the right credential AND
+		with a deliberately wrong one. A control that cannot fail.
+
+		So this reads WHICH LINE apt printed for our URI. `Get:`/`Hit:` mean the
+		index arrived and was verified; `Err:`/`Ign:` mean it did not, whatever
+		the exit code says. "Refused as it should be" and "never reached it" are
+		different outcomes and only one of them is evidence, so the verdict names
+		which.
+
+		NOT `-qq`. That is the flag the previous version of this read-back used,
+		and it suppresses the very lines that carry the answer — which is how a
+		source apt had rejected could be reported as accepted.
+
+		Verdicts: fetched · unauthorized · tls · notfound · errored · unfetched.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Uri,
+		[string[]]$AptArguments = @('update', '-o', 'Acquire::Retries=1')
+	)
+
+	# Reset, then read guarded (BUILD-NOTES #121): apt-get is a command that
+	# might be found and not startable, and an unguarded read would hand this
+	# function an earlier command's 0 and call an update that never ran a
+	# success.
+	$global:LASTEXITCODE = $null
+	$out = & apt-get @AptArguments 2>&1
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	$text = ($out | ForEach-Object { [string]$_ }) -join "`n"
+
+	if ($null -eq $code) {
+		return [pscustomobject]@{
+			Verdict = 'unfetched'; ExitCode = $null
+			Detail  = 'apt-get was found but could not be started'
+		}
+	}
+
+	$quoted  = [regex]::Escape($Uri.TrimEnd('/'))
+	$arrived = [bool]([regex]::IsMatch($text, "(?m)^(Get|Hit):\d+\s+$quoted"))
+	$errored = [bool]([regex]::IsMatch($text, "(?m)^(Err|Ign):\d+\s+$quoted"))
+
+	$detail = ''
+	foreach ($line in $text.Split("`n")) {
+		$s = $line.Trim()
+		if ($s -match '^(E:|W:|Err:)' -or $s -match '401|Unauthorized|certificate verify failed') {
+			$detail = if ($s.Length -gt 200) { $s.Substring(0, 200) } else { $s }
+			break
+		}
+	}
+
+	$verdict =
+		if ($text -match '401|Unauthorized') { 'unauthorized' }
+		elseif ($text -match 'certificate verify failed|SSL connection failed') { 'tls' }
+		elseif ($errored -and $text -match '404') { 'notfound' }
+		elseif ($arrived -and -not $errored) { 'fetched' }
+		elseif ($errored) { 'errored' }
+		else { 'unfetched' }
+
+	[pscustomobject]@{
+		Verdict  = $verdict
+		ExitCode = $code
+		Detail   = if ($detail) { $detail } else {
+			'apt printed neither Get: nor Err: for this source'
+		}
 	}
 }
 
@@ -721,12 +1044,29 @@ function Set-OS7UpdateChannel {
 	.PARAMETER Uri
 		The repository. Without it, whatever the machine already has.
 
+	.PARAMETER Credential
+		The credential apt needs for a repository that requires one — OS/7's own
+		is served over WebDAV and answers an anonymous request with 401
+		(docs/RELEASE-PROCESS.md §4.1a). It is written to
+		/etc/apt/auth.conf.d/os7.conf at mode 0600, keyed to the URI's host, and
+		it is never printed, returned or put in a command line.
+
+		Without it, whatever the machine already has: os7-release ships one for
+		the published repository, so an operator normally passes nothing. Pass
+		it to point a machine at a DIFFERENT repository, or after the published
+		credential has been rotated.
+
 	.PARAMETER Disable
 		Switch the source off again, leaving it declared. The honest state for a
-		machine that should not update.
+		machine that should not update. It leaves the credential in place —
+		removing a secret the operator supplied is not this switch's business,
+		and a re-enable would otherwise silently fetch nothing.
 
 	.EXAMPLE
 		Set-OS7UpdateChannel -Channel stable -Uri https://releases.example/os7
+
+	.EXAMPLE
+		Set-OS7UpdateChannel -Channel preview -Credential (Get-Credential)
 
 	.EXAMPLE
 		Set-OS7UpdateChannel -Disable
@@ -737,6 +1077,7 @@ function Set-OS7UpdateChannel {
 		[ValidateSet('stable', 'preview', 'development')]
 		[string]$Channel,
 		[string]$Uri,
+		[pscredential]$Credential,
 		[switch]$Disable
 	)
 
@@ -773,6 +1114,24 @@ function Set-OS7UpdateChannel {
 		"Enabled: $enabled"
 	) -join "`n"
 
+	# THE CREDENTIAL GOES DOWN BEFORE THE SOURCE, not after. The read-back below
+	# is a real `apt-get update`, so the first time apt ever reads this source it
+	# must already be able to authenticate — otherwise the verb's own
+	# verification fails on a machine that is correctly configured, and the
+	# operator is sent to look at the wrong file.
+	$authHost = Get-OS7AptAuthHost -Uri $Uri
+	$auth = $null
+	if ($Credential) {
+		if (-not $authHost) {
+			throw [System.InvalidOperationException]::new(
+				"a credential was given for '$Uri', which is not an http or https " +
+				'URI. apt keys auth.conf on a host, so there is nothing for this ' +
+				'credential to match and writing it would be a secret on disk that ' +
+				'can never be used.')
+		}
+		$auth = Write-OS7AptCredential -MachineHost $authHost -Credential $Credential
+	}
+
 	if ($PSCmdlet.ShouldProcess($script:OS7AptSource,
 			"point at $Uri, suite $suite, enabled=$enabled")) {
 		[System.IO.Directory]::CreateDirectory(
@@ -786,12 +1145,17 @@ function Set-OS7UpdateChannel {
 		if ($Channel) {
 			[System.IO.Directory]::CreateDirectory(
 				[System.IO.Path]::GetDirectoryName($script:OS7UpdateConf)) | Out-Null
-			[System.IO.File]::WriteAllText($script:OS7UpdateConf, @(
+			# The trailing newline is load-bearing: this is a KEY="value" file
+			# an operator appends to (OS7_UPDATE_UNATTENDED_ALLOW_DEVELOPMENT,
+			# per the timer's log message), and without it the first `echo >>`
+			# glues onto the channel line and corrupts BOTH settings. Measured:
+			# the timer read channel 'development"OS7_UPDATE_UNATTENDED_…'.
+			[System.IO.File]::WriteAllText($script:OS7UpdateConf, (@(
 				'# OS/7 — where this machine looks for its next release.'
 				'# Written by Set-OS7UpdateChannel. The repository URI is in'
 				"# $($script:OS7AptSource); this is the channel within it."
 				"OS7_UPDATE_CHANNEL=`"$Channel`""
-			) -join "`n")
+			) -join "`n") + "`n")
 
 			# Read it back. A file that was written is not a file that parses,
 			# and the next thing to read it is an unattended timer.
@@ -803,14 +1167,38 @@ function Set-OS7UpdateChannel {
 		}
 
 		# ASK apt, not the file. A source file that parses is not a source apt
-		# accepted: a bad Signed-By path, a suite with no Release file, or a URI
-		# that does not resolve all leave the file exactly as written and apt
-		# reporting nothing from it.
+		# accepted: a bad Signed-By path, a suite with no Release file, a URI
+		# that does not resolve or a credential the server refuses all leave the
+		# file exactly as written and apt reporting nothing from it.
+		#
+		# AND NOT BY ITS EXIT CODE, which is what this did until 2026-09-09:
+		# `apt-get -qq update` returns 0 for a source it could not fetch at all
+		# (§4.1a, measured), and -qq suppresses the Get:/Err: lines that say
+		# which happened. So the old version of this check passed for every
+		# reachable machine and for every unreachable one alike.
 		if (-not $Disable) {
-			try { Invoke-OS7Native -Command 'apt-get' -Arguments @('-qq', 'update') | Out-Null }
-			catch {
+			$fetch = Test-OS7AptSourceFetched -Uri $Uri
+			if ($fetch.Verdict -ne 'fetched') {
+				$why = switch ($fetch.Verdict) {
+					'unauthorized' {
+						'the server refused the credential (401). ' + $(if ($Credential) {
+							'The one just written is not accepted for this repository.'
+						} else {
+							'This repository needs one and this machine has none, or the ' +
+							'one it has is stale: pass -Credential.'
+						})
+					}
+					'tls'       { 'TLS verification failed, so apt never reached the repository.' }
+					'notfound'  { 'the server answered 404: the suite is not at this URI.' }
+					'errored'   { 'apt refused the source.' }
+					default     { 'apt reported nothing at all for this source.' }
+				}
 				throw [System.InvalidOperationException]::new(
-					"the source was written and apt will not read it:`n$($_.Exception.Message)")
+					"the source was written and apt did not fetch it — $why`n" +
+					"  verdict: $($fetch.Verdict) (apt-get exited $($fetch.ExitCode))`n" +
+					"  apt said: $($fetch.Detail)`n" +
+					"  the file is still $($script:OS7AptSource); fix the URI, the " +
+					'credential or the server and run this again.')
 			}
 		}
 	}
@@ -824,6 +1212,14 @@ function Set-OS7UpdateChannel {
 		Enabled    = (-not $Disable)
 		SourceFile = $script:OS7AptSource
 		Keyring    = $script:OS7Keyring
+		# THE CREDENTIAL IS REPORTED AND NEVER CARRIED. An operator needs to know
+		# whether this machine has one and which account it names; nothing needs
+		# the password, and an object that held it would put it in a transcript,
+		# a log and every `| Export-Csv` anybody ever runs on it.
+		AuthFile   = $(if ($authHost) { $script:OS7AptAuthConf } else { $null })
+		AuthHost   = $authHost
+		AuthLogin  = $(if ($auth) { $auth.Login }
+			else { Get-OS7AptCredentialLogin -MachineHost $authHost })
 	}
 }
 
@@ -924,11 +1320,9 @@ function Mount-OS7UpdateRoot {
 	# child. canmount=off datasets are containers and have nothing to mount.
 	foreach ($d in @(Get-ZfsDataset -Name $rootDs -Recurse -Type Filesystem | Sort-Object Name)) {
 		if ($d.Name -eq $rootDs) { continue }
-		$cm = (Get-ZfsProperty -Name $d.Name -Property canmount |
-			Where-Object Name -eq 'canmount' | Select-Object -First 1).Value
+		$cm = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'canmount'
 		if ([string]$cm -eq 'off') { continue }
-		$mp = (Get-ZfsProperty -Name $d.Name -Property mountpoint |
-			Where-Object Name -eq 'mountpoint' | Select-Object -First 1).Value
+		$mp = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'mountpoint'
 		$mp = [string]$mp
 		if (-not $mp -or $mp -eq 'none' -or $mp -eq 'legacy') { continue }
 		& $zfsMount $d.Name ($Root + $mp)
@@ -940,15 +1334,20 @@ function Mount-OS7UpdateRoot {
 
 	# The ESP is ONE partition shared by every boot environment — it is not
 	# per-BE and must not be cloned into one. A bind is the only correct way to
-	# give the clone the ESP the machine actually boots from.
+	# give the clone the ESP the machine actually boots from — and it must BE
+	# mounted first, or the bind carries an empty directory into the chroot
+	# and grub's postinst writes into a hole (#104's other half). Guarded on
+	# the directory existing, because the bind loop below already SKIPS absent
+	# mountpoints — check-update-logic's world has no /boot/efi at all, and a
+	# world without the directory is not a world with an unmounted ESP.
+	if ([System.IO.Directory]::Exists('/boot/efi')) { Assert-OS7EspMounted }
 	$binds = @('/boot/efi')
 
 	# Every out-of-BE dataset, by its mountpoint (§4.4). Read from ZFS rather
 	# than listed here, so a layout that gains a dataset does not need this file
 	# edited — which is how the list would fall behind.
 	foreach ($d in @(Get-ZfsDataset -Name 'rpool/DATA' -Recurse -Type Filesystem -ErrorAction SilentlyContinue)) {
-		$mp = (Get-ZfsProperty -Name $d.Name -Property mountpoint |
-			Where-Object Name -eq 'mountpoint' | Select-Object -First 1).Value
+		$mp = Get-OS7ZfsPropertyValue -Name $d.Name -Property 'mountpoint'
 		$mp = [string]$mp
 		if (-not $mp -or $mp -eq 'none' -or $mp -eq 'legacy') { continue }
 		$binds += $mp
@@ -969,6 +1368,18 @@ function Mount-OS7UpdateRoot {
 		if (-not [System.IO.Directory]::Exists($mp)) { continue }
 		[System.IO.Directory]::CreateDirectory($Root + $mp) | Out-Null
 		Invoke-OS7Native -Command 'mount' -Arguments @('--bind', $mp, ($Root + $mp)) `
+			-WhatIf:$WhatIf | Out-Null
+		# --make-slave IMMEDIATELY, and it is load-bearing: on a systemd system
+		# every mount is shared, so a plain bind JOINS ITS SOURCE'S PEER GROUP
+		# — the bind of /boot/efi and the real /boot/efi become peers, and a
+		# mount event under one propagates to the other. The first end-to-end
+		# update run ended with the RUNNING MACHINE's ESP unmounted at
+		# activation time, after the dismount had taken the assembly apart
+		# (#104). A slave receives events and sends none, which is exactly the
+		# relationship a scaffold should have to the machine it is built
+		# against — the same reasoning the rbinds below have carried all
+		# along, now applied to every bind.
+		Invoke-OS7Native -Command 'mount' -Arguments @('--make-slave', ($Root + $mp)) `
 			-WhatIf:$WhatIf | Out-Null
 		$mounted.Add($Root + $mp)
 	}
@@ -1411,7 +1822,11 @@ function Get-OS7NewestKernel {
 		@{ Expression = { if ($_.Numbers.Count -gt 2) { $_.Numbers[2] } else { 0 } } },
 		@{ Expression = { if ($_.Numbers.Count -gt 3) { $_.Numbers[3] } else { 0 } } },
 		@{ Expression = { $_.Release } }
-	return ($sorted | Select-Object -Last 1).Release
+	# BUILD-NOTES #119: `$sorted` is empty whenever the caller had no releases
+	# to sort, and `$null.Release` under Set-StrictMode is a terminating error
+	# rather than the $null this returns everywhere else.
+	$newest = $sorted | Select-Object -Last 1
+	return $(if ($newest) { $newest.Release } else { $null })
 }
 
 
@@ -1570,7 +1985,16 @@ function Update-OS7 {
 		}
 
 		if ($Version) {
-			$target = $offered | Where-Object Version -eq $Version | Select-Object -First 1
+			# One version can be TWO entries when one repository serves both
+			# architectures (RELEASE-PROCESS §7.3). The machine's own comes
+			# first; the foreign one is kept as a fallback so the refusal
+			# below can name the real reason instead of "no such release".
+			$target = $offered |
+				Where-Object { $_.Version -eq $Version -and -not $_.ForeignArchitecture } |
+				Select-Object -First 1
+			if (-not $target) {
+				$target = $offered | Where-Object Version -eq $Version | Select-Object -First 1
+			}
 			if (-not $target) {
 				throw [System.InvalidOperationException]::new(
 					"the channel offers no release $Version. Get-OS7Release -Available lists " +
@@ -1609,6 +2033,32 @@ function Update-OS7 {
 			throw [System.InvalidOperationException]::new(
 				"$to is not newer than $from. This train moves forward only; to go back, " +
 				'use Restore-OS7.')
+		}
+
+		# One repository URL may serve both architectures (RELEASE-PROCESS.md
+		# §7.3). An explicit -Version reaches here past Applicable, so the
+		# mismatch is its own refusal — without it apt fails late, about
+		# unsatisfiable packages, on a machine that was told the release was
+		# for it.
+		if ($target.ForeignArchitecture) {
+			throw [System.InvalidOperationException]::new(
+				"$to is built for $($target.Architecture) and this machine is " +
+				"$((Get-OS7Version).Architecture). A release moves a machine within its " +
+				'own architecture; this is a different product.')
+		}
+
+		# §7: a hotfix overlays exactly the base release it names. Applying it
+		# to any other machine produces a system no descriptor describes — the
+		# overlay packages assume the base's package set, and the version
+		# number x.y.z.N+1 would claim a state the machine never held. An
+		# explicit -Version reaches here past Applicable, which is why this is
+		# its own refusal and not a filter.
+		if ($target.Hotfix -and
+				(Compare-OS7Version -Left $target.HotfixBase -Right $from) -ne 0) {
+			throw [System.InvalidOperationException]::new(
+				"$to is a hotfix of $($target.HotfixBase) and this machine runs $from. " +
+				"A hotfix overlays exactly the release it names (§7); update to " +
+				"$($target.HotfixBase) first, then apply the hotfix.")
 		}
 
 		# C7a is open. Every key that exists today is a development key, so this
@@ -2043,7 +2493,24 @@ function Update-OS7 {
 					Write-OS7Step 'the OS/7 apt source was this run only; removed from the environment'
 				}
 				else {
-					[System.IO.File]::WriteAllText($os7SrcPath, $os7SrcBefore)
+					# WITH THE TARGET'S SUITE, not the one the machine followed
+					# before. The environment being written IS the target
+					# release: a 1.0.x machine moving to 1.1.0 must wake up on
+					# `os7-1.1`, and the file being put back is a conffile
+					# Set-OS7UpdateChannel wrote with `os7-1.0` — kept by
+					# --force-confold across every later upgrade, so nothing
+					# downstream would ever correct it (RELEASE-PROCESS.md
+					# §7.2). Rewritten only when the suites differ, so an
+					# ordinary same-suite update restores the file byte for
+					# byte.
+					$restored = $os7SrcBefore
+					if ($suite -and $restored -match '(?m)^Suites:\s*(\S+)\s*$' -and
+							$Matches[1] -ne $suite) {
+						$restored = $restored -replace '(?m)^Suites:\s*\S+\s*$', "Suites: $suite"
+						Write-OS7Step ("the machine's OS/7 apt source moves to suite " +
+							"$suite with this release")
+					}
+					[System.IO.File]::WriteAllText($os7SrcPath, $restored)
 					Write-OS7Step "restored the environment's own OS/7 apt source"
 				}
 			}
@@ -2098,6 +2565,21 @@ function Update-OS7 {
 
 		Set-OS7BootEnvironment -Name $beName -Confirm:$false | Out-Null
 		$plan.Activated = $true
+
+		# WHAT THIS UPDATE CAME FROM, recorded as a fact — because the promote
+		# below ROTATES the ZFS ancestry: after it the new environment's origin
+		# is '-', the OLD one's origin points AT the new, and even sibling
+		# clones' origins move (all measured, BUILD-NOTES #107). Restore-OS7
+		# reads this property first; without it, "previous" degraded to an age
+		# heuristic that once rolled a machine back onto an experiment's
+		# leftover clone instead of the release the update was applied to.
+		try {
+			Set-ZfsProperty -Name "$($script:OS7RootParent)/$beName" `
+				-PropertyName 'org.os7:previous' -Value $fromBe.Name -Confirm:$false | Out-Null
+		}
+		catch {
+			Write-OS7Step "note: could not record the previous environment: $($_.Exception.Message)"
+		}
 
 		# ---- UL9's retention ----------------------------------------------
 		#
@@ -2204,11 +2686,36 @@ function Update-OS7 {
 		$half = if (Get-Variable -Name beName -Scope 0 -ErrorAction SilentlyContinue) { $beName } else { $null }
 		Write-OS7UpdateLog ("FAILED " + $_.Exception.Message.Replace("`n", ' ') +
 			$(if ($half) { "  left behind: $half" } else { '' }))
+		# FORENSICS FOR #104's open half: both end-to-end failures so far lost
+		# a RUNNING-SYSTEM mount (/boot/efi once, /boot once) somewhere around
+		# the dismount, at a point that moved between runs. Whatever the
+		# mechanism turns out to be, the next failure should carry the mount
+		# state out with it instead of leaving it to a later boot to infer.
+		foreach ($probe in @('/boot', '/boot/efi')) {
+			$state = try {
+				[string](Invoke-OS7Native -Command 'findmnt' -Arguments @('-no', 'SOURCE,FSTYPE', $probe))
+			} catch { 'NOT MOUNTED' }
+			Write-OS7UpdateLog "FAILED-state ${probe}: $state"
+		}
 		if ($half) {
-			Write-OS7Step ("the update failed. $half is built, INACTIVE and left in place " +
-				"as the evidence; this machine still boots what it booted. Clear it with " +
-				"Remove-OS7BootEnvironment -Name $half, and read " +
-				$script:OS7UpdateLog + '.')
+			# "Still boots what it booted" is a CLAIM, so ask the machine
+			# rather than assert it: an activation can fail AFTER its point of
+			# no return (the ESP stub rewrite), and then the new environment is
+			# what this machine boots, failure or not. The Menu property is
+			# read from the stub itself.
+			$switched = $false
+			try { $switched = [bool](Get-OS7BootEnvironment -Name $half).Menu } catch { }
+			if ($switched) {
+				Write-OS7Step ("the update failed AFTER activation's point of no return: " +
+					"the ESP already names $half and this machine will boot it. Read " +
+					$script:OS7UpdateLog + ' before rebooting.')
+			}
+			else {
+				Write-OS7Step ("the update failed. $half is built, INACTIVE and left in place " +
+					"as the evidence; this machine still boots what it booted. Clear it with " +
+					"Remove-OS7BootEnvironment -Name $half, and read " +
+					$script:OS7UpdateLog + '.')
+			}
 		}
 		throw
 	}
@@ -2402,6 +2909,22 @@ function Test-OS7Update {
 		}
 		catch { }
 		check 'a current index is accepted' ($null -ne $index)
+
+		# The document says which channel it is, and the fetch said which
+		# channel was wanted. Serving one channel's signed index under
+		# another's name must be a refusal — the signature proves authorship,
+		# not that this is the channel it was asked for.
+		$stablePath = [System.IO.Path]::Combine($repo, 'index', 'stable.json')
+		[System.IO.File]::Copy(
+			[System.IO.Path]::Combine($repo, 'index', 'development.json'), $stablePath, $true)
+		$threw = $false
+		try {
+			Get-OS7ReleaseIndex -BaseUri $repoUri -Channel 'stable' -WorkDir $tmp -SkipSignature | Out-Null
+		}
+		catch { $threw = $true }
+		check 'an index mislabelled as another channel is refused' $threw `
+			'a development listing served as stable would answer with the wrong population'
+		[System.IO.File]::Delete($stablePath)
 
 		# -------------------------------------------------------------------
 		# 6. A DESCRIPTOR IS BOUND TO THE INDEX THAT NAMED IT.

@@ -1,0 +1,16 @@
+OS7-STEP new boot environment demo from os7_1.0.0.175_202609030759
+ZFS-STEP snapshot rpool/ROOT/os7_1.0.0.175_202609030759@demo
+ParentContainsErrorRecordException: zfs snapshot -r rpool/ROOT/os7_1.0.0.175_202
+609030759@demo exited 1 cannot
+create snapshot 'rpool/ROOT/os7_1.0.0.175_202609030759@demo': dataset already
+exists cannot create snapshot 'rpool/ROOT/os7_1.0.0.175_202609030759/var@demo':
+dataset already exists cannot create snapshot
+'rpool/ROOT/os7_1.0.0.175_202609030759/var/cache@demo': dataset already exists
+cannot create snapshot 'rpool/ROOT/os7_1.0.0.175_202609030759/var/lib@demo':
+dataset already exists cannot create snapshot
+'rpool/ROOT/os7_1.0.0.175_202609030759/var/lib/apt@demo': dataset already
+exists cannot create snapshot
+'rpool/ROOT/os7_1.0.0.175_202609030759/var/lib/dpkg@demo': dataset already
+exists no snapshots were created
+
+PS /home/os7admin>

@@ -36,10 +36,13 @@ WHAT IT DOES NOT COVER, said plainly:
 """
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BUILD_IMAGE = "os7-build"
@@ -72,12 +75,24 @@ export DEBIAN_FRONTEND=noninteractive
 install -Dm644 /repo/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 cat > /etc/apt/apt.conf.d/99os7-check <<'CONF'
 Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";
+// --force-confold, because DEBIAN_FRONTEND=noninteractive does NOT cover
+// dpkg's conffile prompt: this harness writes its own os7.sources BEFORE
+// installing os7-release, which ships the same path as a CONFFILE, and the
+// first run after that change died with "end of file on stdin at conffile
+// prompt" — os7-release left unconfigured, and every identity check after it
+// reporting a machine that was never branded. Update-OS7's own apt runs
+// already carry exactly this option, for exactly this reason.
+Dpkg::Options { "--force-confdef"; "--force-confold"; };
 CONF
 
 # The machine takes its Ubuntu half from the PINNED SNAPSHOT, not from the live
 # archive. A container resolving os7-backup's `sanoid` out of today's archive
 # would be testing a machine OS/7 does not build.
 . /repo/pin.conf
+# The three versions this run built — the development release, the stable base,
+# and the hotfix of it. Written by the harness beside the repository; the pool
+# holds all three, so every install below PINS the version it means.
+. /repo/check-versions.conf
 cat > /etc/apt/sources.list.d/ubuntu.sources <<SRC
 Types: deb
 URIs: ${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}
@@ -111,9 +126,23 @@ say update.log "$(tail -4 /tmp/update.log)"
 say policy "$(apt-cache policy os7-base 2>/dev/null | tr -s ' ')"
 
 # ---------------------------------------------------------------------------
-# 2. Make it an OS/7 machine, in one apt operation.
+# 2. Make it an OS/7 machine, in one apt operation. Pinned to the development
+#    release: the pool also carries the stable base and the hotfix, and an
+#    unpinned install would take the newest and test a different question.
+#
+#    A preferences pin, not only `=version` — MEASURED: apt's resolver
+#    satisfies a strict `Depends (= old)` only from CANDIDATE versions, so
+#    `apt-get install os7-server=<old>` alone reports os7-base "is not
+#    selected for install" while the version sits in the pool. This is the
+#    same fact Update-OS7 pays for with its own preferences.d pin during a
+#    run, met here from the other side.
 # ---------------------------------------------------------------------------
-apt-get install -y -qq os7-server > /tmp/install.log 2>&1
+cat > /etc/apt/preferences.d/os7-check.pref <<PIN
+Package: os7-*
+Pin: version ${OS7_CHECK_DEV}
+Pin-Priority: 1001
+PIN
+apt-get install -y -qq "os7-server=${OS7_CHECK_DEV}" > /tmp/install.log 2>&1
 say install.rc "$?"
 say install.log "$(tail -12 /tmp/install.log)"
 
@@ -210,6 +239,38 @@ say setup.selftest "$(/usr/sbin/os7-setup --self-test 2>&1 | grep -c '^SELFTEST 
 say setup.selftest.bad "$(/usr/sbin/os7-setup --self-test 2>&1 | grep -c '^SELFTEST FAIL')"
 
 # ---------------------------------------------------------------------------
+# 6b. THE FIRSTBOOT MIGRATION RUNNER (C10 §6'), exercised out of its package.
+#     No systemd here — the SCRIPT is what decides everything the unit cannot,
+#     so the script is what is driven: once (it runs and stamps), again (it
+#     skips — CL8's rollback-then-re-update path, twice without harm), and
+#     once with a pending entry outside the directory os7-release owns, which
+#     must be a refusal — the pending file is an instruction to run code as
+#     root. UL1's script takes its no-LUKS path in a container, which is
+#     itself one of its honest exits.
+# ---------------------------------------------------------------------------
+MIG="$(ls /usr/lib/os7/migrations/ | grep -v README | head -1)"
+say runner.unit "$([ -f /usr/lib/systemd/system/os7-migrations-firstboot.service ] && echo yes || echo no)"
+say runner.wants "$(readlink /usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service 2>/dev/null)"
+say runner.script "$([ -x /usr/libexec/os7-migrate-firstboot ] && echo yes || echo no)"
+say runner.shipped "$(ls "/usr/lib/os7/migrations/${MIG}/firstboot/" 2>/dev/null)"
+mkdir -p /var/lib/os7/migrations
+printf '/usr/lib/os7/migrations/%s/firstboot/50-tpm2-reseal\n' "${MIG}" > /var/lib/os7/migrations/pending
+sh /usr/libexec/os7-migrate-firstboot > /tmp/runner1.log 2>&1
+say runner.first.rc "$?"
+say runner.first.log "$(tail -4 /tmp/runner1.log)"
+say runner.stamp "$([ -f "/var/lib/os7/migrations/${MIG}/50-tpm2-reseal" ] && echo yes || echo no)"
+say runner.pending.gone "$([ -e /var/lib/os7/migrations/pending ] && echo no || echo yes)"
+printf '/usr/lib/os7/migrations/%s/firstboot/50-tpm2-reseal\n' "${MIG}" > /var/lib/os7/migrations/pending
+sh /usr/libexec/os7-migrate-firstboot > /tmp/runner2.log 2>&1
+say runner.second.rc "$?"
+say runner.second.log "$(tail -3 /tmp/runner2.log)"
+printf '/tmp/not-a-migration\n' > /var/lib/os7/migrations/pending
+sh /usr/libexec/os7-migrate-firstboot > /tmp/runner3.log 2>&1
+say runner.refuse.rc "$?"
+say runner.refuse.log "$(tail -2 /tmp/runner3.log)"
+rm -f /var/lib/os7/migrations/pending
+
+# ---------------------------------------------------------------------------
 # 7. UL10, measured. base-files owns /usr/lib/os-release as a conffile, and
 #    before the divert every apt run that touched it could revert the branding.
 #    Reinstall it and ask the file what it says.
@@ -230,6 +291,42 @@ say divert.after "$(dpkg-divert --list '/usr/lib/os-release' 2>/dev/null)"
 say osrel.removed "$(. /etc/os-release 2>/dev/null; \
    printf 'NAME=%s ID=%s PRETTY_NAME=%s IMAGE_VERSION=%s' \
    "${NAME-}" "${ID-}" "${PRETTY_NAME-}" "${IMAGE_VERSION-}")"
+
+# ---------------------------------------------------------------------------
+# 8b. THE HOTFIX PATH (§7), APPLIED. The machine goes onto the stable BASE by
+#     exact version, and one `apt full-upgrade` then applies the hotfix: the
+#     os7-* packages move on the Build field alone, and the ONE overlay
+#     package — a snapshot package re-served newer from OS/7's own suite — is
+#     what UL3 is about: a security fix reaching a frozen archive without
+#     unfreezing it. Step 8 removed os7-release, so the source file it owned
+#     went with it; the harness's own copy goes back first.
+# ---------------------------------------------------------------------------
+cat > /etc/apt/sources.list.d/os7.sources <<SRC
+Types: deb
+URIs: file:///repo
+Suites: ${OS7_SUITE}
+Components: main
+Signed-By: /usr/share/keyrings/os7-archive-keyring.gpg
+SRC
+apt-get update -qq > /dev/null 2>&1
+cat > /etc/apt/preferences.d/os7-check.pref <<PIN
+Package: os7-*
+Pin: version ${OS7_CHECK_STABLE}
+Pin-Priority: 1001
+PIN
+apt-get install -y -qq "os7-server=${OS7_CHECK_STABLE}" > /tmp/hotfix-base.log 2>&1
+say hotfix.base.rc "$?"
+say hotfix.base.log "$(tail -6 /tmp/hotfix-base.log)"
+say hotfix.mid "$(dpkg-query -W -f='${Version}' os7-base 2>/dev/null)"
+# The pin comes out for the upgrade: from here the machine follows the suite,
+# and the newest release in it is the hotfix.
+rm -f /etc/apt/preferences.d/os7-check.pref
+apt-get full-upgrade -y -qq > /tmp/hotfix-up.log 2>&1
+say hotfix.upgrade.rc "$?"
+say hotfix.upgrade.log "$(tail -6 /tmp/hotfix-up.log)"
+say hotfix.final "$(dpkg-query -W -f='${Version}' os7-base 2>/dev/null)"
+say hotfix.less "$(dpkg-query -W -f='${Version}' less 2>/dev/null)"
+say hotfix.reljson "$(grep -o '"version": *"[^"]*"' /usr/lib/os7/release.json 2>/dev/null | head -1)"
 
 # ---------------------------------------------------------------------------
 # 9. THE NEGATIVE CHECK. Swap the trust anchor for a key that did not sign this
@@ -279,6 +376,47 @@ apt-get update \
 	-o Dir::Etc::sourceparts=/dev/null \
 	> /tmp/update-good.log 2>&1
 say goodkey.rc "$?"
+"""
+
+
+# The hotfix overlay: one package out of the pinned snapshot, re-versioned so
+# it sorts newer. Runs in the plain test image with the same trust-store and
+# snapshot-source dance the probe does, because ubuntu:26.04 ships no CA
+# certificates and no pinned sources.
+HOTFIX_PREP = r"""
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+install -Dm644 /repo/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+cat > /etc/apt/apt.conf.d/99os7-check <<'CONF'
+Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";
+CONF
+. /repo/pin.conf
+cat > /etc/apt/sources.list.d/ubuntu.sources <<SRC
+Types: deb
+URIs: ${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_SNAPSHOT}
+Suites: ${OS7_DISTRIBUTION} ${OS7_DISTRIBUTION}-updates ${OS7_DISTRIBUTION}-security
+Components: main universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+SRC
+rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.list 2>/dev/null
+apt-get update -qq > /dev/null 2>&1
+cd /tmp
+apt-get download less > /dev/null 2>&1
+deb=$(ls less_*.deb)
+arch="${deb##*_}"; arch="${arch%.deb}"
+dpkg-deb -R "$deb" d
+sed -i 's/^Version: .*/&+os7hf1/' d/DEBIAN/control
+mkdir -p /repo/.hotfix
+rm -f /repo/.hotfix/*.deb
+# name_version_arch.deb, with +os7hf1 in the VERSION segment where it belongs.
+# apt-ftparchive --arch keys on the FILENAME's architecture segment (measured
+# 2026-09-01: a control field saying amd64 does not rescue a file whose name
+# says amd64+os7hf1), so the first spelling of this line — appending after the
+# arch — silently dropped the overlay out of every per-arch index, and the
+# builder's own read-back was what caught it.
+out="${deb%_*}+os7hf1_${arch}.deb"
+dpkg-deb -b --root-owner-group d "/repo/.hotfix/${out}" > /dev/null
+dpkg-deb -f "/repo/.hotfix/${out}" Version
 """
 
 
@@ -362,31 +500,16 @@ def source_facts():
     return None
 
 
-def hook_dropin():
-    """The PowerShell hand-off drop-in as hook 0050 writes it.
-
-    THE SAME FILE EXISTS TWICE UNTIL THE ISO SWITCHES OVER: as a heredoc inside
-    build/config/hooks/0050-powershell-interactive-shell.hook.chroot, which is
-    how it reaches an ISO today, and as
-    build/packages/os7-powershell/95-os7-powershell.sh, which is how it reaches
-    a machine through the package. Two copies of five guards, each of which
-    exists to avoid breaking something specific, is exactly the drift C7 was
-    written to end — so until one of them goes, they are compared here and a
-    difference is a failure rather than a surprise on some machine.
-    """
+def hook_0050_carries_no_copy():
+    """The PowerShell hand-off drop-in has ONE source since 2026-08-28: the
+    os7-powershell package. Hook 0050 used to carry a second copy as a heredoc
+    — how it reached an ISO before the ISO installed the packages — and this
+    harness compared the two byte for byte to contain the drift. The seam is
+    closed by deletion; what is asserted now is that it STAYS closed."""
     path = os.path.join(REPO, "build", "config", "hooks",
                         "0050-powershell-interactive-shell.hook.chroot")
-    out, inside = [], False
     with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            if not inside:
-                if "<<'DROPIN'" in line:
-                    inside = True
-                continue
-            if line.rstrip("\n") == "DROPIN":
-                break
-            out.append(line)
-    return "".join(out)
+        return "DROPIN" not in fh.read()
 
 
 def parse(stdout):
@@ -397,6 +520,11 @@ def parse(stdout):
             facts[key] = value.replace("~", "\n").strip()
     return facts
 
+
+# The channel every build in this file goes into, and the index the §7.3
+# assertions read. Named here rather than inherited from the pin — see the
+# comment at the first build.
+DEV_CHANNEL = "development"
 
 def main():
     ap = argparse.ArgumentParser()
@@ -443,6 +571,25 @@ def main():
                  # disabled. This run is the case where there IS somewhere to
                  # point it.
                  "-e", "OS7_REPO_ENABLED=yes",
+                 # THE CHANNEL IS NAMED HERE, and it was not until 2026-09-09.
+                 #
+                 # This run used to inherit whatever OS7_CHANNEL the pin held,
+                 # while the second-architecture merge below hard-codes
+                 # `development` and the §7.3 assertions read development.json.
+                 # That agreed while the pin said `development` — it did at
+                 # f2a8217, when those assertions were written and green — and
+                 # stopped agreeing at 934eba0, which turned 1.0.0 into a
+                 # `preview`. The two architectures of one version then landed
+                 # in two different channel indexes and
+                 # "the index holds one entry per (version, architecture)"
+                 # failed with `arm64`: the amd64 entry was in preview.json,
+                 # which nothing here reads.
+                 #
+                 # A check that inherits a value it does not name goes red for
+                 # a reason that has nothing to do with what it checks, and
+                 # this one went red for eleven days without anybody running
+                 # it. The channel names it asserts are now its own.
+                 "-e", f"OS7_CHANNEL={DEV_CHANNEL}",
                  f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
                  "/work/build/lib/build-os7-repo.sh "
                  "/work/build/config/os7-release.conf /out"])
@@ -470,6 +617,91 @@ def main():
     with open(os.path.join(repo_dir, "ca-certificates.crt"), "w", newline="\n") as fh:
         fh.write(ca.stdout)
 
+    # -- the second channel, and the hotfix of it (§7) -----------------------
+    #
+    # Three more builder runs against the SAME output directory, which is the
+    # normal case for a repository — it accumulates. The stable base and the
+    # hotfix are cut at Build+1 and Build+2: versions the tree does not have,
+    # standing in for the next two builds, which is what a hotfix is. os7-setup
+    # is left out of both (OS7_REPO_PACKAGES) because it is the NativeAOT
+    # compile — the expensive half of this harness — and it is deliberately
+    # not a member of os7-base, so nothing below resolves against it.
+    v_stable = f"1.0.0.{int(build_no) + 1}"
+    v_hotfix = f"1.0.0.{int(build_no) + 2}"
+    with open(os.path.join(repo_dir, "check-versions.conf"), "w", newline="\n") as fh:
+        fh.write(f'OS7_CHECK_DEV="{version}"\n'
+                 f'OS7_CHECK_STABLE="{v_stable}"\n'
+                 f'OS7_CHECK_HOTFIX="{v_hotfix}"\n')
+    subset = ("os7-release os7-console os7-module os7-powershell os7-backup "
+              "os7-base os7-server os7-desktop")
+
+    # The overlay package: `less` out of the pinned snapshot — it is a Depends
+    # of os7-powershell, so the probe machine HAS it, and full-upgrade taking
+    # the overlay over the snapshot's version is exactly UL3's mechanism. The
+    # version gains +os7hf1, which sorts newer; the .deb is otherwise
+    # Canonical's bytes, which is C1's re-host degree.
+    print("      preparing the hotfix overlay (less, re-versioned)")
+    prep = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                "-v", f"{repo_dir}:/repo", TEST_IMAGE, "bash", "-c", HOTFIX_PREP])
+    hotfix_debs = [n for n in os.listdir(os.path.join(repo_dir, ".hotfix"))
+                   if n.endswith(".deb")] if os.path.isdir(
+                       os.path.join(repo_dir, ".hotfix")) else []
+    if prep.returncode != 0 or len(hotfix_debs) != 1:
+        print(prep.stdout[-2000:])
+        print(prep.stderr[-1500:], file=sys.stderr)
+        print("      FAIL  the hotfix overlay package could not be prepared")
+        sys.exit(1)
+
+    def build_more(ver, channel, extra_env=(), expect_fail=False, label="",
+                   arch=None):
+        # `arch` overrides what the packages are LABELLED as, not where the
+        # builder runs: the container stays this host's platform, because
+        # dpkg-deb composes a foreign-architecture package without emulation
+        # and os7-setup — the one true compile — is not in the subset.
+        got = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                   "-v", f"{REPO}:/work", "-v", f"{repo_dir}:/out",
+                   *source_env,
+                   "-e", f"OS7_VERSION={ver}", "-e", f"OS7_ARCH={arch or args.arch}",
+                   "-e", "OS7_REPO_URI=file:///repo", "-e", "OS7_REPO_ENABLED=yes",
+                   "-e", f"OS7_CHANNEL={channel}",
+                   "-e", f"OS7_REPO_PACKAGES={subset}",
+                   *extra_env,
+                   f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
+                   "/work/build/lib/build-os7-repo.sh "
+                   "/work/build/config/os7-release.conf /out"])
+        if not expect_fail and got.returncode != 0:
+            print(got.stdout[-3000:])
+            print(got.stderr[-2000:], file=sys.stderr)
+            print(f"      FAIL  {label or ver} did not build")
+            sys.exit(1)
+        return got
+
+    print(f"      building the stable base — OS/7 {v_stable} (channel stable)")
+    build_more(v_stable, "stable", label="the stable base")
+
+    # The builder's own refusals, seen to fire before the real hotfix build:
+    # a base this repository does not hold, and a version that moves more than
+    # the Build field. Both are cheap — they refuse before any package builds.
+    bad_base = build_more(v_hotfix, "stable", expect_fail=True,
+                          extra_env=("-e", "OS7_HOTFIX_BASE=1.0.0.1"))
+    bad_span = build_more("1.1.0.5", "stable", expect_fail=True,
+                          extra_env=("-e", f"OS7_HOTFIX_BASE={v_stable}"))
+
+    print(f"      building the hotfix — OS/7 {v_hotfix} on {v_stable}")
+    build_more(v_hotfix, "stable", label="the hotfix",
+               extra_env=("-e", f"OS7_HOTFIX_BASE={v_stable}",
+                          "-e", f"OS7_HOTFIX_DEBS=/out/.hotfix/{hotfix_debs[0]}"))
+
+    # -- the OTHER architecture, into the SAME tree (RELEASE-PROCESS §7.3) ---
+    # This is the merge the release process needs: one tree serving both
+    # architectures from one URL. It runs BEFORE the probe on purpose — the
+    # probe then installs on this host's architecture from a tree whose
+    # indices, Release and arch:all packages the other architecture's run
+    # rewrote LAST, which is exactly the property a two-run tree has to hold.
+    other = "arm64" if args.arch == "amd64" else "amd64"
+    print(f"      merging the second architecture — OS/7 {version} ({other})")
+    build_more(version, DEV_CHANNEL, label=f"the {other} merge", arch=other)
+
     print(f"      installing from it in a clean {TEST_IMAGE}")
     got = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
                "-v", f"{repo_dir}:/repo:ro", TEST_IMAGE, "bash", "-c", PROBE])
@@ -487,6 +719,131 @@ def main():
         print(f"      {'ok  ' if ok else 'FAIL'}  {what}" + (f" — {detail}" if detail else ""))
         if not ok:
             bad += 1
+
+    # -- the channels, read off the repository itself ------------------------
+    print("\n  two channels, one repository")
+    with open(os.path.join(repo_dir, "index", f"{DEV_CHANNEL}.json")) as fh:
+        dev_idx = json.load(fh)
+    with open(os.path.join(repo_dir, "index", "stable.json")) as fh:
+        st_idx = json.load(fh)
+    check(dev_idx.get("channel") == DEV_CHANNEL
+          and st_idx.get("channel") == "stable",
+          "each index says the channel its filename claims")
+    check(os.path.exists(os.path.join(repo_dir, "index", "development.json.asc"))
+          and os.path.exists(os.path.join(repo_dir, "index", "stable.json.asc")),
+          "and both are signed")
+    dev_versions = [r.get("version") for r in dev_idx.get("releases", [])]
+    st_versions = [r.get("version") for r in st_idx.get("releases", [])]
+    check(version in dev_versions and version not in st_versions,
+          f"the development channel offers {version} and stable does not")
+    check(st_versions[:2] == [v_hotfix, v_stable],
+          f"stable offers the hotfix over its base — {', '.join(st_versions)}")
+    hf_entry = next((r for r in st_idx.get("releases", [])
+                     if r.get("version") == v_hotfix), {})
+    base_entry = next((r for r in st_idx.get("releases", [])
+                       if r.get("version") == v_stable), {})
+    check(hf_entry.get("hotfix_base") == v_stable
+          and base_entry.get("hotfix_base") is None,
+          "the index entry says what the hotfix sits on, and the base says nothing")
+    check(hf_entry.get("supersedes") == v_stable, "and that it supersedes it")
+
+    # -- the hotfix descriptor, and the overlay it binds ---------------------
+    # The architecture is in the descriptor's PATH since RELEASE-PROCESS §7.3:
+    # two architectures at one version are two descriptors, not one file the
+    # second build overwrites.
+    print("\n  the hotfix descriptor (§7)")
+    with open(os.path.join(repo_dir, "releases", v_hotfix, args.arch,
+                           "release.json")) as fh:
+        hf_desc = json.load(fh)
+    hf_block = hf_desc.get("hotfix") or {}
+    overlay = hf_block.get("packages") or []
+    check(hf_block.get("base") == v_stable,
+          "the descriptor names its base", str(hf_block.get("base")))
+    check(len(overlay) == 1 and overlay[0].get("package") == "less",
+          "exactly one overlay package, and it is the one that was built",
+          ", ".join(p.get("package", "?") for p in overlay))
+    if overlay:
+        pool_path = os.path.join(repo_dir, *overlay[0]["filename"].split("/"))
+        with open(pool_path, "rb") as fh:
+            got_sha = hashlib.sha256(fh.read()).hexdigest()
+        check(got_sha == overlay[0].get("sha256"),
+              "and the descriptor's hash is the pool file's",
+              got_sha[:16] + "…")
+    comp = {c.get("package"): c.get("degree") for c in hf_desc.get("components", [])}
+    check(comp.get("less") == "re-host" and comp.get("os7-module") == "rebuild",
+          "the components list carries the overlay at the re-host degree (C1)")
+
+    # -- one tree, two architectures (RELEASE-PROCESS §7.3) ------------------
+    print("\n  one tree, two architectures (§7.3)")
+    with open(os.path.join(repo_dir, "dists", "os7-1.0", "Release")) as fh:
+        release_file = fh.read()
+    check(any(l.strip() == "Architectures: amd64 arm64"
+              for l in release_file.splitlines()),
+          "the Release names BOTH architectures — apt refuses one it does not name",
+          next((l.strip() for l in release_file.splitlines()
+                if l.startswith("Architectures:")), "(no Architectures line)"))
+    check(os.path.exists(os.path.join(repo_dir, "releases", version, args.arch,
+                                      "release.json"))
+          and os.path.exists(os.path.join(repo_dir, "releases", version, other,
+                                          "release.json")),
+          "two descriptors at one version, each under its own architecture")
+
+    both = [r for r in dev_idx.get("releases", []) if r.get("version") == version]
+    check(len(both) == 2 and
+          {r.get("architecture") for r in both} == {"amd64", "arm64"},
+          "the index holds one entry per (version, architecture)",
+          ", ".join(sorted(str(r.get("architecture")) for r in both)))
+    check(all(r.get("manifest") ==
+              "releases/%s/%s/release.json" % (version, r.get("architecture"))
+              for r in both),
+          "and each entry names its own architecture's descriptor")
+    merged_entry = next((r for r in both if r.get("architecture") == other), {})
+    check(merged_entry.get("supersedes") is None,
+          "the merge run supersedes nothing — the other architecture's history "
+          "is another machine's story")
+
+    # THE HASHES ARE THE POOL'S, IN EVERY INDEX. Eight of the ten packages are
+    # arch:all, rebuilt under ONE filename by either run — so after the merge
+    # run replaced them, an index this run did NOT regenerate would record
+    # hashes of files that no longer exist, and apt on that architecture would
+    # refuse every install with a hash-sum mismatch.
+    all_deb = None
+    pool_o = os.path.join(repo_dir, "pool", "main", "o", "os7-release")
+    for name in sorted(os.listdir(pool_o) if os.path.isdir(pool_o) else []):
+        if name == f"os7-release_{version}_all.deb":
+            all_deb = os.path.join(pool_o, name)
+    if all_deb:
+        with open(all_deb, "rb") as fh:
+            pool_sha = hashlib.sha256(fh.read()).hexdigest()
+        stale = []
+        for a in ("amd64", "arm64"):
+            pk = os.path.join(repo_dir, "dists", "os7-1.0", "main",
+                              f"binary-{a}", "Packages")
+            recorded = ""
+            with open(pk) as fh:
+                for stanza in fh.read().split("\n\n"):
+                    if f"os7-release_{version}_all.deb" not in stanza:
+                        continue
+                    recorded = next((l.split(": ", 1)[1]
+                                     for l in stanza.splitlines()
+                                     if l.startswith("SHA256: ")), "")
+            if recorded != pool_sha:
+                stale.append(a)
+        check(not stale,
+              "every architecture's Packages records the pool file that is THERE "
+              "— the merge run regenerated both",
+              ("stale: " + ", ".join(stale)) if stale else pool_sha[:16] + "…")
+    else:
+        check(False, "os7-release_%s_all.deb is in the pool" % version)
+
+    # -- what the builder refuses --------------------------------------------
+    print("\n  what the builder refuses")
+    check(bad_base.returncode != 0 and "not in this repository" in
+          (bad_base.stdout + bad_base.stderr),
+          "a hotfix of a base this repository does not hold")
+    check(bad_span.returncode != 0 and "Build field alone" in
+          (bad_span.stdout + bad_span.stderr),
+          "a hotfix that moves more than the Build field")
 
     # -- trust --------------------------------------------------------------
     print("\n  the repository")
@@ -588,15 +945,10 @@ def main():
     check("OS7_BASH=" in f.get("handoff.optout", ""),
           "and OS7_NO_PWSH still gives bash", f.get("handoff.optout", "")[:60])
 
-    # The two copies of the drop-in, while there are two. See hook_dropin().
-    with open(os.path.join(REPO, "build", "packages", "os7-powershell",
-                           "95-os7-powershell.sh"), encoding="utf-8") as fh:
-        packaged = fh.read()
-    hooked = hook_dropin()
-    check(bool(hooked) and packaged.strip() == hooked.strip(),
-          "the packaged drop-in is byte-identical to hook 0050's",
-          "identical" if packaged.strip() == hooked.strip()
-          else f"packaged {len(packaged)}B vs hook {len(hooked)}B")
+    # One source for the drop-in, and it stays that way. See
+    # hook_0050_carries_no_copy().
+    check(hook_0050_carries_no_copy(),
+          "hook 0050 carries no second copy of the drop-in — the package is the source")
 
     # -- the installer ------------------------------------------------------
     print("\n  os7-setup, out of its package — not a member of os7-base")
@@ -607,6 +959,48 @@ def main():
     check(f.get("setup.selftest.bad") == "0" and int(f.get("setup.selftest") or 0) > 20,
           "os7-setup --self-test is clean",
           f"{f.get('setup.selftest')} ok, {f.get('setup.selftest.bad')} failed")
+
+    # -- the firstboot migration runner (C10 §6') ----------------------------
+    print("\n  the firstboot migration runner")
+    check(f.get("runner.unit") == "yes" and f.get("runner.script") == "yes",
+          "the unit and the runner ship in os7-release")
+    check("os7-migrations-firstboot.service" in f.get("runner.wants", ""),
+          "enabled by shipped symlink, exactly as the backup units are",
+          f.get("runner.wants", "") or "(no symlink)")
+    check("50-tpm2-reseal" in f.get("runner.shipped", ""),
+          "the release ships UL1 under its own version",
+          f.get("runner.shipped", "") or "(nothing shipped)")
+    check(f.get("runner.first.rc") == "0" and "ran " in f.get("runner.first.log", ""),
+          "a pending firstboot migration runs",
+          f.get("runner.first.log", "")[-120:])
+    check(f.get("runner.stamp") == "yes" and f.get("runner.pending.gone") == "yes",
+          "the run is stamped and the pending record is cleared")
+    check(f.get("runner.second.rc") == "0" and "already ran" in f.get("runner.second.log", ""),
+          "a second run skips it — twice, without harm (CL8)",
+          f.get("runner.second.log", "")[-120:])
+    check(f.get("runner.refuse.rc") not in ("0", None)
+          and "REFUSED" in f.get("runner.refuse.log", ""),
+          "a pending entry outside /usr/lib/os7/migrations is refused, not run",
+          f.get("runner.refuse.log", "")[-120:])
+
+    # -- the hotfix path, applied by apt -------------------------------------
+    print("\n  the hotfix path, applied — one package on a frozen snapshot (UL3)")
+    check(f.get("hotfix.base.rc") == "0",
+          f"the stable base installs by exact version",
+          f.get("hotfix.base.log", "").replace("~", " | ")[-160:])
+    check(f.get("hotfix.mid", "") == v_stable,
+          f"and the machine sits on {v_stable}", f.get("hotfix.mid", ""))
+    check(f.get("hotfix.upgrade.rc") == "0", "one apt full-upgrade applies the hotfix",
+          f.get("hotfix.upgrade.log", "").replace("~", " | ")[-160:])
+    check(f.get("hotfix.final", "") == v_hotfix,
+          f"os7-base moved to {v_hotfix} — the Build field alone",
+          f.get("hotfix.final", ""))
+    check(f.get("hotfix.less", "").endswith("+os7hf1"),
+          "the overlay package took precedence over the frozen snapshot's",
+          f.get("hotfix.less", ""))
+    check(v_hotfix in f.get("hotfix.reljson", ""),
+          "and the machine's release.json names the hotfix",
+          f.get("hotfix.reljson", ""))
 
     # -- the negative check -------------------------------------------------
     print("\n  and a repository it cannot verify is REFUSED")
@@ -624,6 +1018,101 @@ def main():
     check(f.get("goodkey.rc") == "0",
           "while the same isolated update with the right key still succeeds",
           f"exit {f.get('goodkey.rc')}")
+
+    # -- the builder's REFUSAL, in both directions (BUILD-NOTES #143) ---------
+    #
+    # RELEASE-PROCESS §4.2 requires that a build cannot silently produce a
+    # medium without a credential its repository needs. That refusal is the one
+    # piece of the §4.2 work whose whole job is to FAIL, and on the day it was
+    # written nothing exercised it: the run above hands an overridden
+    # OS7_REPO_URI in, so it walks the not-firing branch and never visits the
+    # other one. The first input that reached the firing branch was run-s5.py's
+    # own HTTP mirror, which it refused — a scheme is not a server.
+    #
+    # So both directions are asserted here, on os7-release alone (seconds: no
+    # pwsh tarball, no fonts), against a real container and a real dpkg-deb.
+    print("\n  the builder's credential refusal, both ways")
+    ref_dir = tempfile.mkdtemp(prefix="os7-refusal-")
+    cred = os.path.join(ref_dir, "storagebox.conf")
+    with open(cred, "w", newline="\n") as fh:
+        fh.write("OS7_SB_HOST=box.invalid\n"
+                 "OS7_SB_REPO_USER=probe-user\n"
+                 "OS7_SB_REPO_PASSWORD=probe-secret-9134\n")
+
+    def build_release(extra_env, name):
+        """build-os7-packages.sh for os7-release only. Returns (rc, log, deb).
+
+        THE TRUST ANCHOR IS HANDED IN, from the repository this run already
+        built. os7-release refuses to exist without one (§6.3) — a package
+        shipped keyless leaves every machine unable to verify an update — and
+        that refusal comes BEFORE the credential logic under test, so without
+        this the four cases below would all fail for the wrong reason. Which is
+        what they did the first time they ran.
+        """
+        out = os.path.join(ref_dir, name)
+        os.makedirs(out, exist_ok=True)
+        r = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                 "-v", f"{REPO}:/work", "-v", f"{ref_dir}:/cred:ro",
+                 "-v", f"{repo_dir}:/repo:ro", "-v", f"{out}:/out",
+                 "-e", "OS7_REPO_PUBKEY=/repo/keyring/os7-archive-keyring.gpg",
+                 "-e", f"OS7_VERSION={version}", "-e", f"OS7_ARCH={args.arch}",
+                 "-e", f"OS7_CHANNEL={DEV_CHANNEL}",
+                 *[a for kv in extra_env.items() for a in ("-e", f"{kv[0]}={kv[1]}")],
+                 f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
+                 "/work/build/lib/build-os7-packages.sh "
+                 "/work/build/config/os7-release.conf /out os7-release"])
+        deb = os.path.join(out, f"os7-release_{version}_all.deb")
+        return r.returncode, (r.stdout or "") + (r.stderr or ""), deb
+
+    def deb_has_credential(deb):
+        if not os.path.exists(deb):
+            return None
+        r = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                 "-v", f"{os.path.dirname(deb)}:/d:ro",
+                 f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
+                 f"dpkg-deb -c /d/{os.path.basename(deb)} "
+                 "| grep ' ./etc/apt/auth.conf.d/os7.conf' || true"])
+        return (r.stdout or "").strip()
+
+    pin_auth = ""
+    with open(os.path.join(REPO, "build", "config", "os7-release.conf")) as fh:
+        for line in fh:
+            if line.startswith("OS7_REPO_AUTH="):
+                pin_auth = line.split("=", 1)[1].strip().strip('"')
+    check(pin_auth == "yes",
+          "the pin declares its server needs a credential — the premise of all this",
+          f"OS7_REPO_AUTH={pin_auth or '(unset)'}")
+
+    # IT FIRES: the pin's own URI, the pin's declaration, no credential.
+    rc, log, _ = build_release({}, "refuse")
+    check(rc != 0 and "OS7_REPO_AUTH=yes" in log,
+          "no credential for the pin's own URI is REFUSED",
+          (["(no !!! line)"] + [l for l in log.splitlines() if l.startswith("!!!")])[-1][:110])
+
+    # IT DOES NOT FIRE on an overridden URI. This is #143's exact input — the
+    # case that was refused, and the case run-s5.py needs to build at all.
+    rc, log, deb = build_release({"OS7_REPO_URI": "http://10.0.2.2:8907"}, "override")
+    check(rc == 0, "an OVERRIDDEN URI builds without one — a scheme is not a server",
+          (log.strip().splitlines() or [""])[-1][:110])
+    check(deb_has_credential(deb) == "",
+          "and ships no credential, since none was given for that server")
+
+    # THE OPT-OUT works on the pin's URI too, and still ships nothing.
+    rc, log, deb = build_release({"OS7_REPO_NO_CREDENTIAL": "1"}, "optout")
+    check(rc == 0, "OS7_REPO_NO_CREDENTIAL=1 is the deliberate way past it",
+          (log.strip().splitlines() or [""])[-1][:110])
+    check(deb_has_credential(deb) == "", "and it ships no credential either")
+
+    # AND THE SATISFIED CASE: a credential handed in is written, 0600, in the deb.
+    rc, log, deb = build_release(
+        {"OS7_REPO_CREDENTIAL_FILE": "/cred/storagebox.conf"}, "satisfied")
+    line = deb_has_credential(deb) or ""
+    check(rc == 0 and line.startswith("-rw-------"),
+          "a credential handed in ships at 0600, asked of the .deb",
+          line.split()[0] if line else "(absent)")
+    check("probe-secret" not in log,
+          "and the build never printed the password")
+    shutil.rmtree(ref_dir, ignore_errors=True)
 
     print()
     if bad:

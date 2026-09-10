@@ -366,8 +366,7 @@ function Get-OS7BackupTarget {
 						# sanoid's units force TZ=UTC, so two clocks appear in
 						# one machine's snapshot names and neither is safe to
 						# subtract from the other.
-						$theirGuid = (Get-ZfsProperty -Name $newest.Name -Property guid @remote |
-							Where-Object Name -eq 'guid' | Select-Object -First 1).Value
+						$theirGuid = Get-OS7ZfsPropertyValue -Name $newest.Name -Property 'guid' -Remote $remote
 						if ($theirGuid) {
 							if (-not $policy) { $policy = Get-OS7BackupPolicy }
 							$mine = @(foreach ($s in $policy.Sources) {
@@ -376,8 +375,7 @@ function Get-OS7BackupTarget {
 									}
 								})
 							foreach ($m in $mine) {
-								$g = (Get-ZfsProperty -Name $m.Name -Property guid |
-									Where-Object Name -eq 'guid' | Select-Object -First 1).Value
+								$g = Get-OS7ZfsPropertyValue -Name $m.Name -Property 'guid'
 								if ($g -and [string]$g -eq [string]$theirGuid) { $obj.InSync = $true; break }
 							}
 						}

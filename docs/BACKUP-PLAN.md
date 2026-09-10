@@ -495,7 +495,7 @@ back-to-bash means here.
 
 ## 11. The finding that limits what this is worth today
 
-### B-Q1 — FIXED IN CODE 2026-08-26, STILL OPEN: `/home/<user>` is not on a USERDATA dataset
+### B-Q1 — FIXED 2026-08-26, MEASURED ON A MACHINE 2026-08-30; the MIGRATION half is still open: `/home/<user>` is not on a USERDATA dataset
 
 **Measured 2026-08-25**, and it is not a backup bug:
 
@@ -556,6 +556,38 @@ gate; `installer/testing/check-home-logic.py` is what exists in the meantime —
 the real cmdlets against a fake `zfs` whose datasets are real tmpfs mounts, 45
 checks, green in about four seconds, and it found two bugs while being written.
 It checks OS/7's decisions. A machine checks the machine.
+
+#### 2026-08-30 — the INSTALLER half is now measured on a machine; the MIGRATION half is not
+
+A machine checks the machine, and one finally did. `os7lab.py install` built an
+OS/7 1.0.0.161 machine on the x64 Windows host, and on it:
+
+```
+Get-OS7Home  ->  Path          : /home/os7admin
+                 Dataset       : rpool/USERDATA/os7admin_8caded3b
+                 OwnDataset    : True
+                 OwnFilesystem : True
+                 Agrees        : True
+                 Note          : on its own dataset, outside the boot environment
+
+findmnt      ->  rpool/USERDATA/os7admin_8caded3b /home/os7admin zfs
+zfs list     ->  rpool/USERDATA/os7admin_8caded3b  /home/os7admin
+                 rpool/USERDATA/root_8caded3b      /root
+```
+
+`Agrees: True` is the part worth reading: ZFS and `stat(2)` were asked
+separately and said the same thing, which is what this cmdlet exists to
+distinguish. **So the installer half of B-Q1 is closed** — the home an OS/7
+install produces is outside the boot environment, a rollback cannot un-say it,
+and a snapshot policy can reach it.
+
+It did not need `run-phase3.py all` in the end, and that is the wider point:
+what it needed was a booted machine and a question, which the workbench makes
+cheap ([SESSION-WORKBENCH.md](SESSION-WORKBENCH.md)).
+
+**`Move-OS7Home` is still unverified** against real ZFS, so the migration for
+machines installed before 2026-08-26 remains open, and B-6 remains its gate.
+Those are two claims and only one of them has moved.
 
 ---
 

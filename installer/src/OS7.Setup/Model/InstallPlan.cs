@@ -43,6 +43,16 @@ internal sealed class InstallPlan
     public NetworkPlan Network { get; set; } = new();
 
     /// <summary>
+    /// Screen 9D — the Active Directory domain, if any. SETUP-PLAN D16.
+    ///
+    /// After the network and not before it: a join needs DNS, a route and a
+    /// clock, so the question cannot be asked until the answers to screen 9
+    /// exist. The default is not to join, which is what every machine this
+    /// installer has produced so far does.
+    /// </summary>
+    public DomainPlan Domain { get; set; } = new();
+
+    /// <summary>
     /// The netplan renderer, DERIVED FROM <see cref="Mode"/> and from nothing
     /// else — D14, and L24 is what it costs to get wrong.
     ///
@@ -85,6 +95,10 @@ internal sealed class InstallPlan
     /// Phase 3b added the network half here and NOWHERE ELSE, for the same
     /// reason. Screens 9, 9S and 9W each refuse only their own fields; the
     /// network is checked as a whole at the same two moments as everything else.
+    ///
+    /// The domain half (screen 9D) is here on the same terms, and it is the
+    /// cheapest possible line: a plan that is not joining a domain has nothing
+    /// to check, so `DomainPlan.Validate` returns immediately.
     /// </summary>
     public bool Validate(out List<string> problems)
     {
@@ -93,6 +107,7 @@ internal sealed class InstallPlan
         Storage.Validate(problems);
         Account.Validate(problems);
         Network.Validate(problems);
+        Domain.Validate(problems);
         return problems.Count == 0;
     }
 

@@ -1,7 +1,10 @@
-# OS/7 — the container `check-home-logic.py` runs in.
+# OS/7 — the container `check-home-logic.py` runs in, and — on Windows only —
+# `check-be-logic.py` too, because a Windows host cannot start the POSIX fakes
+# that check puts on PATH (BUILD-NOTES #121 is what running it there anyway
+# found). On macOS check-be-logic still runs on the host.
 #
-# WHY A CONTAINER AT ALL, when check-be-logic.py runs on the host: this one
-# needs two things macOS does not have. GNU `find -printf`, `diff
+# WHY A CONTAINER AT ALL for check-home-logic: it needs two things macOS does
+# not have. GNU `find -printf`, `diff
 # --no-dereference` and `stat -c` are what Move-OS7Home verifies a copy with —
 # BSD equivalents do not take those options — and the whole point of the check
 # is that the migrated home really is a SEPARATE FILESYSTEM, which needs

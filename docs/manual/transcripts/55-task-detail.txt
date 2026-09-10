@@ -1,0 +1,16 @@
+Name        : sanoid.timer
+Description : Run Sanoid Every 15 Minutes
+NextRun     : 09/09/2026 20:00:00
+LastRun     : 09/09/2026 19:47:52
+LastResult  : success
+Activates   : sanoid.service
+StartupType : enabled
+ActiveState : active
+SubState    : waiting
+Schedule    : *-*-* *:00/15:00
+Persistent  : True
+IsOS7       : True
+Healthy     : True
+
+
+PS /home/os7admin>

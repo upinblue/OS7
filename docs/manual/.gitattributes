@@ -1,0 +1,5 @@
+# The .raw files are the bytes the machine's serial line sent, kept so that
+# `shoot-manual.py --render` can redraw a picture without booting a VM. They
+# carry CR LF line endings and terminal escape sequences, and a text filter
+# rewriting either one destroys the only property they have. Binary.
+*.raw binary

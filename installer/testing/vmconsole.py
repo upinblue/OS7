@@ -187,6 +187,13 @@ def run(*args, **kw):
 
 
 def qemu_prefix():
+    # OS7_QEMU_PREFIX exists for check-vm-arch.py, which builds the arm64
+    # command lines on a host that has neither brew nor an aarch64 QEMU and
+    # asserts them against the recorded pre-port construction. Unset, the
+    # behaviour is exactly what it was before the override existed.
+    p = os.environ.get("OS7_QEMU_PREFIX")
+    if p:
+        return p
     p = subprocess.run(["brew", "--prefix", "qemu"], capture_output=True, text=True)
     if p.returncode == 0 and p.stdout.strip():
         return p.stdout.strip()

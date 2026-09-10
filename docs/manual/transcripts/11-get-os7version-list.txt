@@ -1,0 +1,19 @@
+ProductName  : OS/7
+Known        : True
+Version      : 1.0.0
+Build        : 175
+FullVersion  : 1.0.0.175
+Channel      : preview
+Edition      : Server
+Architecture : amd64
+BaseRelease  : 26.04
+Built        : 09/02/2026 15:34:27
+Reproducible : True
+Short        : 1.0.0 (preview)
+Full         : 1.0.0.175 (preview)
+Display      : OS/7 1.0.0 (preview)
+Drift        :
+ManifestPath : /usr/lib/os7/release.json
+
+
+PS /home/os7admin>

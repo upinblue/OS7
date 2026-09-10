@@ -205,10 +205,21 @@ function Invoke-HardwareCommand {
 
 	$errFile = [System.IO.Path]::GetTempFileName()
 	try {
+		# RESET, THEN GUARDED READ — BUILD-NOTES #121, learned after this module
+		# was written and applied to it on the merge forward. `$LASTEXITCODE` is
+		# rewritten only when a native command COMPLETES through the pipeline. A
+		# command that is FOUND and cannot be STARTED neither throws nor sets it,
+		# so a bare read is a terminating StrictMode error in a fresh session and
+		# the PREVIOUS command's code in every other one — 0 included, which is
+		# how a step that never ran reports success. This function's whole job is
+		# reporting exit codes faithfully, so it is the worst possible place for
+		# that.
+		$global:LASTEXITCODE = $null
 		$out = & $exe @argv 2> $errFile
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 		return [pscustomobject]@{
 			StdOut   = ($out -join "`n")
-			ExitCode = $LASTEXITCODE
+			ExitCode = $code
 			StdErr   = ((Get-Content -Raw -ErrorAction SilentlyContinue $errFile) ?? '')
 		}
 	}
@@ -1474,7 +1485,15 @@ function Get-HwProbe {
 	$reportedVersion = $null
 	if ($present -and $Version) {
 		$r = Invoke-HardwareCommand -Command 'hw-probe' -Arguments @('--version') -Root $Root
-		$reportedVersion = (@($r.StdOut -split "`n" | Where-Object { $_.Trim() }) | Select-Object -First 1)?.Trim()
+		# TWO STEPS, NOT A PROPERTY OFF A PIPELINE — BUILD-NOTES #112/#119. The
+		# `?.` here did guard the null, but the rule is a shape rather than a
+		# case: `(… | Select-Object -First 1).Property` is the thing that shipped
+		# thirteen times and threw on every fresh machine, and a scan cannot tell
+		# a safe instance of the shape from an unsafe one. The empty case is real
+		# even here — hw-probe printing nothing to stdout.
+		$firstLine = @($r.StdOut -split "`n" | Where-Object { $_.Trim() }) |
+			Select-Object -First 1
+		$reportedVersion = if ($firstLine) { $firstLine.Trim() } else { $null }
 	}
 
 	$o = [pscustomobject]@{

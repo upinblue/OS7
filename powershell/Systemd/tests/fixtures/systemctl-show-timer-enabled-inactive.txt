@@ -1,0 +1,15 @@
+Id=os7-task-probe.timer
+Description=OS/7 task: probe
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=/etc/systemd/system/os7-task-probe.timer
+UnitFileState=enabled
+Unit=os7-task-probe.service
+TimersCalendar={ OnCalendar=*-*-* 03:00:00 ; next_elapse=(null) }
+NextElapseUSecRealtime=
+NextElapseUSecMonotonic=infinity
+LastTriggerUSec=
+Result=success
+RandomizedDelayUSec=10min
+Persistent=yes

@@ -17,6 +17,11 @@ decides what, the commands that work, and the traps that cost the most.
 | That ISO boots | **Yes.** UEFI → GRUB → casper → systemd → login prompt, in QEMU. |
 | **Installing to a disk** | **Works on arm64, proven end to end.** ZFS-on-LUKS root, installed from the live ISO and booted from the disk alone. See [SESSION-S3-ZFS-LUKS.md](SESSION-S3-ZFS-LUKS.md). |
 | **Secure Boot + TPM2** | **Works on arm64.** Boots with SB enabled against the Microsoft UEFI CA; TPM2 auto-unlock works and a TPM-less machine still prompts. See [SESSION-S4-SECUREBOOT-TPM.md](SESSION-S4-SECUREBOOT-TPM.md). |
+| **Secure Boot: the INSTALLED disk** | **The chain is on it, on both architectures, and on amd64 that was measured for the first time on 2026-09-07** — out of an `os7-setup` install's ESP without booting it: `/EFI/BOOT/BOOTX64.EFI` is Microsoft-signed shim, byte-identical to the shim in the image it came from, and `grubx64.efi` beside it is Canonical's `gcd` build. `grub-install` writes that chain even though every medium this repo has booted had Secure Boot **off**. [SESSION-SECUREBOOT-MEDIUM.md](SESSION-SECUREBOOT-MEDIUM.md) §1–§3. |
+| **Secure Boot: the MEDIUM** | **Works on amd64 since 1.0.0.192 (2026-09-07), and it is a BOOT, not a check.** `OS7-1.0.0.192-amd64.iso` reaches `os7-setup`'s welcome screen under Microsoft-keyed OVMF; the old 1.0.0.175 answered `Access Denied -- rejected probably by Secure Boot` and fell through to PXE. `build/lib/efi-remaster.sh` no longer builds a loader — it lifts shim, `gcd<arch>` and MokManager out of the squashfs it just wrote, so the medium's shim is byte-identical to the one that lands on the disk. The same ISO under non-Secure-Boot firmware photographs identically: one path, both worlds. `check-image.py amd64` went 13 failures → 0. **arm64 is UNBUILT with this** — `out/os7-arm64.iso` is still the unsigned 1.0.0.175, and the `aa64` branch of the build and the check has never executed. [SESSION-SECUREBOOT-MEDIUM.md](SESSION-SECUREBOOT-MEDIUM.md) §7. |
+| **Secure Boot: asking a harness for it** | **`VmArch(secure_boot=True)` since 2026-09-07.** `vmarch.py` owns the second firmware pair — `OVMF_CODE_4M.secboot.fd` + `OVMF_VARS_4M.ms.fd` on amd64, `AAVMF_CODE.secboot.fd` + `AAVMF_VARS.ms.fd` fetched into `.vm/firmware/` on arm64 — as a constructor argument, deliberately not an environment variable. `check-vm-arch.py` went 41 → 71 checks and holds the default byte-identical: building a full argv both ways, **exactly one argument differs**. A variable store now carries a `.firmware` marker, because the two stores are the same size and reusing the key-less one would report a Secure Boot result from firmware enforcing nothing. `Lab("x", arch=VmArch(secure_boot=True))` needs no change to vmscreen or os7lab. [SESSION-SECUREBOOT-MEDIUM.md](SESSION-SECUREBOOT-MEDIUM.md) §8. |
+| **Secure Boot: a machine installed from such a medium** | **Done on amd64, 2026-09-08, and it is a machine talking.** `./installer/testing/run-secureboot.py all` — **32 ok** — boots the medium through its OWN bootloader (`-cdrom`, no `-kernel` — the vehicle nothing here had), types at GRUB's command line to get a console, and asks the guest: `SecureBoot enabled`, the kernel's own `secureboot: Secure boot enabled`, lockdown `[integrity]`, and Canonical's prebuilt `zfs.ko` loading under it. Then it installs unattended from that medium, boots the disk with no medium, and the disk unlocks from the TPM with nothing typed. `policy` is the control: the same disk under non-enforcing firmware answers `TPM policy does not match current system state` and still takes the passphrase. **Big finding: #100's cause was the harness's own `-kernel` boot** — with the sealing session booted through shim, the install-time seal opens on the first boot, so the routine case needs no re-enrolment and UL1 is a belt for the policy-change case. [SESSION-SECUREBOOT-MEDIUM.md](SESSION-SECUREBOOT-MEDIUM.md) §9. |
+| **Secure Boot: what is still owed** | **arm64's BOOT, and only that.** Its MEDIUM is done since 2026-09-09: `OS7-1.0.0.194-arm64.iso` carries the signed chain and `check-image.py arm64` passes on it — both produced ON THIS x64 HOST under emulation, because **#12/#23 has no mirror image** (#140): amd64 cannot be built on Apple Silicon, arm64 CAN be built on x86_64 (~1.5 h, after `tonistiigi/binfmt --install arm64`). What needs the Mac is HVF, so `run-secureboot.py all` on arm64 and `vmarch.ensure_firmware()` have never run. **`Get-OS7SecureBoot` exists since 2026-09-08** — the UEFI variable's data byte, not `mokutil`'s prose, with three outcomes per answer and the kernel's **lockdown** reported beside them; `check-secureboot-logic.py` owns its decision table (19 checks, two planted traps proven to fire) and `run-secureboot.py` requires it to agree with `mokutil` on a real machine. What is still owed there is the **installer**: the Complete screen says nothing about Secure Boot, which is the one place Setup could tell an operator the machine it just built is not protected the way they assume. |
 | **NativeAOT for `os7-setup`** | **Works on both arches.** 3.2–3.4 MB static-ish ELF, zero warnings, runs in the ISO with .NET deleted. See [SESSION-S2-NATIVEAOT.md](SESSION-S2-NATIVEAOT.md). The SDK is now in the Dockerfile. |
 | **The text-mode look** | **Works on arm64, measured.** Field exactly `#0057ad`, stripe exactly `#1289ff`, 126 test-card cells matching the console font pixel for pixel, all 16 arrow/F-keys decoding, 80×25 at 1280×800. See [SESSION-S1-LOOK.md](SESSION-S1-LOOK.md). |
 | **The console font** | **Two fonts, both built by the ISO build, neither displayed yet for the second.** `build/lib/build-console-font.sh` converts the pinned Fixedsys Excelsior TTF for **os7-setup** (D9), asserting coverage *and shape*. `build/lib/build-installed-console-font.sh` converts Cascadia Mono for the **installed console** (D15, 2026-08-25), from the .deb already in the pinned snapshot. Both stage into `/usr/share/consolefonts` with a matching `/etc/default/console-setup`, which selects Cascadia. **Proven on a booted machine 2026-08-25** by `./installer/testing/verify-console-font.py`: the installed disk with no ISO attached, 107 of 107 cells matching the shipped PSF bitmap for bitmap. Getting there cost two kernel rejections nothing here could see (BUILD-NOTES #59). See [SESSION-CASCADIA-CONSOLE.md](SESSION-CASCADIA-CONSOLE.md). |
@@ -32,11 +37,15 @@ decides what, the commands that work, and the traps that cost the most.
 | **The version number** | **Exists, and is true.** [`build/config/os7-release.conf`](../build/config/os7-release.conf) is the single pin — version, archive snapshot, every component hash. The build resolves against `snapshot.ubuntu.com`, writes `/usr/lib/os7/release.json` and brands `/etc/os-release`, and Setup shows the release on every screen. **Spike S7 passed:** two builds from one pin hold identical package sets, 549 packages, same manifest hash. See [SESSION-RELEASE-IDENTITY.md](SESSION-RELEASE-IDENTITY.md). |
 | `./installer/testing/check-image.py` | **New.** Asks a built ISO what it is, in seconds, without booting: the shipped `sources.list`, the branded os-release, the ISO volume label, and `os7-setup --version` / `--self-test` run by chrooting into the image. It is the only check that sees the artefact after live-build's binary stage. |
 | **Backup** | **Written and self-tested; NEVER RUN ON A MACHINE.** `powershell/OS7/OS7.Backup*.ps1` — 17 cmdlets over `sanoid` (snapshot policy and retention) and `syncoid` (`zfs send`/`receive` replication, local or over ssh), both GPL-3.0+ and both shelled out to rather than vendored. OS/7 owns which datasets, which targets, and the verification: `Get-OS7BackupStatus` asks ZFS on the source and, through the `Zfs` module over ssh (Z14), on the target — comparing snapshot **GUIDs**, because neither tool's exit code is evidence (BUILD-NOTES #73). `Assert-OS7DatasetSafe` keeps a snapshot policy away from `rpool/ROOT` and `bpool/BOOT`. `Test-OS7Backup` is **63 checks, green**, and `check-layering.py` still reports **0**. What has never happened: a snapshot taken, a stream sent, or a file restored by this code. [BACKUP-PLAN.md](BACKUP-PLAN.md), [SESSION-BACKUP.md](SESSION-BACKUP.md). |
-| **The PowerShell system surface** | **Five generic modules and 64 exported OS/7 cmdlets since 2026-08-27**, and none of it has run on a booted machine. [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds **five** rules), P3 (the netplan renderer moves to PowerShell in two steps), P8/P9 (the device manager). `powershell/Net/`, `powershell/Time/`, `powershell/Systemd/` and `powershell/Hardware/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/Management/Device.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 32, Hardware 52, Backup 63 — all green, all against RECORDED REAL output. Six no-VM checks beside them. |
-| **The device manager** | **Written and checked; NEVER RUN AGAINST REAL HARDWARE.** `Get-OS7Device` returns only the devices that need attention — `-All` for the rest (P8) — in four states, with a sentence and a command for each. `powershell/Hardware/` enumerates from **sysfs, not lspci**: `lspci -mm -vkn` drops every `Module:` line when it cannot load libkmod resources and still exits 0 (measured), and pciutils is a package a minimal image lacks. The state that justifies the feature is `NeedsRebuild`, and it exists because **`dkms status` has no word for a failed build** — `added`, `built`, `installed` is its complete vocabulary, and a module whose build failed reports `added`, byte for byte what a module nobody ever tried reports (dkms 3.2.2, measured). `installer/testing/check-device-logic.py` is 74 checks with no hardware. [SESSION-DEVICE-MANAGER.md](SESSION-DEVICE-MANAGER.md) §7 lists what that leaves unproven. |
+| **The PowerShell system surface** | **Six generic modules and 147 exported OS/7 functions as of 2026-09-10** (101 and five modules on 2026-08-29, 95 on 2026-08-28, four modules and 58 on 2026-08-27) — and since the manual and the scheduled-task feature, parts of it HAVE run on a booted machine (typed at one, which is what found #112–#113). [POWERSHELL-SURFACE-PLAN.md](POWERSHELL-SURFACE-PLAN.md) is authoritative: P1 (the `OS7` prefix), P2 (a generic module per subsystem, `check-layering.py` holds **six** rules since the hardware one landed), P3 (the netplan renderer moves to PowerShell in two steps), P10/P11 (the device manager). `powershell/Net/`, `powershell/Time/`, `powershell/Systemd/`, `powershell/Directory/` and `powershell/Hardware/` join `powershell/Zfs/` as layers that know nothing about OS/7; `OS7.Network/Time/Remoting/Service/ScheduledTask/Management/Directory/DirectoryObject/Domain/Device.ps1` are the product on top. Self-tests: Zfs 75, Net 57, Time 33, Systemd 68 (32 before the timer surface), Directory 40, Hardware 52, Backup 63 — all green, all against RECORDED REAL output. The no-VM checks that go with them are listed in §2; `check-scheduledtask-logic.py` is the newest. |
+| **The device manager** | **Written and checked; NEVER RUN AGAINST REAL HARDWARE.** `Get-OS7Device` returns only the devices that need attention — `-All` for the rest (P10) — in four states, with a sentence and a command for each. `powershell/Hardware/` enumerates from **sysfs, not lspci**: `lspci -mm -vkn` drops every `Module:` line when it cannot load libkmod resources and still exits 0 (measured), and pciutils is a package a minimal image lacks. The state that justifies the feature is `NeedsRebuild`, and it exists because **`dkms status` has no word for a failed build** — `added`, `built`, `installed` is its complete vocabulary, and a module whose build failed reports `added`, byte for byte what a module nobody ever tried reports (dkms 3.2.2, measured). `installer/testing/check-device-logic.py` is 74 checks with no hardware. [SESSION-DEVICE-MANAGER.md](SESSION-DEVICE-MANAGER.md) §7 lists what that leaves unproven. |
 | **The update train's driver gate** | **New, and never run on a machine.** `Update-OS7` step 6'' refuses to activate a boot environment in which a DKMS driver that works on this machine **now** did not build for the kernel the new environment boots. A driver that was already broken warns instead — otherwise a machine carrying one abandoned module could never be updated again. `-IgnoreDriverRebuild` overrides, and the refusal names it, and names `/var/lib/dkms/<m>/<v>/build/make.log`, which is the only place the reason exists. `check-update-logic.py` drives it against the real sequence and asserts the refusal lands **before** `update-initramfs`. |
 | **What that surface found** | **Entra sign-in cannot work on an OS/7 image as built today.** `/etc/authd/brokers.d` is EMPTY in the shipped ISO — authd installed, PAM wired to it, no broker to bridge to — so a sign-in fails as though the password were wrong. That is C8a measured on the artefact rather than reasoned about, and `Get-OS7EntraStatus` is the first thing on a machine that says so. Also: `Enter-PSSession` did not work at all (`sshd -T` listed only `sftp`); an interactive `ssh` DOES land in PowerShell and had never been tested until `check-ssh-login.py`. |
-| `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. It is `qemu-system-aarch64 -machine virt,accel=hvf` like every other harness here, so it needs the Apple Silicon host. |
+| **Active Directory** | **Stage 1 is proven against a directory that answers; stage 2 has never run on a machine.** An administrator signs in to AD **from** an OS/7 machine with their own AD admin account and works as themselves — the machine is **not** a member of the domain and does not need to be. `powershell/Directory/` is the fifth generic layer (**36** functions, `Test-DirectoryModule` **51/51**—both numbers were 25 and 40 here and were already stale before the merge;—the module was asked) over `System.DirectoryServices.Protocols`, which ships *inside* pwsh 7.6.5 on Linux and needs **no new package on either architecture**; `OS7.Directory.ps1`, `OS7.DirectoryObject.ps1` and `OS7.Domain.ps1` are the product on top. `check-ad.py` drives all of it against a real **Samba 4.23.6** AD DC in a container (realm `OS7.TEST`) and reads every write back with `ldbsearch` **inside the DC** — a tool that shares no code with the client under test — and it is **all green**; `check-directory-logic.py` is the no-DC, no-VM half, **15/15**. What that leaves: **no OS/7 machine has ever joined a domain**, `adcli` is on no ISO built so far (so screen 9D is skipped on every medium that exists), **a real Windows Server DC is owed**, and **arm64 is unmeasured for all of it**. [AD-PLAN.md](AD-PLAN.md) is the authority. |
+| **Remote Desktop (RDP)** | **v1 OF THE CMDLET SURFACE IS BUILT AND HAS RUN ON A MACHINE (2026-09-07); the plan's decisions are still *Proposed*.** `Get-/Enable-/Disable-OS7RemoteDesktop`, `Set-OS7RemoteDesktopCredential`, the three certificate verbs and `Test-OS7RemoteDesktop` live in `powershell/OS7/OS7.RemoteDesktop.ps1`; `check-remotedesktop-logic.py` holds the decisions with no daemon (and `--container` adds the key's mode on a real filesystem). On the GUI bench `Enable-OS7RemoteDesktop -AllowAnySource` issued the certificate, generated a credential it did not print, and brought the daemon up; `Test-` was green on all thirteen checks including the two only a connection can answer (the daemon serves the certificate on disk; a non-NLA client gets `RDP_NEG_FAILURE 5`); FreeRDP 3.31 authenticated with the generated credential and was refused with a wrong one; `Disable-` left nothing listening. Building it measured five more things (§13a of the plan) and cost BUILD-NOTES **#123** and **#124**. **The allow-list IS built since 2026-09-07 and is measured safe in all four quadrants** (`Get-/Add-/Remove-OS7RemoteDesktopUser`, one `pam_access` line in `gdm-authd` and `gdm-password`): a non-member is refused on the real RDP path with the client's IP in the log, and an administrator still signs in at the physical console with it installed. Building it corrected the plan three times (§13b) and cost BUILD-NOTES **#125** and **#126**. **The session verbs are built too since 2026-09-07** (`Get-/Stop-OS7RemoteDesktopSession` over the Systemd module's new `Get-/Stop-SystemdSession`, with five recorded `loginctl` fixtures): with a real RDP session open the cmdlet returned exactly it, ending it worked, and **the ssh and console sessions survived**. There is deliberately no `Disconnect-` — logind has one verb and it ENDS the session (R20). **What is NOT built:** — deferred behind O-R2/O-R3, **The account lockout IS built since 2026-09-07** (`Get-/Set-OS7AccountLockout`, `Unlock-OS7Account`) and lives where it had to: `common-auth`, through `pam-auth-update`, which recomputes the jump chain a hand-written stack gets wrong (#125). It is therefore **ACCOUNT-WIDE** — ssh, the text console, `sudo` and both login screens — because the local and the remote login screen are one PAM service. Measured over `su` on a pty: ten failures lock, the right password is then refused, `faillock --reset` restores it, root is never locked, and **a success does not clear the counter** (it clears by time, as Windows' does). `Set-` reads the generated file back, checks the ORDER, and reverses its own change if either is wrong. `Enable-` therefore still refuses without `-AllowFrom`/`-AllowAnySource`. **A local account DOES sign in over RDP and reaches the OS/7 desktop** (M-R50): `loginctl` records `Remote=yes RemoteHost=<client> Service=gdm-authd Type=wayland Class=user`. An earlier claim here that this was broken by an authd defect was **WITHDRAWN 2026-09-07** — it was a keyboard-layout fault in the test harness, because RDP carries scancodes and the machine is `XKBLAYOUT=de` while the test typed on a US keymap (BUILD-NOTES #128). A successful sign-in is therefore attributable from logind; only a REFUSED one still leaves no address (RL5). Still true and still the point: it is **two logins** — a machine-wide credential at the door, then the person's own account at OS/7's branded login screen delivered over RDP (photographed, M-R33); the credential rests in **plaintext** because the daemon's user is not in group `tss` (RL1); `Kerberos` is refused by the 50.2 system daemon; a *completed* per-user login over RDP is still owed (O-R2). amd64-GUI only: headless and arm64 have no daemon (ssh / `Enter-PSSession` is the path). [REMOTE-DESKTOP-PLAN.md](REMOTE-DESKTOP-PLAN.md) is the authority — R1–R17 proposed, RL1–RL13 the honest list, O-R1–O-R18 the measurements owed with their harness. |
+| `./installer/testing/run-backup.py` | **New, and never executed.** The tier-2 gate for the backup feature: builds two file-backed pools in a booted VM, enables the policy, snapshots, replicates to the second pool, ruins a file and restores it — with every assertion asked of ZFS or the filesystem. `all` is the gate BACKUP-PLAN B-5 names. Ported to `vmarch.py` on 2026-08-28 and still unrun — on either host. |
+| **The VM harness on x86_64** | **Works since 2026-08-28, measured on the x64 Windows host.** `installer/testing/vmarch.py` is the one place machine/accelerator/firmware/vehicle come from: arm64 stays a host process on HVF (byte-identical to the pre-port construction, held by `check-vm-arch.py` — 41 checks, no QEMU, both hosts); amd64 is `q35,accel=kvm` with OVMF inside the `os7-vm:amd64` container, serial over the docker client's stdio, QMP on TCP, swtpm in-container. `boot` measured #69 for the first time (#100): the install-time TPM seal does not open through shim, and S6's one-command recovery restores it. The arm64 branch was NOT executed (no Mac in the session). [SESSION-VM-HARNESS-PORT.md](SESSION-VM-HARNESS-PORT.md) |
+| **The update train, delivered end to end** | **The full `run-s5.py all` gate — install, TPM boot, cycle, `Update-OS7` against a served repository, and the unattended timer — has RUN ON THIS HOST (amd64/KVM), repeatedly, on fully packaged ISOs.** The ISO installs the nine OS/7 .debs through hook 0022 (`check-image.py`: 105 checks, `dpkg -S` attributes pwsh, the modules, os7-setup, the console font, release.json and the apt source to packages); releases have channels and a hotfix form (`check-os7-repo.py` 123, `check-update-logic.py` 32); firstboot migrations have a runner shipped in os7-release, and UL1's TPM2 re-seal plus #104's fstab-ordering retrofit are its first two real migrations; §6's unattended check ships as `os7-update-check.timer` with a measured exit-code contract (0 nothing/no channel, 2 staged, 1 failed). Four gate runs each converted a FAIL into a numbered defect — #104 (the ESP buried under the ZFS /boot by a boot-ordering race), #105 (saved_entry written before activation's point of no return), #106 (update.conf's missing trailing newline), #107 (Restore-OS7's "previous" — age, then promote-rotated origins, now the `org.os7:previous` property) — and the final verdict table is in [SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md). |
 
 ### Phase 0 is done — the gate is open
 
@@ -76,6 +85,231 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**1.0.0.203 IS PUBLISHED (2026-09-09), and it is the second preview.** Both
+media from `42156cf`, clean tree, `reproducible: true`; the signed apt
+repository on the Storage Box now holds **both** releases with 1.0.0.203's index
+entry recording that it supersedes 1.0.0.175; os7.org offers the new images and
+the versioned manual; the GitHub pre-release carries the changelog and the
+descriptors. What that run measured, and the five defects it found, is
+[SESSION-PREVIEW-203.md](SESSION-PREVIEW-203.md).
+
+**Three things it leaves owed, in the order they cost:**
+
+1. **UL6 has never been satisfied and now has a release that says so.** No
+   `archive/<version>/<arch>/*.deb` exists for 1.0.0.175 or 1.0.0.203, and no
+   tool builds one — §4's layout is proposed, not built. So the reproducibility
+   claim rests on `snapshot.ubuntu.com`, for which Canonical publishes no
+   retention guarantee. Defensible for a preview; not for a `stable`.
+2. **#144: two amd64 builds from one pin do not hold the same package set.**
+   Edge, the Intune portal, the identity broker and VS Code come unpinned from
+   the live `packages.microsoft.com`; only pwsh is pinned by version and hash.
+   Measured by accident — two media an hour apart differed by 7 MB because
+   `code` moved upstream. Pinning the four turns every Edge release into a
+   release event (§3.4 says that is the intended shape) and is the honest fix.
+3. **#145 is a one-line fix and it is not made**: `OS7_CHANNEL` belongs in
+   `build-os7-packages.sh`'s env-preservation list beside the other three.
+
+**And the release process itself now owes a rule it learned the hard way.**
+Both of the rebuilds this release cost were defects in measuring instruments
+(#143, #141), and both were found *after* the media were built. The gate list in
+[RELEASE-PROCESS.md](RELEASE-PROCESS.md) §2 is what it is for; what it does not
+say is that the tooling changed in the same commit as the pin should be
+exercised BEFORE the media are cut. It cost two amd64 builds and one arm64 build
+to learn that.
+
+
+**SECURE BOOT IS FINISHED ON amd64 AND OWES arm64 EXACTLY ONE THING: A BOOT
+(2026-09-09).** `./installer/testing/run-secureboot.py all` is 32 ok on this
+host — the medium boots through its own signed bootloader under Microsoft-keyed
+OVMF, a machine is installed from it, that machine comes up with no medium and
+unlocks itself from the TPM with nothing typed, and a control phase requires
+the passphrase back when the firmware policy changes. `Get-OS7SecureBoot`
+answers what an administrator asks and is required to agree with `mokutil` on
+the same machine. The arm64 MEDIUM is done too — 1.0.0.194 carries the signed
+chain and `check-image.py arm64` passes on it, both built here under emulation
+(#140). So the three things worth picking up, in the order they cost:
+
+1. **`run-secureboot.py all` on the Mac.** HVF, and nothing else: the harness
+   is architecture-parameterised, `vmarch.ensure_firmware()` downloads the
+   Secure Boot AAVMF the way spike S4 does, and neither has ever executed.
+   This is the last unmeasured line in the chain.
+2. **The Complete screen says nothing about Secure Boot.** Deliberately not
+   decided in passing: a screen that reports a firmware setting has to say
+   what the operator should DO about it, and that text is a product decision
+   ([SESSION-SECUREBOOT-MEDIUM.md](SESSION-SECUREBOOT-MEDIUM.md) §10).
+3. **U8 has not moved, but it can now be shown.** `run-secureboot.py policy`
+   produces the exact prompt a fleet meets the morning after a shim or `dbx`
+   update. The escrow is still missing; what changed is that the cost of its
+   absence is one command away (DECISIONS, open question 7).
+
+**THERE IS A WORKBENCH SINCE 2026-08-30, AND IT CHANGES WHAT "GO AND LOOK" COSTS.**
+`installer/testing/os7lab.py` runs a VM that outlives the process that started
+it, so asking a booted machine a question costs a command instead of a boot —
+and `snapshot`/`restore` are **0.6 s and 0.7 s** against the 25 minutes an
+install takes. Three channels, and which one answered is part of the answer:
+the serial line (needs only a kernel, and is the only one that can watch a boot
+fail), ssh (a real exit code and no quoting limit), QMP (the screen, the
+keyboard and the tablet). `run-surface.py` types every Get- and Test- cmdlet at
+that machine and writes [SURFACE-MATRIX.md](SURFACE-MATRIX.md).
+
+It found three defects in its first hour, and **none of them was reachable by
+the checks that existed** — they ask a build host or a container about an
+image, and these needed an installed machine:
+
+* **#117 — 27 world-writable paths in the shipped ISO**, `/usr/lib/systemd/system`
+  and `…/system-generators` among them. Docker Desktop presents the Windows
+  bind mount as 0777 and `cp -a` preserved it. **FIXED**, and the ISO is
+  measured at 0 by two new `check-image.py` assertions that were red against
+  1.0.0.159 before the fix existed.
+* ~~**#118 — no installed machine can accept an SSH connection. STILL OPEN.**~~
+  **FIXED 2026-08-30 — and the FIX caused #120, which is also fixed and
+  CONFIRMED IN A SHIPPED IMAGE.** The repair unit (`os7-sshd-keygen.service`)
+  first said `Before=ssh.service ssh.socket`, which closes an ordering cycle
+  through `sockets.target`, and systemd's way out of a cycle is to DELETE a
+  job — the socket's, so the machine listened on nothing and the unit's own
+  journal was empty (BUILD-NOTES #120). The fix is Ubuntu's own ordering
+  (`Before=` names the services alone, `WantedBy` carries the socket), measured
+  on a rebooted bench (socket active, zero cycle lines, ssh answering from
+  outside) AND read out of `OS7-1.0.0.163-amd64.iso` by three `check-image.py`
+  assertions that were built to fail on the cycle. Both measurements on
+  purpose: the machine one without the image one would have proved a
+  hand-edited unit.
+* **#112/#119 — FIXED**, see above.
+
+[SESSION-WORKBENCH.md](SESSION-WORKBENCH.md) is the measurement; the arm64 half
+of the bench is written and **unrun**.
+
+**ACTIVE DIRECTORY WORKS OUTBOUND SINCE 2026-08-28, AND THE MACHINE IS NOT IN
+THE DOMAIN.** An administrator signs in to AD **from** an OS/7 machine with their
+own AD admin account and works as themselves — users, groups, computers, OUs, a
+password reset, a raw search. No domain join, no machine account, and **no new
+package on either architecture**: `System.DirectoryServices.Protocols` ships
+inside pwsh 7.6.5 on Linux and reaches `libldap`, which is guaranteed because
+`libldap2` is a `Depends` of `libcurl4t64` and `curl` is in
+`os7-base.list.chroot`. That is **stage 1**, and it is proven against a
+directory that answers. **Stage 2 — the domain join, `sssd`, and the installer's
+screen 9D — is code that has never run on a machine.** Keep those two sentences
+apart; the whole feature's honesty is in the gap between them.
+[AD-PLAN.md](AD-PLAN.md) is the authority, and it is where A/AL/M-A numbers live.
+
+```bash
+./installer/testing/check-directory-logic.py   # the DECISIONS, no DC, no VM — 15/15 GREEN
+./installer/testing/check-ad.py                # a REAL Samba 4.23.6 DC in a container — ALL GREEN
+pwsh -c 'Import-Module ./powershell/Directory/Directory.psd1 -Force; Test-DirectoryModule'  # 51/51
+./installer/testing/check-layering.py          # FIVE rules now: P2-directory, baseline 1
+```
+
+`check-ad.py` builds the DC itself (`installer/testing/Dockerfile.ad-dc`, realm
+`OS7.TEST`), and two things about it are worth copying rather than repeating:
+every OS/7 write is read back with `ldbsearch` **inside the DC**, which shares no
+code with the client under test; and the stage-1 section runs a second time with
+`adcli`, `kinit`, `klist` and `sssctl` moved out of `PATH`, so "stage 1 needs
+none of stage 2's packages" is a measurement rather than an intention.
+
+**BOTH CMDLET DEFECTS FOUND ON 2026-08-29 ARE NOW CLOSED** — #113 on the day,
+#112 on 2026-08-30 — and both were found the same way: **by typing the commands
+at a machine rather than by a check.** Writing the administrator manual
+([docs/manual/](manual/README.md)) required every example to be run and
+photographed on an installed disk, and that was a use of this surface nothing
+here had made before. `installer/testing/run-surface.py` now makes it routine:
+it types every Get- and Test- cmdlet at a booted machine in one pass, which is
+how #112 was found a second time after its own note recommended a fix that was
+never applied.
+
+* ~~**#112 — `Get-OS7BackupStatus` throws on an ordinary machine. STILL OPEN.**~~
+  **FIXED 2026-08-30, together with the idiom behind it (#119).** No
+  replication target meant `$targets` was empty, `Select-Object -Last 1` was
+  `$null`, and `Set-StrictMode` turned the property read into a terminating
+  error — on *every* machine that had not opted into replication (B4), and
+  unconditionally under `-SkipTargets`. Four sites now take the selection in
+  two steps, and the nine `Get-ZfsProperty … .Value` occurrences of the same
+  idiom became one private helper. **Verified on a booted machine**, not by a
+  self-test: `Test-OS7Backup` was 63 green before and after and covers neither
+  state. Two things this note should be read for now: the fix sat here as a
+  RECOMMENDATION for a day and nothing was watching the difference, and what
+  found it again was `run-surface.py` asking a machine. The manual's picture of
+  this cmdlet (`docs/manual/transcripts/92-backup-status.txt`) still shows the
+  exception and needs re-shooting from an image built after the fix.
+* ~~**#113 — the cmdlet surface cannot see a timer.**~~ **FIXED 2026-08-29 as
+  a NOUN** — POWERSHELL-SURFACE-PLAN **P9**: `Get-OS7Service` stays
+  deliberately services-only (Windows' own services.msc/taskschd.msc split),
+  and `Get-/Enable-/Disable-/Start-/Register-/Unregister-OS7ScheduledTask`
+  is where timers live, over the Systemd layer's new
+  `Get-/New-/Remove-SystemdTimer`. `Get-OS7ScheduledTask
+  os7-update-check.timer` answers, and its `Healthy` names the
+  enable-without-start trap (#115) and keeps disabled tasks listed (#116).
+  Gates: `check-scheduledtask-logic.py` 64 checks, `Test-SystemdModule` 32→76
+  on newly recorded systemd 259 fixtures, the cmdlets run end to end against
+  real systemd as PID 1 in a container, `check-os7-repo.py` 123 with the file
+  that made the dot-source list FIFTEEN in the .deb (27 required paths, was
+  26; OS7.Update.ps1 stays last), and the machine evidence in
+  [SESSION-SCHEDULED-TASKS.md](SESSION-SCHEDULED-TASKS.md).
+
+[SESSION-ADMIN-MANUAL.md](SESSION-ADMIN-MANUAL.md) has the original
+measurements, and #114 there is the harness lesson that cost three VM runs.
+
+**What is owed, in order, and none of it is small:**
+
+1. **A real Windows Server domain controller.** Samba exercises the protocol; it
+   does not reproduce LDAP channel binding, signing enforcement, Windows
+   password-policy sub-codes, `msDS-*` constructed attributes, LAPS or
+   cross-forest referrals. A green `check-ad.py` is the gate for the protocol. It
+   is not a fleet.
+2. **A machine that has actually joined.** `Join-OS7Domain`, `Test-OS7Domain` and
+   `Repair-OS7Domain` are code plus a container test. And `adcli` is on **no ISO
+   this repository has built** — measured against
+   `out/OS7-1.0.0.116-amd64.packages.manifest`, 1 491 packages — so screen 9D
+   skips itself on every medium that exists today and records that nobody was
+   asked. Putting the join tooling in a package list is the first step, and
+   rebuilding is the second.
+3. **arm64, for all of it.** There is no arm64 packages manifest in `out/` at all,
+   so even the package half of the join is an inference on that architecture.
+4. **Screen 12 does not print the join's outcome.** The join is best-effort by
+   design — a wrong password must not destroy an otherwise complete install — so
+   the one thing that must not happen is that it is quiet. It is logged and it is
+   in the plan; it is not yet on the screen the operator reads.
+
+**Writing it found four traps, three of them now numbered.** BUILD-NOTES **#94**
+(`[datetime]::TryParseExact` handed a plain `@(...)` binds the single-format
+overload and joins the array into one format string — every timestamp comes back
+`$null`, which reads as "this DC does not send `whenCreated`"), **#95**
+(`catch [T]` matches the *inner* exception while `$_.Exception` inside the handler
+is still the `MethodInvocationException` wrapper, so reading `.ErrorCode` off it
+throws under `Set-StrictMode` **inside the handler that was supposed to explain
+the failure** — the operator gets a PowerShell property error where a password
+message belonged), and **#96** (`.GetNewClosure()` breaks a test seam that has to
+reach *module* state: it rebinds the block to a fresh closure scope where
+`$script:` no longer resolves to the module's session state, and every recorded
+call becomes `$null` — measured both ways in one run). The fourth is not a
+PowerShell trap but a directory one, and it is in the surface rather than in the
+notes: **`userAccountControl`'s `LOCKOUT` bit (`0x10`) is not maintained by Active
+Directory**, so `Get-OS7ADUser` computes `LockedOut` from **`lockoutTime`**
+— a surface that read the flag would tell an administrator a locked-out account is
+fine, and send them to look at the password.
+
+**Two things it leaves undecided, and both are layout questions rather than code
+ones** — [DECISIONS.md](DECISIONS.md) open questions **9** and **10**. `/etc` is
+inside the boot environment, so `/etc/krb5.keytab` is: roll back across a machine
+account password rotation (30 days by default) and the keytab goes back while the
+DC does not, while sssd's cache under `/var/lib/sss` is *outside* the BE by D10
+and does not roll back — the two halves of one identity disagree by construction.
+And domain users' homes are under `/var/lib/os7/domain-homes` via sssd's
+`fallback_homedir`, deliberately outside the BE where `Restore-OS7` would roll
+them back (BUILD-NOTES #74's shape in a second place), but that is not a
+`rpool/USERDATA` dataset and the default backup policy does not reach it.
+
+**And one thing it deliberately does not do**, which belongs here so nobody
+re-opens it as a gap: no Group Policy (no GPO engine exists for Linux; sssd
+enforces logon-right GPOs only, which is consumption and not administration),
+nothing over RPC/DCOM (`repadmin`, `dcdiag`, `netdom`, DNS server, DHCP,
+certificate enrolment), nothing through `[ADSI]` (it loads on Linux and then
+throws "not supported on this platform"), and no WinRM (measured dead: "no
+supported WSMan client library was found"). A domain join also does **not** make
+a machine Intune-manageable — enrolment goes through Entra and there is no hybrid
+join for Linux.
+
+---
+
 **THE POWERSHELL SURFACE IS WRITTEN AND HAS NEVER RUN ON A BOOTED MACHINE.**
 Everything in it was measured against a container and, for the facts that
 decide behaviour, re-checked against the shipped ISO's squashfs — but a
@@ -94,6 +328,9 @@ distinction nearly put a false product defect into this file. What is owed:
 #   Get-OS7NetworkAdapter / Set-OS7NetworkAdapter with a real netplan apply
 #   Get-OS7TimeSynchronization against a real chronyd on real hardware
 #   Get-OS7Log against a real journal that has survived a reboot
+#     (possible at all only since #109: until 2026-08-28 the installed
+#      machine had NO journal on any boot — the flush beat zfs-mount and
+#      the real /var/log buried what it wrote)
 #   Get-OS7Device on a machine with a discrete GPU, or a DKMS module, or a
 #     device nothing supports — none of the three existed on the host that
 #     built this, so the four states have never been seen on real hardware
@@ -138,30 +375,80 @@ hosts has been checked against Microsoft's live documentation, which CLAUDE.md
 says is the FIRST thing to do for anything touching identity.
 
 
-**`Update-OS7` IS WRITTEN (2026-08-27) AND HAS NEVER RUN ON A MACHINE. THAT IS
-THE FIRST THING TO DO ON THE MAC.** The update train is the §4.2 sequence as C10
-corrects it, in `powershell/OS7/OS7.Update.ps1`, with `Get-OS7Release`,
-`Set-OS7UpdateChannel` and `Test-OS7Update` beside it. It is checked without a
-VM and the gate has not been run:
+**`Update-OS7` HAS RUN ON A MACHINE — the full gate runs on THIS host since
+2026-08-28** ([SESSION-UPDATE-DELIVERY.md](SESSION-UPDATE-DELIVERY.md)): the
+packaged ISO installs, boots by TPM alone, cycles, applies a served release
+end to end (N → N+1, firstboot migrations, conffile-kept channel, prune) and
+honours the unattended exit-code contract. What the update train still OWES,
+by host:
+
+**The Mac owes:**
 
 ```bash
-./installer/testing/check-update-logic.py    # ~3 min, no VM — GREEN
-./installer/testing/check-ps-traps.py        # seconds — GREEN
-./installer/testing/run-s5.py all            # THE GATE. Needs the Mac. NOT RUN
+./installer/testing/run-s5.py all      # the SAME gate on arm64/HVF — the ported
+                                       #   branch is byte-identical (check-vm-arch)
+                                       #   and has never been EXECUTED
+./installer/testing/run-phase3.py all  # still the #74 gate. `walk` PASSES on
+                                       #   amd64 since 2026-08-28 (the FIRST
+                                       #   amd64 interactive install ever), but
+                                       #   `boot` cannot see an amd64 machine at
+                                       #   all (#99), and #74 checks 9 and 10 are
+                                       #   IN `boot`. So walk green != #74 shown.
+                                       #   arm64 owes the whole of `all`
+make build-arm64                       # DONE 2026-09-09, and on the WINDOWS
+./installer/testing/check-image.py arm64 #   host under emulation: 1.0.0.194
+                                       #   carries the signed Secure Boot
+                                       #   chain and the check passes (#140).
+                                       #   What arm64 owes now is a BOOT
+./installer/testing/run-backup.py all  # B-5's gate, never run on ANY host
 ```
 
-`run-s5.py` already installs a machine, clones its boot environment, changes the
-clone, boots it and rolls back — steps 3 to 8 **by hand**, because the cmdlet did
-not exist. Pointing it at `Update-OS7` instead is what turns "a machine updated
-by this cmdlet boots" from a claim about code into a measurement.
-[SESSION-UPDATE-TRAIN.md](SESSION-UPDATE-TRAIN.md) is what was decided, what was
-found and — at greater length — what was not checked.
+**Either host owes: a serial console for `run-phase3.py boot` on amd64.**
+`run-s5.py` grew a `serialize` phase for BUILD-NOTES #99 — x86 has no
+device-tree console, os7-setup correctly writes no `console=`, and the
+installed machine talks to tty0. run-phase3 has no equivalent, so its `boot`
+phase times out for 599 seconds on a machine that boots perfectly.
 
-**Writing it found four defects, three of them already in the tree**, which is
-the argument for the two no-VM checks above: BUILD-NOTES **#89** (the kernel
-picker chose the older kernel, and only an update could ever reveal it), **#90**
-(a freshness check that could not read its date, and warned), **#91**
-(`@('a', $b, $c + $d)` is four elements) and **#65 twice**.
+~~Until it does, #74 cannot be discharged on this host either, because its two
+/home checks live in that phase.~~ **Not true since 2026-08-30**: the two /home
+checks live in that phase, but the QUESTION does not. `os7lab.py install` built
+a machine on this host and `Get-OS7Home` answered it directly —
+`rpool/USERDATA/os7admin_8caded3b`, `OwnDataset: True`, `Agrees: True`. What
+run-phase3 still owes is its own coverage of the installer walk, not this.
+
+**Either host owes:** a hotfix applied through `Update-OS7` on a booted
+machine (the form is container-proven, `check-os7-repo.py` walks a real one;
+the machine gate applies full releases only — wired, not run); and P3 step 2
+(collapsing the two netplan renderers) stays gated on `run-phase3.py all`.
+
+**The merge with the Directory/identity branch is DONE (2026-08-28, `fdb00f9`).**
+The checklist that stood here was followed and it was right about all three
+things. The module list resolved toward main's (six modules), pkg_finish took
+the union, and the .deb content check was re-run rather than trusted:
+`make repo-amd64` reports `os7-module — 26 required paths present` (27 since
+2026-08-29, when OS7.ScheduledTask.ps1 joined the list), read back out
+of the built package by `dpkg-deb -c`, and `check-os7-repo.py` is **123/123**.
+`check-installer-cmdlets.py` was the first thing run on the merged tree and
+passes across 157 cmdlets.
+
+What the checklist did NOT anticipate, and what a second pass found:
+
+* **`build.sh` carried the same module list a second time**, and it was the
+  half nobody was looking at. update-train had replaced `stage_ps_module`
+  with `stage_ps_fixtures` over a `for _mod in Zfs Net Time Systemd OS7` loop;
+  main's entire `build.sh` diff was adding Directory to the function
+  update-train deleted. Two lists, one entry apart, no conflict between them.
+* **pkg_finish named three of the fourteen files `OS7.psm1` dot-sources.**
+  Each branch had added files the other could not see. All of them are named
+  now — fourteen then, fifteen since OS7.ScheduledTask.ps1 (2026-08-29) — and
+  the set is diffed against the `.psm1`'s own `foreach`, not `ls`.
+* **BUILD-NOTES #108 was claimed twice** by two already-committed branches.
+  main had it; the missing-journal note became **#109** and its references
+  moved with it. The file's reservation convention only works between
+  sessions that share a branch.
+
+See [SESSION-MERGE-CONSOLIDATION.md](SESSION-MERGE-CONSOLIDATION.md) for what
+was measured on the merged tree and what was not.
 
 ---
 
@@ -179,27 +466,29 @@ make repo-amd64                           # nine .debs + a SIGNED suite os7-1.0
                                           #   require apt to REFUSE. ~4 min
 ```
 
-What that leaves, in order:
+What that left has been done:
 
-1. ~~**`Update-OS7`**~~ and ~~**`Get-OS7Release -Available`**~~ — **both written
-   2026-08-27**, above. What they leave is the gate.
-2. **Switch the ISO over.** `build.sh` still stages the same files through
-   `includes.chroot`, so the packages are correct and the image does not use
-   them. That change resolves the one seam this left, which
-   [SESSION-OS7-REPOSITORY.md](SESSION-OS7-REPOSITORY.md) §5 names: two
-   `release.json` files, one authored by the release and one measured from the
-   image.
+1. ~~**`Update-OS7`**~~ and ~~**`Get-OS7Release -Available`**~~ — written
+   2026-08-27, and the gate has now run (above).
+2. ~~**Switch the ISO over.**~~ — **Done 2026-08-28** (hook 0022 installs the
+   nine .debs, os7-release first; hooks 0020/0085 deleted; 0050/0075 verify
+   the packages' work). The two-release.json seam resolved as C9 implies:
+   `/usr/lib/os7/release.json` is what os7-release DECLARES, the build's
+   measurement moved to `/usr/lib/os7/image.json`, and `check-image.py`
+   requires the two to agree where they overlap.
 
 **C7a is still open and was kept open on purpose.** The repository is signed by
 a development key whose user ID reads `NOT FOR RELEASE` and which the descriptor
 declares as such. Where a release key lives and who holds it is a decision to
 make deliberately, not on the day the first repository is published.
 
-**And this box can run KVM after all.** `docker run --device /dev/kvm` on the
-x64 Windows host gives `query-kvm → {"enabled": true}` — no elevation, no
-Hyper-V by hand. Every harness here is still `qemu-system-aarch64` and would
-need an x86_64 arm, so §3's blocker is now a **port** rather than an
-impossibility. See [../CLAUDE.md](../CLAUDE.md).
+**And this box can run KVM after all — and since 2026-08-28 the harnesses
+USE it.** `docker run --device /dev/kvm` on the x64 Windows host gives
+`query-kvm → {"enabled": true}` — no elevation, no Hyper-V by hand. The port
+(`installer/testing/vmarch.py`) is done for every harness; `run-s5.py` has
+run its full gate here repeatedly; the other harnesses are ported and UNRUN
+on this host. See [../CLAUDE.md](../CLAUDE.md) and
+[SESSION-VM-HARNESS-PORT.md](SESSION-VM-HARNESS-PORT.md).
 
 
 **THE amd64 DESKTOP WAS LOOKED AT ON A SCREEN FOR THE FIRST TIME ON
@@ -224,9 +513,9 @@ ok  an interactive login lands in PowerShell 7.6.5 — PS /> … 7.6.5
 So **boot it and look at the panel.** It is `#d4d0c8` or the session default is
 still not taking, and that is a two-second answer nothing here can give.
 [SESSION-DESKTOP-DEBRAND.md](SESSION-DESKTOP-DEBRAND.md) says what was measured
-and — at greater length — what was not. Note that this box cannot run
-`run-phase3.py`: the harnesses are `qemu-system-aarch64 -machine virt,accel=hvf`
-and need the Mac, so the amd64 VM work is Hyper-V by hand.
+and — at greater length — what was not. Since 2026-08-28 this box CAN run the
+harnesses (`vmarch.py`, amd64/KVM in Docker) — `run-phase3.py` is ported and
+merely unrun here — so the amd64 VM work is no longer Hyper-V by hand.
 
 **THE BACKUP FEATURE LANDED ON 2026-08-26 AND HAS NEVER TOUCHED A MACHINE.**
 That is the first thing to do next, and it is one command on the Mac:
@@ -241,7 +530,18 @@ every answer. Until it passes, `Get-OS7BackupStatus` is a claim about code.
 [BACKUP-PLAN.md](BACKUP-PLAN.md) B-5 is the gate; §12 is the honest limitation
 list, and BL1 is at the top of it.
 
-**#74 IS WRITTEN AND UNVERIFIED, AND IT IS THE FIRST THING TO RUN ON THE MAC.**
+**#74 — MEASURED ON A MACHINE 2026-08-30, ON THIS HOST, AND IT LANDED.**
+`os7lab.py install` produced an OS/7 1.0.0.161 machine and `Get-OS7Home` on it
+said `Dataset: rpool/USERDATA/os7admin_8caded3b`, `OwnDataset: True`,
+`OwnFilesystem: True`, `Agrees: True` — ZFS and `stat(2)` asked separately and
+agreeing — with `findmnt` and `zfs list` saying the same. The home an OS/7
+install produces is outside the boot environment. **`Move-OS7Home`, the
+migration for machines installed before the fix, is still unverified**, and
+`run-phase3.py all` still owes its own coverage of the installer walk. The
+paragraph below is what the question WAS, and it is kept because the reasoning
+in it is still how the defect is explained.
+
+**~~#74 IS WRITTEN AND UNVERIFIED, AND IT IS THE FIRST THING TO RUN ON THE MAC.~~**
 `New-OS7Storage`'s `-UserName` defaulted to `os7` and `os7-setup` never passed
 it, so on the machine this repository has actually booted the account's home is
 an ordinary directory **inside the boot environment** and `/home/os7` is an
@@ -697,6 +997,14 @@ that has ever reached the binary stage on amd64.
 
 Full detail in [BUILD-NOTES.md](BUILD-NOTES.md). The ones that bite hardest:
 
+- **#138 — a wall of "Couldn't download package" is an UPSTREAM 503, not your
+  change.** `snapshot.ubuntu.com` failed 3 of 12 requests when this was
+  measured (2026-09-08) and a build makes hundreds, so it dies looking exactly
+  like a broken tree — and the LAST line of the log is
+  `chroot: failed to run command '/usr/bin/env'`, which is the cleanup, not the
+  cause. One `curl -w '%{http_code}'` at the pinned snapshot separates the two
+  in a second. **Retry before debugging anything**; three builds in a row died
+  this way and the fourth succeeded unchanged.
 - **#13 — hooks must be at `config/hooks/*.chroot`, FLAT.** The older
   `config/hooks/normal/` layout does not match; live-build then runs nothing,
   prints "Begin executing hooks...", and **exits 0**. `build.sh` now hard-fails
@@ -798,6 +1106,16 @@ shows what it takes to do it reliably anyway (BUILD-NOTES #16) — read freely,
 type one character at a time, re-send a step whose acknowledgement never
 arrives, and answer the terminal's queries.
 
+**And since 2026-09-07, "does the firmware even accept it" is answerable
+without booting either.** `check-image.py <arch>` reads both sides of the
+medium — the ISO9660 tree and the FAT image El Torito points at — and verifies
+them with the IMAGE's own `sbverify`, requiring the loader to be byte-identical
+to the shim the installed machine will boot from. `check-image.py --self-test`
+is the other half of that rule, run against a recorded correct medium, because
+a rule every ISO fails is a rule that might be unsatisfiable. Whether the thing
+then BOOTS under Secure Boot is `run-secureboot.py`, which is the only harness
+here that lets the firmware find the loader by itself (#134).
+
 For everything that is not "does it boot", mount the squashfs and run the
 image's own binaries — fast, clean, quotable:
 
@@ -828,8 +1146,15 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
   is replaced by `0090-desktop-theme-verify.hook.chroot`, which verifies instead
   of recording. The desktop also carries OS/7 Classic, a Windows 2000 theme. Its
   **GTK half is measured from rendered pixels** (`build/testing/render-theme.sh`);
-  its **GNOME Shell half — panel, taskbar, black desktop — has never been seen**,
-  because that needs a session and no amd64 ISO has been built with it.
+  its ~~**GNOME Shell half — panel, taskbar, black desktop — has never been
+  seen**, because that needs a session and no amd64 ISO has been built with
+  it.~~ **SEEN 2026-08-30**, on a machine `os7lab.py install gui --mode Gui`
+  produced and a session logged into through the HID keyboard and tablet:
+  `.vm/gui/shots/` holds the greeter (OS/7 blue, the OS/7 mark, no Ubuntu
+  orange), the desktop (panel with Apps and Places, window-list taskbar along
+  the bottom, black desktop, Home icon) and the Apps menu opened BY MOUSE,
+  listing Microsoft Edge, Files, Terminal and Microsoft Intune in the classic
+  grey. What was missing was never the ISO — it was a way to log in and look.
   [SESSION-CLASSIC-DESKTOP.md](SESSION-CLASSIC-DESKTOP.md) §7 lists exactly what
   that leaves unproven.
 - **D8/L16 — `/etc/os-release` identity.** D8 is *decided* (`IMAGE_ID` /

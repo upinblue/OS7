@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Two PowerShell traps this repository has paid for, as a mechanism rather than a note.
+Six PowerShell traps this repository has paid for, as a mechanism rather than a note.
 
-    ./check-ps-traps.py            report, and fail if either got worse
+    ./check-ps-traps.py            report, and fail if any of them got worse
 
-Both are the same kind of defect: code that reads correctly, parses correctly,
-and means something else. Neither produces a warning; both were found by a
-machine doing the wrong thing.
+All six are the same kind of defect: code that reads correctly, parses
+correctly, and means something else. None produces a warning; each was found by
+a machine doing the wrong thing.
 
 #65 — A LOCAL NAMED AFTER A PARAMETER IS THAT PARAMETER.
 PowerShell variable names are case-insensitive, so inside a function declaring
@@ -28,7 +28,70 @@ with operator Plus whose left side is an ArrayLiteral. It produced
 which mount rejected, loudly, by luck. One argument earlier and it would have
 produced a VALID command against the wrong path. Parenthesise the concatenation.
 
-BOTH BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
+#82 — A CMDLET CALLED AT IMPORT SCOPE IS NOT THERE IN THE CHROOT.
+A command call outside every function definition runs when the module is
+IMPORTED. Hook 0060 imports the module inside the build chroot, where a cmdlet
+resolved BY NAME cannot be autoloaded — only Microsoft.PowerShell.Core is
+already loaded. The note was written for `Join-Path` and `Test-Path`;
+on 2026-08-28 it happened again, with `Sort-Object` one statement outside a
+function in OS7.DirectoryObject.ps1, and it killed a 25-minute ISO build:
+
+    OS/7 hook 0060:   OS7: FAILED: The term 'Sort-Object' is not recognized
+
+It had been true on main since the Active Directory commit and was invisible
+because no ISO was built in between — word for word what #82 already says
+about itself. This scan finds it in seconds. Which module a name belongs to is
+ASKED of Get-Command rather than kept in a list here, and names the tree itself
+DEFINES are collected by the parser first, so neither can go stale.
+
+#112/#119 — A PROPERTY READ OFF A PIPELINE THAT MAY BE EMPTY.
+`(… | Select-Object -Last 1).Property` is `$null.Property` when nothing
+matched, and both OS7.psm1 and Zfs.psm1 set `Set-StrictMode -Version Latest`,
+under which that is a TERMINATING error rather than $null. The empty case is
+not exotic: it is a machine with no replication target, no snapshot yet, no
+release index — a fresh install. It shipped thirteen times, made
+`Get-OS7BackupStatus` throw on every new machine, and put an exception into
+the administrator manual's own screenshot of that cmdlet. #112 diagnosed it
+correctly on 2026-08-29, recommended a two-step fix, and nothing changed until
+2026-08-30 — which is the argument for this rule rather than a fourth
+paragraph. The scan added it on the day of the fix and immediately found
+THREE more sites than the grep that preceded it, in three different modules.
+
+#121 — A BARE `$LASTEXITCODE` READ IS EITHER A CRASH OR AN EARLIER COMMAND'S CODE.
+The engine rewrites it only when a native command COMPLETES through the
+pipeline. A command that is found but cannot be started does not throw and does
+not set it (measured 2026-09-01 against an extensionless file on PATH, and
+2026-08-26 against a .cmd shim): in a fresh session the next read is a
+terminating StrictMode error inside the function whose job was to report the
+failure, and after any earlier native call it is THAT call's exit code — 0
+included, so a verification step that never ran reports success. The idiom is
+reset-then-guarded-read:
+
+    $global:LASTEXITCODE = $null
+    $out = & $exe @argv 2> $errFile
+    $code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+
+Writes are the reset half and are allowed; a read under the Test-Path guard is
+the read half; any other read is a hit.
+
+#127 — A PARAMETER THE CALLEE DOES NOT HAVE, IN A CALL NOBODY HAS RUN.
+PowerShell resolves parameter names at INVOCATION. So a file parses, the module
+imports, every other function works, and `Set-SystemdUnitStartup -Name sssd
+-Enabled` — on a cmdlet whose parameter is `-Startup` — is a defect that exists
+only on the line nobody has executed. Found 2026-09-07 by running
+`Join-OS7Domain` for the first time, where it sat inside a try/catch that turned
+the binding error into one warning line among five in an otherwise successful
+join, on an image that happened to ship sssd enabled already, so the step that
+did nothing was indistinguishable from the step that worked. Every other caller
+of that cmdlet was correct; the wrong one was in the only function never
+executed. `check-installer-cmdlets.py` catches this class for what the C#
+installer types (#108) and nothing looked at PowerShell calling PowerShell,
+which is 194 functions calling each other. This scan checks only calls to
+functions the tree DEFINES, allows PowerShell's own unambiguous-prefix rule and
+the common parameters, and skips a call that splats or a callee with a
+dynamicparam block — in each of those the source does not carry the answer.
+
+ALL SIX BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
 word for word: "a rule that is only written down erodes."
 
 It needs `pwsh` and nothing else — no container, no ZFS, no VM. The scan is
@@ -43,13 +106,65 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Measured by running this, not counted by eye. #65 was 2 and #91 was 4 before
-# 2026-08-27.
-BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0}
+# 2026-08-27; #121 was 8 before 2026-09-01, when all eight were fixed together
+# with the scan that counts them.
+BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0, "STRICTPROP": 0,
+            "BARELEC": 0, "BADPARAM": 0}
 
 SCAN = r'''
 $root = $env:OS7_SCAN_ROOT
 $files = Get-ChildItem -LiteralPath $root -Recurse -Include *.psm1,*.ps1 |
     Where-Object { $_.FullName -notmatch '[\\/]tests[\\/]' }
+
+# A PRE-PASS for #82: every function name the tree DEFINES. A call at import
+# scope to one of these is ordinary - it is in the module being loaded, not
+# looked up in the archive. Collected by the parser, so a rename cannot make
+# this list stale the way a hand-written one would.
+#
+# THE SAME PASS SERVES #127, which needs one thing more: the PARAMETERS each of
+# those functions declares. A callee whose parameters cannot be known from the
+# source is recorded as unknown and never reported against - a `dynamicparam`
+# block, or a function with no parameter list at all.
+$defined = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::InvariantCultureIgnoreCase)
+$calleeParams = @{}
+$calleeUnknown = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::InvariantCultureIgnoreCase)
+foreach ($file in $files) {
+    $pre = [System.Management.Automation.Language.Parser]::ParseFile(
+        $file.FullName, [ref]$null, [ref]$null)
+    foreach ($f in $pre.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+        [void]$defined.Add($f.Name)
+
+        # Both spellings: `function f { param($a) }` and `function f ($a) {}`.
+        $declared = $null
+        if ($f.Body.ParamBlock) { $declared = $f.Body.ParamBlock.Parameters }
+        elseif ($f.Parameters) { $declared = $f.Parameters }
+        if ($null -eq $declared -or $f.Body.DynamicParamBlock) {
+            [void]$calleeUnknown.Add($f.Name)
+            continue
+        }
+        if (-not $calleeParams.ContainsKey($f.Name)) {
+            $calleeParams[$f.Name] = [System.Collections.Generic.HashSet[string]]::new(
+                [System.StringComparer]::InvariantCultureIgnoreCase)
+        }
+        foreach ($p in $declared) {
+            [void]$calleeParams[$f.Name].Add($p.Name.VariablePath.UserPath)
+        }
+    }
+}
+
+# The common parameters exist on anything with [CmdletBinding()], and -WhatIf
+# and -Confirm on anything with SupportsShouldProcess. They are allowed
+# unconditionally: this rule is for a parameter that does not exist at all,
+# which is what was measured, and not for the narrower question of whether a
+# particular callee supports ShouldProcess.
+$commonParams = [System.Collections.Generic.HashSet[string]]::new(
+    [string[]]@('Verbose', 'Debug', 'ErrorAction', 'WarningAction', 'InformationAction',
+        'ProgressAction', 'ErrorVariable', 'WarningVariable', 'InformationVariable',
+        'OutVariable', 'OutBuffer', 'PipelineVariable', 'WhatIf', 'Confirm'),
+    [System.StringComparer]::InvariantCultureIgnoreCase)
 
 foreach ($file in $files) {
     $errors = $null
@@ -100,6 +215,160 @@ foreach ($file in $files) {
         if ($text.Length -gt 70) { $text = $text.Substring(0, 70) + '...' }
         Write-Output ("ARRAYPLUS`t{0}`t{1}`t{2}" -f $file.Name, $b.Extent.StartLineNumber, $text)
     }
+
+    # ---- #112 / #119 --------------------------------------------------
+    #
+    # `(… | Select-Object -Last 1).Property` is `$null.Property` when the
+    # pipeline is empty, and OS7.psm1 sets Set-StrictMode -Version Latest,
+    # under which that is a TERMINATING error rather than $null.
+    #
+    # THE SIGNATURE IS NARROW ON PURPOSE. It fires only on a member access
+    # whose target is a parenthesised pipeline of two or more elements ENDING
+    # IN Select-Object. `(Get-Foo).Bar` can fail the same way and is not
+    # matched: it would fire on hundreds of correct lines and a check that
+    # cries wolf is a check people delete. What IS matched is the exact idiom
+    # this repository shipped thirteen times, twice into an administrator
+    # manual's screenshots.
+    #
+    # The fix a hit asks for is two statements -- name the selection, then read
+    # the property if there is one -- or, for the nine ZFS-property cases,
+    # OS7.psm1's private Get-OS7ZfsPropertyValue.
+    $members = $ast.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] }, $true)
+    foreach ($m in $members) {
+        $paren = $m.Expression
+        if ($paren -isnot [System.Management.Automation.Language.ParenExpressionAst]) { continue }
+        $pipe = $paren.Pipeline
+        if ($pipe -isnot [System.Management.Automation.Language.PipelineAst]) { continue }
+        if ($pipe.PipelineElements.Count -lt 2) { continue }
+        $last = $pipe.PipelineElements[-1]
+        if ($last -isnot [System.Management.Automation.Language.CommandAst]) { continue }
+        $name = $last.GetCommandName()
+        if ($name -notin @('Select-Object', 'select')) { continue }
+        $text = $m.Extent.Text -replace '\s+', ' '
+        if ($text.Length -gt 70) { $text = $text.Substring(0, 70) + '...' }
+        Write-Output ("STRICTPROP`t{0}`t{1}`t{2}" -f $file.Name, $m.Extent.StartLineNumber, $text)
+    }
+
+    # ---- #121 ---------------------------------------------------------
+    #
+    # $LASTEXITCODE is rewritten only when a native command COMPLETES through
+    # the pipeline. Read bare, it is a StrictMode terminating error when no
+    # native command has run yet, and an EARLIER command's code — 0 included —
+    # when one has. The idiom is reset-then-guarded-read; a WRITE is the reset
+    # half and a read under the Test-Path guard is the read half. Anything
+    # else that reads the variable is a hit.
+    $vars = $ast.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)
+    foreach ($v in $vars) {
+        if ($v.VariablePath.UserPath -notmatch '(?i)^(global:)?LASTEXITCODE$') { continue }
+        if ($v.Parent -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $v.Parent.Left -eq $v) { continue }
+        $p = $v.Parent
+        $guarded = $false
+        while ($p) {
+            if ($p -is [System.Management.Automation.Language.IfStatementAst]) {
+                foreach ($clause in $p.Clauses) {
+                    if ($clause.Item1.Extent.Text -match '(?i)Test-Path\s+Variable:\\?LASTEXITCODE') {
+                        $guarded = $true
+                    }
+                }
+                if ($guarded) { break }
+            }
+            $p = $p.Parent
+        }
+        if ($guarded) { continue }
+        $text = $v.Parent.Extent.Text -replace '\s+', ' '
+        if ($text.Length -gt 70) { $text = $text.Substring(0, 70) + '...' }
+        Write-Output ("BARELEC`t{0}`t{1}`t{2}" -f $file.Name, $v.Extent.StartLineNumber, $text)
+    }
+
+    # ---- #82 ----------------------------------------------------------
+    #
+    # A command call OUTSIDE every function definition runs at IMPORT, and hook
+    # 0060 imports the module inside the build chroot, where a cmdlet resolved
+    # BY NAME cannot be autoloaded. Only Microsoft.PowerShell.Core is already
+    # there; anything else fails the BUILD with "The term '<name>' is not
+    # recognized" and takes the whole ISO with it.
+    #
+    # The module a name belongs to is ASKED of Get-Command rather than kept in a
+    # list here, because a list of "safe" cmdlets is exactly the kind of thing
+    # that agrees with the code instead of checking it.
+    $commands = $ast.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+    foreach ($c in $commands) {
+        $p = $c.Parent
+        $inFunction = $false
+        while ($p) {
+            if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                $inFunction = $true
+                break
+            }
+            $p = $p.Parent
+        }
+        if ($inFunction) { continue }
+
+        $name = $c.GetCommandName()
+        if (-not $name) { continue }
+        if ($defined.Contains($name)) { continue }
+
+        $resolved = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        $module = if ($resolved) { $resolved.ModuleName } else { '' }
+        if ($module -eq 'Microsoft.PowerShell.Core') { continue }
+        if (-not $resolved) { $module = '(unresolved)' }
+
+        Write-Output ("IMPORTSCOPE`t{0}`t{1}`t{2}`t{3}" -f `
+            $file.Name, $c.Extent.StartLineNumber, $name, $module)
+    }
+
+    # ---- #127 ---------------------------------------------------------
+    #
+    # A parameter the callee does not have. PowerShell reports it at
+    # INVOCATION, so the file parses, the module imports, and the defect lives
+    # only on the line nobody has run: Join-OS7Domain called
+    # `Set-SystemdUnitStartup -Enabled` on a cmdlet whose parameter is
+    # `-Startup`, inside a try/catch that turned the binding error into one
+    # warning line, on an image where sssd was already enabled.
+    #
+    # ONLY CALLS TO FUNCTIONS THIS TREE DEFINES are checked. Resolving external
+    # cmdlets would need every module loaded and would break on a servicing
+    # update, reporting it as a client defect - the same argument
+    # check-directory-logic.py makes about faking .NET types.
+    #
+    # THREE THINGS ARE DELIBERATELY NOT REPORTED, because in each the source
+    # does not carry the answer and a guess would be a false positive:
+    #   * a call that SPLATS - the keys live in a hashtable built elsewhere;
+    #   * a callee with a dynamicparam block;
+    #   * an unambiguous PREFIX, which PowerShell itself accepts (-Start for
+    #     -Startup), so the rule accepts it too.
+    foreach ($c in $commands) {
+        $callee = $c.GetCommandName()
+        if (-not $callee) { continue }
+        if ($calleeUnknown.Contains($callee)) { continue }
+        if (-not $calleeParams.ContainsKey($callee)) { continue }
+
+        $splatted = $false
+        foreach ($e in $c.CommandElements) {
+            if ($e -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $e.Splatted) { $splatted = $true; break }
+        }
+        if ($splatted) { continue }
+
+        $known = $calleeParams[$callee]
+        foreach ($e in $c.CommandElements) {
+            if ($e -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+            $pname = $e.ParameterName
+            if (-not $pname) { continue }
+            if ($commonParams.Contains($pname)) { continue }
+            if ($known.Contains($pname)) { continue }
+            $prefixOf = @($known | Where-Object {
+                $_.StartsWith($pname, [System.StringComparison]::InvariantCultureIgnoreCase) })
+            if ($prefixOf.Count -eq 1) { continue }
+            $verdict = if ($prefixOf.Count -gt 1) { 'ambiguous prefix' } else { 'no such parameter' }
+            Write-Output ("BADPARAM`t{0}`t{1}`t{2}`t{3}`t{4}" -f `
+                $file.Name, $e.Extent.StartLineNumber, $callee, $pname, $verdict)
+        }
+    }
 }
 Write-Output ("FILES`t{0}" -f $files.Count)
 '''
@@ -114,7 +383,7 @@ def find_pwsh():
 
 
 def main():
-    print("\n### two PowerShell traps, asked of the parser rather than of a regex")
+    print("\n### six PowerShell traps, asked of the parser rather than of a regex")
 
     pwsh = find_pwsh()
     if not pwsh:
@@ -122,14 +391,26 @@ def main():
         sys.exit(2)
 
     env = dict(os.environ)
-    env["OS7_SCAN_ROOT"] = os.path.join(REPO, "powershell")
+    # OS7_SCAN_ROOT IS HONOURED IF IT IS ALREADY SET, and that is what makes
+    # this check checkable. A scan that can only ever be pointed at a clean tree
+    # can be verified to report nothing and never verified to report something —
+    # which is the shape of a diagnostic that agrees with the code instead of
+    # checking it. To prove a rule fires: copy powershell/ somewhere, plant the
+    # defect in the copy, and
+    #
+    #     OS7_SCAN_ROOT=/tmp/copy/powershell ./check-ps-traps.py
+    #
+    # Each rule here was confirmed against a planted instance that way.
+    env["OS7_SCAN_ROOT"] = os.environ.get(
+        "OS7_SCAN_ROOT", os.path.join(REPO, "powershell"))
     got = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", SCAN],
                          capture_output=True, text=True, env=env)
     if got.returncode != 0:
         print(got.stderr[-2000:], file=sys.stderr)
         sys.exit(1)
 
-    found = {"SHADOW": [], "ARRAYPLUS": [], "PARSE": []}
+    found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "STRICTPROP": [],
+             "BARELEC": [], "BADPARAM": [], "PARSE": []}
     files = 0
     for line in got.stdout.splitlines():
         parts = line.strip().split("\t")
@@ -155,9 +436,39 @@ def main():
     else:
         print("      (none)")
 
+    print("\n  #82 - a cmdlet called at IMPORT scope, which the build chroot cannot autoload")
+    if found["IMPORTSCOPE"]:
+        for name, line, cmd, module in found["IMPORTSCOPE"]:
+            print("      %s:%s  %s  (%s)" % (name, line, cmd, module))
+    else:
+        print("      (none)")
+
+    print("\n  #112/#119 - a property read off a pipeline that may be empty")
+    if found["STRICTPROP"]:
+        for name, line, text in found["STRICTPROP"]:
+            print("      %s:%s  %s" % (name, line, text))
+    else:
+        print("      (none)")
+
+    print("\n  #121 - a bare $LASTEXITCODE read: a crash, or an earlier command's code")
+    if found["BARELEC"]:
+        for name, line, text in found["BARELEC"]:
+            print("      %s:%s  %s" % (name, line, text))
+    else:
+        print("      (none)")
+
+    print("\n  #127 - a parameter the callee does not have, reported only when it runs")
+    if found["BADPARAM"]:
+        for name, line, callee, param, verdict in found["BADPARAM"]:
+            print("      %s:%s  %s -%s  (%s)" % (name, line, callee, param, verdict))
+    else:
+        print("      (none)")
+
     bad = False
     print()
-    for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91")):
+    for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82"),
+                       ("STRICTPROP", "#112/#119"), ("BARELEC", "#121"),
+                       ("BADPARAM", "#127")):
         n = len(found[key])
         base = BASELINE[key]
         if n > base:
@@ -176,8 +487,11 @@ def main():
         sys.exit(1)
     if bad:
         sys.exit(1)
-    print("\nBoth traps held: no local shadows a parameter, and no array literal "
-          "hides an append.")
+    print("\nAll six held: no local shadows a parameter, no array literal hides "
+          "an append, nothing outside a function calls a cmdlet the build "
+          "chroot cannot autoload, no property is read off a pipeline that "
+          "may be empty, no $LASTEXITCODE is read bare, and no call names a "
+          "parameter its callee does not have.")
 
 
 if __name__ == "__main__":

@@ -67,6 +67,69 @@ endef
 # place that decision lives.
 SOURCE_FACTS = $(addprefix -e ,$(shell $(CURDIR)/scripts/os7-source-facts.sh $(CURDIR)))
 
+# ONE SIGNING KEY FOR THE ISO AND THE REPOSITORY (build/lib/os7-signing-key.sh).
+# The ISO installs os7-release, which ships the trust anchor; the repository is
+# signed by the key behind it. If the two targets resolved keys independently,
+# a machine installed from this tree's ISO would refuse this tree's repository
+# at the first `apt update`. Development-key state only — C7a is open, and a
+# real OS7_REPO_GNUPGHOME handed in by the operator overrides this default.
+# out/ is gitignored; nothing in this keyring may ever be published.
+# Override with `make KEYDIR=/path/to/real/gnupghome …` to sign with a real
+# key; the container sees whatever directory is mounted here.
+KEYDIR   ?= $(OUT)/os7-gnupg
+
+# THE SUCCESSOR KEY, TRUSTED BEFORE IT IS USED (CURATION-AND-DELIVERY-PLAN
+# §6.3). A HOST path to the PUBLIC half of the release key, mounted read-only so
+# build/lib/os7-signing-key.sh can put it in the trust anchor beside the signer.
+#
+# This is load-bearing and its absence is invisible. apt verifies a repository
+# with the keyring the RUNNING system has — Update-OS7 writes `Signed-By:` into
+# the clone, and the clone is a copy of the environment that is running — so a
+# machine can only ever be moved to a release signed by a key it ALREADY trusts.
+# An ISO whose anchor holds one key can never be handed a second one; the only
+# route left is reinstallation. Set this before the first medium leaves the
+# building, or the decision is made by default and cannot be revisited.
+#
+#   make build-amd64 OS7_RELEASE_PUBKEY=/mnt/c/Users/<you>/.os7/os7-release-key.pub
+#
+# A HOST path outside this repository, and deliberately not a file in the tree:
+# a public git repository is the wrong place for a release key's public half too,
+# because then rotating the key looks like a code change. Empty means
+# "signer only", which is what every build did before this line existed.
+OS7_RELEASE_PUBKEY ?=
+
+KEY_ARGS  = -v $(KEYDIR):/os7-gnupg -e OS7_REPO_GNUPGHOME=/os7-gnupg $(TRUST_ARGS) \
+            $(CRED_ARGS)
+ifneq ($(strip $(OS7_RELEASE_PUBKEY)),)
+TRUST_ARGS = -v $(OS7_RELEASE_PUBKEY):/os7-trust/release.pub:ro \
+             -e OS7_REPO_TRUST_PUBKEYS=/os7-trust/release.pub
+else
+TRUST_ARGS =
+endif
+
+# THE REPOSITORY'S READ CREDENTIAL, WHICH THE MEDIUM CARRIES (§4.2).
+#
+# A HOST path to the operator's storagebox.conf — the file
+# scripts/setup-release-credentials.sh writes, outside both repositories —
+# mounted read-only so build-os7-packages.sh can put the read-only account in
+# /etc/apt/auth.conf.d/os7.conf inside os7-release. Same shape and same reason
+# as OS7_RELEASE_PUBKEY above: this repository is public.
+#
+#   make build-amd64 OS7_REPO_CREDENTIAL=$$HOME/.os7/storagebox.conf
+#
+# EMPTY IS NOT A QUIET DEFAULT. When the pin's OS7_REPO_URI needs
+# authentication — every http(s) URI does; §4.1a measured the box answering an
+# anonymous request with 401 — a build without this REFUSES, because the medium
+# it would produce installs machines that cannot reach the published repository
+# and say nothing about why. OS7_REPO_NO_CREDENTIAL=1 is the deliberate opt-out.
+OS7_REPO_CREDENTIAL ?=
+ifneq ($(strip $(OS7_REPO_CREDENTIAL)),)
+CRED_ARGS = -v $(OS7_REPO_CREDENTIAL):/os7-cred/storagebox.conf:ro \
+            -e OS7_REPO_CREDENTIAL_FILE=/os7-cred/storagebox.conf
+else
+CRED_ARGS = $(if $(strip $(OS7_REPO_NO_CREDENTIAL)),-e OS7_REPO_NO_CREDENTIAL=1,)
+endif
+
 .PHONY: help image-amd64 image-arm64 build-amd64 build-arm64 check-amd64-host \
         build-amd64-vm build-amd64-vm-reset repo-amd64 repo-arm64 \
         lb-config shell-amd64 shell-arm64 clean
@@ -83,6 +146,14 @@ help:
 	@echo "                    Works: the ISO boots, installs, and the installed"
 	@echo "                    disk boots on its own. Check it with"
 	@echo "                    installer/testing/check-image.py"
+	@echo "                    A RELEASE BUILD NEEDS TWO HOST PATHS handed in,"
+	@echo "                    both outside this public repository:"
+	@echo "                      OS7_RELEASE_PUBKEY=\$$HOME/.os7/os7-release-key.pub"
+	@echo "                      OS7_REPO_CREDENTIAL=\$$HOME/.os7/storagebox.conf"
+	@echo "                    The second is REQUIRED whenever the pin's"
+	@echo "                    OS7_REPO_URI is an http(s) one - the build refuses"
+	@echo "                    without it rather than ship a medium whose machines"
+	@echo "                    cannot reach the repository (RELEASE-PROCESS 4.2)."
 	@echo "  make repo-amd64   Build and SIGN OS/7's own package repository"
 	@echo "                    -> ./out/os7-repo  (C7). Not privileged."
 	@echo "                    Prove it with installer/testing/check-os7-repo.py,"
@@ -129,8 +200,8 @@ check-amd64-host:
 
 # On an x86_64 host this is native and fast - the right way to build amd64.
 build-amd64: check-amd64-host image-amd64
-	mkdir -p $(OUT)
-	$(call DOCKER_RUN,amd64,$(SOURCE_FACTS)) /work/build/build.sh amd64
+	mkdir -p $(OUT) $(KEYDIR)
+	$(call DOCKER_RUN,amd64,$(SOURCE_FACTS) $(KEY_ARGS)) /work/build/build.sh amd64
 
 # amd64 ISO via full x86 system emulation. Needed only on ARM hosts.
 # Not Docker: QEMU emulates a whole x86 machine, so no syscall translation and
@@ -142,8 +213,8 @@ build-amd64-vm-reset:
 	./scripts/build-amd64-vm.sh --reset
 
 build-arm64: image-arm64
-	mkdir -p $(OUT)
-	$(call DOCKER_RUN,arm64,$(SOURCE_FACTS)) /work/build/build.sh arm64
+	mkdir -p $(OUT) $(KEYDIR)
+	$(call DOCKER_RUN,arm64,$(SOURCE_FACTS) $(KEY_ARGS)) /work/build/build.sh arm64
 
 # OS/7's own package repository (docs/CURATION-AND-DELIVERY-PLAN.md C7).
 #
@@ -161,10 +232,10 @@ build-arm64: image-arm64
 #
 # Prove it with:  ./installer/testing/check-os7-repo.py --arch <arch>
 define BUILD_REPO
-mkdir -p $(OUT)/os7-repo
+mkdir -p $(OUT)/os7-repo $(KEYDIR)
 docker run --rm --platform linux/$(1) \
   -v $(CURDIR):/work -v $(OUT)/os7-repo:/out \
-  $(SOURCE_FACTS) -e OS7_ARCH=$(1) \
+  $(SOURCE_FACTS) $(KEY_ARGS) -e OS7_ARCH=$(1) \
   $(IMAGE):$(1) /work/build/lib/build-os7-repo.sh \
   /work/build/config/os7-release.conf /out
 endef

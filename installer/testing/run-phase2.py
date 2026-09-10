@@ -93,6 +93,9 @@ WANT_DATASETS = [
     "rpool/DATA/log", "rpool/DATA/spool", "rpool/DATA/tmp", "rpool/DATA/srv",
     "rpool/DATA/snapd", "rpool/DATA/lib/networkmanager", "rpool/DATA/lib/authd",
     "rpool/DATA/lib/azcmagent",
+    # AD-PLAN A9: domain users' homes must survive a boot-environment rollback,
+    # and until 2026-09-07 the path sssd is given had no dataset at all.
+    "rpool/DATA/lib/os7-domain-homes",
     "bpool/BOOT",
 ]
 
@@ -108,7 +111,7 @@ def fetch_font():
         f"mount -o loop,ro /iso/{os.path.basename(lab.iso)} /mnt/iso; "
         "mount -t squashfs -o loop,ro /mnt/iso/casper/filesystem.squashfs /mnt/sq; "
         "cp /mnt/sq/usr/share/consolefonts/os7-fixedsys-16x32.psf.gz /out/; "
-        "umount /mnt/sq; umount /mnt/iso", stdout=subprocess.DEVNULL)
+        "set +e; umount -d /mnt/sq; umount -d /mnt/iso; exit 0", stdout=subprocess.DEVNULL)
 
 
 _mark = 0
