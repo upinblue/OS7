@@ -283,6 +283,32 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   requires EXACTLY ONE argument to
                                           #   differ. No QEMU, no Docker, ~2s,
                                           #   both hosts, 71 checks
+./installer/testing/run-firstrun.py       # THE DOCUMENTED FIRST RUN, TYPED BY
+                                          #   THE ACCOUNT THE INSTALLER CREATED
+                                          #   — the one thing every other
+                                          #   harness here could not do, because
+                                          #   they all run as root (run-s5 goes
+                                          #   through `sudo -S -p '' pwsh`, the
+                                          #   check-*.py live in containers whose
+                                          #   only account is root). #148 was
+                                          #   found by a person in the first hour
+                                          #   after a release that had passed 141
+                                          #   artefact checks per architecture.
+                                          #   Every command is QUOTED from
+                                          #   docs/manual/en/ and the run refuses
+                                          #   to start if the manual no longer
+                                          #   says it, so it follows the
+                                          #   documentation in both directions.
+                                          #   Reading verbs must WORK; changing
+                                          #   ones must REFUSE with a message
+                                          #   that names root and carries the
+                                          #   `sudo pwsh -c` form — a bare
+                                          #   `Exception calling "…"` is #148's
+                                          #   and #149's signature and is failed
+                                          #   by name. Proven in both directions
+                                          #   on a machine: red on 1.0.0.203,
+                                          #   green once the guard is on it. It
+                                          #   found #150 on its first run
 ./installer/testing/shoot-manual.py       # the administrator manual's pictures,
                                           #   taken from a machine: boot an
                                           #   installed disk with NO medium, log

@@ -1351,9 +1351,42 @@ function Get-OS7MenuBootEnvironment {
 	[CmdletBinding()]
 	param()
 
+	# "NOT THERE" AND "NOT ALLOWED TO LOOK" ARE DIFFERENT ANSWERS, and this
+	# read used to give neither: a bare Test-Path on a path inside the ESP
+	# THROWS for an account that cannot traverse /boot/efi, so the whole of
+	# Get-OS7BootEnvironment failed for the account Setup creates —
+	# BUILD-NOTES #150, found by run-firstrun.py on its first run, with
+	#
+	#     Test-Path: Access to the path '/boot/efi/EFI/BOOT/grub.cfg' is denied.
+	#
+	# A command chapter 2 of the manual puts in an operator's first five
+	# minutes has to work for that operator. So a stub that cannot be READ is
+	# reported and skipped rather than thrown, and the caller gets the same
+	# "cannot say" it already handles for a stub that is absent — the choice
+	# Get-OS7Manifest makes two hundred lines above, for the same reason.
+	#
+	# WARNED AND NOT SILENT, because the two are not the same fact: an absent
+	# stub means this machine's bootloader was never pointed anywhere, and an
+	# unreadable one means the answer exists and this account may not have it.
+	# Returning $null for both without a word would be the shape this
+	# repository keeps paying for.
 	foreach ($stub in $script:OS7EspStubs) {
-		if (-not (Test-Path $stub)) { continue }
-		$m = [regex]::Match((Get-Content -Raw $stub), "/BOOT/(?<be>[^@']+)@/grub")
+		$text = $null
+		try {
+			if (-not (Test-Path -LiteralPath $stub -ErrorAction Stop)) { continue }
+			$text = Get-Content -Raw -LiteralPath $stub -ErrorAction Stop
+		}
+		catch [System.UnauthorizedAccessException] {
+			Write-Warning ("cannot read $stub as this account, so the boot " +
+				'environment the bootloader would start cannot be named. Run as ' +
+				'root to see it: sudo pwsh -NoProfile -c ' + "'Get-OS7BootEnvironment'")
+			continue
+		}
+		catch {
+			Write-Warning "cannot read ${stub}: $($_.Exception.Message)"
+			continue
+		}
+		$m = [regex]::Match($text, "/BOOT/(?<be>[^@']+)@/grub")
 		if ($m.Success) { return $m.Groups['be'].Value }
 	}
 	return $null

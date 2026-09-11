@@ -8099,3 +8099,52 @@ So there are three ways out and none is free:
 open.** `check-privilege.py` holds the generic layers at a baseline of 41 that
 may not grow, reports every site with the module that owns it, and prints the
 measured Net message so the next reader sees the defect rather than a count.
+
+## #150 — a READ command from the manual's first five minutes failed for the account Setup creates, on a bare `Test-Path`
+
+**Found 2026-09-11 by `run-firstrun.py` on its first run**, which is the whole
+reason that harness exists. As `os7admin` on a 1.0.0.203 machine:
+
+```
+Get-OS7BootEnvironment
+  Test-Path: Access to the path '/boot/efi/EFI/BOOT/grub.cfg' is denied.
+```
+
+Chapter 2 of the manual puts that command in an operator's first five minutes,
+beside `Get-OS7Version`. It did not work for them.
+
+**The cause is one missing word.** `Get-OS7BootLoaderChoice` walks
+`$script:OS7EspStubs` with
+
+```powershell
+if (-not (Test-Path $stub)) { continue }
+```
+
+and `Test-Path` on a path inside a directory the account cannot traverse does
+not return `$false` — it writes an error, which under a caller's
+`$ErrorActionPreference = 'Stop'` takes the whole cmdlet down. Two hundred
+lines above, `Get-OS7Manifest` does the careful thing for the same class and
+says why: "a missing file and a malformed one both come back as `$null`, and
+that is deliberate: the callers all have to handle 'cannot say' anyway". The
+ESP read had never been given the same treatment.
+
+**"NOT THERE" AND "NOT ALLOWED TO LOOK" ARE DIFFERENT ANSWERS, and the fix
+keeps them apart.** Returning `$null` for both would have made the cmdlet work
+and quietly drop a field — the shape this repository keeps paying for. So an
+unreadable stub is caught, **warned about by name**, and skipped:
+
+```
+WARNING: cannot read /boot/efi/EFI/BOOT/grub.cfg as this account, so the boot
+environment the bootloader would start cannot be named. Run as root to see it:
+sudo pwsh -NoProfile -c 'Get-OS7BootEnvironment'
+```
+
+and the operator gets the table — both environments, `Active` and `Running`
+from ZFS — with the one fact that needs the ESP named as missing rather than
+absent. Measured on the machine, as `os7admin`, after the fix.
+
+**What it says about the other reads.** `Get-OS7Version`, `Test-OS7Network` and
+`Get-OS7ManagementStatus` were fine, so this is not a general property of the
+read surface — it is one path, in one helper, that nobody had ever exercised
+without root. Which is precisely what #148 said about the write surface, and
+why the harness that found both is the one that runs as a person.

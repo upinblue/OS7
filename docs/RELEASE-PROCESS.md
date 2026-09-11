@@ -100,6 +100,7 @@ host that can run them, because that is the thing a single operator forgets.
 | `run-s5.py all` | amd64: this box · arm64: the Mac | **The machine gate.** Install, TPM boot, cycle, `Update-OS7` against a served repository, the unattended timer. |
 | `run-phase3.py install` and `walk` | amd64: this box · arm64: the Mac | Install, then install again **by keypress**. `boot` cannot run on amd64 — an installed machine there has no `console=` and the phase watches the serial line (#132). |
 | `run-secureboot.py all` | amd64: this box · arm64: the Mac | **Secure Boot on a machine**, and the only harness that boots the MEDIUM through its own bootloader. Added to this table 2026-09-09, when it first gated a release. |
+| `run-firstrun.py` | amd64: this box · arm64: the Mac | **The documented first run, as the account the installer created** — every other row here runs as root. Added 2026-09-11, after #148 was reported by an operator an hour after a release that passed every other row. |
 
 **arm64's evidence standard is lower than amd64's, and that is a decision, not
 an oversight.** As of 1.0.0.203 arm64 gets `check-image.py` — **114 checks**,
