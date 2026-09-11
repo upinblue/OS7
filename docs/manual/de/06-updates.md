@@ -71,6 +71,10 @@ Warnung aufgeführt.
 Update-OS7
 ```
 
+Dieses Cmdlet braucht eine erhöhte Sitzung — siehe *Erhöhte Rechte* in Kapitel
+1, dort steht auch, warum `sudo Update-OS7` nicht der Weg dorthin ist. Als
+normaler Benutzer verweigert es namentlich und nennt die Form, die geht.
+
 Ohne Parameter nimmt der Befehl das nächste Release des eingestellten Kanals.
 Was dann passiert, in der Reihenfolge, in der es passiert:
 

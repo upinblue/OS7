@@ -123,3 +123,15 @@ Screen illustrations show the console of a running OS/7 machine.
 > ```
 > Every example in this manual assumes you are in such a session unless it says
 > otherwise.
+>
+> **`sudo Update-OS7` cannot work, and neither can `sudo` in front of any other
+> OS/7 cmdlet.** `sudo` looks for a program on the PATH, and every cmdlet in
+> this product is a PowerShell *function* — so you get
+> `sudo: 'Update-OS7': command not found`, which reads like a missing feature
+> and is not one. Elevate the shell, not the cmdlet. For a single command
+> without starting a session:
+> ```powershell
+> sudo pwsh -NoProfile -c 'Update-OS7 -Confirm:$false'
+> ```
+> `-Confirm:$false` is needed there because the cmdlets that change the machine
+> ask for confirmation, and a non-interactive shell has nobody to ask.

@@ -131,3 +131,16 @@ OS/7-Maschine.
 > ```
 > Alle Beispiele in diesem Handbuch gehen davon aus, dass Sie in einer solchen
 > Sitzung arbeiten, sofern nichts anderes dabeisteht.
+>
+> **`sudo Update-OS7` kann nicht funktionieren, und `sudo` vor jedem anderen
+> OS/7-Cmdlet auch nicht.** `sudo` sucht ein Programm im PATH, und jedes Cmdlet
+> dieses Produkts ist eine PowerShell-*Funktion* — Sie bekommen deshalb
+> `sudo: 'Update-OS7': command not found`, was wie eine fehlende Funktion
+> aussieht und keine ist. Erhöhen Sie die Shell, nicht das Cmdlet. Für einen
+> einzelnen Befehl, ohne eine Sitzung zu starten:
+> ```powershell
+> sudo pwsh -NoProfile -c 'Update-OS7 -Confirm:$false'
+> ```
+> `-Confirm:$false` ist dort nötig, weil die verändernden Cmdlets eine
+> Rückfrage stellen und eine nicht-interaktive Shell niemanden hat, den sie
+> fragen könnte.

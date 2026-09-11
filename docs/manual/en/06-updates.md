@@ -68,6 +68,10 @@ appear — it is not listed with a warning.
 Update-OS7
 ```
 
+This one needs an elevated session — see *Elevation* in chapter 1, including
+why `sudo Update-OS7` is not the way to get one. As an ordinary user it refuses
+by name and tells you the form that works.
+
 With no parameters this takes the next release on the configured channel. What
 then happens, in the order it happens:
 

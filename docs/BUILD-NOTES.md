@@ -7956,10 +7956,21 @@ the same shape.
 
 **And the product hands out the failing command itself.** `/usr/libexec/os7-update-check`
 runs as root from the timer and writes, on finding a development release:
-*"Apply it by hand with `Update-OS7 -AllowDevelopment`"*. The manual documents
-the bare form on four pages, and the word `sudo` appears twice in the whole
-English manual, neither time about updates. The 1.0.0.203 release notes I wrote
-repeat it.
+*"Apply it by hand with `Update-OS7 -AllowDevelopment`"*, and the 1.0.0.203
+release notes repeated it.
+
+**The manual was NOT as wrong as this note first said, and the correction
+matters.** An earlier version of this paragraph reported that "the word `sudo`
+appears twice in the whole English manual, neither time about updates" — both
+clauses true, and the impression false. Chapter 1 carries an *Elevation*
+paragraph in both languages which says that nearly every changing cmdlet needs
+administrative rights, gives `sudo pwsh`, and states that every example in the
+manual assumes such a session. The manual's actual gap was exactly one fact:
+that `sudo <cmdlet>` **cannot** work, which is the move an operator makes the
+moment the first message tells them they need root. That sentence is now in
+chapter 1 in both languages, with the `sudo pwsh -NoProfile -c '…'` form and
+why `-Confirm:$false` belongs in it, and §6.4 points at it from where the
+operator actually landed.
 
 **What works today**, and it is worth writing down before the fix exists:
 
@@ -8032,3 +8043,59 @@ pages per language, and the 1.0.0.203 media, which carry the module without the
 guard. A machine already installed gets the good message only with the release
 after it; until then the working form is
 `sudo pwsh -NoProfile -c 'Update-OS7 -AllowDevelopment -Confirm:$false'`.
+
+## #149 — the SAME privilege defect is in every generic layer, and the fix cannot be the same one
+
+**Measured 2026-09-11, immediately after #148 was fixed**, because the obvious
+next question is whether the operator surface was the only place. It was not.
+
+`Set-NetplanDocument` in `powershell/Net`, called as uid 1000 in a container:
+
+```
+Exception calling "WriteAllText" with "2" argument(s):
+  "Access to the path '/etc/netplan/99-probe.yaml' is denied."
+```
+
+That is #148's shape letter for letter — a .NET method signature and a path,
+and no mention of root. The scan `check-privilege.py` now runs across all seven
+modules puts a number on it: **41 mutating cmdlets in the generic layers reach
+something only root can**, beside OS7's 42. Zfs alone accounts for 17.
+
+**What was NOT measured, and is worth saying:** this container has no ZFS kernel
+module, so `New-ZfsDataset` answered "The ZFS modules cannot be auto-loaded. Try
+running 'modprobe zfs' as root" — a message about module loading, not about
+privilege, so the Zfs layer's real answer to a non-root user is still unknown.
+On a machine `zfs create` says "permission denied" itself, which would make the
+Zfs layer the *least* bad of them; that is a reasonable guess and it is not a
+measurement. `Start-SystemdUnit` could not be measured either: a plain
+container is "not booted with systemd as init system (PID 1)".
+
+**THE FIX CANNOT BE Assert-OS7Elevated, AND THAT IS THE WHOLE PROBLEM.** That
+function lives in `OS7.psm1`, and `powershell/Zfs`, `Net`, `Time`, `Systemd`,
+`Directory` and `Hardware` sit BELOW the product layer. A layer calling up into
+OS7 inverts P2's direction — the rule `check-layering.py` exists to hold — and
+would make the generic modules undeployable on their own, which is the property
+that makes them generic ("all five would run on any Ubuntu host", CLAUDE.md).
+
+So there are three ways out and none is free:
+
+1. **A copy per module.** Six copies of twenty lines. This repository has
+   BUILD-NOTES #66 about exactly that shape ("code that replaces a spike must be
+   DIFFED against it") and P3 is an open plan to delete ONE of the two netplan
+   renderers for the same reason. Six copies of a privilege check that must
+   agree about what `sudo pwsh -c` looks like is the same trap, six-fold.
+2. **A seventh module below all of them** — `powershell/Base`, holding the uid
+   read and nothing else. Honest, and it adds a module to the layering diagram,
+   to hook 0060's verification list, to the .deb, to POWERSHELL-REFERENCE.md and
+   to `check-module-parts.py`'s four-place rule. Not a small change.
+3. **Leave the layers unguarded, deliberately**, on the argument that a library
+   reports what the subsystem said and the product owns the operator
+   conversation. Defensible — every OS7 verb guards now, and OS7 is what the
+   manual documents — but `POWERSHELL-REFERENCE.md` documents all 266 exported
+   functions without saying which are not meant to be typed, so today an
+   operator has no way to know they are below the line.
+
+**Not decided here, and the number is what stops it drifting while it is
+open.** `check-privilege.py` holds the generic layers at a baseline of 41 that
+may not grow, reports every site with the module that owns it, and prints the
+measured Net message so the next reader sees the defect rather than a count.

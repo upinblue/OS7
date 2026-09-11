@@ -84,10 +84,22 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # day it was written.
 BASELINE = 42
 
+# The same rule asked of the generic layers, where NO guard exists to call:
+# Assert-OS7Elevated is in OS7 and they sit below it, so a layer calling it
+# would invert P2's direction. That is BUILD-NOTES #149 and it is deliberately
+# not decided here. This number is an inventory of the debt, and it may not
+# grow while the decision is open.
+BASELINE_LAYERS = 41
+
 SCAN = r'''
 $ErrorActionPreference = 'Stop'
 $root = $env:OS7_SCAN_ROOT
-$mod  = Join-Path $root 'OS7'
+# EVERY module, not just OS7. The generic layers have the same defect and
+# cannot have the same fix: OS7.psm1's Assert-OS7Elevated is above them, and a
+# layer calling up into the product would invert P2 (see the header).
+$modules = @(Get-ChildItem -Path $root -Directory |
+             Where-Object { Test-Path (Join-Path $_.FullName "$($_.Name).psd1") } |
+             Select-Object -ExpandProperty Name)
 
 # Read-only verbs. Everything else is treated as mutating.
 $readVerbs = @('Get','Test','Measure','Read','Enter','Exit','Find','Show',
@@ -133,11 +145,20 @@ function Get-Exported([string]$manifest) {
     $d = Import-PowerShellDataFile -Path $manifest
     @($d.FunctionsToExport)
 }
-$exported = Get-Exported (Join-Path $mod 'OS7.psd1')
+$files = @()
+$exported = @()
+$owner = @{}
+foreach ($m in $modules) {
+    $md = Join-Path $root $m
+    foreach ($e in (Get-Exported (Join-Path $md "$m.psd1"))) {
+        $exported += $e
+        $owner[$e] = $m
+    }
+    $files += @(Get-ChildItem -Path $md -Filter '*.ps1' -File) +
+              @(Get-ChildItem -Path $md -Filter '*.psm1' -File)
+}
 Write-Output ("EXPORTED`t{0}" -f $exported.Count)
-
-$files = @(Get-ChildItem -Path $mod -Filter '*.ps1' -File) +
-         @(Get-ChildItem -Path $mod -Filter '*.psm1' -File)
+Write-Output ("MODULES`t{0}" -f ($modules -join ','))
 
 # PASS 1 — script-scope variables that hold a system path. This module spells
 # most of its paths that way, and a scan that only read literals would miss
@@ -206,9 +227,9 @@ foreach ($f in $files) {
         if ($why.Count -eq 0) { continue }
 
         $first = ($why | Select-Object -Unique | Select-Object -First 2) -join ', '
-        Write-Output ("{0}`t{1}`t{2}`t{3}" -f
+        Write-Output ("{0}`t{1}`t{2}`t{3}`t{4}" -f
             $(if ($guarded) { 'GUARDED' } else { 'UNGUARDED' }),
-            $name, $f.Name, $first)
+            $owner[$name], $name, $f.Name, $first)
     }
 }
 Write-Output ("FILES`t{0}" -f $files.Count)
@@ -247,39 +268,72 @@ def main():
 
     guarded, unguarded = [], []
     exported = pathvars = files = 0
+    modules = []
     for line in got.stdout.splitlines():
-        p = line.rstrip().split("\t")
+        p = line.rstrip().split("	")
         if p[0] == "GUARDED":
             guarded.append(p[1:])
         elif p[0] == "UNGUARDED":
             unguarded.append(p[1:])
         elif p[0] == "EXPORTED":
             exported = int(p[1])
+        elif p[0] == "MODULES":
+            modules = p[1].split(",")
         elif p[0] == "PATHVARS":
             pathvars = int(p[1])
         elif p[0] == "FILES":
             files = int(p[1])
 
-    print(f"      {files} file(s), {exported} exported function(s), "
-          f"{pathvars} script-scope system path(s)")
+    print(f"      {len(modules)} module(s), {files} file(s), {exported} exported "
+          f"function(s), {pathvars} script-scope system path(s)")
     print(f"      {len(guarded) + len(unguarded)} mutating cmdlet(s) reach something "
           "only root can")
     print()
 
     if guarded:
         print("  GUARDED — they refuse as a user and say how to elevate")
-        for name, where, why in guarded:
-            print(f"      ok    {name:<34} {where}")
+        for mod, name, where, why in guarded:
+            print(f"      ok    {name:<34} {mod}/{where}")
         print()
 
-    if unguarded:
-        print("  UNGUARDED — they fail as a user with whatever the write said")
-        for name, where, why in unguarded:
-            print(f"            {name:<34} {where:<28} {why[:60]}")
+    own = [r for r in unguarded if r[0] == "OS7"]
+    layers = [r for r in unguarded if r[0] != "OS7"]
+
+    if own:
+        print("  UNGUARDED in OS7 — the operator surface. Each fails as a user")
+        print("  with whatever its first write happened to say.")
+        for mod, name, where, why in own:
+            print(f"            {name:<34} {where:<28} {why[:56]}")
         print()
 
-    n = len(unguarded)
-    print(f"      {n} unguarded; baseline {BASELINE}")
+    if layers:
+        print("  UNGUARDED in the generic layers — SAME DEFECT, DIFFERENT FIX (#149).")
+        print("  Assert-OS7Elevated lives in OS7 and these sit BELOW it, so calling")
+        print("  it would invert P2's direction. Measured 2026-09-11, this is #148's")
+        print("  shape exactly — Set-NetplanDocument as uid 1000:")
+        print('      Exception calling "WriteAllText" with "2" argument(s):')
+        print("      \"Access to the path '/etc/netplan/99-probe.yaml' is denied.\"")
+        for mod, name, where, why in sorted(layers):
+            print(f"            {name:<34} {mod:<11} {why[:52]}")
+        print()
+
+    n = len(own)
+    m = len(layers)
+    print(f"      OS7: {n} unguarded; baseline {BASELINE}")
+    print(f"      the generic layers: {m}; baseline {BASELINE_LAYERS} — no guard "
+          "exists to call yet (#149)")
+    if m > BASELINE_LAYERS:
+        print()
+        print(f"{m - BASELINE_LAYERS} MORE mutating cmdlet(s) in the generic layers")
+        print("than the baseline. There is no guard for them yet, so this number is")
+        print("an inventory: it may not grow while the decision is open.")
+        sys.exit(1)
+    if m < BASELINE_LAYERS:
+        print()
+        print(f"      LAYER BASELINE IS STALE: {m} < {BASELINE_LAYERS}. Lower it —")
+        print("      the same argument as below, and the same one check-layering.py")
+        print("      makes: a baseline nobody tightens stops meaning anything.")
+        sys.exit(1)
     if n > BASELINE:
         print()
         print(f"{n - BASELINE} cmdlet(s) MORE than the baseline reach something only")
