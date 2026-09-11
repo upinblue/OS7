@@ -384,3 +384,58 @@ the name a reader will type — is still worth having. What it needs beside it i
 the rule this cost: **a failure of that check is not evidence until the resolver
 has been asked a second way.** `1.1.1.1` as a `-Server` argument is not a second
 way. DNS over HTTPS is.
+
+---
+
+## 8. #148 and #149, reported by the operator against the release above
+
+**2026-09-11.** The operator typed, on a 1.0.0.203 machine, the command this
+release's own notes and manual both gave:
+
+```
+PS /home/basti> Update-OS7
+     | cannot take the update lock at /run/os7-update.lock: … "Access to the
+     | path '/run/os7-update.lock' is denied."
+PS /home/basti> sudo Update-OS7
+sudo: 'Update-OS7': command not found
+```
+
+Nothing was wrong with the machine, and nothing in the product said so. The
+whole of it is [BUILD-NOTES](BUILD-NOTES.md) **#148** and **#149**; what belongs
+in this file is what it says about the release process rather than about the
+code.
+
+**It was found by a person, in the first hour, doing the ordinary thing.** This
+release went through 141 artefact checks per architecture, five machine phases,
+35 Secure Boot checks, two full rebuilds and a repository verified from outside
+by apt with a wrong-credential control. None of that asked what an ordinary
+account sees when it types the verb the release notes lead with — because every
+harness here runs as root, and `run-s5.py` reaches `Update-OS7` through
+`sudo -S -p '' pwsh`. The gate is not wrong; it measures what it measures. What
+it does not have is a single check that walks the documented first-run sequence
+as the account the installer created.
+
+**Two things were fixed, and one of them is bigger than the report.**
+`Assert-OS7Elevated` gives the three verbs an operator types — `Update-OS7`,
+`Set-OS7UpdateChannel`, `Restore-OS7` — a refusal that names the verb, what it
+does, the uid, and the `sudo pwsh -c` form. And
+`installer/testing/check-privilege.py` holds the class: 42 mutating cmdlets in
+OS7 and 41 in the generic layers reach something only root can, both baselines
+measured, both may fall and may not rise, every site named on every run.
+
+**The manual was corrected and its PDFs were REPLACED IN PLACE**, same
+filenames, different bytes: 2,066,691 → 2,070,188 (en), 2,091,452 → 2,097,287
+(de), verified by downloading both back off the webspace and comparing hashes.
+The alternative — a second filename — would have left the first still telling
+operators to type a command that cannot work. A manual is instructions; the
+things whose provenance anyone audits are the media hashes, the descriptors and
+the signed repository, and none of those moved.
+
+**And the first draft of that correction described the WRONG RELEASE.** §6.4
+was written to say that as an ordinary user the cmdlet "refuses by name and
+tells you the form that works" — true of the next release, and not of the one
+this manual is published with, whose module has no guard. A manual versioned
+1.0.0.203 describes 1.0.0.203, so it now says what this release actually does:
+it fails with a message about `/run/os7-update.lock` being denied, which is
+this cmdlet's way of saying it needs root. Caught while writing this section,
+which is the argument for writing them.

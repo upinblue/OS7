@@ -69,8 +69,9 @@ Update-OS7
 ```
 
 This one needs an elevated session — see *Elevation* in chapter 1, including
-why `sudo Update-OS7` is not the way to get one. As an ordinary user it refuses
-by name and tells you the form that works.
+why `sudo Update-OS7` is not the way to get one. Run as an ordinary user on
+this release it fails with a message about `/run/os7-update.lock` being denied,
+which is this cmdlet's way of saying it needs root.
 
 With no parameters this takes the next release on the configured channel. What
 then happens, in the order it happens:

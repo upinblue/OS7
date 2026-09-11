@@ -73,7 +73,9 @@ Update-OS7
 
 Dieses Cmdlet braucht eine erhöhte Sitzung — siehe *Erhöhte Rechte* in Kapitel
 1, dort steht auch, warum `sudo Update-OS7` nicht der Weg dorthin ist. Als
-normaler Benutzer verweigert es namentlich und nennt die Form, die geht.
+normaler Benutzer ausgeführt scheitert es in diesem Release mit einer Meldung
+darüber, dass `/run/os7-update.lock` verweigert wurde — so sagt dieses Cmdlet,
+dass es root braucht.
 
 Ohne Parameter nimmt der Befehl das nächste Release des eingestellten Kanals.
 Was dann passiert, in der Reihenfolge, in der es passiert:
