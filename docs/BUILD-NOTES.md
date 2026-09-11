@@ -7908,3 +7908,73 @@ not depend on the HOST's text conventions either, and on Windows that is not a
 theoretical concern — `git`, Python's text mode, PowerShell's redirection and
 the console codepage each have an opinion about bytes this repository ships to
 Linux.
+
+## #148 — `Update-OS7` needs root, says so in a .NET sentence about a lock file, and `sudo Update-OS7` cannot work at all
+
+**Reported by the operator on a 1.0.0.203 machine, 2026-09-11, and reproduced on
+the bench the same hour.** Typed at the prompt a login lands on:
+
+```
+PS /home/basti> Update-OS7
+OperationStopped: …/OS7/OS7.Update.ps1:1935
+     | cannot take the update lock at /run/os7-update.lock: Exception calling
+     | "Open" with "4" argument(s): "Access to the path '/run/os7-update.lock'
+     | is denied."
+
+PS /home/basti> sudo Update-OS7
+sudo: 'Update-OS7': command not found
+```
+
+Both halves are defects, and the second one closes the door the first one leaves
+open.
+
+**The first:** the lock is `[System.IO.File]::Open(… FileShare::None)` on
+`/run/os7-update.lock`, and the code around it is careful — it catches
+`IOException` separately so a sharing violation is reported as "another update
+holds it", and its comment even says "a read-only /run, a full tmpfs or a
+permission problem are all IOException's neighbours". **Permission denied is
+`UnauthorizedAccessException`, which does not derive from `IOException`**, so it
+falls into the generic catch and is re-wrapped verbatim. The operator is handed a
+.NET method signature and a path, and nothing that says the word root.
+
+**The second:** `Update-OS7` is a PowerShell *function*, so `sudo` cannot find
+it — sudo resolves executables. Every cmdlet in this product has that property
+and nothing in the product mentions it.
+
+**Measured on the bench, which is what makes it a privilege bug and not
+something else:** as the ordinary account the call dies at line 1935; as root
+(`sudo -S -p '' pwsh …`) the same call passes the lock, reads the pin, resolves
+`/boot` and `/boot/efi`, and fails only on the absent test repository that bench
+still points at. So the lock is the whole of the wall.
+
+**THERE IS NO ROOT CHECK ANYWHERE IN THE OS7 MODULE.** `grep -rn "id -u\|IsRoot\|
+whoami\|EUID\|geteuid\|must run as root\|requires root" powershell/OS7/` returns
+nothing. So this is not one cmdlet's oversight: every verb that writes to `/etc`,
+`/run` or a pool fails as a normal user with whatever the underlying call
+happened to say. `Set-OS7UpdateChannel` writes `/etc/apt/sources.list.d/` and has
+the same shape.
+
+**And the product hands out the failing command itself.** `/usr/libexec/os7-update-check`
+runs as root from the timer and writes, on finding a development release:
+*"Apply it by hand with `Update-OS7 -AllowDevelopment`"*. The manual documents
+the bare form on four pages, and the word `sudo` appears twice in the whole
+English manual, neither time about updates. The 1.0.0.203 release notes I wrote
+repeat it.
+
+**What works today**, and it is worth writing down before the fix exists:
+
+```powershell
+sudo pwsh -NoProfile -c 'Update-OS7 -Confirm:$false'
+```
+
+`-Confirm:$false` because `Update-OS7` declares `ConfirmImpact = 'High'`, and
+`Import-Module OS7` is unnecessary — the module auto-loads by command name for
+root as well, which the bench confirmed. The other supported route already
+exists and is root-correct by construction:
+`sudo systemctl start os7-update-check.service`, which stages the release and
+reports 2.
+
+**The fix is not a message.** A message is where it must start — name root, name
+the `sudo pwsh -c` form — but the real answer is that a product whose entire
+administrative surface is PowerShell functions needs to decide how an operator
+elevates one, and say it in one place rather than in forty error strings.
