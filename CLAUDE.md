@@ -194,6 +194,35 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   (`none [integrity] …` - the
                                           #   first word is the wrong answer).
                                           #   20 checks, seconds, needs pwsh
+./installer/testing/check-privilege.py    # #148: a cmdlet that changes the
+                                          #   machine must REFUSE as a user, in
+                                          #   a sentence. An operator typed
+                                          #   `Update-OS7` on 1.0.0.203 and got
+                                          #   a .NET message about
+                                          #   /run/os7-update.lock being denied,
+                                          #   then `sudo Update-OS7` and got
+                                          #   "command not found" — every verb
+                                          #   here is a FUNCTION and sudo
+                                          #   resolves executables. There was no
+                                          #   privilege check anywhere in the
+                                          #   module. Now Assert-OS7Elevated
+                                          #   names the verb, what it does, the
+                                          #   uid, and the `sudo pwsh -c` form.
+                                          #   The rule is NOT keyed on the verb:
+                                          #   88 exported functions mutate and
+                                          #   ~20 of them need no root at all —
+                                          #   the AD surface writes to a DC over
+                                          #   LDAPS as the operator. It reads the
+                                          #   BODY instead, through the AST, for
+                                          #   system paths (including via
+                                          #   $script: variables, which is how
+                                          #   this module spells them), for
+                                          #   privileged programs, and for the
+                                          #   generic layers' write verbs.
+                                          #   Baseline 42 UNGUARDED: debt, named
+                                          #   on every run, may fall and may not
+                                          #   rise. Proven to fire via
+                                          #   OS7_SCAN_ROOT. Seconds, needs pwsh
 ./installer/testing/check-module-parts.py # the OS7 module is one directory
                                           #   named in FOUR places - the .psm1
                                           #   foreach, hook 0060, the .deb's

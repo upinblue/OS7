@@ -7974,7 +7974,61 @@ exists and is root-correct by construction:
 `sudo systemctl start os7-update-check.service`, which stages the release and
 reports 2.
 
-**The fix is not a message.** A message is where it must start — name root, name
-the `sudo pwsh -c` form — but the real answer is that a product whose entire
-administrative surface is PowerShell functions needs to decide how an operator
-elevates one, and say it in one place rather than in forty error strings.
+### Fixed 2026-09-11, and the class is held rather than the instance
+
+`Assert-OS7Elevated` is in `OS7.psm1` and **asks the kernel**:
+/proc/self/status's `Uid:` line carries real, EFFECTIVE, saved-set and
+filesystem uid, and the effective one is what decides whether a write
+succeeds — no subprocess, no PATH, and it cannot be fooled by an account named
+root. An unreadable /proc is NOT a refusal: this function exists to replace a
+bad message with a good one and must not invent a failure of its own.
+
+It is called by `Update-OS7` **before the lock** — the lock is the first thing
+that touches the filesystem, which is why it was the whole of the operator's
+experience — by `Set-OS7UpdateChannel`, the verb they reach for first, and by
+`Restore-OS7`. Measured in a container as root and as uid 1000, with the lock
+made deliberately unreachable so the old error would have shown if the guard
+sat after it:
+
+```
+Update-OS7 must run as root: it clones a boot environment, mounts it, runs apt
+inside it and rewrites the bootloader. This process is uid 1000.
+
+  sudo Update-OS7  DOES NOT WORK: every OS/7 cmdlet is a PowerShell
+  function and sudo resolves executables. Elevate the shell instead:
+
+      sudo pwsh -NoProfile -c 'Update-OS7 <parameters> -Confirm:$false'
+```
+
+**`installer/testing/check-privilege.py` stops the class recurring**, and its
+design is the part worth keeping. The rule is NOT keyed on the verb: 88 of the
+module's exported functions carry a mutating verb and about twenty need no
+privilege at all — the whole AD surface writes to a domain controller over
+LDAPS with the operator's own credential, which is AD-PLAN's stage 1, and a
+rule that flagged those twenty is a rule somebody switches off. It reads each
+function's BODY through the AST instead: a system path (including through a
+`$script:` variable, which is how this module spells most of them — a
+literals-only scan would have missed `Set-OS7UpdateChannel`, half of this very
+note), a privileged program named as a string because that is how
+`Invoke-OS7Native` takes them, or a write verb of one of the generic layers. A
+path counts only alongside a write, so `New-OS7BootEnvironmentName` reading the
+release manifest is not flagged.
+
+**Baseline 42 unguarded, and that number is debt rather than a target.** Every
+one of the 42 is printed on every run; it may fall and may not rise. Two flaws
+in the rule's first draft are recorded because both made it *quieter* than the
+truth: anchoring the layer pattern with `$` matched only bare nouns like
+`New-Zpool` and silently dropped `New-ZfsDataset` and the whole Compat.Windows
+service family, and counting the Directory layer as privileged flagged eighteen
+AD cmdlets that were right as they stood.
+
+**And the check has a blind spot it met on its first day:** `Restore-OS7`
+delegates all of its privileged work to `Set-OS7BootEnvironment`, so nothing
+flagged it — and it is the verb an operator types straight after a failed
+update. It is guarded by hand and the scan still does not ask for it.
+
+**What is still not fixed:** the manual, which documents the bare form on four
+pages per language, and the 1.0.0.203 media, which carry the module without the
+guard. A machine already installed gets the good message only with the release
+after it; until then the working form is
+`sudo pwsh -NoProfile -c 'Update-OS7 -AllowDevelopment -Confirm:$false'`.

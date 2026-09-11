@@ -1081,6 +1081,13 @@ function Set-OS7UpdateChannel {
 		[switch]$Disable
 	)
 
+	# It writes /etc/apt/sources.list.d/, /etc/apt/auth.conf.d/ and /etc/os7/,
+	# so it has #148's shape too — and it is the verb an operator reaches for
+	# FIRST, before Update-OS7, which makes its message the one they read first.
+	Assert-OS7Elevated -Cmdlet 'Set-OS7UpdateChannel' -Because (
+		'writes the apt source, the repository credential and the channel ' +
+		'under /etc')
+
 	$suite = Get-OS7ReleaseConfField -Name 'OS7_SUITE'
 	if (-not $suite) {
 		throw [System.InvalidOperationException]::new(
@@ -1944,6 +1951,15 @@ function Update-OS7 {
 
 	# ---- 0. Preflight. Read-only, and every refusal happens here ------------
 	#
+	# PRIVILEGE FIRST, BEFORE THE LOCK. The lock is the first thing that
+	# touches the filesystem, so before this line an ordinary user's whole
+	# experience of this cmdlet was a .NET sentence about
+	# /run/os7-update.lock being denied — BUILD-NOTES #148, reported from a
+	# 1.0.0.203 machine. The refusal has to come from the verb, naming the verb.
+	Assert-OS7Elevated -Cmdlet 'Update-OS7' -Because (
+		'clones a boot environment, mounts it, runs apt inside it and ' +
+		'rewrites the bootloader')
+
 	# ONE LOCK FOR THE MACHINE. Two updates cloning the same environment produce
 	# two environments from one origin, both claiming the same release, and the
 	# second activation silently wins. The idiom is the backup feature's.

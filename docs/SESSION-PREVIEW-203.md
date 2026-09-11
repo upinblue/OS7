@@ -151,10 +151,15 @@ Green, with the counts each reported:
 | the Storage Box | `check-storagebox.py --probe` — 4 ok: the pin names the host the check probes, an anonymous `GET /` is 401, the read-only credential answers 200, and `/dists/os7-1.0/InRelease` is 200 |
 
 **One finding worth carrying, found by running them from a script rather than by
-hand.** Five of the seven self-tests **return nothing**: `Test-ZfsModule`,
-`Test-NetModule`, `Test-TimeModule`, `Test-SystemdModule` and
-`Test-DirectoryModule` print their verdict and return `$null`, while
-`Test-OS7Backup` and `Test-OS7Update` return a boolean. So
+hand — and its own count was wrong here for two days.** **SIX** of the seven
+self-tests **return nothing**: `Test-ZfsModule`, `Test-NetModule`,
+`Test-TimeModule`, `Test-SystemdModule`, `Test-DirectoryModule` **and
+`Test-OS7Backup`** print their verdict and return `$null`. `Test-OS7Update` is
+the only one that returns a boolean. This paragraph said five and named
+`Test-OS7Backup` among the boolean pair until 2026-09-11, when a throwaway
+wrapper printed `Backup FAIL` beside `63 passed, 0 failed` and the measurement
+was actually taken — which is the same mistake in miniature as the thing the
+paragraph is about. So
 `if (-not (Test-ZfsModule)) { exit 1 }` — the idiom that is correct for the OS7
 pair, and the one `check-update-logic.py` uses — reports a **failure for a module
 whose own last line says PASS**. CLAUDE.md's documented invocation just calls

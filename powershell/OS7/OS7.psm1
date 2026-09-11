@@ -97,6 +97,94 @@ function Get-OS7ZfsPropertyValue {
 	if ($p) { $p.Value } else { $null }
 }
 
+function Assert-OS7Elevated {
+	<#
+	.SYNOPSIS
+		Refuse, in a sentence an operator can act on, unless this process is
+		root. Internal.
+
+	.DESCRIPTION
+		BUILD-NOTES #148, reported against 1.0.0.203 by an operator who typed
+		the command the manual and the release notes both gave:
+
+		    PS /home/basti> Update-OS7
+		         | cannot take the update lock at /run/os7-update.lock:
+		         | Exception calling "Open" with "4" argument(s): "Access to
+		         | the path '/run/os7-update.lock' is denied."
+		    PS /home/basti> sudo Update-OS7
+		    sudo: 'Update-OS7': command not found
+
+		Two facts were missing from those nine lines and both are in this one
+		function now. The first is that the verb needs root — the message named
+		a .NET method and a path and never the word. The second is that
+		`sudo <verb>` CANNOT work, because every verb in this product is a
+		PowerShell function and sudo resolves executables; an operator who
+		reads "needs root" and reaches for sudo is sent somewhere else that
+		fails, which is worse than the first message.
+
+		THE KERNEL IS ASKED, NOT A COMMAND. /proc/self/status's `Uid:` line
+		carries real, EFFECTIVE, saved-set and filesystem uid, and the
+		effective one is what decides whether a write succeeds — measured
+		2026-09-11: `Uid:\t0\t0\t0\t0` as root and `Uid:\t1001\t1001…` as a
+		user. Reading it costs no subprocess, needs no PATH, and cannot be
+		confused by an account that happens to be named root. It is the same
+		argument Get-OS7MountedPaths gives for reading /proc/self/mountinfo.
+
+		AN UNREADABLE /proc IS NOT A REFUSAL. This function exists to replace
+		a bad message with a good one, so it must not invent a failure of its
+		own: on anything that cannot answer the question it says so under
+		-Verbose and returns. Every caller's real write still fails on its own
+		terms if the process was not privileged after all — which is exactly
+		the situation before this function existed, and no worse.
+
+	.PARAMETER Cmdlet
+		The verb to name in the message. Callers pass their own name rather
+		than having it read out of the call stack: a stack frame is the wrong
+		place to learn what to tell a person, and PowerShell's is not stable
+		across pipelines and script blocks.
+
+	.PARAMETER Because
+		What the verb does that needs root, as a clause. It completes the
+		sentence "<Cmdlet> must run as root: it <Because>." An operator who is
+		told only "needs root" has to guess whether they typed the wrong thing
+		or the machine is misconfigured.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Cmdlet,
+		[Parameter(Mandatory)][string]$Because
+	)
+
+	$status = '/proc/self/status'
+	if (-not [System.IO.File]::Exists($status)) {
+		Write-Verbose "Assert-OS7Elevated: no $status, so privilege was not checked"
+		return
+	}
+
+	$uid = $null
+	foreach ($line in [System.IO.File]::ReadAllLines($status)) {
+		if (-not $line.StartsWith('Uid:')) { continue }
+		# label, real, EFFECTIVE, saved-set, filesystem — tab separated.
+		$f = $line.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)
+		if ($f.Count -ge 3) { $uid = $f[2] }
+		break
+	}
+	if ($null -eq $uid) {
+		Write-Verbose "Assert-OS7Elevated: $status names no Uid:, so privilege was not checked"
+		return
+	}
+	if ($uid -eq '0') { return }
+
+	throw [System.InvalidOperationException]::new(
+		"$Cmdlet must run as root: it $Because. This process is uid $uid.`n" +
+		"`n" +
+		"  sudo $Cmdlet  DOES NOT WORK: every OS/7 cmdlet is a PowerShell`n" +
+		"  function and sudo resolves executables. Elevate the shell instead:`n" +
+		"`n" +
+		"      sudo pwsh -NoProfile -c '$Cmdlet <parameters> -Confirm:`$false'`n" +
+		"`n" +
+		"  or work in an elevated session: sudo pwsh")
+}
+
 function Invoke-OS7Native {
 	<#
 	.SYNOPSIS
@@ -2540,6 +2628,16 @@ function Restore-OS7 {
 		[Parameter()]
 		[string]$BootEnvironment
 	)
+
+	# #148, and this one is the blind spot in the scan that holds the rule:
+	# check-privilege.py sees the privileged work of a cmdlet, and all of this
+	# one's is DELEGATED to Set-OS7BootEnvironment in another part of the
+	# module. So nothing flagged it, and it is the verb an operator types
+	# straight after a failed update. Guarded by hand, named here so the next
+	# reader knows the check did not ask for it.
+	Assert-OS7Elevated -Cmdlet 'Restore-OS7' -Because (
+		'rewrites which boot environment the bootloader starts, on the ESP ' +
+		'and in grubenv')
 
 	$all = @(Get-OS7BootEnvironment)
 	if ($all.Count -lt 2 -and -not $BootEnvironment) {
