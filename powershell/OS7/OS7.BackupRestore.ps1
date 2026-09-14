@@ -35,6 +35,22 @@
 # makes this work without OS/7 changing a property on the user's datasets.
 $script:OS7SnapshotDir = '.zfs/snapshot'
 
+# The snapshot a restore takes before it overwrites anything, and how many of
+# them one dataset keeps.
+#
+# BOTH NUMBERS ARE OS/7's OWN, AND THAT IS THE MEASUREMENT RATHER THAN THE
+# PLAN. docs/VERSIONS-PLAN.md V8 asked for a snapshot "exempt from sanoid's
+# pruning by name, for a bounded period", on the assumption that the retention
+# policy would otherwise thin the safety net away. Measured on the bench
+# 2026-09-14: four hand-made `demo-*` snapshots were still there after sanoid
+# ran a policy pass over the same dataset — SANOID PRUNES ONLY WHAT SANOID
+# TOOK. So the exemption costs nothing and is not a feature; the real risk is
+# the inverse, that nothing thins these at all and a machine that restores
+# often accumulates them for its lifetime. OS/7 prunes its own, here, at the
+# moment it makes one — no timer, no policy, nothing else to keep in step.
+$script:OS7RestoreSafetyPrefix = 'os7-before-restore-'
+$script:OS7RestoreSafetyKeep = 5
+
 function Get-OS7PathMount {
 	<#
 	.SYNOPSIS
@@ -499,6 +515,159 @@ function Get-OS7FileVersion {
 	}
 }
 
+function New-OS7RestoreSafetySnapshot {
+	<#
+	.SYNOPSIS
+		Internal. Snapshot what a restore is about to write over.
+
+	.DESCRIPTION
+		docs/VERSIONS-PLAN.md V8. A restore that overwrites the live file
+		destroys whatever was there, and a feature whose entire purpose is "you
+		can go back" must not contain a one-way door: restoring yesterday's
+		version over today's work loses the work, and the next snapshot is up to
+		an hour away. This is the way back from the way back.
+
+		IT SNAPSHOTS THE DESTINATION'S DATASET, NOT THE SOURCE'S, and those are
+		not the same question. The version being restored came out of some
+		dataset's snapshot; what is at RISK is whatever the copy lands on, and
+		`-Destination` can name a path on an entirely different dataset — or on
+		no ZFS filesystem at all.
+
+		IT IS TAKEN ONLY WHEN SOMETHING EXISTS TO LOSE. A restore to a path
+		that is not there destroys nothing, and a snapshot of the dataset for
+		that costs a name, a prune and an entry in every later listing.
+
+		WHAT IT COSTS: 55 ms (docs/VERSIONS-PLAN.md M-V7) and no space at the
+		moment it is taken — a snapshot shares every block with the live
+		filesystem and only begins to hold space as the two diverge. So this is
+		affordable even when the pool is under pressure, which is deliberate:
+		Get-OS7StoragePressure's Refuse level is about a machine that is running
+		out of room, and a restore performed with no way back is not the thing
+		to do about that.
+
+		AND IT PRUNES ITS OWN. Nothing else will: `Invoke-OS7StorageRelief`
+		deletes no snapshot itself — it writes the retention policy and lets
+		sanoid prune under it — and sanoid prunes only the snapshots it took.
+		The newest $script:OS7RestoreSafetyKeep per dataset are kept and the
+		rest are destroyed here, so the count is bounded by the mechanism that
+		creates them rather than by a timer that could stop running.
+
+	.PARAMETER Path
+		The path about to be written. Its dataset is what gets snapshotted.
+
+	.PARAMETER Taken
+		What this invocation has already snapshotted: dataset name → snapshot
+		name. ONE SAFETY SNAPSHOT PER DATASET PER INVOCATION, and both halves of
+		that are needed.
+
+		Restoring twenty files in one pipeline would otherwise take twenty
+		snapshots of one dataset — nineteen of them redundant, because the FIRST
+		one already holds the state before any of the writes, which is precisely
+		what "the way back from this restore" means. They would also flood the
+		version list the feature exists to make readable.
+
+		AND IT IS WHAT MAKES THE NAME SAFE. The stamp has one-second resolution,
+		so two files restored in the same second asked ZFS for a snapshot that
+		already existed; `zfs snapshot` fails on that, and the second file's
+		restore would have died of the mechanism protecting it. Found by
+		check-storage-logic.py §7 case G, which reached the same second by
+		accident and reported the wrong failure until this existed.
+
+	.PARAMETER Keep
+		How many of these one dataset keeps. Negative disables pruning.
+
+	.OUTPUTS
+		The full snapshot name (`dataset@os7-before-restore-<stamp>`), or $null
+		when the destination is not on a mounted ZFS filesystem — in which case
+		OS/7 cannot protect it and the caller is told so rather than being left
+		to believe there is a way back.
+	#>
+	[CmdletBinding()]
+	[OutputType([string])]
+	param(
+		[Parameter(Mandatory)][string]$Path,
+		[System.Collections.IDictionary]$Taken,
+		[int]$Keep = $script:OS7RestoreSafetyKeep
+	)
+
+	$owner = Get-OS7PathDataset -Path $Path
+	if (-not $owner) {
+		# Not a refusal. Restoring onto a USB stick or an NFS mount is a
+		# legitimate thing to do; it just cannot be made undoable by ZFS.
+		Write-Warning ("'$Path' is not on a mounted ZFS filesystem, so no " +
+			'snapshot can be taken before it is written. The restore itself is ' +
+			'unaffected; there will be no way back from it.')
+		return $null
+	}
+
+	if ($Taken -and $Taken.Contains($owner.Dataset)) {
+		return [string]$Taken[$owner.Dataset]
+	}
+
+	$existing = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse)
+
+	# The name a person can read, and then whatever it takes to make it unique.
+	# A second invocation in the same second is a script's `foreach`, which the
+	# per-invocation memo above cannot see.
+	$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+	$snapshotName = "$script:OS7RestoreSafetyPrefix$stamp"
+	$suffix = 1
+	while ($existing | Where-Object { $_.SnapshotName -eq $snapshotName }) {
+		$suffix++
+		$snapshotName = "$script:OS7RestoreSafetyPrefix$stamp-$suffix"
+	}
+	$full = "$($owner.Dataset)@$snapshotName"
+
+	# -Confirm:$false ON PURPOSE. The operator has already confirmed the
+	# restore, and this snapshot is part of that restore rather than a second
+	# decision to make — being asked twice teaches people to answer without
+	# reading. `Restore-OS7File -WhatIf` never reaches here at all, because its
+	# own ShouldProcess returns first.
+	New-ZfsSnapshot -Name $owner.Dataset -SnapshotName $snapshotName -Confirm:$false |
+		Out-Null
+
+	# THE SNAPSHOT IS ASKED FOR RATHER THAN ASSUMED (docs/BUILD-NOTES.md's
+	# recurring rule). `zfs snapshot` exiting 0 is a diagnostic; this is the
+	# thing itself. If it is not there, the caller must not go on to overwrite
+	# a file believing it is protected.
+	$made = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse |
+		Where-Object { $_.SnapshotName -eq $snapshotName })
+	if ($made.Count -eq 0) {
+		throw [System.InvalidOperationException]::new(
+			"the safety snapshot '$full' was requested and does not exist. " +
+			'Nothing has been written. Use -NoSafetySnapshot to restore anyway, ' +
+			'knowing there will be no way back from it.')
+	}
+
+	if ($Taken) { $Taken[$owner.Dataset] = $full }
+
+	# Prune ours, and only ours. Matched on the prefix rather than on a
+	# property, because a property would have to be read back from a snapshot
+	# somebody may have renamed, and the name is what this owns.
+	if ($Keep -ge 0) {
+		$ours = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse |
+			Where-Object { $_.SnapshotName -and
+				$_.SnapshotName.StartsWith($script:OS7RestoreSafetyPrefix, 'Ordinal') } |
+			Sort-Object Creation)
+
+		# SkipLast, not Select -First: the newest $Keep stay, whatever their
+		# count, and a machine that has never restored has none to skip.
+		foreach ($old in ($ours | Select-Object -SkipLast $Keep)) {
+			try {
+				Remove-ZfsSnapshot -Name $old.Name -Confirm:$false
+			}
+			catch {
+				# A prune that failed has cost disk space. A restore that failed
+				# because of it would have cost the operator their file, and the
+				# snapshot this call just took is already in place.
+				Write-Warning "could not remove the old safety snapshot '$($old.Name)': $_"
+			}
+		}
+	}
+
+	$full
+}
+
 function Restore-OS7File {
 	<#
 	.SYNOPSIS
@@ -544,6 +713,15 @@ function Restore-OS7File {
 	.PARAMETER Force
 		Overwrite. Required to restore over the live path.
 
+	.PARAMETER NoSafetySnapshot
+		Do not snapshot the destination's dataset before writing over it.
+
+		The snapshot is what makes the restore itself undoable (V8), so this
+		switch is the named way to give that up — for a destination whose
+		dataset must not gain snapshots, or when one could not be taken and the
+		operator has read why and wants the file anyway. It changes nothing
+		when there was nothing at the destination to lose.
+
 	.EXAMPLE
 		Restore-OS7File /home/os7/notes.txt -Destination /home/os7/notes.restored.txt
 
@@ -561,8 +739,16 @@ function Restore-OS7File {
 		[Parameter()][string]$Snapshot,
 		[Parameter()][datetime]$AsOf,
 		[Parameter()][string]$Destination,
-		[switch]$Force
+		[switch]$Force,
+		[switch]$NoSafetySnapshot
 	)
+
+	begin {
+		# What this invocation has already snapshotted, so that restoring a
+		# hundred files through the pipeline takes one snapshot per dataset and
+		# not a hundred. See New-OS7RestoreSafetySnapshot -Taken.
+		$safetyTaken = @{}
+	}
 
 	process {
 		$versions = @(Get-OS7FileVersion -Path $Path)
@@ -615,13 +801,31 @@ function Restore-OS7File {
 		}
 		$target = $target -replace '\\', '/'
 
-		if ((Test-Path -LiteralPath $target) -and -not $Force) {
+		$targetExists = Test-Path -LiteralPath $target
+		if ($targetExists -and -not $Force) {
 			throw [System.IO.IOException]::new(
 				"'$target' exists. Use -Force to overwrite it.")
 		}
 
+		# V8, AND THE WHOLE OF THE DECISION IS THIS LINE. A restore is only
+		# destructive where it lands on something: a -Destination that is not
+		# there yet takes nothing away, and a safety snapshot for it would cost
+		# a name, a prune and a row in every later version listing for nothing.
+		$takeSafety = $targetExists -and -not $NoSafetySnapshot
+
 		$what = "restore from $($pick.SnapshotName) ($($pick.Created)) to $target"
+		if ($takeSafety) {
+			# SAID BEFORE IT HAPPENS, not reported after. The operator is being
+			# asked to approve overwriting a file, and whether that is reversible
+			# is the most important thing about the answer.
+			$what += " (snapshotting $target first, so this can be undone)"
+		}
 		if (-not $PSCmdlet.ShouldProcess($pick.Path, $what)) { return }
+
+		$safety = if ($takeSafety) {
+			New-OS7RestoreSafetySnapshot -Path $target -Taken $safetyTaken
+		}
+		else { $null }
 
 		$parent = Split-Path -Parent $target
 		if ($parent -and -not (Test-Path -LiteralPath $parent)) {
@@ -669,6 +873,10 @@ function Restore-OS7File {
 			Created      = $pick.Created
 			Length       = if ($pick.IsFolder) { $null } else { [uint64]$now.Length }
 			IsFolder     = $pick.IsFolder
+			# The way back from this restore, named so it can be typed:
+			#   Restore-OS7File <path> -Snapshot os7-before-restore-… -Force
+			# $null means nothing was overwritten, or the operator gave that up.
+			SafetySnapshot = $safety
 		}
 	}
 }

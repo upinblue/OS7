@@ -28,6 +28,15 @@ and two things guard it, both of which this file is mostly about:
     environment came back prunable — caught on a machine, and case 4 here is
     what stops it coming back.
 
+AND SINCE V8 IT ALSO OWNS THE OTHER DIRECTION — the one snapshot OS/7 takes of
+its own accord. §7 and §8 are the restore's safety snapshot: taken only where
+something is actually overwritten, on the DESTINATION's dataset rather than the
+version's, announced in the confirmation prompt before it is answered, pruned
+by OS/7 because nothing else will, and never, ever matching one of sanoid's.
+Those two sections run against REAL FILES in a temporary directory with a fake
+ZFS around them, so "the bytes landed" and "nothing was written" are read off a
+filesystem rather than off a mock's call log.
+
 WHAT THIS IS NOT. It says nothing about what ZFS reports; Get-ZfsPool's shape
 was measured from a real `zpool list -j` and Test-ZfsModule checks the parsing.
 This checks what OS/7's layer CONCLUDES from it.
@@ -137,6 +146,36 @@ def run(body, cases):
     except json.JSONDecodeError:
         check(False, cases, (result.stdout or result.stderr).strip()[:300])
         return None
+
+
+def run_text(body, cases):
+    """The same, for a body whose output is the operator's screen and not JSON.
+
+    `-WhatIf` writes through the HOST, not through a stream: it cannot be
+    caught by -InformationVariable and `6>` does not redirect it. That is
+    awkward here and is exactly why it is worth checking — it is the sentence
+    a person reads before answering a confirmation prompt.
+    """
+    script = PRELUDE.format(storage=STORAGE.replace("\\", "/"),
+                            restore=RESTORE.replace("\\", "/")) + "\n" + body
+
+    with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False,
+                                     encoding="utf-8") as handle:
+        handle.write(script)
+        path = handle.name
+
+    try:
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-File", path],
+            capture_output=True, encoding="utf-8", errors="replace")
+    finally:
+        os.unlink(path)
+
+    if result.returncode != 0:
+        check(False, cases, (result.stderr or result.stdout).strip()[:300])
+        return None
+
+    return result.stdout
 
 
 GIB = 1024 ** 3
@@ -570,6 +609,327 @@ $out | ConvertTo-Json -Depth 4
     check(got["empty"] == 0, "no versions collapse to no rows")
     check(got["one"] == 1, "one version collapses to itself")
 
+SAFETY_FAKES = r"""
+function N { param([string]$p) $p -replace '\\', '/' }
+
+$script:Snapshots = [System.Collections.Generic.List[object]]::new()
+$script:Created   = [System.Collections.Generic.List[string]]::new()
+$script:Removed   = [System.Collections.Generic.List[string]]::new()
+$script:DatasetFor = @{}
+$script:SnapshotVanishes = $false
+$script:OldFile = $null
+
+function New-Snap {
+	param([string]$Dataset, [string]$Name, [datetime]$Created)
+	[pscustomobject]@{
+		Name = "$Dataset@$Name"; Dataset = $Dataset
+		SnapshotName = $Name; Creation = $Created }
+}
+
+# The mount table, as a prefix map. Longest wins, the way the real one does.
+function Get-OS7PathDataset {
+	param([string]$Path, [object[]]$Dataset)
+	$p = N $Path
+	foreach ($prefix in ($script:DatasetFor.Keys | Sort-Object { $_.Length } -Descending)) {
+		if ($p -eq $prefix -or $p.StartsWith($prefix + '/')) {
+			return [pscustomobject]@{
+				Dataset = $script:DatasetFor[$prefix]
+				Mountpoint = $prefix
+				RelativePath = $p.Substring($prefix.Length).TrimStart('/')
+			}
+		}
+	}
+	$null
+}
+
+function Get-ZfsSnapshot {
+	param([string]$Name, [switch]$NoRecurse)
+	@($script:Snapshots | Where-Object { $_.Dataset -eq $Name })
+}
+
+function New-ZfsSnapshot {
+	[CmdletBinding(SupportsShouldProcess)]
+	param([string]$Name, [string]$SnapshotName, [switch]$Recurse,
+		[System.Collections.IDictionary]$Property)
+	$script:Created.Add("$Name@$SnapshotName")
+	# SnapshotVanishes is `zfs snapshot` exiting 0 having done nothing — the
+	# failure shape docs/BUILD-NOTES.md keeps finding. The restore must not
+	# write a byte on the strength of an exit code.
+	if (-not $script:SnapshotVanishes) {
+		$script:Snapshots.Add((New-Snap $Name $SnapshotName (Get-Date)))
+	}
+}
+
+function Remove-ZfsSnapshot {
+	[CmdletBinding(SupportsShouldProcess)]
+	param([string]$Name, [switch]$Recurse)
+	$script:Removed.Add($Name)
+	$keep = @($script:Snapshots | Where-Object { $_.Name -ne $Name })
+	$script:Snapshots.Clear()
+	foreach ($k in $keep) { $script:Snapshots.Add($k) }
+}
+
+function Write-OS7Step { param([string]$Message) }
+
+# rsync, doing the one thing the restore relies on it for: the bytes land.
+function Invoke-OS7Native {
+	param([string]$Command, [string[]]$Arguments)
+	Copy-Item -LiteralPath $Arguments[-2] -Destination $Arguments[-1] -Recurse -Force
+}
+
+function Get-OS7FileVersion {
+	param([string]$Path, [string]$Snapshot, [switch]$IncludeCurrent,
+		[switch]$IncludeAbsent, [switch]$DistinctOnly, [switch]$AsArray)
+	# ONE version, and it comes out of the SOURCE's dataset — which is
+	# deliberately not the dataset every destination below is on.
+	@([pscustomobject]@{
+		Path = $Path
+		SnapshotName = 'autosnap_2026-09-14_18:00:02_hourly'
+		Snapshot = 'rpool/USERDATA/alice@autosnap_2026-09-14_18:00:02_hourly'
+		Created = [datetime]'2026-09-14T18:00:02'
+		Length = 9
+		IsFolder = $false
+		Exists = $true
+		SnapshotPath = $script:OldFile
+	})
+}
+
+$script:Root = N (Join-Path ([System.IO.Path]::GetTempPath()) ("os7v8-" + [guid]::NewGuid().ToString('N')))
+$script:SnapDir = "$script:Root/snap"
+$script:LiveDir = "$script:Root/live"
+$script:OtherDir = "$script:Root/other"
+New-Item -ItemType Directory -Force -Path $script:SnapDir, $script:LiveDir, $script:OtherDir | Out-Null
+
+# Nine bytes: 'yesterday'. The length matters — Restore-OS7File stats the
+# result and compares it with the version's, so a copy that did not happen is
+# a failure here rather than a green check.
+$script:OldFile = "$script:SnapDir/notes.txt"
+Set-Content -LiteralPath $script:OldFile -Value 'yesterday' -NoNewline
+$script:Live = "$script:LiveDir/notes.txt"
+"""
+
+
+def safety():
+    print()
+    print("  7. A restore that overwrites something is itself undoable")
+
+    # docs/VERSIONS-PLAN.md V8. The snapshot is what stops the feature whose
+    # whole purpose is "you can go back" from containing a one-way door.
+    body = SAFETY_FAKES + r"""
+$out = [ordered]@{}
+$script:DatasetFor = @{ $script:LiveDir = 'rpool/USERDATA/alice' }
+
+# --- A: a destination that is not there yet takes nothing away -------------
+$fresh = "$script:LiveDir/fresh.txt"
+$r = Restore-OS7File -Path $script:Live -Destination $fresh
+$out['freshSnapshot'] = $r.SafetySnapshot
+$out['freshCreated'] = @($script:Created).Count
+$out['freshBytes'] = Get-Content -LiteralPath $fresh -Raw
+
+# --- B: in place, over work that exists ------------------------------------
+$script:Created.Clear()
+Set-Content -LiteralPath $script:Live -Value 'today, which is work' -NoNewline
+$r = Restore-OS7File -Path $script:Live -Force
+$out['inPlaceSnapshot'] = $r.SafetySnapshot
+$out['inPlaceCreated'] = @($script:Created)
+$out['inPlaceBytes'] = Get-Content -LiteralPath $script:Live -Raw
+
+# --- C: the DESTINATION's dataset, not the source's ------------------------
+$script:DatasetFor = @{
+	$script:LiveDir = 'rpool/USERDATA/alice'
+	$script:OtherDir = 'rpool/DATA/shared'
+}
+$victim = "$script:OtherDir/notes.txt"
+Set-Content -LiteralPath $victim -Value 'somebody elses work' -NoNewline
+$script:Created.Clear()
+$r = Restore-OS7File -Path $script:Live -Destination $victim -Force
+$out['crossSnapshot'] = $r.SafetySnapshot
+
+# --- D: the named way to give it up ----------------------------------------
+$script:Created.Clear()
+Set-Content -LiteralPath $script:Live -Value 'work again' -NoNewline
+$r = Restore-OS7File -Path $script:Live -Force -NoSafetySnapshot
+$out['optedOutSnapshot'] = $r.SafetySnapshot
+$out['optedOutCreated'] = @($script:Created).Count
+$out['optedOutBytes'] = Get-Content -LiteralPath $script:Live -Raw
+
+# --- E: it prunes its own, and only its own --------------------------------
+$script:Snapshots.Clear(); $script:Created.Clear(); $script:Removed.Clear()
+1..7 | ForEach-Object {
+	$script:Snapshots.Add((New-Snap 'rpool/USERDATA/alice' `
+		("os7-before-restore-2026090$_-120000") ([datetime]'2026-09-01').AddDays($_)))
+}
+# sanoid's, and OLDER than every one of ours.
+$script:Snapshots.Add((New-Snap 'rpool/USERDATA/alice' `
+	'autosnap_2026-08-01_00:00:00_monthly' ([datetime]'2026-08-01')))
+$script:Snapshots.Add((New-Snap 'rpool/USERDATA/alice' `
+	'autosnap_2026-08-02_00:00:00_daily' ([datetime]'2026-08-02')))
+# and another dataset's safety snapshot, which is not this one's business.
+$script:Snapshots.Add((New-Snap 'rpool/DATA/shared' `
+	'os7-before-restore-20260101-000000' ([datetime]'2026-01-01')))
+
+Set-Content -LiteralPath $script:Live -Value 'more work' -NoNewline
+$r = Restore-OS7File -Path $script:Live -Force
+$out['pruneRemoved'] = @($script:Removed)
+$out['pruneLeftMine'] = @($script:Snapshots |
+	Where-Object { $_.Dataset -eq 'rpool/USERDATA/alice' } |
+	Sort-Object Creation | ForEach-Object { $_.SnapshotName })
+$out['pruneLeftOther'] = @($script:Snapshots |
+	Where-Object { $_.Dataset -eq 'rpool/DATA/shared' } |
+	ForEach-Object { $_.SnapshotName })
+
+# --- F: a destination ZFS does not own -------------------------------------
+$script:DatasetFor = @{}
+$script:Created.Clear()
+Set-Content -LiteralPath $script:Live -Value 'on a usb stick' -NoNewline
+$w = $null
+$r = Restore-OS7File -Path $script:Live -Force -WarningVariable w -WarningAction SilentlyContinue
+$out['noZfsSnapshot'] = $r.SafetySnapshot
+$out['noZfsCreated'] = @($script:Created).Count
+$out['noZfsWarning'] = (@($w | ForEach-Object { [string]$_ }) -join ' ')
+$out['noZfsBytes'] = Get-Content -LiteralPath $script:Live -Raw
+
+# --- G: asked for, and not there -------------------------------------------
+$script:DatasetFor = @{ $script:LiveDir = 'rpool/USERDATA/alice' }
+$script:SnapshotVanishes = $true
+Set-Content -LiteralPath $script:Live -Value 'precious' -NoNewline
+$out['vanishError'] = ''
+try { Restore-OS7File -Path $script:Live -Force | Out-Null }
+catch { $out['vanishError'] = $_.Exception.Message }
+$out['vanishBytes'] = Get-Content -LiteralPath $script:Live -Raw
+$script:SnapshotVanishes = $false
+
+# --- H: many files, one invocation, ONE snapshot ---------------------------
+$script:Snapshots.Clear(); $script:Created.Clear(); $script:Removed.Clear()
+$a = "$script:LiveDir/a.txt"
+$b = "$script:LiveDir/b.txt"
+Set-Content -LiteralPath $a -Value 'work a' -NoNewline
+Set-Content -LiteralPath $b -Value 'work b' -NoNewline
+$rs = @(@([pscustomobject]@{ FullName = $a }, [pscustomobject]@{ FullName = $b }) |
+	Restore-OS7File -Force)
+$out['pipelineCreated'] = @($script:Created).Count
+$out['pipelineSnapshots'] = @($rs | ForEach-Object { $_.SafetySnapshot })
+$out['pipelineBytes'] = @((Get-Content -LiteralPath $a -Raw), (Get-Content -LiteralPath $b -Raw))
+
+Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue
+$out | ConvertTo-Json -Depth 4
+"""
+    got = run(body, "the safety snapshot can be exercised")
+    if got is None:
+        return
+
+    check(got["freshSnapshot"] is None,
+          "restoring to a path that does not exist takes no snapshot")
+    check(got["freshCreated"] == 0,
+          "and asks ZFS for nothing — a snapshot per restore would be a row in "
+          "every later listing, for nothing")
+    check(got["freshBytes"] == "yesterday", "the restore itself still happens")
+
+    made = got["inPlaceCreated"]
+    check(got["inPlaceSnapshot"] is not None and len(made) == 1,
+          "restoring over a file that exists snapshots it first")
+    check(str(got["inPlaceSnapshot"]).startswith("rpool/USERDATA/alice@os7-before-restore-"),
+          "and the snapshot is named for what it is", str(got["inPlaceSnapshot"]))
+    check(got["inPlaceBytes"] == "yesterday",
+          "the overwrite happened — the snapshot is the way back, not a refusal")
+    check(str(got["inPlaceSnapshot"]).split("@")[-1][len("os7-before-restore-"):]
+          .replace("-", "").isdigit(),
+          "and carries the moment it was taken, so it can be told from the next one")
+
+    check(str(got["crossSnapshot"]).startswith("rpool/DATA/shared@"),
+          "the DESTINATION's dataset is snapshotted, not the version's",
+          str(got["crossSnapshot"]))
+
+    check(got["optedOutSnapshot"] is None and got["optedOutCreated"] == 0,
+          "-NoSafetySnapshot is the named way to give the way back up")
+    check(got["optedOutBytes"] == "yesterday",
+          "and it still restores")
+
+    removed = got["pruneRemoved"]
+    left = got["pruneLeftMine"]
+    check(len(removed) == 3,
+          "eight safety snapshots and a keep of five leaves three to remove",
+          f"{len(removed)}: {', '.join(removed)}")
+    check(all("os7-before-restore-2026090" in r for r in removed),
+          "and the three removed are the OLDEST of ours", ", ".join(removed))
+    check(not any("autosnap" in r for r in removed),
+          "SANOID'S SNAPSHOTS ARE NEVER TOUCHED, however old — a prune that "
+          "matched everything would be the data loss this feature exists to "
+          "prevent")
+    check(sum(1 for s in left if s.startswith("autosnap")) == 2,
+          "both of sanoid's are still there afterwards")
+    check(sum(1 for s in left if s.startswith("os7-before-restore-")) == 5,
+          "and exactly five of ours, whatever the machine's history",
+          str(sum(1 for s in left if s.startswith("os7-before-restore-"))))
+    check(got["pruneLeftOther"] == ["os7-before-restore-20260101-000000"],
+          "another dataset's safety snapshot is not this restore's business")
+
+    check(got["noZfsSnapshot"] is None and got["noZfsCreated"] == 0,
+          "a destination ZFS does not own cannot be snapshotted")
+    check("ZFS" in got["noZfsWarning"] and "no way back" in got["noZfsWarning"],
+          "and the operator is told that, rather than left to assume there is "
+          "a way back", got["noZfsWarning"][:90])
+    check(got["noZfsBytes"] == "yesterday",
+          "restoring onto a USB stick is legitimate and is not refused")
+
+    check("os7-before-restore-" in got["vanishError"],
+          "a snapshot that was requested and is not there stops the restore",
+          got["vanishError"][:90])
+    check("-NoSafetySnapshot" in got["vanishError"],
+          "and the message names the way past it")
+    check(got["vanishBytes"] == "precious",
+          "AND NOTHING WAS WRITTEN — `zfs snapshot` exiting 0 is a diagnostic, "
+          "and the file is the evidence")
+
+    snaps = got["pipelineSnapshots"]
+    check(got["pipelineCreated"] == 1,
+          "two files restored in one invocation take ONE snapshot of the dataset",
+          str(got["pipelineCreated"]))
+    check(len(snaps) == 2 and snaps[0] == snaps[1] and snaps[0] is not None,
+          "and both are told the same way back, because that snapshot predates "
+          "both writes", str(snaps))
+    check(got["pipelineBytes"] == ["yesterday", "yesterday"],
+          "and both files were actually restored")
+
+
+def confirmation():
+    print()
+    print("  8. The prompt says whether this can be undone, BEFORE it is answered")
+
+    # -WhatIf renders exactly the sentence a -Confirm prompt shows, and it goes
+    # to the host rather than to a stream, which is why this case is read as
+    # text instead of as JSON.
+    body = SAFETY_FAKES + r"""
+$script:DatasetFor = @{ $script:LiveDir = 'rpool/USERDATA/alice' }
+Set-Content -LiteralPath $script:Live -Value 'today, which is work' -NoNewline
+
+'--- overwriting ---'
+Restore-OS7File -Path $script:Live -Force -WhatIf
+'--- new path ---'
+Restore-OS7File -Path $script:Live -Destination "$script:LiveDir/fresh.txt" -WhatIf
+'--- created: ' + @($script:Created).Count
+'--- bytes: ' + (Get-Content -LiteralPath $script:Live -Raw)
+Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue
+"""
+    text = run_text(body, "the confirmation text can be read")
+    if text is None:
+        return
+
+    overwriting = text.split("--- overwriting ---")[-1].split("--- new path ---")[0]
+    fresh = text.split("--- new path ---")[-1].split("--- created:")[0]
+
+    check("snapshotting" in overwriting and "undone" in overwriting,
+          "overwriting a file says a snapshot is taken first, in the prompt",
+          overwriting.strip()[:110])
+    check("snapshotting" not in fresh,
+          "and a restore that overwrites nothing does not promise one",
+          fresh.strip()[:110])
+    check("--- created: 0" in text,
+          "-WhatIf takes no snapshot either — ShouldProcess answers first")
+    check("--- bytes: today, which is work" in text,
+          "and writes nothing")
+
+
 def main():
     print("OS/7 storage pressure — the decisions, with no ZFS")
     print()
@@ -584,6 +944,8 @@ def main():
     protection()
     ownership()
     boundary()
+    safety()
+    confirmation()
 
     print()
     if FAILS:

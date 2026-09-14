@@ -104,9 +104,19 @@ public sealed class VersionEntry
 	/// The retention bucket sanoid put the snapshot in, if it is sanoid's.
 	/// </summary>
 	/// <remarks>
+	/// <para>
 	/// Read off the name, and used ONLY as a label — never to decide anything.
 	/// A snapshot an administrator took by hand has no bucket and is shown just
 	/// the same, which is the case a name-driven design would lose.
+	/// </para>
+	/// <para>
+	/// ONE OF THESE IS OS/7's OWN. <c>Restore-OS7File</c> snapshots the live
+	/// file before it writes over it (VERSIONS-PLAN V8), so the row directly
+	/// above a restore is the work that restore replaced — the most useful row
+	/// in the window at the moment somebody realises they restored the wrong
+	/// thing. Labelled "manual" it would read as something a person did by
+	/// hand, and be passed over.
+	/// </para>
 	/// </remarks>
 	public string Bucket
 	{
@@ -116,6 +126,11 @@ public sealed class VersionEntry
 			if (string.IsNullOrEmpty(name))
 			{
 				return "live";
+			}
+
+			if (name.StartsWith("os7-before-restore-", StringComparison.Ordinal))
+			{
+				return "before a restore";
 			}
 
 			foreach (var bucket in new[]

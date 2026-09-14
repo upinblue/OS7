@@ -8320,3 +8320,46 @@ have caught this, and the one instrument that did was a person looking at two
 pictures.
 
 ---
+---
+
+## #159 — a name made from the clock is unique only if the thing is made more slowly than the clock ticks
+
+`Restore-OS7File` gained a safety snapshot before it overwrites anything
+(VERSIONS-PLAN V8), named `os7-before-restore-<yyyyMMdd-HHmmss>` so a person can
+read it. That name is unique per **second**, and the cmdlet has a `process{}`
+block — so it is made once per **pipeline item**:
+
+```powershell
+Get-ChildItem ~/Angebote | Restore-OS7File -AsOf $yesterday -Force
+```
+
+Twenty files, one second, twenty requests for the same snapshot name. `zfs
+snapshot` refuses a name that already exists, so **the second file's restore
+dies of the mechanism that exists to protect it** — and it dies after the first
+file has already been overwritten, which is the worst place in the sequence to
+stop.
+
+Two fixes, and only one of them is interesting.
+
+The dull one is a uniqueness suffix (`…-2`, `…-3`), which is what now guarantees
+correctness across two SEPARATE invocations in one second — a script's
+`foreach`, which nothing inside a single call can see.
+
+The one worth the entry is that **the right answer was not to make more
+snapshots but fewer**: one per dataset per invocation, remembered in `begin{}`
+and reused for every item after. The first snapshot already holds the state
+before *all* of the writes, so nineteen of the twenty were redundant even when
+they worked — and twenty rows named "before a restore" in a window built to make
+a file's history readable is a second defect hiding behind the first.
+
+*The general form:* **a `process{}` block runs once per item and every constant
+inside it is a per-item constant.** A clock read to the second is a constant for
+a whole pipeline; so is a temporary name, a lock file, a log file, a transient
+unit name. Whether that is a collision, a leak or a flood depends on what the
+name is for — but "it will not happen twice in the same second" is a statement
+about a HUMAN's pace, and a pipeline is not a human.
+
+Caught by `check-storage-logic.py` §7 before it reached a machine, and by
+accident: two cases of the check ran in the same second, and case G reported
+the wrong failure — a snapshot it expected to be missing was found, because it
+was the previous case's.

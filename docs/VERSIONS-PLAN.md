@@ -9,10 +9,12 @@ change of file manager.**
 technical prerequisite already exists and that the snapshots this feature would read **are already
 being taken**. Decisions are V1–V18, limitations VL1–VL8. A measurement still owed is `O-V1…`.
 
-**V15 and V16 are DECIDED and BUILT** — the storage-pressure rule (70 warn / 80 tighten / 90
-refuse, gated on whether thinning could even work) and the boot environment that is never pruned.
-§5 has them, `powershell/OS7/OS7.Storage.ps1` implements them, and
-`installer/testing/check-storage-logic.py` holds all of it at 37 checks with no ZFS.
+**V8, V15, V16, V17 and V18 are DECIDED and BUILT** — the snapshot a restore takes before it
+overwrites anything, the storage-pressure rule (70 warn / 80 tighten / 90 refuse, gated on whether
+thinning could even work), the boot environment that is never pruned, the "did not exist" boundary,
+and the window asking the cmdlet instead of deciding for itself. `powershell/OS7/OS7.Storage.ps1`
+and `OS7.BackupRestore.ps1` implement them, and `installer/testing/check-storage-logic.py` holds all
+of it at **86 checks** with no ZFS and no VM.
 
 `src/OS7.App.Versions/` draws the window, reads real snapshots, and offers *Open* and *Copy to…*
 only; **§7a is what building it measured**, including the two things about the cascade that were
@@ -100,7 +102,8 @@ and is refused: it works only for snapshots sanoid made, and an administrator's 
 lists what exists and reads out of it. It does not schedule, and it does not prune.
 
 The one exception is V8 (a snapshot immediately before a restore), which is a single snapshot taken
-at an operator's explicit request, not a policy.
+at an operator's explicit request, not a policy — and, because it is OS/7's own, the one thing this
+feature does prune. Sanoid prunes only what sanoid took (measured), so nothing else ever would.
 
 ### V2 — The times come from ZFS; the contents come from the filesystem. Proposed 2026-09-14.
 
@@ -164,14 +167,55 @@ changed" and this means "nothing is being kept".
 *Open* and *Copy to…* are first because most of what people want from a versions feature is to
 **look**, and a design whose only verb is the destructive one makes looking dangerous.
 
-### V8 — A restore takes a snapshot first, so the restore itself is undoable. Proposed 2026-09-14.
+### V8 — A restore takes a snapshot first, so the restore itself is undoable. **BUILT 2026-09-14.**
 
 55 ms (M-V7). Without it, restoring yesterday's file over today's work destroys the work with no way
 back, and the feature whose entire purpose is "you can go back" would have a one-way door in it.
 
-The snapshot is named for what it is (`os7-before-restore-<timestamp>`) and is **exempt from sanoid's
-pruning by name**, for a bounded period — otherwise the safety net is thinned away by the policy
-that did not create it.
+`New-OS7RestoreSafetySnapshot` in `powershell/OS7/OS7.BackupRestore.ps1`, called by
+`Restore-OS7File` between the confirmation and the copy. `-NoSafetySnapshot` is the named way to
+give it up. The result object carries `SafetySnapshot`, which is the way back written so it can be
+typed.
+
+**ONLY WHERE SOMETHING IS OVERWRITTEN.** A `-Destination` that does not exist yet takes nothing
+away, and a snapshot for it would cost a name, a prune and a row in every later version listing for
+nothing. In-place (`-Force`), or a destination that is already there, is what is snapshotted.
+
+**AND IT IS THE DESTINATION'S DATASET, NOT THE VERSION'S.** Those are different questions: the
+version came out of some dataset's snapshot, and what is at risk is whatever the copy lands on —
+which `-Destination` can put on another dataset entirely, or on no ZFS filesystem at all. A
+destination ZFS does not own is **not refused**: restoring onto a USB stick is a legitimate thing to
+do, it simply cannot be made undoable, and the operator is told that rather than left to assume
+otherwise.
+
+**THE PROMPT SAYS SO BEFORE IT IS ANSWERED.** The `ShouldProcess` description gains
+"(snapshotting … first, so this can be undone)" exactly when one will be taken. Whether an
+overwrite is reversible is the most important thing about the answer, and reporting it afterwards
+is too late to inform it. `Move-OS7Home` already phrases its own the same way.
+
+**THIS PARAGRAPH USED TO SAY THE SNAPSHOT IS "EXEMPT FROM SANOID'S PRUNING BY NAME, FOR A BOUNDED
+PERIOD", AND THE MEASUREMENT SAYS OTHERWISE.** Measured on the bench 2026-09-14: four hand-made
+`demo-*` snapshots were still there after sanoid ran a policy pass over the same dataset, in a set
+of 36. **Sanoid prunes only the snapshots sanoid took.** So the exemption is automatic and is not a
+feature — and the real risk is the inverse of the one the plan wrote down: *nothing thins these at
+all*, and `Invoke-OS7StorageRelief` will not either, because it deletes no snapshot itself (it
+writes the retention policy and lets sanoid prune under it). **OS/7 prunes its own**, at the moment
+it makes one: the newest five per dataset are kept and older ones destroyed, matched on the prefix
+so sanoid's are never touched however old they are. No timer, no policy file, nothing else to keep
+in step.
+
+**ONE PER DATASET PER INVOCATION**, which is both the right answer and the safe one. Restoring
+twenty files through one pipeline would otherwise take twenty snapshots of one dataset, nineteen of
+them redundant — the first already holds the state before any of the writes. It also stopped a
+defect the plan had not foreseen: the stamp has one-second resolution, so two files restored in the
+same second asked ZFS for a snapshot that already existed, which `zfs snapshot` refuses. The second
+file's restore would have died of the mechanism protecting it. BUILD-NOTES #159; found by
+`check-storage-logic.py` §7, which reached the same second by accident.
+
+Checked: `check-storage-logic.py` §7 (25 cases, real files and a fake ZFS — including a `zfs
+snapshot` that exits 0 having done nothing, after which the restore must write **no byte**) and §8
+(the confirmation text, read as the operator sees it). Four planted defects go red. Unmeasured on a
+machine.
 
 ### V9 — Restoring is done by the PowerShell surface, not by the window. Proposed 2026-09-14.
 

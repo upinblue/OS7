@@ -121,6 +121,15 @@ public static class SelfTest
 			Entry("2026-09-14T12:00:00Z", snapshot: "before-the-migration").Bucket == "manual");
 		Check("and the live file is 'live'", Current().Bucket == "live");
 
+		// V8. The row above a restore holds the work that restore replaced, and
+		// it is the one somebody comes back for.
+		Check("the snapshot a restore took of your work says what it is",
+			Entry("2026-09-14T12:00:00Z", snapshot: "os7-before-restore-20260914-230715")
+				.Bucket == "before a restore");
+		Check("including the second one in the same second",
+			Entry("2026-09-14T12:00:00Z", snapshot: "os7-before-restore-20260914-230715-2")
+				.Bucket == "before a restore");
+
 		Check("an empty file is 'empty', not '0 bytes'",
 			Entry("2026-09-14T12:00:00Z", length: 0).State == "empty");
 	}

@@ -308,7 +308,26 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   environment came back prunable —
                                           #   caught on a machine, and case 4
                                           #   is what stops it returning.
-                                          #   37 checks, no ZFS, seconds
+                                          #   AND THE ONE SNAPSHOT OS/7 TAKES
+                                          #   OF ITS OWN ACCORD (V8): the one
+                                          #   `Restore-OS7File` makes of the
+                                          #   live file before it writes over
+                                          #   it, so the restore is itself
+                                          #   undoable. Sections 7 and 8 run
+                                          #   against REAL files with a fake
+                                          #   ZFS around them, so "the bytes
+                                          #   landed" and "nothing was written"
+                                          #   are read off a filesystem. It is
+                                          #   taken only where something is
+                                          #   actually overwritten, on the
+                                          #   DESTINATION's dataset and not the
+                                          #   version's, said in the prompt
+                                          #   BEFORE it is answered, and pruned
+                                          #   by OS/7 because sanoid prunes
+                                          #   only what sanoid took (measured)
+                                          #   — never matching one of sanoid's,
+                                          #   however old. Four planted defects
+                                          #   go red. 86 checks, no ZFS, seconds
 ./installer/testing/check-gui-tokens.py   # G9: OS/7's GUI apps have ONE palette.
                                           #   The 17 Windows 2000 constants live
                                           #   in the desktop theme's gtk.css AND
