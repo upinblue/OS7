@@ -1,14 +1,13 @@
 # OS/7 as an automation host
 
 **Status: every decision here is *Proposed*. Nothing in this document has been run on a
-machine.** Written 2026-09-14 from reading the module surface and from one customer
-requirement list; the inventory in §5 is read out of the source, the rest is design.
+machine.** Written 2026-09-14 from reading the module surface; the inventory in §5 is read
+out of the source, the rest is design.
 
 This plan decides what **the operating system** owes an automation workload, and — just as
 deliberately — what it does not. A product that provisions identities, holds approvals and
-governs entitlements is described in a separate concept document that is **deliberately not in
-this repository** — this one is public, that one is commercial. This file is the machine
-underneath it, and is useful without it: nothing below depends on that product being built.
+governs entitlements is [IAM-PLAN.md](IAM-PLAN.md). This file is the machine underneath it,
+and is useful without it: nothing below depends on that application being built.
 
 ---
 
@@ -43,9 +42,10 @@ near a computer.
   units live under `/run` — and AU12 is written on that expectation (M-AU4).
 - Every performance claim. There are none in this document on purpose.
 
-**The customer requirement list that motivated this plan is not its authority.** It is one
-document from one organisation (82 rows, an IGA questionnaire). Where a decision below was
-prompted by a row, the row is cited as motivation and nothing more.
+**What motivated this plan does not govern it.** The work that prompted it is an identity
+and access management application on top of OS/7 ([IAM-PLAN.md](IAM-PLAN.md)); every decision
+below is justified on this machine's own terms, and every one of them is worth having on a
+machine where no such application is ever installed.
 
 ---
 
@@ -124,9 +124,9 @@ command line: it is world-readable in `ps` and in systemd's own tooling, which
 `Register-OS7ScheduledTask` already says in capitals. Not a file, unless it is too large,
 because a file has a lifetime and someone has to end it.
 
-One document, on stdin, closed. The job parses it or fails. Motivated by R41 ("all relevant
-parameters passed automatically to the script"), and the mechanism is the answer to *how*,
-which that row does not ask and needs.
+One document, on stdin, closed. The job parses it or fails. The requirement it serves is
+that a caller hands a job every parameter it needs with no manual step — and the interesting
+half of that is not *whether* but *through which channel*, which is what this decides.
 
 ### AU4 — Every job runs in a slice, with limits, a timeout and isolation, and the defaults are restrictive. Proposed 2026-09-14.
 
@@ -135,7 +135,7 @@ which that row does not ask and needs.
 `ProtectSystem=strict`, `ProtectHome=yes`, `NoNewPrivileges=yes`, and `DynamicUser=yes`
 wherever the job does not need a named identity.
 
-The motivating case is a product above running **customer-authored scripts** (R42). A script
+The motivating case is a product above running **scripts written by the operator**. A script
 that allocates until the machine dies takes the audit trail's writer with it. systemd has
 done this for a decade; nothing here is new except that it is switched on and stated.
 
@@ -247,11 +247,11 @@ folklore.
 
 A job that failed at 03:00 is today known to nobody: `Healthy` is pull, not push, and no MTA
 is installed. `Send-OS7Notification` with sinks in a data file beside the module — the shape
-`Get-OS7Endpoint` already uses, because sovereign clouds and customer relays are data, not
+`Get-OS7Endpoint` already uses, because sovereign clouds and an organisation's own relay are data, not
 code. Sinks: SMTP, webhook, command.
 
-A product above will send its own business mail (an approver's task, R65) through its own
-templates. AU11 is for the machine's own bad news — backup failed, update failed, a lock has
+A product above will send its own business mail — an approver's task, a request accepted —
+through its own templates. AU11 is for the machine's own bad news — backup failed, update failed, a lock has
 been held for six hours.
 
 ### AU12 — Scheduling stays the machine's; business schedules belong to the product. Proposed 2026-09-14.
@@ -377,7 +377,7 @@ Read out of the source on 2026-09-14. This is the honest starting line.
   `StateDirectory` is owned by an id that changes; jobs that must persist need a named
   identity. The default therefore cannot be dynamic for every job, and AU4 will need a
   second sentence once somebody implements it.
-- **AUL5 — `ProtectSystem=strict` will break customer scripts** that write where they always
+- **AUL5 — `ProtectSystem=strict` will break operator-authored scripts** that write where they always
   did. The escape (`-Unconfined`) exists and is recorded per job; the support burden is real
   and belongs to whoever ships the product above.
 - **AUL6 — No fleet story.** Everything here is one machine. `Enable-OS7Remoting` and SSH
@@ -426,8 +426,8 @@ Each kills or confirms a decision. Four need nothing but a VM.
 
 **Phase 1 — the primitives a product above cannot be built without.** AU2, AU5, AU6, AU4,
 AU8, AU7, AU11, plus AU14's `check-automation-logic.py` alongside rather than after. This is
-the whole of what a product above requires from the machine — and every one of them is worth
-having on a machine where no such product is ever installed.
+the whole of what [IAM-PLAN.md](IAM-PLAN.md) requires from the machine — and every one of
+them is worth having on a machine where that application is never installed.
 
 **Phase 2 — the OS's own value, needed by no product.** AU13 (path and socket triggers),
 fleet execution — where the differentiator is honesty: a machine that was not reached reports
