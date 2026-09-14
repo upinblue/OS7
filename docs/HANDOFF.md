@@ -1130,6 +1130,26 @@ docker run --rm --privileged --platform linux/arm64 -v "$PWD/out":/iso os7-build
 
 ## 6. Open items not decided anywhere
 
+- **Should OS/7 become an automation host, and should a product be built on it?**
+  (Raised 2026-09-14 by a customer's IGA questionnaire, 82 rows.) **Nothing is
+  decided and nothing is built** — what exists is three documents and the reason
+  they are separate. [AUTOMATION-PLAN.md](AUTOMATION-PLAN.md) is the OS half
+  (AU1–AU14, all *Proposed*) and is worth reading even if the product half never
+  happens, because it names what this repository measured about itself on
+  2026-09-14: `Register-OS7ScheduledTask` exposes **no limit, no timeout and no
+  isolation parameter**, and there is **no secret store, no lock verb, no
+  notification verb and no MTA anywhere in the tree**. Those are gaps in a
+  machine that already calls itself a place where scheduled work runs.
+  The **product** half — a concept document and a per-row reading of that
+  questionnaire — was written the same day and is **deliberately not in this
+  repository**: this one is public and MIT, that material is commercial, and
+  `web/` already made exactly that move on 2026-08-28. It lives unversioned in
+  the working tree for now (`docs/IAM-*.md`, excluded locally via
+  `.git/info/exclude` so no `git add -A` can publish it by accident) and belongs
+  in a private repository. **Ask the owner before assuming it still exists.**
+  The decision that gates all of it is not architectural: *is that questionnaire
+  a market, or one customer?* The two answers build different companies, and the
+  OS half above is worth having under either.
 - **The live ISO and the setup ISO are the same image, and that now looks
   settled rather than undecided.** One medium carries two GRUB entries — *Install
   OS/7* (which sets `os7.setup=1` and `systemd.wants=os7-setup.service`) and a
