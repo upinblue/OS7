@@ -35,6 +35,92 @@
 # makes this work without OS/7 changing a property on the user's datasets.
 $script:OS7SnapshotDir = '.zfs/snapshot'
 
+function Get-OS7PathMount {
+	<#
+	.SYNOPSIS
+		Internal. The filesystem actually mounted at a path, from the kernel.
+
+	.DESCRIPTION
+		Get-OS7PathDataset knows which ZFS dataset's MOUNTPOINT is the longest
+		prefix of a path. That is not the same question as which filesystem the
+		path is on, and on this product the difference is every pseudo-filesystem
+		there is: `/` is a ZFS boot environment, so `/proc/cpuinfo`, `/dev/null`,
+		`/run/utmp` and `/sys/...` are all "under" it by path and on procfs,
+		devtmpfs, tmpfs and sysfs in fact.
+
+		MEASURED, 2026-09-14: `Get-OS7FileVersion /proc/cpuinfo` returned zero
+		versions in silence. The refusal it should have given — "is not inside a
+		mounted ZFS filesystem, so it has no snapshots" — is written, correct,
+		and was UNREACHABLE for exactly the paths a file manager hands over from
+		outside a home directory. A guard that cannot fire is not a guard.
+
+		THE FORMAT IS PARSED, NOT SPLIT. Between the mount point (field 5) and
+		the ` - ` separator the kernel writes a VARIABLE number of optional
+		fields, so counting from either end is wrong; everything before the lone
+		` - ` is one part and everything after is the other. Octal escapes are
+		decoded because a home directory with a space in it is ordinary and an
+		undecoded one resolves to the wrong mount.
+
+		IT NEVER THROWS. A machine with no /proc — or one where it cannot be
+		read — gets $null and the caller carries on as it did before this
+		existed. A diagnostic that becomes a new failure mode is worse than the
+		gap it closes.
+
+	.OUTPUTS
+		An object with MountPoint and FsType, or $null.
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)][string]$Path,
+		[string]$MountInfo = '/proc/self/mountinfo'
+	)
+
+	if (-not [System.IO.File]::Exists($MountInfo)) { return $null }
+
+	$lines = $null
+	try { $lines = [System.IO.File]::ReadAllLines($MountInfo) } catch { return $null }
+	if ($null -eq $lines) { return $null }
+
+	$wanted = $Path -replace '/+$', ''
+	if ([string]::IsNullOrEmpty($wanted)) { $wanted = '/' }
+
+	$bestPoint = $null
+	$bestType = $null
+
+	foreach ($line in $lines) {
+		$sep = $line.IndexOf(' - ')
+		if ($sep -lt 0) { continue }
+
+		$left = $line.Substring(0, $sep) -split ' +'
+		$right = $line.Substring($sep + 3) -split ' +'
+		if ($left.Count -lt 5 -or $right.Count -lt 1) { continue }
+
+		$point = $left[4] -replace '\\040', ' ' -replace '\\011', "`t" `
+			-replace '\\012', "`n" -replace '\\134', '\'
+		$type = $right[0]
+
+		# A string prefix is not enough: /home/os7admin2 starts with
+		# /home/os7admin and is a different account's home.
+		$owns = if ($point -eq '/') { $wanted.StartsWith('/') }
+		elseif ($wanted -eq $point) { $true }
+		else { $wanted.StartsWith($point.TrimEnd('/') + '/') }
+
+		if (-not $owns) { continue }
+
+		if ($null -eq $bestPoint -or $point.Length -gt $bestPoint.Length) {
+			$bestPoint = $point
+			$bestType = $type
+		}
+	}
+
+	if ($null -eq $bestPoint) { return $null }
+
+	[pscustomobject]@{
+		MountPoint = $bestPoint
+		FsType     = $bestType
+	}
+}
+
 function Get-OS7PathDataset {
 	<#
 	.SYNOPSIS
@@ -101,6 +187,24 @@ function Get-OS7PathDataset {
 	if (-not $best) { return $null }
 
 	$mp = [string]$best.Mountpoint
+
+	# AND IS ANYTHING ELSE MOUNTED IN BETWEEN? Everything above compares the
+	# path against ZFS MOUNTPOINTS, which cannot see that /proc, /dev, /run,
+	# /sys and /tmp interrupt the root dataset's ownership. Measured: this
+	# returned the running boot environment for /proc/cpuinfo, and the caller's
+	# correct refusal was therefore unreachable for every path outside a ZFS
+	# filesystem on a machine whose / IS one.
+	#
+	# A LONGER mount than the dataset's means something is mounted underneath
+	# it. If that something is zfs it is a child dataset, which the loop above
+	# has already considered as a longer candidate; anything else owns the path
+	# and this dataset does not.
+	$actual = Get-OS7PathMount -Path $p
+	if ($null -ne $actual -and
+		$actual.MountPoint.TrimEnd('/').Length -gt $mp.TrimEnd('/').Length -and
+		$actual.FsType -ne 'zfs') {
+		return $null
+	}
 
 	# SPLICED BY LENGTH, not by a regex over the mountpoint. `/` is the case
 	# that catches a regex out — findoid's `s/^$dataset\///` never fires for a

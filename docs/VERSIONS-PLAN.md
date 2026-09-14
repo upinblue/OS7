@@ -179,9 +179,21 @@ G3. Reading is observation and the window may do it directly (V2); restoring cha
 takes a snapshot first (V8), and has to decide what to do when the live file has changed since the
 window was opened. Those are decisions, and decisions live in cmdlets:
 
-- `Get-OS7FileVersion -Path <p>` — what versions exist, with their times and sizes
-- `Restore-OS7FileVersion -Path <p> -Version <snapshot> [-To <dest>]` — with the pre-snapshot
-- `Get-OS7VersionStore [-Dataset <d>]` — what the history costs and how much headroom is left
+- ~~`Get-OS7FileVersion -Path <p>`~~ — **IT ALREADY EXISTED.** `powershell/OS7/OS7.BackupRestore.ps1`
+  has had it since the backup work, with `-DistinctOnly`, `-Newest` and `-IncludeCurrent`, and
+  [BACKUP-PLAN.md](BACKUP-PLAN.md) §344 and its cmdlet table document it. **This plan proposed
+  building it because nobody grepped**, and a session then built a second one before noticing —
+  removed again the same hour. It works on a machine, unprivileged (§7b).
+- ~~`Restore-OS7FileVersion`~~ — **`Restore-OS7File` already exists too**, beside it. What it does
+  NOT do is V8's snapshot-before-restore; that is the part still owed, and it is a change to an
+  existing cmdlet rather than a new one.
+- `Get-OS7VersionStore [-Dataset <d>]` — what the history costs and how much headroom is left. This
+  one was genuinely new and is built.
+
+**The lesson is about this file rather than the code.** A plan that lists cmdlets to build has to be
+written against `Get-Command`, not against memory — the same rule
+[POWERSHELL-REFERENCE.md](POWERSHELL-REFERENCE.md) exists for, and the same one
+`check-module-parts.py` enforces on the counts. Two of the three were already there.
 
 G7 also requires this: a headless or arm64 machine has no window, and USERDATA snapshots exist there
 just the same. An administrator must be able to recover a file over ssh.
@@ -445,6 +457,50 @@ a UTC container while being green on a +02:00 machine. Captions are rendered in
 local time, so the assertions are about shape now, not value.
 
 ---
+
+## 7b. The cmdlet already existed, and asking it found a defect — 2026-09-14
+
+`Get-OS7FileVersion` and `Restore-OS7File` have been in
+`powershell/OS7/OS7.BackupRestore.ps1` since the backup work. This plan's V9
+proposed building them, a session started to, and the duplicate was removed
+within the hour — the psd1's own export list caught it, because the name was
+suddenly in it twice and `check-module-parts.py` went red on a count that no
+longer matched.
+
+**It works on a machine**, which had not been shown before: against the demo
+file's four snapshots it returned 24, 50 and 77 bytes plus the live 38,
+`-DistinctOnly` collapsed the unchanged one, and it did all of that as the
+unprivileged owner. That also settles **BACKUP-PLAN BL9**, which said the
+assumption the restore path rests on — that `snapdir=hidden` still permits
+explicit traversal of `.zfs/snapshot` — was unmeasured. It is measured now
+(M-V4, M-V5, M-V6).
+
+**And one defect, which is the kind this repository collects.**
+`Get-OS7FileVersion /proc/cpuinfo` returned **zero versions in silence**. The
+refusal it should have given is written, correct and well-phrased —
+
+> '/proc/cpuinfo' is not inside a mounted ZFS filesystem, so it has no
+> snapshots. Only ZFS datasets have versions…
+
+— and it was **unreachable**. `Get-OS7PathDataset` resolves ownership by
+comparing the path against ZFS *mountpoints*, which cannot see that `/proc`,
+`/dev`, `/run`, `/sys` and `/tmp` interrupt the root dataset: on a machine whose
+`/` is a boot environment, every one of those paths is "under" it. The guard
+never fired, and the caller got an empty list — which by V6's own argument is
+the wrong answer, because empty means "nothing changed" and this means "not a
+place that has versions".
+
+Fixed by asking the kernel: `Get-OS7PathMount` reads `/proc/self/mountinfo` and
+`Get-OS7PathDataset` now refuses when something that is not ZFS is mounted
+between the dataset and the path. Eight cases in
+`installer/testing/check-storage-logic.py` §5 hold it, including the two that
+were silently wrong and the `/home/os7admin2` prefix trap.
+
+**It matters for this feature specifically**: the file manager hands over
+whatever path was right-clicked, and a window that says "no versions" for
+`/proc` teaches an operator that the feature is unreliable rather than that the
+path is.
+
 
 ## 8. Order of work
 

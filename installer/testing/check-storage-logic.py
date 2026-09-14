@@ -41,6 +41,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 STORAGE = os.path.join(REPO, "powershell", "OS7", "OS7.Storage.ps1")
+RESTORE = os.path.join(REPO, "powershell", "OS7", "OS7.BackupRestore.ps1")
 
 FAILS = []
 
@@ -54,6 +55,7 @@ def check(ok, what, detail=""):
 PRELUDE = r"""
 $ErrorActionPreference = 'Stop'
 . '{storage}'
+. '{restore}'
 
 # ---------------------------------------------------------------------------
 # The fakes. Defined AFTER the dot-source on purpose: PowerShell resolves a
@@ -111,7 +113,8 @@ function New-Pool {{
 
 def run(body, cases):
     """Run a PowerShell body that emits one JSON object, and report it."""
-    script = PRELUDE.format(storage=STORAGE.replace("\\", "/")) + "\n" + body
+    script = PRELUDE.format(storage=STORAGE.replace("\\", "/"),
+                            restore=RESTORE.replace("\\", "/")) + "\n" + body
 
     with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False,
                                      encoding="utf-8") as handle:
@@ -426,6 +429,67 @@ $out | ConvertTo-Json -Depth 4
           "one environment on a fresh machine is protected and prunes to nothing")
 
 
+
+def ownership():
+    print()
+    print("  5. A path is owned by what is actually MOUNTED there")
+
+    # MEASURED ON A MACHINE, 2026-09-14: Get-OS7FileVersion /proc/cpuinfo
+    # returned zero versions in silence, because / is a ZFS boot environment
+    # and every pseudo-filesystem is "under" it by path. The refusal it should
+    # have given is written and correct and was simply unreachable. A guard
+    # that cannot fire is not a guard.
+    body = r"""
+$info = [System.IO.Path]::GetTempFileName()
+@(
+	'1 0 0:1 / / rw - zfs rpool/ROOT/os7 rw'
+	'2 1 0:2 / /proc rw - proc proc rw'
+	'3 1 0:3 / /dev rw - devtmpfs udev rw'
+	'4 1 0:4 / /home/os7admin rw shared:1 master:2 - zfs rpool/USERDATA/os7admin_a1 rw'
+	'5 1 0:5 / /home/os7admin/media rw - vfat /dev/sdb1 rw'
+	'6 1 0:6 / /home/a\040b rw - zfs rpool/USERDATA/spaced rw'
+) | Set-Content -Path $info -Encoding utf8
+
+$out = [ordered]@{}
+foreach ($p in @('/etc/hostname', '/proc/cpuinfo', '/dev/null',
+                 '/home/os7admin/notes.txt', '/home/os7admin/media/x.jpg',
+                 '/home/os7admin2/secret.txt', '/home/a b/c.txt', '/nowhere/at/all')) {
+	$m = Get-OS7PathMount -Path $p -MountInfo $info
+	$out[$p] = if ($null -eq $m) { $null } else { @{ point = $m.MountPoint; type = $m.FsType } }
+}
+Remove-Item $info -Force
+$out | ConvertTo-Json -Depth 4
+"""
+    got = run(body, "the mount table can be read")
+    if got is None:
+        return
+
+    check(got["/etc/hostname"]["type"] == "zfs" and got["/etc/hostname"]["point"] == "/",
+          "a file on the root dataset is owned by /")
+
+    # The two that were silently wrong.
+    check(got["/proc/cpuinfo"]["type"] == "proc",
+          "/proc/cpuinfo is on procfs, not on the boot environment")
+    check(got["/dev/null"]["type"] == "devtmpfs",
+          "/dev/null is on devtmpfs, not on the boot environment")
+
+    check(got["/home/os7admin/notes.txt"]["point"] == "/home/os7admin",
+          "the LONGEST mount wins, not the first")
+    check(got["/home/os7admin/media/x.jpg"]["type"] == "vfat",
+          "a USB stick mounted inside a home is not part of that home")
+
+    # /home/os7admin2 starts with /home/os7admin and is another account.
+    check(got["/home/os7admin2/secret.txt"]["point"] == "/",
+          "a longer NAME is not a deeper PATH")
+
+    # Optional fields between the mount point and the separator, and an octal
+    # escape: both are formats the kernel writes and a split would get wrong.
+    check(got["/home/a b/c.txt"]["point"] == "/home/a b",
+          "an octal-escaped space in a mount point is decoded")
+
+    check(got["/nowhere/at/all"]["point"] == "/",
+          "a path that exists nowhere still resolves to the root mount")
+
 def main():
     print("OS/7 storage pressure — the decisions, with no ZFS")
     print()
@@ -438,6 +502,7 @@ def main():
     gate()
     tightening()
     protection()
+    ownership()
 
     print()
     if FAILS:
