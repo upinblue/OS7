@@ -57,14 +57,13 @@ CAPABILITIES = {
         "open_files": [],
     },
     "OS7.App.Versions": {
-        "why": "the filesystem IS its subject (VERSIONS-PLAN V10): the kernel's "
-               "mount table, one stat per snapshot, and reading a file the "
-               "operator already owns",
+        "why": "it shows a file's contents, and that means reading them "
+               "(VERSIONS-PLAN V10). WHICH versions exist and which are worth "
+               "showing is Get-OS7FileVersion's, not this application's — the "
+               "grant shrank from four files to two when that moved",
         "start_process": [],
         "open_files": [
-            "Services/MountTable.cs",     # /proc/self/mountinfo
-            "Services/TextPreview.cs",    # the preview of an old version
-            "Services/VersionLoader.cs",  # one stat per snapshot
+            "Services/TextPreview.cs",    # the contents of one old version
             "Views/MainWindow.axaml.cs",  # Copy to… writes the copy
         ],
     },
@@ -262,15 +261,23 @@ def surface_rules(scan_root):
     else:
         check(False, "UpdateRunner.cs is where it is expected", runner)
 
-    zfs = at("OS7.App.Versions", "Services", "ZfsCli.cs")
-    if os.path.exists(zfs):
-        text = read(zfs)
-        check("Get-ZfsSnapshot" in text,
-              "snapshot times come from the Zfs module, not from stat (V2, M-V11)")
-        check("IsWellFormedDataset" in text,
-              "and a dataset name is validated before it reaches a script")
+    loader = at("OS7.App.Versions", "Services", "VersionLoader.cs")
+    if os.path.exists(loader):
+        text = read(loader)
+        check("Get-OS7FileVersion" in text,
+              "the versions come from Get-OS7FileVersion, not from the app's own walk")
+        # The boundary the owner asked to keep, and the collapsing that stops
+        # 45 snapshots being 45 rows. Both are the cmdlet's to decide.
+        check("-IncludeAbsent" in text and "-DistinctOnly" in text,
+              "and it asks for the boundary and the collapsing rather than doing them")
+        check("@'" in text,
+              "a path reaches PowerShell inside a here-string, never as syntax")
+        # What must NOT be here any more.
+        stripped = strip_comments(loader, text)
+        check("mountinfo" not in stripped and "Get-ZfsSnapshot" not in stripped,
+              "and it no longer resolves datasets or reads snapshot times itself")
     else:
-        check(False, "ZfsCli.cs is where it is expected", zfs)
+        check(False, "VersionLoader.cs is where it is expected", loader)
 
 
 def refusal_rules(scan_root):
@@ -287,15 +294,19 @@ def refusal_rules(scan_root):
     else:
         check(False, "ReleaseRow.cs is where it is expected", row)
 
-    store = os.path.join(scan_root, "OS7.App.Versions", "Services", "VersionStore.cs")
-    if os.path.exists(store):
-        text = read(store)
+    app = os.path.join(scan_root, "OS7.App.Versions", "App.axaml.cs")
+    if os.path.exists(app):
+        text = strip_comments(app, read(app))
         # V6: an empty list means "nothing changed" and no-history means
-        # "nothing is being kept". Those are opposite facts.
-        check("NotZfs" in text and "NoSnapshots" in text and "NotFound" in text,
-              "a path with no history says WHICH kind of none it is (V6)")
+        # "nothing is being kept". Those are opposite facts, and the cmdlet
+        # has a sentence for each — the window must pass it through rather
+        # than collapse them into "no versions found".
+        check("result.Error" in text and "model.Message" in text,
+              "the cmdlet's own refusal reaches the window unaltered (V6)")
+        check("NoHistory" in text,
+              "and 'nothing is kept' stays a different state from 'it failed'")
     else:
-        check(False, "VersionStore.cs is where it is expected", store)
+        check(False, "App.axaml.cs is where it is expected", app)
 
 
 def app_self_tests(image):
@@ -357,7 +368,7 @@ def self_test():
               "opening a file where it was not granted is caught")
 
         # A project WITHOUT the grant starting a process.
-        plant(("OS7.App.Versions", "Services", "ZfsCli.cs"),
+        plant(("OS7.App.Versions", "Services", "VersionLoader.cs"),
               "\t\tvar result = await _shell.RunAsync",
               '\t\tSystem.Diagnostics.Process.Start("zfs", "list");',
               "starting a process where it was not granted is caught")

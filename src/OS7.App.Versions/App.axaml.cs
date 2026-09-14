@@ -45,15 +45,17 @@ public partial class App : Application
 
 	/// <summary>
 	/// Fill the window once it exists, so "Looking for previous versions…" is a
-	/// state the operator sees rather than a frame they miss — the ZFS query
-	/// alone costs about 570 ms (VERSIONS-PLAN §2).
+	/// state the operator sees rather than a frame they miss.
 	/// </summary>
+	/// <remarks>
+	/// EVERY FAILURE IS THE CMDLET'S SENTENCE. `Get-OS7FileVersion` refuses a
+	/// path that is not on ZFS, a path that IS a mountpoint, and a dataset that
+	/// is not mounted, each with its own wording and its own instruction. They
+	/// arrive here as the message and go on the screen unaltered.
+	/// </remarks>
 	private static async Task LoadAsync(MainWindowViewModel model, string path)
 	{
 		var result = await new VersionLoader().LoadAsync(path).ConfigureAwait(true);
-
-		// One format for the whole list, chosen once it is known what is in it.
-		VersionEntry.AssignCaptions(result.Entries);
 
 		foreach (var entry in result.Entries)
 		{
@@ -67,9 +69,16 @@ public partial class App : Application
 			return;
 		}
 
-		model.Message = result.Target.Explanation;
-		model.Phase = result.Entries.Count > 0
-			? VersionsPhase.Listing
-			: VersionsPhase.NoHistory;
+		if (result.Entries.Count == 0)
+		{
+			// The cmdlet answered and had nothing. It throws for the cases it
+			// can explain, so this is the remaining one: a path nothing holds.
+			model.Message =
+				$"No snapshot of this machine holds {path}, and there is nothing there now.";
+			model.Phase = VersionsPhase.NoHistory;
+			return;
+		}
+
+		model.Phase = VersionsPhase.Listing;
 	}
 }

@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using OS7.App.Versions.Model;
-using OS7.App.Versions.Services;
 
 namespace OS7.App.Versions.ViewModels;
 
@@ -20,8 +19,8 @@ public enum VersionsPhase
 /// One layer of the cascade: a version, and whether it is the one in front.
 /// </summary>
 /// <remarks>
-/// <see cref="IsFront"/> is what selects the ACTIVE caption gradient over the
-/// inactive one (V12), and what decides whether the layer shows its contents or
+/// <see cref="IsFront"/> selects the ACTIVE caption gradient over the inactive
+/// one (VERSIONS-PLAN V12), and decides whether the layer shows its contents or
 /// only its title bar. Windows 2000 used exactly that pair of colours to mean
 /// "this is the one you are working in", which is what the front of a stack of
 /// times means.
@@ -31,16 +30,12 @@ public sealed record CascadeLayer(VersionEntry Entry, bool IsFront);
 /// <summary>One point on the timeline, and one layer of the cascade.</summary>
 public sealed class VersionEntry
 {
-	public VersionEntry(FileVersion version, bool isCurrent)
-	{
-		Version = version;
-		IsCurrent = isCurrent;
-	}
+	public VersionEntry(FileVersion version) => Version = version;
 
 	public FileVersion Version { get; }
 
 	/// <summary>Whether this is the state the live filesystem is in.</summary>
-	public bool IsCurrent { get; }
+	public bool IsCurrent => Version.IsCurrent;
 
 	/// <summary>
 	/// The caption, which is what the cascade shows of the layers behind.
@@ -72,7 +67,7 @@ public sealed class VersionEntry
 
 		var times = entries
 			.Where(e => !e.IsCurrent)
-			.Select(e => e.Version.Snapshot.Creation.ToLocalTime())
+			.Select(e => e.Version.Created.ToLocalTime())
 			.ToList();
 
 		var collides = times
@@ -86,19 +81,55 @@ public sealed class VersionEntry
 		{
 			entry.Caption = entry.IsCurrent
 				? "Now"
-				: entry.Version.Snapshot.Creation.ToLocalTime()
+				: entry.Version.Created.ToLocalTime()
 					.ToString(format, CultureInfo.InvariantCulture);
 		}
 	}
 
-	public string State => Version.State switch
+	/// <summary>What this version IS, in one phrase.</summary>
+	public string State
 	{
-		VersionState.Absent => "did not exist",
-		VersionState.Directory => "folder",
-		_ => FormatSize(Version.Size),
-	};
+		get
+		{
+			if (!Version.Exists)
+			{
+				return "did not exist";
+			}
 
-	public string Bucket => Version.Snapshot.Bucket ?? "manual";
+			return Version.IsFolder ? "folder" : FormatSize(Version.Size);
+		}
+	}
+
+	/// <summary>
+	/// The retention bucket sanoid put the snapshot in, if it is sanoid's.
+	/// </summary>
+	/// <remarks>
+	/// Read off the name, and used ONLY as a label — never to decide anything.
+	/// A snapshot an administrator took by hand has no bucket and is shown just
+	/// the same, which is the case a name-driven design would lose.
+	/// </remarks>
+	public string Bucket
+	{
+		get
+		{
+			var name = Version.SnapshotName;
+			if (string.IsNullOrEmpty(name))
+			{
+				return "live";
+			}
+
+			foreach (var bucket in new[]
+				{ "frequently", "hourly", "daily", "weekly", "monthly", "yearly" })
+			{
+				if (name.EndsWith('_' + bucket, StringComparison.Ordinal))
+				{
+					return bucket;
+				}
+			}
+
+			return "manual";
+		}
+	}
 
 	private string? _preview;
 	private bool _previewed;
@@ -122,8 +153,8 @@ public sealed class VersionEntry
 			}
 
 			_previewed = true;
-			_preview = Version.State == VersionState.Present
-				? Services.TextPreview.For(Version.Path)
+			_preview = Version.Exists && !Version.IsFolder
+				? Services.TextPreview.For(Version.SnapshotPath)
 				: null;
 
 			return _preview;
@@ -133,12 +164,20 @@ public sealed class VersionEntry
 	public bool HasPreview => Preview is not null;
 
 	/// <summary>What to say when there is nothing to show inline.</summary>
-	public string NoPreview => Version.State switch
+	public string NoPreview
 	{
-		VersionState.Absent => "This file did not exist at this point.",
-		VersionState.Directory => "A folder.",
-		_ => "Not a text file — use Open to look at it.",
-	};
+		get
+		{
+			if (!Version.Exists)
+			{
+				return "This file did not exist at this point.";
+			}
+
+			return Version.IsFolder
+				? "A folder."
+				: "Not a text file — use Open to look at it.";
+		}
+	}
 
 	public static string FormatSize(long bytes)
 	{
@@ -162,8 +201,10 @@ public sealed class VersionEntry
 /// The window's state and its decisions.
 /// </summary>
 /// <remarks>
-/// Constructible from a target and a list of versions with no ZFS and no
-/// filesystem, which is what lets <c>--self-test</c> exercise it.
+/// Constructible from a list of versions with no PowerShell behind it, which is
+/// what lets <c>--self-test</c> exercise every presentation decision here. What
+/// it does NOT decide is which versions exist or which are worth showing —
+/// <c>Get-OS7FileVersion</c> settles both (G3).
 /// </remarks>
 public sealed class MainWindowViewModel : INotifyPropertyChanged
 {
@@ -172,8 +213,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 	/// </summary>
 	/// <remarks>
 	/// Four, because the cascade has to read as depth without becoming a wall
-    /// of title bars — and because a Windows 2000 MDI cascade of twenty
-	/// children was already unreadable. The timeline carries the rest.
+	/// of title bars — a Windows 2000 MDI cascade of twenty children was
+	/// already unreadable. The timeline carries the rest.
 	/// </remarks>
 	public const int CascadeDepth = 4;
 
@@ -181,12 +222,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 	private string _message = string.Empty;
 	private int _selectedIndex;
 
-	public MainWindowViewModel(string path, IReadOnlyList<VersionEntry> entries, VersionTarget? target = null)
+	public MainWindowViewModel(string path, IReadOnlyList<VersionEntry> entries)
 	{
 		Path = path;
-		Target = target;
-
-		VersionEntry.AssignCaptions(entries);
 
 		foreach (var entry in entries)
 		{
@@ -202,8 +240,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 	public event PropertyChangedEventHandler? PropertyChanged;
 
 	public string Path { get; }
-
-	public VersionTarget? Target { get; }
 
 	public ObservableCollection<VersionEntry> Entries { get; } = new();
 
@@ -240,9 +276,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 		get => _selectedIndex;
 		set
 		{
-			var clamped = Entries.Count == 0
-				? 0
-				: Math.Clamp(value, 0, Entries.Count - 1);
+			var clamped = Entries.Count == 0 ? 0 : Math.Clamp(value, 0, Entries.Count - 1);
 
 			if (_selectedIndex == clamped)
 			{
@@ -262,12 +296,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 	/// <see cref="Controls.CascadePanel"/> wants, because a panel paints its
 	/// children in order and the selected time has to end up in front.
 	/// </summary>
-	/// <remarks>
-	/// The stack recedes into the PAST: the selected point in time is the front
-	/// layer, and what is behind it is older. Stepping back through the
-	/// timeline brings the next layer forward, which is the movement Time
-	/// Machine makes and the reason the metaphor is worth keeping.
-	/// </remarks>
 	public IReadOnlyList<CascadeLayer> Cascade
 	{
 		get
@@ -280,6 +308,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 				.ToList();
 		}
 	}
+
+	public bool HasEntries => Entries.Count > 0;
 
 	public string FileName
 	{
@@ -300,8 +330,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
 	public string SubHeader => Phase switch
 	{
-		VersionsPhase.Failed => Message,
-		VersionsPhase.NoHistory => Target?.Explanation ?? Message,
+		VersionsPhase.Failed or VersionsPhase.NoHistory => Message,
 		VersionsPhase.Loading => Path,
 
 		// The one line that says what the history actually covers. An operator
@@ -309,12 +338,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 		_ => Oldest is null
 			? Path
 			: $"{Entries.Count} versions, back to "
-				+ $"{Oldest.Version.Snapshot.Creation.ToLocalTime():yyyy-MM-dd}",
+				+ $"{Oldest.Version.Created.ToLocalTime():yyyy-MM-dd}",
 	};
 
 	public VersionEntry? Oldest => Entries.Count == 0 ? null : Entries[^1];
-
-	public bool HasEntries => Entries.Count > 0;
 
 	/// <summary>Whether stepping further back is possible.</summary>
 	public bool CanGoBack => _selectedIndex < Entries.Count - 1;
@@ -328,9 +355,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 	/// <remarks>
 	/// A version in which the file did not exist has nothing to open, and the
 	/// window must say that by disabling the verb rather than by failing when
-	/// it is used.
+	/// it is used. The boundary rows are exactly those.
 	/// </remarks>
-	public bool CanOpen => Selected?.Version.State == VersionState.Present;
+	public bool CanOpen => Selected?.Version is { Exists: true, IsFolder: false };
 
 	public void GoBack() => SelectedIndex = _selectedIndex + 1;
 

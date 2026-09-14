@@ -221,6 +221,66 @@ function Get-OS7PathDataset {
 	}
 }
 
+function Select-OS7DistinctVersion {
+	<#
+	.SYNOPSIS
+		Internal. Collapse runs of identical versions, keeping the one nearest
+		the change.
+
+	.DESCRIPTION
+		Runs, not a global set: a file that changes and changes back is two
+		distinct versions of the same content and both are real.
+
+		WHICH MEMBER OF A RUN IS KEPT DEPENDS ON WHAT THE RUN MEANS, and both
+		answers are "the snapshot nearest the change".
+
+		  PRESENT run  -> the OLDEST, the snapshot in which this content first
+		                  appeared. "It has looked like this since."
+		  ABSENT run   -> the NEWEST, the last moment the path is known not to
+		                  have been there. "It appeared after."
+
+		Keeping the oldest of an absent run instead would be true and nearly
+		useless: on a machine with three months of snapshots it reports "did not
+		exist" at the very beginning of history, and the bracket around when the
+		file appeared is three months wide instead of an hour. Measured on a
+		machine: 30 absent snapshots collapsed to one, and the one names 20:00
+		on the day the file was created at 20:39.
+
+	.PARAMETER Version
+		The versions, OLDEST FIRST, as Get-OS7FileVersion builds them.
+	#>
+	[CmdletBinding()]
+	param([Parameter()][object[]]$Version)
+
+	if (-not $Version -or $Version.Count -eq 0) { return @() }
+
+	$runs = [System.Collections.Generic.List[object]]::new()
+	$current = [System.Collections.Generic.List[object]]::new()
+	$prev = $null
+
+	foreach ($v in $Version) {
+		$same = $prev -and $prev.Exists -eq $v.Exists -and
+			$prev.Length -eq $v.Length -and $prev.Modified -eq $v.Modified
+		if (-not $same -and $current.Count -gt 0) {
+			$runs.Add(@($current))
+			$current = [System.Collections.Generic.List[object]]::new()
+		}
+		$current.Add($v)
+		$prev = $v
+	}
+	if ($current.Count -gt 0) { $runs.Add(@($current)) }
+
+	$kept = [System.Collections.Generic.List[object]]::new()
+	foreach ($run in $runs) {
+		# The input is oldest-first, so [0] is the oldest of the run and [-1]
+		# the newest.
+		if ($run[0].Exists -eq $false) { $kept.Add($run[-1]) }
+		else { $kept.Add($run[0]) }
+	}
+
+	,@($kept)
+}
+
 function Get-OS7FileVersion {
 	<#
 	.SYNOPSIS
@@ -283,7 +343,8 @@ function Get-OS7FileVersion {
 
 		[Parameter()][int]$Newest = 0,
 		[switch]$DistinctOnly,
-		[switch]$IncludeCurrent
+		[switch]$IncludeCurrent,
+		[switch]$IncludeAbsent
 	)
 
 	process {
@@ -340,7 +401,30 @@ function Get-OS7FileVersion {
 			try { $item = Get-Item -LiteralPath $snapPath -Force -ErrorAction Stop }
 			catch [System.UnauthorizedAccessException] { $denied++ }
 			catch { }
-			if (-not $item) { continue }
+			if (-not $item) {
+				# THE BOUNDARY. Without -IncludeAbsent these snapshots are
+				# skipped, which is right for "give me the file back" and wrong
+				# for "when did it appear" — the question a Time-Machine window
+				# is opened to answer. A row saying the path was NOT there is
+				# what turns a list of versions into a history.
+				if ($IncludeAbsent) {
+					$out.Add([pscustomobject]@{
+							PSTypeName   = 'OS7.Backup.FileVersion'
+							Path         = $full
+							SnapshotName = $s.SnapshotName
+							Snapshot     = $s.Name
+							Created      = $s.Creation
+							Modified     = $null
+							Length       = $null
+							IsFolder     = $false
+							IsCurrent    = $false
+							Exists       = $false
+							Dataset      = $owner.Dataset
+							SnapshotPath = $snapPath
+						})
+				}
+				continue
+			}
 
 			$isDir = $item.PSIsContainer
 			$out.Add([pscustomobject]@{
@@ -353,6 +437,7 @@ function Get-OS7FileVersion {
 					Length       = if ($isDir) { $null } else { [uint64]$item.Length }
 					IsFolder     = $isDir
 					IsCurrent    = $false
+					Exists       = $true
 					Dataset      = $owner.Dataset
 					SnapshotPath = $snapPath
 				})
@@ -372,6 +457,7 @@ function Get-OS7FileVersion {
 						Length       = if ($live.PSIsContainer) { $null } else { [uint64]$live.Length }
 						IsFolder     = $live.PSIsContainer
 						IsCurrent    = $true
+						Exists       = $true
 						Dataset      = $owner.Dataset
 						SnapshotPath = $full
 					})
@@ -403,18 +489,7 @@ function Get-OS7FileVersion {
 		$versions = @($out | Sort-Object Created)
 
 		if ($DistinctOnly) {
-			# Runs, not a global set: a file that changes and changes back is
-			# two distinct versions of the same content and both are real. The
-			# OLDEST of each run is kept because that is the snapshot in which
-			# the content first appeared.
-			$kept = [System.Collections.Generic.List[object]]::new()
-			$prev = $null
-			foreach ($v in $versions) {
-				$same = $prev -and $prev.Length -eq $v.Length -and $prev.Modified -eq $v.Modified
-				if (-not $same) { $kept.Add($v) }
-				$prev = $v
-			}
-			$versions = @($kept)
+			$versions = @(Select-OS7DistinctVersion -Version $versions)
 		}
 
 		if ($Newest -gt 0) {

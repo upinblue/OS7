@@ -1,7 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using OS7.App.Versions.Model;
 using OS7.App.Versions.ViewModels;
 
 namespace OS7.App.Versions.Views;
@@ -42,12 +41,15 @@ public partial class MainWindow : Window
 	{
 		var version = Model?.Selected?.Version;
 
-		if (version is null || version.State != VersionState.Present)
+		if (version is null || !version.Exists || version.IsFolder)
 		{
 			return;
 		}
 
-		await Launcher.LaunchFileInfoAsync(new FileInfo(version.Path));
+		// SnapshotPath, not Path: Path is the LIVE file this is a version of,
+		// and opening that would show today's contents under yesterday's
+		// caption. The bytes are the ones under .zfs/snapshot.
+		await Launcher.LaunchFileInfoAsync(new FileInfo(version.SnapshotPath));
 	}
 
 	/// <summary>
@@ -58,14 +60,14 @@ public partial class MainWindow : Window
 		var model = Model;
 		var version = model?.Selected?.Version;
 
-		if (model is null || version is null || version.State != VersionState.Present)
+		if (model is null || version is null || !version.Exists || version.IsFolder)
 		{
 			return;
 		}
 
 		// The name carries the moment it came from, because a folder with
 		// notes.txt and notes.txt beside it helps nobody.
-		var stamp = version.Snapshot.Creation.ToLocalTime().ToString("yyyy-MM-dd-HHmm");
+		var stamp = version.Created.ToLocalTime().ToString("yyyy-MM-dd-HHmm");
 		var name = Path.GetFileNameWithoutExtension(model.FileName);
 		var extension = Path.GetExtension(model.FileName);
 
@@ -82,7 +84,7 @@ public partial class MainWindow : Window
 
 		try
 		{
-			File.Copy(version.Path, destination, overwrite: true);
+			File.Copy(version.SnapshotPath, destination, overwrite: true);
 		}
 		catch (Exception ex)
 		{

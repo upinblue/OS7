@@ -1,134 +1,113 @@
+using System.Text.Json;
 using OS7.App.Versions.Model;
 using OS7.App.Versions.ViewModels;
+using OS7.Shell;
 
 namespace OS7.App.Versions.Services;
 
 /// <summary>What loading a path's history produced.</summary>
-public sealed record LoadResult(
-	VersionTarget Target,
-	IReadOnlyList<VersionEntry> Entries,
-	string? Error);
+/// <param name="Entries">The versions, newest first.</param>
+/// <param name="Error">
+/// Null when the question was answered. Otherwise the machine's own words —
+/// never this application's paraphrase of them.
+/// </param>
+public sealed record LoadResult(IReadOnlyList<VersionEntry> Entries, string? Error);
 
 /// <summary>
-/// The only place this application touches the disk.
+/// The versions of a path, from the PowerShell surface.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Everything it decides is in <see cref="VersionStore"/> and is pure; this
-/// supplies the three things that are not — the mount table, the snapshot list,
-/// and one <c>stat</c> per snapshot. Keeping them apart is what lets every
-/// decision be checked with no ZFS and no machine.
+/// docs/GUI-APPS-PLAN.md G3/G4 and VERSIONS-PLAN V9. <c>Get-OS7FileVersion</c>
+/// is the authority: it resolves which dataset owns the path, asks ZFS for the
+/// snapshot times, reads each one, and decides which versions are worth
+/// showing. This arranges what comes back.
 /// </para>
 /// <para>
-/// It runs UNPRIVILEGED, and that is measured rather than hoped:
-/// <c>su - os7admin</c> listed the snapshots and read a file out of one
-/// (VERSIONS-PLAN M-V5). Browsing one's own history needs no polkit, which is
-/// the difference between this window and Software Update's.
+/// EVERY REFUSAL IS THE CMDLET'S OWN SENTENCE. "'/proc/cpuinfo' is not inside a
+/// mounted ZFS filesystem, so it has no snapshots" and "'/home/u' IS the
+/// mountpoint of rpool/USERDATA/u — name a file or a folder inside it" are
+/// written once, in the cmdlet, and reach the window unaltered. An application
+/// that rewrote them into "no versions found" would delete the instruction they
+/// carry, which is VERSIONS-PLAN V6's whole point.
+/// </para>
+/// <para>
+/// THE ONE THING STILL DONE HERE is reading a version's contents for the
+/// preview, and that is <see cref="TextPreview"/>: bytes, not decisions, and a
+/// `pwsh` launch per preview would make the window unusable.
 /// </para>
 /// </remarks>
 public sealed class VersionLoader
 {
-	private readonly ZfsCli _zfs;
+	private static readonly JsonSerializerOptions Json = new()
+	{
+		PropertyNameCaseInsensitive = true,
+	};
 
-	public VersionLoader(ZfsCli? zfs = null) => _zfs = zfs ?? new ZfsCli();
+	private readonly PowerShellRunner _shell;
+
+	public VersionLoader(PowerShellRunner? shell = null) => _shell = shell ?? new PowerShellRunner();
+
+	/// <summary>
+	/// Build the script for one path.
+	/// </summary>
+	/// <remarks>
+	/// The path is passed through a HERE-STRING with single quotes, which
+	/// PowerShell does not expand and which cannot be closed from inside by
+	/// anything a filename may contain — a file called <c>'; rm -rf ~ #</c> is
+	/// legal on Linux and would end an ordinary quoted string.
+	/// </remarks>
+	public static string ScriptFor(string path)
+	{
+		return "Import-Module OS7 -ErrorAction Stop; "
+			+ "$p = @'\n" + path + "\n'@; "
+			+ "Get-OS7FileVersion -Path $p -DistinctOnly -IncludeCurrent -IncludeAbsent | "
+			+ "Select-Object Path, Dataset, SnapshotName, Snapshot, Created, Modified, "
+			+ "Length, IsFolder, IsCurrent, Exists, SnapshotPath | "
+			+ "ConvertTo-Json -Depth 4 -AsArray";
+	}
 
 	public async Task<LoadResult> LoadAsync(string path, CancellationToken ct = default)
 	{
-		var mounts = MountTable.Read();
-		var target = VersionStore.Resolve(path, mounts, File.Exists, Directory.Exists);
+		var result = await _shell.RunAsync(ScriptFor(path), ct).ConfigureAwait(false);
 
-		if (!target.HasHistory || target.Mount is null)
+		if (!result.Ok)
 		{
-			return new LoadResult(target, Array.Empty<VersionEntry>(), null);
+			return new LoadResult(Array.Empty<VersionEntry>(), result.Message);
 		}
 
-		var query = await _zfs.GetSnapshotsAsync(target.Mount.Source, ct).ConfigureAwait(false);
-
-		if (!query.Ok)
+		if (string.IsNullOrWhiteSpace(result.Stdout))
 		{
-			return new LoadResult(target, Array.Empty<VersionEntry>(), query.Error);
+			return new LoadResult(Array.Empty<VersionEntry>(), null);
 		}
 
-		if (query.Snapshots.Count == 0)
-		{
-			return new LoadResult(
-				target with { Reason = NoHistoryReason.NoSnapshots },
-				Array.Empty<VersionEntry>(),
-				null);
-		}
-
-		var versions = VersionStore.Versions(target, query.Snapshots, Probe);
-		var distinct = VersionStore.Distinct(versions);
-
-		// A path that exists in no snapshot at all, and not live either, is the
-		// one case where "not found" is the honest answer rather than "deleted".
-		if (distinct.Count == 0 || distinct.All(v => !v.Exists))
-		{
-			var live = Probe(target.Path);
-			if (live.State == VersionState.Absent)
-			{
-				return new LoadResult(
-					target with { Reason = NoHistoryReason.NotFound },
-					Array.Empty<VersionEntry>(),
-					null);
-			}
-		}
-
-		var current = Probe(target.Path);
-		var entries = new List<VersionEntry>();
-
-		// The live file heads the list when it differs from the newest snapshot
-		// — otherwise "Now" and the newest snapshot would be two rows saying
-		// the same thing.
-		var newest = distinct.Count > 0 ? distinct[0] : null;
-		var liveVersion = new FileVersion(
-			new SnapshotRef { Name = target.Mount.Source, Creation = DateTimeOffset.Now },
-			target.Path, current.State, current.Size, current.Modified);
-
-		if (current.State != VersionState.Absent && liveVersion.DiffersFrom(newest))
-		{
-			entries.Add(new VersionEntry(liveVersion, isCurrent: true));
-		}
-
-		entries.AddRange(distinct.Select(v => new VersionEntry(v, isCurrent: false)));
-
-		return new LoadResult(target, entries, null);
-	}
-
-	/// <summary>
-	/// What is at a path: one <c>stat</c>, and no exception for absence.
-	/// </summary>
-	/// <remarks>
-	/// Absence is the ORDINARY answer here — a snapshot from before the file
-	/// existed, or after it was deleted — and the deleted case is the whole
-	/// point of the feature (V5). Treating it as an error would throw away the
-	/// thing somebody opened the window to find.
-	/// </remarks>
-	public static (VersionState State, long Size, DateTimeOffset Modified) Probe(string path)
-	{
+		List<FileVersion>? versions;
 		try
 		{
-			if (Directory.Exists(path))
-			{
-				return (VersionState.Directory, 0,
-					new DateTimeOffset(Directory.GetLastWriteTimeUtc(path), TimeSpan.Zero));
-			}
-
-			var info = new FileInfo(path);
-			if (!info.Exists)
-			{
-				return (VersionState.Absent, 0, default);
-			}
-
-			return (VersionState.Present, info.Length,
-				new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero));
+			versions = JsonSerializer.Deserialize<List<FileVersion>>(result.Stdout, Json);
 		}
-		catch (Exception)
+		catch (JsonException ex)
 		{
-			// A permission error inside a snapshot reads as absence, because
-			// from this operator's side it is: they cannot see it, and saying
-			// so is more useful than a dialog about EACCES.
-			return (VersionState.Absent, 0, default);
+			return new LoadResult(
+				Array.Empty<VersionEntry>(),
+				$"the version list could not be read: {ex.Message}");
 		}
+
+		if (versions is null || versions.Count == 0)
+		{
+			return new LoadResult(Array.Empty<VersionEntry>(), null);
+		}
+
+		// The cmdlet emits oldest first; the window reads newest first, because
+		// "now" is where somebody starts and walks backwards from.
+		var entries = versions
+			.OrderByDescending(v => v.IsCurrent)
+			.ThenByDescending(v => v.Created)
+			.Select(v => new VersionEntry(v))
+			.ToList();
+
+		VersionEntry.AssignCaptions(entries);
+
+		return new LoadResult(entries, null);
 	}
 }

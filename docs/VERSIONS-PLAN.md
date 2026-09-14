@@ -7,7 +7,7 @@ change of file manager.**
 **The read half is built and has run on a machine; nothing yet changes a file.** Every `Vn` below is
 *Proposed 2026-09-14* — the foundation is not: §2 measured, on a running OS/7 machine, that every
 technical prerequisite already exists and that the snapshots this feature would read **are already
-being taken**. Decisions are V1–V16, limitations VL1–VL8. A measurement still owed is `O-V1…`.
+being taken**. Decisions are V1–V18, limitations VL1–VL8. A measurement still owed is `O-V1…`.
 
 **V15 and V16 are DECIDED and BUILT** — the storage-pressure rule (70 warn / 80 tighten / 90
 refuse, gated on whether thinning could even work) and the boot environment that is never pruned.
@@ -209,6 +209,42 @@ Recorded as a decision rather than a note because the alternative — quietly ex
 is how a rule stops meaning anything.
 
 ---
+
+### V17 — The boundary stays, and a run of it collapses to the NEWEST. Decided 2026-09-14.
+
+Owner's decision. A version list shows not only the snapshots that hold the path but a row for the
+point at which it was **not there** — *"This file did not exist at this point."* Without it the list
+answers "give me the file back" and not "when did this appear", and the second is the question a
+Time-Machine window is opened with.
+
+`Get-OS7FileVersion -IncludeAbsent` reports it. Without the switch the cmdlet behaves as it always
+has, which keeps every existing caller unchanged.
+
+**Which member of an absent run is kept is the whole of the design.** `-DistinctOnly` keeps the
+OLDEST of a present run — "it has looked like this since" — and the **NEWEST** of an absent one:
+"this is the last moment it is known not to have been there". Measured on a machine: 30 absent
+snapshots collapsed to one, and that one names 20:00 on the day the file appeared at 20:39. Keeping
+the oldest instead would have been equally true and nearly useless — it names the beginning of
+recorded history, and brackets the change to five days instead of thirty-nine minutes.
+
+A boundary row offers no verb: there is nothing to open and nothing to copy, and the window disables
+both rather than failing when they are used. `Restore-OS7File` refuses one too, in its own words.
+
+### V18 — The window asks the cmdlet. Decided 2026-09-14, and built.
+
+`os7-versions` resolved datasets, listed snapshots and collapsed version runs in C# of its own until
+2026-09-14. That made "which versions are worth showing" a decision implemented twice, in two
+languages, and the two did not even agree. It calls
+`Get-OS7FileVersion -DistinctOnly -IncludeCurrent -IncludeAbsent` now and arranges what comes back.
+
+**Four files left the application**: `MountTable.cs`, `VersionStore.cs`, `ZfsCli.cs` and
+`SnapshotRef.cs`. Its capability grant in `check-gui-logic.py` shrank from four files to two, and
+what it may still open is the *contents* of a version — bytes, not decisions. Its self-test lost the
+mount-parsing and collapsing cases because those moved to `check-storage-logic.py` §5 and §6, where
+an administrator over ssh is covered by them too.
+
+**Every refusal is now the cmdlet's own sentence**, reaching the window unaltered — which is what
+makes V6 real rather than a rule the window re-implements.
 
 ## 4. The window: Time Machine in Windows 2000's vocabulary
 

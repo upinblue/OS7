@@ -490,6 +490,86 @@ $out | ConvertTo-Json -Depth 4
     check(got["/nowhere/at/all"]["point"] == "/",
           "a path that exists nowhere still resolves to the root mount")
 
+
+def boundary():
+    print()
+    print("  6. A run collapses to the version NEAREST the change")
+
+    # Owner's decision 2026-09-14: the "did not exist" boundary stays, because
+    # "when did this appear" is a question a Time-Machine window is opened to
+    # answer. Which member of an absent run to keep is then the whole design:
+    # the NEWEST one brackets the creation to an hour, the oldest to three
+    # months.
+    body = r"""
+function V { param([string]$n, $exists, $len, $mod)
+	[pscustomobject]@{ SnapshotName = $n; Exists = $exists; Length = $len; Modified = $mod } }
+
+$out = [ordered]@{}
+
+# Oldest first, as Get-OS7FileVersion builds them. Thirty absent, then three
+# contents, then a run of the newest repeated.
+$v = @(
+	V 'a1' $false $null $null
+	V 'a2' $false $null $null
+	V 'a3' $false $null $null
+	V 'p1' $true  24 '2026-09-14T20:39:02'
+	V 'p2' $true  50 '2026-09-14T20:39:03'
+	V 'p3' $true  77 '2026-09-14T20:39:05'
+	V 'p4' $true  77 '2026-09-14T20:39:05'
+	V 'p5' $true  77 '2026-09-14T20:39:05'
+)
+$out['mixed'] = @(Select-OS7DistinctVersion -Version $v | ForEach-Object { $_.SnapshotName })
+
+# A file that changes and changes BACK: both runs are real.
+$there = @(
+	V 'b1' $true 10 'm1'
+	V 'b2' $true 20 'm2'
+	V 'b3' $true 10 'm1'
+)
+$out['thereAndBack'] = @(Select-OS7DistinctVersion -Version $there |
+	ForEach-Object { $_.SnapshotName })
+
+# Deleted at the end: the absent run is newest, and its newest member is the
+# last snapshot of all.
+$deleted = @(
+	V 'c1' $true 10 'm1'
+	V 'c2' $false $null $null
+	V 'c3' $false $null $null
+)
+$out['deleted'] = @(Select-OS7DistinctVersion -Version $deleted |
+	ForEach-Object { $_.SnapshotName })
+
+$out['empty'] = @(Select-OS7DistinctVersion -Version @()).Count
+$out['one'] = @(Select-OS7DistinctVersion -Version @(V 'only' $true 1 'm')).Count
+
+$out | ConvertTo-Json -Depth 4
+"""
+    got = run(body, "the collapsing rule can be read")
+    if got is None:
+        return
+
+    mixed = got["mixed"]
+    check(mixed == ["a3", "p1", "p2", "p3"],
+          "an absent run keeps its NEWEST and a present run its OLDEST",
+          ", ".join(mixed))
+    check(mixed[0] == "a3",
+          "so the boundary brackets the creation as tightly as the snapshots allow")
+    check("a1" not in mixed,
+          "and not the beginning of history, which would be true and useless")
+    check(mixed[-1] == "p3",
+          "the newest content is reported at the snapshot where it first appeared")
+
+    check(got["thereAndBack"] == ["b1", "b2", "b3"],
+          "a file that changes and changes BACK is three versions, not two",
+          ", ".join(got["thereAndBack"]))
+
+    check(got["deleted"] == ["c1", "c3"],
+          "a file deleted at the end keeps the last snapshot as the boundary",
+          ", ".join(got["deleted"]))
+
+    check(got["empty"] == 0, "no versions collapse to no rows")
+    check(got["one"] == 1, "one version collapses to itself")
+
 def main():
     print("OS/7 storage pressure — the decisions, with no ZFS")
     print()
@@ -503,6 +583,7 @@ def main():
     tightening()
     protection()
     ownership()
+    boundary()
 
     print()
     if FAILS:
