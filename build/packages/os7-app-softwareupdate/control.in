@@ -1,0 +1,32 @@
+Package: os7-app-softwareupdate
+Version: @OS7_VERSION@
+Architecture: @OS7_ARCH@
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: dotnet-runtime-10.0, libfontconfig1, libx11-6, libice6, libsm6, polkitd, os7-module (= @OS7_VERSION@)
+Recommends: os7-desktop-theme (= @OS7_VERSION@)
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 Software Update — the update train, in a window
+ The first of OS/7's own graphical applications (docs/GUI-APPS-PLAN.md): what
+ the update channel offers, what can be installed on this machine and what
+ cannot, why not in each case, and one button that starts it.
+ .
+ It implements no policy. Every judgement it appears to make is read from
+ `Get-OS7Release -Available`, and the update itself runs in a systemd unit that
+ calls `Update-OS7` — the same code path an operator gets from PowerShell and
+ the same one the unattended timer uses. The window is a second face for one
+ mechanism, never a second mechanism.
+ .
+ It never runs as root. Reading the channel needs no privilege; installing does,
+ and that happens by asking systemd to start os7-update@<version>.service, which
+ polkit governs — so the operator authenticates in polkit's own dialog and this
+ application never sees a password.
+ .
+ An Avalonia application, framework-dependent against the .NET runtime the image
+ already carries. It depends on libfontconfig1 and the X11 libraries explicitly
+ rather than inheriting them from ubuntu-desktop-minimal: they arrive on a GUI
+ image transitively, and a window that cannot draw a letter is not the way to
+ discover that a machine took another path.
+ .
+ amd64 only. arm64 is server-only and has no desktop.

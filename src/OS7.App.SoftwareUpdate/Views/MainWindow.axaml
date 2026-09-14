@@ -1,0 +1,120 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:OS7.Ui.Controls;assembly=OS7.Ui"
+        xmlns:vm="clr-namespace:OS7.App.SoftwareUpdate.ViewModels"
+        x:Class="OS7.App.SoftwareUpdate.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Software Update"
+        Width="640" Height="560"
+        MinWidth="520" MinHeight="420"
+        WindowStartupLocation="CenterScreen">
+
+  <!--
+    THE LAYOUT IS THE APPLE SOFTWARE UPDATE WINDOW'S; THE SHELL IS OS/7's.
+    docs/GUI-APPS-PLAN.md G8. Header sentence, a checkbox list with version and
+    size, a detail pane for the selected row, an explicit restart notice, and a
+    primary button that counts what it will do.
+
+    SystemDecorations stays Full: G8a decides that Mutter draws the title bar,
+    and the theme package already styles it - gtk.css has a `decoration` block
+    commented "Mutter draws server-side decorations for X11/Xwayland clients
+    from these", and an Avalonia application is exactly such a client.
+  -->
+
+  <Grid Margin="{DynamicResource os7_window_padding}" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+
+    <!-- ============================================================ header -->
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Classes="heading" Text="{Binding Header}" TextWrapping="Wrap" />
+      <!-- CAPPED, and it took a machine to see why. The second line is where a
+           failure's own words go, and a cmdlet's error record can be fifteen
+           lines long - which pushed the release list off the bottom of the
+           window and left an operator with a wall of text and no list. It
+           scrolls instead. -->
+      <ScrollViewer MaxHeight="96" VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <TextBlock Classes="muted" Text="{Binding SubHeader}" TextWrapping="Wrap" />
+      </ScrollViewer>
+    </StackPanel>
+
+    <!-- ====================================================== column titles -->
+    <Grid Grid.Row="1" Margin="0,12,0,2"
+          ColumnDefinitions="28,*,110,90"
+          IsVisible="{Binding HasRows}">
+      <TextBlock Grid.Column="1" Classes="muted" Text="Release" />
+      <TextBlock Grid.Column="2" Classes="muted" Text="Released" />
+      <TextBlock Grid.Column="3" Classes="muted" Text="Size"
+                 HorizontalAlignment="Right" Margin="0,0,6,0" />
+    </Grid>
+
+    <!-- ============================================================== list -->
+    <ListBox Grid.Row="2"
+             ItemsSource="{Binding Rows}"
+             SelectedItem="{Binding SelectedRow}">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:ReleaseRow">
+          <Grid ColumnDefinitions="28,*,110,90">
+            <!-- A row that cannot be installed still shows its checkbox,
+                 disabled. Hiding it would make the rows ragged and would hide
+                 the fact that this IS a release, just not one for here. -->
+            <CheckBox Grid.Column="0"
+                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                      IsEnabled="{Binding IsInstallable}" />
+            <TextBlock Grid.Column="1" Text="{Binding Version}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="2" Text="{Binding Released}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="3" Text="{Binding Size}"
+                       VerticalAlignment="Center"
+                       HorizontalAlignment="Right" Margin="0,0,6,0" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <!-- ======================================================= detail pane -->
+    <ui:BevelBorder Grid.Row="3"
+                    Theme="{DynamicResource os7_sunken_pane}"
+                    Margin="0,10,0,0"
+                    Padding="{DynamicResource os7_pane_padding}"
+                    Height="130"
+                    IsVisible="{Binding HasSelection}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="5">
+          <TextBlock Text="{Binding SelectedRow.Status}" TextWrapping="Wrap" />
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="{Binding SelectedRow.Release.Suite, StringFormat='Suite: {0}'}" />
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="{Binding SelectedRow.Release.Snapshot, StringFormat='Ubuntu archive snapshot: {0}'}" />
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="{Binding SelectedRow.Release.SigningKey, StringFormat='Signed with: {0}'}" />
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="{Binding DetailMigrations, StringFormat='Migrations: {0}'}" />
+        </StackPanel>
+      </ScrollViewer>
+    </ui:BevelBorder>
+
+    <!-- ===================================================== restart notice -->
+    <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,10,0,0"
+                IsVisible="{Binding ShowRestartNotice}">
+      <TextBlock Text="&#x24D8;" VerticalAlignment="Center" />
+      <TextBlock TextWrapping="Wrap" VerticalAlignment="Center"
+                 Text="You must restart this computer after the update is installed." />
+    </StackPanel>
+
+    <!-- ============================================================ buttons -->
+    <Grid Grid.Row="5" Margin="0,14,0,0" ColumnDefinitions="*,Auto,Auto">
+      <ProgressBar Grid.Column="0"
+                   IsIndeterminate="True"
+                   VerticalAlignment="Center"
+                   Margin="0,0,12,0"
+                   IsVisible="{Binding IsInstalling}" />
+
+      <Button Grid.Column="1" Name="CloseButton" Content="Not Now" Margin="0,0,8,0" />
+      <Button Grid.Column="2" Name="InstallButton"
+              Theme="{DynamicResource os7_default_button}"
+              Content="{Binding InstallButtonText}"
+              IsEnabled="{Binding CanInstall}"
+              IsDefault="True" />
+    </Grid>
+
+  </Grid>
+</Window>

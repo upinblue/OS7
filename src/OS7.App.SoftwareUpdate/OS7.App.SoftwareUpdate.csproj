@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Software Update — the first OS/7 GUI application.
+    docs/GUI-APPS-PLAN.md §6; the shape is the Apple Software Update window's
+    information architecture in OS/7's classic shell (G8).
+
+    It implements no policy. Every judgement it appears to make is read from
+    `Get-OS7Release -Available`, and the update itself runs in a systemd unit
+    that calls `Update-OS7` — this process never runs as root (G3, G5).
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>OS7.App.SoftwareUpdate</RootNamespace>
+    <AssemblyName>os7-software-update</AssemblyName>
+
+    <!-- Published framework-dependent against the runtime the image carries
+         (G2). 22.1 MiB measured; 100.8 MiB self-contained. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
+
+    <!-- amd64 GUI only (GL1). arm64 is server-only and has no desktop, so
+         there is deliberately no arm64 RID here and no arm64 package. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OS7.Ui\OS7.Ui.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,362 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ui="clr-namespace:OS7.Ui.Controls">
+
+  <!--
+    THE CONTROL THEMES. docs/GUI-APPS-PLAN.md G8/G9.
+
+    Every colour below is a {StaticResource} out of Tokens.axaml and every size
+    is one out of Metrics.axaml. There is no literal of either kind in this
+    file, and installer/testing/check-gui-tokens.py requires that to stay true.
+
+    The bevel grammar, from the theme package's gtk.css:
+      raised   outer hilight  / dkshadow   inner light    / shadow
+      pressed  outer dkshadow / hilight    inner shadow   / light
+      sunken   outer shadow   / hilight    inner dkshadow / light
+  -->
+
+  <!-- ===================================================================
+       A sunken panel. Used directly by views that need the recessed white
+       field: the release list, the detail pane.
+       =================================================================== -->
+  <ControlTheme x:Key="os7_sunken_pane" TargetType="ui:BevelBorder">
+    <Setter Property="Background"       Value="{StaticResource os7_window_brush}" />
+    <Setter Property="OuterTopLeft"     Value="{StaticResource os7_shadow_brush}" />
+    <Setter Property="OuterBottomRight" Value="{StaticResource os7_hilight_brush}" />
+    <Setter Property="InnerTopLeft"     Value="{StaticResource os7_dkshadow_brush}" />
+    <Setter Property="InnerBottomRight" Value="{StaticResource os7_light_brush}" />
+  </ControlTheme>
+
+  <!-- A raised panel on the window face, for grouping. -->
+  <ControlTheme x:Key="os7_raised_pane" TargetType="ui:BevelBorder">
+    <Setter Property="Background"       Value="{StaticResource os7_face_brush}" />
+    <Setter Property="OuterTopLeft"     Value="{StaticResource os7_hilight_brush}" />
+    <Setter Property="OuterBottomRight" Value="{StaticResource os7_dkshadow_brush}" />
+    <Setter Property="InnerTopLeft"     Value="{StaticResource os7_light_brush}" />
+    <Setter Property="InnerBottomRight" Value="{StaticResource os7_shadow_brush}" />
+  </ControlTheme>
+
+  <!-- ===================================================================
+       Button
+       =================================================================== -->
+  <ControlTheme x:Key="{x:Type Button}" TargetType="Button">
+    <Setter Property="Foreground"  Value="{StaticResource os7_text_brush}" />
+    <Setter Property="FontFamily"  Value="{StaticResource os7_font}" />
+    <Setter Property="FontSize"    Value="{StaticResource os7_font_size}" />
+    <Setter Property="MinHeight"   Value="{StaticResource os7_control_height}" />
+    <Setter Property="MinWidth"    Value="{StaticResource os7_button_min_width}" />
+    <Setter Property="Padding"     Value="{StaticResource os7_button_padding}" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment"   Value="Center" />
+    <Setter Property="Cursor" Value="Arrow" />
+
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ui:BevelBorder Name="PART_Bevel"
+                        Padding="{TemplateBinding Padding}"
+                        Background="{StaticResource os7_face_brush}"
+                        OuterTopLeft="{StaticResource os7_hilight_brush}"
+                        OuterBottomRight="{StaticResource os7_dkshadow_brush}"
+                        InnerTopLeft="{StaticResource os7_light_brush}"
+                        InnerBottomRight="{StaticResource os7_shadow_brush}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </ui:BevelBorder>
+      </ControlTemplate>
+    </Setter>
+
+    <!-- Windows 2000 did not light a button up under the pointer. Nothing
+         here does either, so there is deliberately no :pointerover rule. -->
+
+    <Style Selector="^:pressed /template/ ui|BevelBorder#PART_Bevel">
+      <Setter Property="OuterTopLeft"     Value="{StaticResource os7_dkshadow_brush}" />
+      <Setter Property="OuterBottomRight" Value="{StaticResource os7_hilight_brush}" />
+      <Setter Property="InnerTopLeft"     Value="{StaticResource os7_shadow_brush}" />
+      <Setter Property="InnerBottomRight" Value="{StaticResource os7_light_brush}" />
+    </Style>
+
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{StaticResource os7_graytext_brush}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- The default (Enter) button: the extra black ring, exactly as Windows
+       drew it. gtk.css gives it to button.suggested-action. -->
+  <ControlTheme x:Key="os7_default_button" TargetType="Button"
+                BasedOn="{StaticResource {x:Type Button}}">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ui:BevelBorder Background="{StaticResource os7_text_brush}"
+                        OuterTopLeft="{StaticResource os7_text_brush}"
+                        OuterBottomRight="{StaticResource os7_text_brush}"
+                        InnerTopLeft="{StaticResource os7_text_brush}"
+                        InnerBottomRight="{StaticResource os7_text_brush}"
+                        Padding="0">
+          <ui:BevelBorder Name="PART_Bevel"
+                          Padding="{TemplateBinding Padding}"
+                          Background="{StaticResource os7_face_brush}"
+                          OuterTopLeft="{StaticResource os7_hilight_brush}"
+                          OuterBottomRight="{StaticResource os7_dkshadow_brush}"
+                          InnerTopLeft="{StaticResource os7_light_brush}"
+                          InnerBottomRight="{StaticResource os7_shadow_brush}">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+          </ui:BevelBorder>
+        </ui:BevelBorder>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pressed /template/ ui|BevelBorder#PART_Bevel">
+      <Setter Property="OuterTopLeft"     Value="{StaticResource os7_dkshadow_brush}" />
+      <Setter Property="OuterBottomRight" Value="{StaticResource os7_hilight_brush}" />
+      <Setter Property="InnerTopLeft"     Value="{StaticResource os7_shadow_brush}" />
+      <Setter Property="InnerBottomRight" Value="{StaticResource os7_light_brush}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ===================================================================
+       CheckBox — square, sunken, black tick. Never a rounded switch.
+       =================================================================== -->
+  <ControlTheme x:Key="{x:Type CheckBox}" TargetType="CheckBox">
+    <Setter Property="Foreground" Value="{StaticResource os7_text_brush}" />
+    <Setter Property="FontFamily" Value="{StaticResource os7_font}" />
+    <Setter Property="FontSize"   Value="{StaticResource os7_font_size}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Cursor" Value="Arrow" />
+
+    <Setter Property="Template">
+      <ControlTemplate>
+        <StackPanel Orientation="Horizontal" Spacing="6" Background="Transparent">
+          <ui:BevelBorder Name="PART_Box"
+                          Width="{StaticResource os7_check_size}"
+                          Height="{StaticResource os7_check_size}"
+                          VerticalAlignment="Center"
+                          Background="{StaticResource os7_window_brush}"
+                          OuterTopLeft="{StaticResource os7_shadow_brush}"
+                          OuterBottomRight="{StaticResource os7_hilight_brush}"
+                          InnerTopLeft="{StaticResource os7_dkshadow_brush}"
+                          InnerBottomRight="{StaticResource os7_light_brush}">
+            <Path Name="PART_Tick"
+                  Stretch="Uniform"
+                  Stroke="{StaticResource os7_text_brush}"
+                  StrokeThickness="2"
+                  StrokeLineCap="Square"
+                  Data="M 0,4 L 3,7 L 9,0"
+                  IsVisible="False" />
+          </ui:BevelBorder>
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            VerticalAlignment="Center" />
+        </StackPanel>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:checked /template/ Path#PART_Tick">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
+
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{StaticResource os7_graytext_brush}" />
+    </Style>
+    <Style Selector="^:disabled /template/ ui|BevelBorder#PART_Box">
+      <Setter Property="Background" Value="{StaticResource os7_face_brush}" />
+    </Style>
+    <Style Selector="^:disabled /template/ Path#PART_Tick">
+      <Setter Property="Stroke" Value="{StaticResource os7_graytext_brush}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ===================================================================
+       ListBox and its items
+       =================================================================== -->
+  <ControlTheme x:Key="{x:Type ListBox}" TargetType="ListBox">
+    <Setter Property="Background" Value="{StaticResource os7_window_brush}" />
+    <Setter Property="Foreground" Value="{StaticResource os7_text_brush}" />
+    <Setter Property="FontFamily" Value="{StaticResource os7_font}" />
+    <Setter Property="FontSize"   Value="{StaticResource os7_font_size}" />
+
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ui:BevelBorder Theme="{StaticResource os7_sunken_pane}">
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <ItemsPresenter Name="PART_ItemsPresenter"
+                            ItemsPanel="{TemplateBinding ItemsPanel}" />
+          </ScrollViewer>
+        </ui:BevelBorder>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type ListBoxItem}" TargetType="ListBoxItem">
+    <Setter Property="Background"  Value="Transparent" />
+    <Setter Property="Foreground"  Value="{StaticResource os7_text_brush}" />
+    <Setter Property="Padding"     Value="{StaticResource os7_row_padding}" />
+    <Setter Property="MinHeight"   Value="{StaticResource os7_row_height}" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalContentAlignment"   Value="Center" />
+    <Setter Property="Cursor" Value="Arrow" />
+
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Row"
+                Background="{TemplateBinding Background}"
+                Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+
+    <!-- Selection is the only state that changes a row. No hover highlight:
+         Windows 2000 list views had none. -->
+    <Style Selector="^:selected /template/ Border#PART_Row">
+      <Setter Property="Background" Value="{StaticResource os7_select_brush}" />
+    </Style>
+    <Style Selector="^:selected">
+      <Setter Property="Foreground" Value="{StaticResource os7_selecttext_brush}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ===================================================================
+       ProgressBar — a sunken trough with a solid selection-blue fill.
+       Windows 2000 drew segmented blocks; a solid bar is the one place this
+       file simplifies the period rather than modernising it, because the
+       segments carry no information and cost a custom panel.
+       =================================================================== -->
+  <ControlTheme x:Key="{x:Type ProgressBar}" TargetType="ProgressBar">
+    <Setter Property="Height" Value="20" />
+    <Setter Property="Foreground" Value="{StaticResource os7_select_brush}" />
+
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ui:BevelBorder Theme="{StaticResource os7_sunken_pane}" Padding="1">
+          <Panel>
+            <Border Name="PART_Indicator"
+                    Background="{TemplateBinding Foreground}"
+                    HorizontalAlignment="Left" />
+          </Panel>
+        </ui:BevelBorder>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <!-- ===================================================================
+       ScrollBar — wide, bevelled, with a stepper at each end. A modern
+       overlay scrollbar beside a classic list is the single most jarring
+       thing this design system could ship, which is why it is here at all.
+       =================================================================== -->
+  <ControlTheme x:Key="os7_scroll_repeat" TargetType="RepeatButton">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ui:BevelBorder Name="PART_Bevel"
+                        Background="{StaticResource os7_face_brush}"
+                        OuterTopLeft="{StaticResource os7_hilight_brush}"
+                        OuterBottomRight="{StaticResource os7_dkshadow_brush}"
+                        InnerTopLeft="{StaticResource os7_light_brush}"
+                        InnerBottomRight="{StaticResource os7_shadow_brush}">
+          <ContentPresenter Content="{TemplateBinding Content}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
+        </ui:BevelBorder>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pressed /template/ ui|BevelBorder#PART_Bevel">
+      <Setter Property="OuterTopLeft"     Value="{StaticResource os7_dkshadow_brush}" />
+      <Setter Property="OuterBottomRight" Value="{StaticResource os7_hilight_brush}" />
+      <Setter Property="InnerTopLeft"     Value="{StaticResource os7_shadow_brush}" />
+      <Setter Property="InnerBottomRight" Value="{StaticResource os7_light_brush}" />
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type Thumb}" TargetType="Thumb">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ui:BevelBorder Background="{StaticResource os7_face_brush}"
+                        OuterTopLeft="{StaticResource os7_hilight_brush}"
+                        OuterBottomRight="{StaticResource os7_dkshadow_brush}"
+                        InnerTopLeft="{StaticResource os7_light_brush}"
+                        InnerBottomRight="{StaticResource os7_shadow_brush}" />
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type ScrollBar}" TargetType="ScrollBar">
+    <Setter Property="Background" Value="{StaticResource os7_light_brush}" />
+
+    <Style Selector="^:vertical">
+      <Setter Property="Width" Value="17" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}">
+            <DockPanel>
+              <RepeatButton Name="PART_LineUpButton"
+                            DockPanel.Dock="Top"
+                            Height="17"
+                            Theme="{StaticResource os7_scroll_repeat}"
+                            Content="&#x25B2;" FontSize="7" />
+              <RepeatButton Name="PART_LineDownButton"
+                            DockPanel.Dock="Bottom"
+                            Height="17"
+                            Theme="{StaticResource os7_scroll_repeat}"
+                            Content="&#x25BC;" FontSize="7" />
+              <Track Name="PART_Track"
+                     Orientation="Vertical"
+                     Minimum="{TemplateBinding Minimum}"
+                     Maximum="{TemplateBinding Maximum}"
+                     Value="{TemplateBinding Value, Mode=TwoWay}"
+                     ViewportSize="{TemplateBinding ViewportSize}">
+                <Track.Thumb>
+                  <Thumb />
+                </Track.Thumb>
+              </Track>
+            </DockPanel>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <Style Selector="^:horizontal">
+      <Setter Property="Height" Value="17" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}">
+            <DockPanel>
+              <RepeatButton Name="PART_LineUpButton"
+                            DockPanel.Dock="Left"
+                            Width="17"
+                            Theme="{StaticResource os7_scroll_repeat}"
+                            Content="&#x25C0;" FontSize="7" />
+              <RepeatButton Name="PART_LineDownButton"
+                            DockPanel.Dock="Right"
+                            Width="17"
+                            Theme="{StaticResource os7_scroll_repeat}"
+                            Content="&#x25B6;" FontSize="7" />
+              <Track Name="PART_Track"
+                     Orientation="Horizontal"
+                     Minimum="{TemplateBinding Minimum}"
+                     Maximum="{TemplateBinding Maximum}"
+                     Value="{TemplateBinding Value, Mode=TwoWay}"
+                     ViewportSize="{TemplateBinding ViewportSize}">
+                <Track.Thumb>
+                  <Thumb />
+                </Track.Thumb>
+              </Track>
+            </DockPanel>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+  </ControlTheme>
+
+</ResourceDictionary>

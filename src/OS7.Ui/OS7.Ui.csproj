@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OS/7's design system. docs/GUI-APPS-PLAN.md G9: every application
+    references this and defines no colour of its own.
+
+    G8 decides how literal the look is: the classic IDIOM, not the pixel grid.
+    The palette, the greys and the bevelled relief are Windows 2000's; the
+    metrics are not. Metrics.cs is where that distinction is written down as
+    numbers, so the next person can see what was deliberately not copied.
+
+    THE SIMPLE THEME, NOT FLUENT. Fluent is GNOME-era-modern - rounded, animated,
+    accent-coloured - and every one of those is something this design system
+    would have to undo. Simple is Avalonia's minimal base and is closer to the
+    starting point this look needs.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>OS7.Ui</RootNamespace>
+    <AssemblyName>OS7.Ui</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Themes.Simple" />
+  </ItemGroup>
+
+</Project>

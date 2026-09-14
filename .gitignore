@@ -34,6 +34,10 @@ build/config/config/
 # goes to out/, which is already ignored.
 installer/**/bin/
 installer/**/obj/
+# src/ is the GUI applications and the design system they share
+# (docs/GUI-APPS-PLAN.md). Same rule, second tree.
+src/**/bin/
+src/**/obj/
 
 # Python bytecode from the spike harnesses
 __pycache__/

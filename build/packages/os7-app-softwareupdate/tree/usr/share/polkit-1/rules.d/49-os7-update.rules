@@ -1,0 +1,47 @@
+// OS/7 — who may start an update, and how they prove it.
+// docs/GUI-APPS-PLAN.md G5.
+//
+// WHAT THIS DOES NOT DO: it does not grant anything that was not already
+// possible. systemd's default policy for `manage-units` on a system unit is
+// already auth_admin — an unprivileged caller is already asked for an
+// administrator's password. Deleting this file would not open a door.
+//
+// WHAT IT DOES: it scopes the decision to OS/7's own update units and says the
+// authorisation may be KEPT for the session. Installing three releases in one
+// sitting otherwise means typing the password three times, and a prompt that
+// appears more often than it means anything is a prompt people learn to clear
+// without reading.
+//
+// The narrowing is the point. A rule that said `manage-units` without looking
+// at which unit would be a rule about every service on the machine.
+//
+// 49- rather than 50-: below the range a local administrator would use, so a
+// site policy in /etc/polkit-1/rules.d/ wins without having to know this file
+// exists.
+
+polkit.addRule(function (action, subject) {
+	if (action.id !== "org.freedesktop.systemd1.manage-units") {
+		return polkit.Result.NOT_HANDLED;
+	}
+
+	var unit = action.lookup("unit");
+	if (!unit || unit.indexOf("os7-update@") !== 0) {
+		return polkit.Result.NOT_HANDLED;
+	}
+
+	// `verb` is start/stop/restart. Only starting is scoped here; stopping an
+	// update halfway is a decision that should keep the default policy's full
+	// weight, because §4.3's half-activated pair is what it produces.
+	if (action.lookup("verb") !== "start") {
+		return polkit.Result.NOT_HANDLED;
+	}
+
+	// An active local session only. A remote or inactive session gets the
+	// default policy rather than this one — the same distinction polkit draws
+	// everywhere, and the reason the window is not a remote administration tool.
+	if (subject.local && subject.active) {
+		return polkit.Result.AUTH_ADMIN_KEEP;
+	}
+
+	return polkit.Result.NOT_HANDLED;
+});

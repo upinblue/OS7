@@ -1,0 +1,25 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Software Update
+GenericName=OS/7 Updates
+Comment=Install new OS/7 releases
+Exec=/usr/lib/os7/apps/software-update/os7-software-update
+Icon=system-software-update
+Terminal=false
+
+# Where a Windows administrator looks. The OS/7 Classic desktop's menu is
+# GNOME's own apps-menu extension, which reads these categories, and System is
+# where the Control Panel's contents live in that mental model.
+Categories=System;Settings;PackageManager;
+
+# amd64 GUI only (GL1). arm64 is server-only and headless installs purge the
+# desktop, so this file is never present where nothing can read it.
+Keywords=update;upgrade;release;os7;patch;
+StartupNotify=true
+StartupWMClass=os7-software-update
+
+# Deliberately NOT X-GNOME-Autostart. Nothing about OS/7's update train runs
+# because somebody logged in: the unattended check is a systemd timer
+# (RELEASE-AND-UPDATE-PLAN §6), and a window that opened itself would be a
+# second, session-shaped schedule nobody chose.

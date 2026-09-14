@@ -1,0 +1,45 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+  <!--
+    THE METRICS, AND THE PART OF WINDOWS 2000 THIS DESIGN SYSTEM DELIBERATELY
+    DOES NOT COPY.
+
+    docs/GUI-APPS-PLAN.md G8, decided 2026-09-14: the classic IDIOM, not the
+    pixel grid. The palette, the greys and the bevelled relief are Windows
+    2000's, and Tokens.axaml holds them to the theme package value for value.
+    The SIZES are not. They are sized for a machine somebody uses today.
+
+    This file exists so that the departure is written down as numbers instead of
+    being discovered later as drift. Each row says what Windows used, so anyone
+    who wants the period-exact product can see the whole cost in one place.
+
+    The right-hand number is also why pixel-exact was refused: on a stack whose
+    scaling already goes through XWayland (M-G12) a 13-pixel checkbox and a
+    17-pixel row are small targets, and nothing about the LOOK depends on them.
+  -->
+
+  <!--                                                     OS/7   Windows 2000 -->
+  <sys:Double x:Key="os7_font_size">13</sys:Double>       <!--  13         ~12 -->
+  <sys:Double x:Key="os7_control_height">26</sys:Double>  <!--  26          21 -->
+  <sys:Double x:Key="os7_row_height">24</sys:Double>      <!--  24          17 -->
+  <sys:Double x:Key="os7_check_size">16</sys:Double>      <!--  16          13 -->
+  <sys:Double x:Key="os7_button_min_width">88</sys:Double><!--  88          75 -->
+
+  <Thickness x:Key="os7_button_padding">12,4</Thickness>
+  <Thickness x:Key="os7_row_padding">6,3</Thickness>
+  <Thickness x:Key="os7_pane_padding">10</Thickness>
+  <Thickness x:Key="os7_window_padding">12</Thickness>
+  <sys:Double x:Key="os7_gap">10</sys:Double>
+
+  <!--
+    THE FACE. `Tahoma 9` is what the desktop theme's dconf database sets, and
+    the name resolves through fontconfig out of `fonts-wine` (LGPL-2.1+, whose
+    notice the image carries). The fallbacks matter more here than on the GTK
+    side: an application that cannot find Tahoma must still draw, and Avalonia
+    will not silently substitute a font the way fontconfig does.
+  -->
+  <FontFamily x:Key="os7_font">Tahoma, DejaVu Sans, Liberation Sans, sans-serif</FontFamily>
+
+</ResourceDictionary>

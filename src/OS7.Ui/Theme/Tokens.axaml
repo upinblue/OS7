@@ -1,0 +1,61 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    THE PALETTE. docs/GUI-APPS-PLAN.md G9: one source, and this is not it.
+
+    THE SOURCE IS THE THEME PACKAGE:
+      build/packages/os7-desktop-theme/tree/usr/share/themes/OS7-Classic/gtk-3.0/gtk.css
+
+    That file carries the same seventeen constants as `@define-color os7_*`, with
+    the Windows 2000 system-colour names they come from and the note on which
+    two are departures. This file is the SECOND copy, and it exists because
+    Avalonia cannot read GTK CSS.
+
+    A second copy with nothing watching it is how the netplan renderer became a
+    two-language specification (P3, BUILD-NOTES #66), and the failure it makes
+    here is not a crash - it is five applications that are almost the same grey.
+    So installer/testing/check-gui-tokens.py requires this file and that one to
+    agree, value for value.
+
+    THE KEYS ARE THE GTK NAMES, VERBATIM. `os7_face`, not `Os7Face`. It reads
+    slightly oddly in XAML and it means the check compares names directly
+    instead of carrying a translation table that can drift on its own. The
+    correspondence being undeniable is worth more than the capitalisation.
+  -->
+
+  <!-- Windows 2000 "Windows Standard" system colours. -->
+  <Color x:Key="os7_face">#d4d0c8</Color>
+  <Color x:Key="os7_shadow">#808080</Color>
+  <Color x:Key="os7_dkshadow">#404040</Color>
+  <Color x:Key="os7_hilight">#ffffff</Color>
+  <Color x:Key="os7_light">#e8e5de</Color>
+  <Color x:Key="os7_window">#ffffff</Color>
+  <Color x:Key="os7_text">#000000</Color>
+  <Color x:Key="os7_graytext">#808080</Color>
+  <Color x:Key="os7_select">#0a246a</Color>
+  <Color x:Key="os7_selecttext">#ffffff</Color>
+  <Color x:Key="os7_title">#0a246a</Color>
+  <Color x:Key="os7_title2">#a6caf0</Color>
+  <Color x:Key="os7_ititle">#808080</Color>
+  <Color x:Key="os7_ititle2">#b5b5b5</Color>
+  <Color x:Key="os7_titletext">#ffffff</Color>
+  <Color x:Key="os7_ititletext">#d4d0c8</Color>
+  <Color x:Key="os7_tooltip">#ffffe1</Color>
+
+  <!-- Brushes over the same colours. Nothing below may introduce a value. -->
+  <SolidColorBrush x:Key="os7_face_brush"        Color="{StaticResource os7_face}" />
+  <SolidColorBrush x:Key="os7_shadow_brush"      Color="{StaticResource os7_shadow}" />
+  <SolidColorBrush x:Key="os7_dkshadow_brush"    Color="{StaticResource os7_dkshadow}" />
+  <SolidColorBrush x:Key="os7_hilight_brush"     Color="{StaticResource os7_hilight}" />
+  <SolidColorBrush x:Key="os7_light_brush"       Color="{StaticResource os7_light}" />
+  <SolidColorBrush x:Key="os7_window_brush"      Color="{StaticResource os7_window}" />
+  <SolidColorBrush x:Key="os7_text_brush"        Color="{StaticResource os7_text}" />
+  <SolidColorBrush x:Key="os7_graytext_brush"    Color="{StaticResource os7_graytext}" />
+  <SolidColorBrush x:Key="os7_select_brush"      Color="{StaticResource os7_select}" />
+  <SolidColorBrush x:Key="os7_selecttext_brush"  Color="{StaticResource os7_selecttext}" />
+  <SolidColorBrush x:Key="os7_title_brush"       Color="{StaticResource os7_title}" />
+  <SolidColorBrush x:Key="os7_titletext_brush"   Color="{StaticResource os7_titletext}" />
+  <SolidColorBrush x:Key="os7_tooltip_brush"     Color="{StaticResource os7_tooltip}" />
+
+</ResourceDictionary>

@@ -1,0 +1,54 @@
+[Unit]
+# One release, one instance. docs/GUI-APPS-PLAN.md G5.
+#
+# The Software Update window starts this rather than running the update itself,
+# because the window runs as the operator and the update needs root. Starting a
+# system unit as an unprivileged user is exactly what polkit governs, so the
+# authentication happens in polkit's own dialog — and this unit is also what an
+# administrator can start by hand, and what a fleet tool can start remotely.
+#
+# `Update-OS7` GAINS NO CODE FOR THIS. It already takes the whole job and
+# already has run-s5.py's gate over it; this is a way to invoke it, not a
+# second path through it.
+Description=OS/7 update to %i
+Documentation=file:///usr/share/doc/os7-app-softwareupdate/README
+# The update clones a boot environment, mounts it, runs apt inside it and
+# rewrites the bootloader. None of that is meaningful before the pool is up.
+After=network-online.target zfs-mount.service
+Wants=network-online.target
+
+# One update at a time, for the same reason Update-OS7 takes /run/os7-update.lock:
+# two updates cloning one environment produce two environments claiming one
+# release, and the second activation silently wins. The lock is still the
+# authority — this only keeps systemd from queueing a second instance behind it.
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+
+# -File, not -Command: the version is bound as a PARAMETER, validated by
+# [ValidatePattern] in one place, rather than surviving three layers of quoting.
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-update-run.ps1 -Version %i
+
+# An update takes minutes and must not be killed halfway: a boot environment
+# half-assembled is the state §4.3 calls the half-activated pair. Generous
+# rather than unlimited, so a wedged run does eventually end.
+TimeoutStartSec=3600
+
+# The journal is where the window reads progress from, so both streams go there
+# and nowhere else. /var/log/os7/update.log is written by Update-OS7 itself and
+# is the record that survives; this is the live view.
+StandardOutput=journal
+StandardError=journal
+
+# NOT RemainAfterExit. The window distinguishes "finished successfully" from
+# "never started" by ActiveState=inactive with Result=success, and
+# RemainAfterExit would leave the unit active forever — which reads as "still
+# running" to anything that asks, including the next run of this application.
+RemainAfterExit=no
+
+[Install]
+# Deliberately none. This unit is started on demand, by a person or by the
+# window, and is never enabled: an update that ran at every boot is not a train,
+# it is a surprise.

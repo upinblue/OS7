@@ -1,0 +1,51 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    The design system's single entry point. An OS/7 application includes exactly
+    this and nothing else from OS7.Ui:
+
+      <StyleInclude Source="avares://OS7.Ui/Theme/Os7Theme.axaml" />
+
+    ORDER MATTERS. Tokens first because everything below resolves against it,
+    Metrics next, Controls last. Avalonia's Simple theme is included by the
+    application ahead of this one, so these control themes override it rather
+    than the other way round.
+  -->
+
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://OS7.Ui/Theme/Tokens.axaml" />
+        <ResourceInclude Source="avares://OS7.Ui/Theme/Metrics.axaml" />
+        <ResourceInclude Source="avares://OS7.Ui/Theme/Controls.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <!-- The window face. gtk.css: `window, dialog, .background { background-color:
+       @os7_face }`. This is the same statement for Avalonia's windows. -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource os7_face_brush}" />
+    <Setter Property="FontFamily" Value="{DynamicResource os7_font}" />
+    <Setter Property="FontSize"   Value="{DynamicResource os7_font_size}" />
+  </Style>
+
+  <Style Selector="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource os7_text_brush}" />
+    <Setter Property="FontFamily" Value="{DynamicResource os7_font}" />
+    <Setter Property="FontSize"   Value="{DynamicResource os7_font_size}" />
+  </Style>
+
+  <!-- A muted secondary line. GRAYTEXT is what Windows used for it, and it is
+       the same #808080 as 3DSHADOW - one constant with two jobs, which is why
+       Tokens.axaml keeps both names rather than deduplicating them. -->
+  <Style Selector="TextBlock.muted">
+    <Setter Property="Foreground" Value="{DynamicResource os7_graytext_brush}" />
+  </Style>
+
+  <Style Selector="TextBlock.heading">
+    <Setter Property="FontWeight" Value="Bold" />
+  </Style>
+
+</Styles>

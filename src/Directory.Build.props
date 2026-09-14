@@ -1,0 +1,34 @@
+<Project>
+
+  <!--
+    Common settings for OS/7's GUI applications and the design system they
+    share. docs/GUI-APPS-PLAN.md is the design; G1 decides the toolkit and G2
+    decides that these are framework-dependent against the runtime the image
+    already carries (dotnet-runtime-10.0, CURATION-AND-DELIVERY-PLAN.md C2).
+
+    NOT installer/src/. That tree is os7-setup's, it is NativeAOT because it
+    must run with .NET deleted, and nothing here shares those constraints.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <!-- G2: framework-dependent. Measured 2026-09-14 at 22.1 MiB against
+         100.8 MiB self-contained - 78.7 MiB per application, and the runtime
+         C2 kept costs 105 MiB once. docs/SESSION-AVALONIA-FOOTPRINT.md. -->
+    <SelfContained>false</SelfContained>
+
+    <!-- ON, for the same reason os7-setup.csproj gives: the product has to be
+         able to speak German later, and InvariantGlobalization=true makes that
+         impossible while looking like a size win. GL8 says v1 ships English
+         only; it does not say the strings are hard-coded. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

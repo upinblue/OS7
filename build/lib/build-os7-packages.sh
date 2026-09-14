@@ -1070,7 +1070,71 @@ build_metapackage() {
 }
 
 # ---------------------------------------------------------------------------
+# os7-app-softwareupdate — the first OS/7 GUI application.
+#
+# docs/GUI-APPS-PLAN.md. Avalonia (G1), FRAMEWORK-DEPENDENT against the
+# dotnet-runtime-10.0 the image already carries (G2) — measured at 22.1 MiB
+# against 100.8 MiB self-contained, so the runtime C2 kept is paid back on the
+# second application that does this (docs/SESSION-AVALONIA-FOOTPRINT.md).
+#
+# amd64 ONLY, and it SKIPS rather than fails on arm64: arm64 is server-only and
+# has no desktop at all (DECISIONS), so an arm64 run naming this package is
+# asking for something that cannot exist rather than making a mistake.
+# ---------------------------------------------------------------------------
+build_os7_app_softwareupdate() {
+	if [[ "${OS7_ARCH}" != "amd64" ]]; then
+		echo "    os7-app-softwareupdate: SKIPPED on ${OS7_ARCH} — arm64 is server-only"
+		return 0
+	fi
+
+	local stage; stage="$(pkg_begin os7-app-softwareupdate)"
+	local dst="${stage}/usr/lib/os7/apps/software-update"
+	mkdir -p "${dst}"
+
+	echo "    os7-app-softwareupdate: publishing for linux-x64"
+	DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
+		dotnet publish "${REPO}/src/OS7.App.SoftwareUpdate" -c Release -r linux-x64 \
+		--self-contained false -o "${dst}" --nologo
+
+	[[ -f "${dst}/os7-software-update" ]] || {
+		echo "!!! dotnet publish produced no binary" >&2; exit 1; }
+
+	# THE MODE IS DECLARED. On the Windows host's bind mount every file reads
+	# 0777, so a -x test proves nothing and pkg_finish normalises 0777 down to
+	# 0644 — which would ship an application that cannot be executed
+	# (BUILD-NOTES #117, the same trap os7-setup pays for two functions up).
+	chmod 0755 "${dst}/os7-software-update"
+
+	# The native libraries arrive from NuGet as 0744 and ship everywhere else as
+	# 0644. They are dlopen'd, never executed, so the execute bit is noise — and
+	# noise in a mode is what makes a real mode problem hard to see later.
+	chmod 0644 "${dst}"/*.so
+
+	# Publish leaves symbols beside the binary. Nothing on the image reads them.
+	rm -f "${dst}"/*.pdb "${dst}"/*.dbg
+
+	# THE DECISIONS ARE CHECKED WHILE THE PACKAGE IS BUILT, the way hook 0080
+	# runs os7-setup --self-test inside the chroot. A window whose rules have
+	# stopped being true should fail a build rather than a machine.
+	echo "    os7-app-softwareupdate: --self-test"
+	( cd "${dst}" && ./os7-software-update --self-test >/dev/null ) || {
+		echo "!!! os7-software-update --self-test FAILED" >&2; exit 1; }
+
+	pkg_copyright os7-app-softwareupdate "${stage}"
+	pkg_control  os7-app-softwareupdate "${stage}" "${OS7_ARCH}"
+	pkg_finish   os7-app-softwareupdate "${stage}" "${OS7_ARCH}" \
+		./usr/lib/os7/apps/software-update/os7-software-update \
+		./usr/lib/os7/apps/software-update/OS7.Ui.dll \
+		./usr/lib/os7/apps/software-update/libSkiaSharp.so \
+		./usr/libexec/os7-update-run.ps1 \
+		./usr/lib/systemd/system/os7-update@.service \
+		./usr/share/polkit-1/rules.d/49-os7-update.rules \
+		./usr/share/applications/os7-software-update.desktop
+}
+
+# ---------------------------------------------------------------------------
 ALL=(os7-release os7-console os7-module os7-powershell os7-backup os7-setup
+     os7-app-softwareupdate
      os7-base os7-server os7-desktop)
 
 WANT=( "$@" )
@@ -1084,6 +1148,7 @@ for pkg in "${WANT[@]}"; do
 		os7-powershell) build_os7_powershell ;;
 		os7-backup)  build_os7_backup  ;;
 		os7-setup)   build_os7_setup   ;;
+		os7-app-softwareupdate) build_os7_app_softwareupdate ;;
 		os7-base|os7-server|os7-desktop) build_metapackage "${pkg}" ;;
 		*) echo "!!! unknown package '${pkg}'. Known: ${ALL[*]}" >&2; exit 1 ;;
 	esac

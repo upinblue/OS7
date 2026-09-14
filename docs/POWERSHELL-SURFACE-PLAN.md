@@ -556,6 +556,48 @@ So: enumerate from the kernel, and wrap the tool for the judgement the tool
 maintains. `pci.ids` is used for the human name only, which is cosmetic and
 allowed to be missing.
 
+### P12 — A window is a front-end. It decides nothing this surface has not already decided. Proposed 2026-09-14.
+
+OS/7 is building its own graphical applications (Avalonia, decided 2026-09-14 —
+[GUI-APPS-PLAN.md](GUI-APPS-PLAN.md)). This is where the layer cut between them
+and this surface is recorded, because it is this surface's rule and not theirs.
+
+**An application arranges, labels, confirms and reports. It does not judge.**
+Which release is newer, whether a driver regressed, whether a backup is healthy,
+whether an adapter came up after a netplan apply — every one of those is decided
+here, by a cmdlet that already has a check, and read by the application.
+
+The reason is the one P2 gives one layer down, and this repository has paid for
+it twice at full price. `Update-OS7` is the release plan's §4.2 as C10 corrects
+it: the clone, both repositories, the metapackage, the migrations, the
+initramfs, the menu, the driver gate, the activation, the pruning. A C#
+re-implementation of any part of that would be a **third** language for one
+specification — BUILD-NOTES #66's exact shape, where the installer's TPM step
+was written from the same notes as a spike that worked and took a different
+route, and P3's shape, which is currently spending two steps deleting the
+second half of a two-language netplan renderer. The failure a second
+implementation produces is not that it is wrong. It is that it is *nearly*
+right, and diverges under maintenance with nothing watching the seam.
+
+Two consequences worth stating, because they are the ones that erode quietly:
+
+- **The wire is the cmdlets' own objects.** `pwsh -NoProfile -NonInteractive
+  -Command`, `ConvertTo-Json`, and the `[OutputType(...)]` these functions
+  already declare. No screen-scraping of formatted output, and no DTO that
+  means something the cmdlet does not say.
+- **No capability is GUI-only.** arm64 has no desktop at all and an amd64
+  machine may install headless, so a feature reachable only by clicking is
+  absent from most of the product. The direction is one-way: a cmdlet may exist
+  with no application; an application may not exist with no cmdlet.
+
+It is *Proposed* rather than *Decided* because no application exists yet. What
+would make it real is the check `GUI-APPS-PLAN.md` G12 describes — no
+application assembly calling a system path, `zfs`, `apt` or `systemctl`
+directly — held at a baseline the way `check-layering.py` holds P2. Until then
+this is a paragraph, and P2-time is the standing reminder of what those are
+worth: it was written in capitals in a file header while the code underneath
+called `chronyc makestep`.
+
 ---
 
 ## 3. The surface

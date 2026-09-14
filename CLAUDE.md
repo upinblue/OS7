@@ -61,6 +61,7 @@ here either — this file points, they rule.
 | Backup: what is snapshotted, where copies go, how it is verified, B1–B15 | [docs/BACKUP-PLAN.md](docs/BACKUP-PLAN.md) |
 | Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. Both stages are now proven against a real **Windows Server 2025** DC on a machine ([SESSION-AD-REAL-DC.md](docs/SESSION-AD-REAL-DC.md), [SESSION-AD-JOIN.md](docs/SESSION-AD-JOIN.md)); what is still unexercised is the INSTALLER's road to the join (screen 9D) and arm64 |
 | Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **the decisions are still *Proposed*; v1 of the surface is BUILT and has run on a machine.** `Enable-`/`Test-`/`Disable-OS7RemoteDesktop` were exercised against the real daemon and a real RDP client on the GUI bench (§13a). The allow-list is built and measured safe in all four quadrants (§13b); a local account signs in over RDP to the OS/7 desktop (M-R50, after #128 withdrew a false defect); the account lockout is built too, in `common-auth` and therefore ACCOUNT-WIDE (`Set-OS7AccountLockout`, §13c). The session verbs are built over the Systemd module's `Get-/Stop-SystemdSession` (§13d); there is no `Disconnect-`, because logind has one verb and it ENDS the session |
+| OS/7's own GUI applications: the toolkit, what an app may contain, the design system, decisions G1–G12 | [docs/GUI-APPS-PLAN.md](docs/GUI-APPS-PLAN.md) — **the toolkit is Avalonia and that is decided (2026-09-14); everything from G3 on is a proposal and nothing is built.** The argument is not "we already write C#" — it is that `os7-classic.css` already documents that GTK 4 cannot wear this product's face. Measured before writing: 22.1 MiB framework-dependent against 100.8 MiB self-contained, **13.3 MiB of it identical in every app** (so `os7-ui` is arithmetic, not taste), no Wayland backend in Avalonia 12.1.2 → XWayland, and AT-SPI ships ([SESSION-AVALONIA-FOOTPRINT.md](docs/SESSION-AVALONIA-FOOTPRINT.md)). **An app implements no policy** — it is a front-end over cmdlets that already have a test (P12), which is #66's shape pointed at a new surface. **The first application, Software Update, HAS RUN ON A MACHINE (2026-09-14)**: the window draws with Mutter's themed title bar, lists real releases from a signed repository, and polkit prompts by name before systemd runs `Update-OS7` as root ([SESSION-SOFTWARE-UPDATE-APP.md](docs/SESSION-SOFTWARE-UPDATE-APP.md)). What it has NEVER done is a successful update — every release the bench reaches is development-signed — and no ISO has yet carried the package |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -273,6 +274,52 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   OS7_MODULE_ROOT plants the defect on
                                           #   a copy and it goes RED. Seconds,
                                           #   needs only pwsh, both hosts
+./installer/testing/check-gui-tokens.py   # G9: OS/7's GUI apps have ONE palette.
+                                          #   The 17 Windows 2000 constants live
+                                          #   in the desktop theme's gtk.css AND
+                                          #   in src/OS7.Ui/Theme/Tokens.axaml,
+                                          #   because Avalonia cannot read GTK
+                                          #   CSS - so the two are required to
+                                          #   agree name for name and value for
+                                          #   value, and no colour may be
+                                          #   written anywhere else under src/.
+                                          #   The netplan two-language renderer
+                                          #   arriving somewhere new, caught
+                                          #   early. Its first run went red on a
+                                          #   BUILD-NOTES reference (#151) and a
+                                          #   comment explaining a colour, which
+                                          #   is why it blanks comments before
+                                          #   scanning: naming a thing is not
+                                          #   doing it. --self-test plants three
+                                          #   defects and requires each to be
+                                          #   caught. Pure python, seconds
+./installer/testing/check-gui-logic.py    # G3: a GUI app decides NOTHING a
+                                          #   cmdlet has not already decided.
+                                          #   Two halves. The LAYER rule, on the
+                                          #   source, needs nothing installed:
+                                          #   only Os7Cli.cs may start a
+                                          #   process, no file may be opened,
+                                          #   and no file that can INVOKE
+                                          #   anything may name systemctl, zfs
+                                          #   or apt - scoped to invoking files
+                                          #   on purpose, because ReleaseRow.cs
+                                          #   legitimately contains the string
+                                          #   `sudo pwsh -c` that #148 requires
+                                          #   every refusal to carry. The
+                                          #   DECISIONS half drives
+                                          #   `os7-software-update --self-test`
+                                          #   (51 checks) and needs
+                                          #   --docker os7-build:amd64. That
+                                          #   found #151 on its first run.
+                                          #   Section 2 is #152, which a MACHINE
+                                          #   found while all three instruments
+                                          #   here were green: a hand-written
+                                          #   InitializeComponent compiles,
+                                          #   loads the XAML, and leaves every
+                                          #   x:Name'd control null - so the
+                                          #   window died in its constructor and
+                                          #   an operator saw a menu entry that
+                                          #   did nothing
 ./installer/testing/check-vm-arch.py      # the harness port's own check: the
                                           #   arm64 command lines byte-identical
                                           #   to the pre-port construction, the
@@ -954,6 +1001,25 @@ installer/
   testing/                  the VM harness: vmconsole (serial), vmscreen
                             (framebuffer, QMP, reading the screen back through
                             the console font), run-phase1.py
+src/                        OS/7's own GUI applications and the design system
+                            they share (docs/GUI-APPS-PLAN.md). NOT
+                            installer/src/, which is os7-setup's and is NativeAOT
+                            because it must run with .NET deleted
+  Directory.Packages.props  the Avalonia version, ONCE. The authoritative home
+                            is the pin (C14) and this says so at length; moving
+                            it belongs to the release that first carries the
+                            component
+  OS7.Ui/                   the design system. Tokens.axaml holds the 17 Windows
+                            2000 constants and check-gui-tokens.py requires them
+                            equal to the desktop theme's gtk.css; BevelBorder is
+                            the whole visual grammar in one control, and it names
+                            no colour - the four edges are properties the control
+                            themes fill from tokens
+  OS7.App.SoftwareUpdate/   the first application. amd64 GUI only. It implements
+                            no policy: Applicable is READ off Get-OS7Release and
+                            never recomputed, and the update runs in
+                            os7-update@<version>.service so the app never has
+                            root. --self-test is 46 decisions with no display
 powershell/Directory/       the GENERIC directory layer (P2-directory). LDAP
                             over System.DirectoryServices.Protocols, which ships
                             inside pwsh and needs no Add-Type, plus realm

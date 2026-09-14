@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    ONE PLACE FOR THE AVALONIA VERSION, and it is deliberately not in any
+    .csproj.
+
+    WHERE THIS BELONGS EVENTUALLY. build/config/os7-release.conf is the pin, and
+    CLAUDE.md says nothing else in this repository may carry a version number.
+    Avalonia comes from NuGet rather than the archive, so by
+    CURATION-AND-DELIVERY-PLAN.md §7's rule it needs a version AND a SHA256
+    there, the way OS7_PWSH_VERSION and OS7_CASCADIA_VERSION do. That is C14,
+    and C14 is PROPOSED - the component does not ship in an image yet, and
+    editing the release definition is a deliberate act that belongs to the
+    release that first carries it, not to the session that wrote the first
+    window.
+
+    So this file is the INTERIM home, it is one line rather than one per
+    project, and the move to the pin is owed. Until then, anyone changing the
+    version changes it here and nowhere else.
+
+    12.1.2 is what the feed resolved to on 2026-09-14 with the version left
+    floating, measured in os7-build:amd64 - not a version chosen from memory.
+    docs/SESSION-AVALONIA-FOOTPRINT.md §2.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Avalonia" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Themes.Simple" Version="12.1.2" />
+  </ItemGroup>
+
+</Project>

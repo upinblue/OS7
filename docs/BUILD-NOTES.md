@@ -8148,3 +8148,121 @@ absent. Measured on the machine, as `os7admin`, after the fix.
 read surface — it is one path, in one helper, that nobody had ever exercised
 without root. Which is precisely what #148 said about the write surface, and
 why the harness that found both is the one that runs as a person.
+
+---
+
+## #151 — .NET's `$` matches before a trailing newline, so a version could carry one into a systemd unit name
+
+**Found 2026-09-14 by `os7-software-update --self-test` on its first run**,
+against code written twenty minutes earlier in the same session. The rule under
+test was "only a version may become part of a unit name", and the case that
+failed was `"1.0.0.204\n"`:
+
+```
+      FAIL  '1.0.0.204\n' is refused, not escaped
+```
+
+The guard was the obvious one:
+
+```csharp
+new Regex(@"^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$")
+```
+
+**`$` in .NET is not "end of string".** It matches at the end of the input *and*
+immediately before a newline at the end of the input — `RegexOptions.Multiline`
+makes it match before *every* newline, but the trailing-newline behaviour is
+there by default, with no option to switch it off. `\z` is end-of-input and
+nothing else. (`\Z` is the same as the default `$`, which makes the pair easy to
+reach for wrongly.)
+
+So the anchored, all-digits-and-dots pattern accepted a string ending in a
+newline, and that string was on its way to `os7-update@%i.service`.
+
+**Why it matters more than it looks.** A newline in a systemd instance name is
+not merely untidy: the value reaches a unit file's `%i`, and unit files are a
+line-oriented format. The blast radius was small here — the version is also
+re-validated inside the unit, by `[ValidatePattern]` in
+`/usr/libexec/os7-update-run.ps1`, which was written from the same wrong idea
+and had the same `$` — so both guards had the same hole, for the same reason.
+Two independent-looking checks written by one author on one afternoon are one
+check.
+
+**The same engine is under PowerShell**, so `-match`, `-replace` and
+`[ValidatePattern]` treat `$` identically. What that does and does not mean here
+was checked rather than assumed, because "the same trap is live in our
+PowerShell" was the first thing written on this line and it was too strong:
+
+- **`[ValidatePattern]` appears nowhere in `powershell/`** — the one in
+  `os7-update-run.ps1` is the first in the repository. The *validation* form of
+  this trap has no other instance to find.
+- The anchored `'^…$'` patterns that do exist (Net, Hardware, Directory, and
+  others) are **parsing lines already split out of a command's output**, where a
+  trailing newline is neither present nor harmful. Same engine, different
+  exposure.
+
+So the rule to carry is narrow and worth stating exactly: **`\z`, not `$`,
+whenever a pattern decides that an untrusted value is safe to become a name, a
+path, or part of a command.** For parsing a line that has already been split,
+`$` is fine and reads better.
+
+**The fix is one character**, `\z` for `$`, in both places. What is worth
+keeping is not the fix but how it was found: the self-test asked for the refusal
+of six malformed versions rather than the acceptance of one good one, and five
+of the six were refused correctly. A check that only asserts the happy path
+would have been green.
+
+---
+
+## #152 — a hand-written `InitializeComponent` compiles, loads the XAML, and leaves every named control null
+
+**Found 2026-09-14 on a machine**, because nothing else could see it. The
+Software Update menu entry was clicked on a booted OS/7 GUI machine; the menu
+closed and the desktop stayed empty. No dialog, no error, no window. The journal
+had it:
+
+```
+os7-software-update.desktop[4679]: Unhandled exception. System.NullReferenceException
+   at OS7.App.SoftwareUpdate.Views.MainWindow..ctor()
+   at OS7.App.SoftwareUpdate.App.OnFrameworkInitializationCompleted()
+```
+
+The code-behind was the obvious thing to write:
+
+```csharp
+public MainWindow()
+{
+    InitializeComponent();
+    CloseButton.Click += OnNotNow;      // ← null
+    InstallButton.Click += OnInstall;   // ← null
+}
+
+private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+```
+
+**Avalonia GENERATES `InitializeComponent()` for a partial class with a matching
+`.axaml`, and the generated one does two things: it loads the XAML AND assigns
+every `x:Name`'d control to its generated field.** A hand-written one does the
+first half. It compiles without a warning — the fields exist, because the
+generator made them — so the window is built, the XAML is loaded, and every
+field is still null.
+
+**Why it survived every check.** The build was green. `--self-test` was 46 of 46,
+because it exercises view models and never constructs a window. `check-gui-logic.py`
+was green, because it reads the source for a layer violation and this is not
+one. Three instruments, all correct about what they measure, and none of them
+measures "does the window come up".
+
+**What it looked like to a person is the part to remember.** Not a crash dialog,
+not a stack trace on screen: a menu entry that does nothing at all. An operator
+would click it twice, shrug, and conclude the product is broken in a way they
+cannot describe.
+
+**Fixed by deleting the method.** And then held: `check-gui-logic.py` §2
+requires that no `.axaml.cs` define its own `InitializeComponent`, and its
+`--self-test` plants exactly this defect and requires the rule to go red. A
+machine run found it; a grep prevents the next one.
+
+**The general form**, which is worth more than the Avalonia specifics: *a
+generated member that you can legally redefine is a trap, because redefining it
+silently drops the half of its work you did not know about.* The compiler has no
+opinion, and neither does anything downstream until a person clicks something.

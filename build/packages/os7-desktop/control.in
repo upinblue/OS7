@@ -6,12 +6,19 @@ Section: metapackages
 Priority: important
 Depends: os7-base (= @OS7_VERSION@),
  os7-backup (= @OS7_VERSION@),
- os7-desktop-theme (= @OS7_VERSION@)
+ os7-desktop-theme (= @OS7_VERSION@),
+ os7-app-softwareupdate (= @OS7_VERSION@)
 Conflicts: os7-server
 Homepage: https://github.com/upinblue/os7
 Description: OS/7 — the GUI product
  What a machine installed in GUI mode is: everything os7-server has, plus OS/7
- Classic, the Windows 2000 surface for GNOME.
+ Classic, the Windows 2000 surface for GNOME, and OS/7's own graphical
+ applications.
+ .
+ The applications are members here rather than in os7-base because a headless
+ machine has nothing to draw them on: the headless path purges the desktop and
+ then runs `apt-get autoremove -y --purge`, and membership is what lets that
+ take them with it.
  .
  x86_64 only, and that is a Microsoft constraint rather than an OS/7 preference:
  Edge, the Intune portal and the identity broker have no arm64 builds, and
