@@ -617,6 +617,7 @@ $script:Created   = [System.Collections.Generic.List[string]]::new()
 $script:Removed   = [System.Collections.Generic.List[string]]::new()
 $script:DatasetFor = @{}
 $script:SnapshotVanishes = $false
+$script:SnapshotDenied = $false
 $script:OldFile = $null
 
 function New-Snap {
@@ -652,6 +653,11 @@ function New-ZfsSnapshot {
 	param([string]$Name, [string]$SnapshotName, [switch]$Recurse,
 		[System.Collections.IDictionary]$Property)
 	$script:Created.Add("$Name@$SnapshotName")
+	# What an unprivileged owner gets on a real machine, word for word (M-V20).
+	if ($script:SnapshotDenied) {
+		throw [System.InvalidOperationException]::new(
+			"zfs snapshot $Name@$SnapshotName`nexited 1`ncannot create snapshots : permission denied")
+	}
 	# SnapshotVanishes is `zfs snapshot` exiting 0 having done nothing — the
 	# failure shape docs/BUILD-NOTES.md keeps finding. The restore must not
 	# write a byte on the strength of an exit code.
@@ -811,6 +817,20 @@ $out['pipelineCreated'] = @($script:Created).Count
 $out['pipelineSnapshots'] = @($rs | ForEach-Object { $_.SafetySnapshot })
 $out['pipelineBytes'] = @((Get-Content -LiteralPath $a -Raw), (Get-Content -LiteralPath $b -Raw))
 
+# --- I: the owner, without privilege ---------------------------------------
+# Measured on a machine (M-V20): reading a version needs no privilege and
+# `zfs snapshot` needs root, so this is the COMMON case, not a broken pool.
+$script:SnapshotDenied = $true
+Set-Content -LiteralPath $script:Live -Value 'the users own work' -NoNewline
+$out['deniedError'] = ''
+try { Restore-OS7File -Path $script:Live -Force | Out-Null }
+catch { $out['deniedError'] = $_.Exception.Message }
+$out['deniedBytes'] = Get-Content -LiteralPath $script:Live -Raw
+
+$r = Restore-OS7File -Path $script:Live -Force -NoSafetySnapshot
+$out['deniedOptOut'] = Get-Content -LiteralPath $script:Live -Raw
+$script:SnapshotDenied = $false
+
 Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue
 $out | ConvertTo-Json -Depth 4
 """
@@ -890,6 +910,22 @@ $out | ConvertTo-Json -Depth 4
           "both writes", str(snaps))
     check(got["pipelineBytes"] == ["yesterday", "yesterday"],
           "and both files were actually restored")
+
+    denied = got["deniedError"]
+    check("sudo pwsh -NoProfile -c" in denied,
+          "an owner who cannot snapshot is told to elevate, in #148's form",
+          denied.splitlines()[0][:80] if denied else "(no error)")
+    check("-NoSafetySnapshot" in denied,
+          "and told the other road, which is to give the way back up on purpose")
+    check("nothing is lost" in denied,
+          "and told the file is still there — the sentence a person needs first")
+    check("permission denied" in denied,
+          "with ZFS's own words kept, because they say WHY")
+    check(got["deniedBytes"] == "the users own work",
+          "AND THE FILE IS UNTOUCHED: a restore that could not be made undoable "
+          "is not performed")
+    check(got["deniedOptOut"] == "yesterday",
+          "-NoSafetySnapshot is the road, and it works")
 
 
 def confirmation():

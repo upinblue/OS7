@@ -623,8 +623,35 @@ function New-OS7RestoreSafetySnapshot {
 	# decision to make — being asked twice teaches people to answer without
 	# reading. `Restore-OS7File -WhatIf` never reaches here at all, because its
 	# own ShouldProcess returns first.
-	New-ZfsSnapshot -Name $owner.Dataset -SnapshotName $snapshotName -Confirm:$false |
-		Out-Null
+	try {
+		New-ZfsSnapshot -Name $owner.Dataset -SnapshotName $snapshotName -Confirm:$false |
+			Out-Null
+	}
+	catch {
+		# #148'S RULE, AND A MACHINE IS WHAT FOUND THIS ONE (M-V20). The common
+		# case here is not a broken pool: it is the OWNER of the file, restoring
+		# their own work, as themselves. Reading a version needs no privilege at
+		# all (M-V5) and `zfs snapshot` needs root, so the safety net is the one
+		# part of this feature an ordinary user cannot reach — and what they saw
+		# was `cannot create snapshots : permission denied`, which names neither
+		# a verb nor a way forward.
+		#
+		# NOTHING HAS BEEN WRITTEN AT THIS POINT, and saying so is half the
+		# message: the file they were about to lose is still there.
+		throw [System.InvalidOperationException]::new(
+			"the safety snapshot '$full' could not be taken, so '$Path' has NOT " +
+			"been written and nothing is lost.`n" +
+			"`n" +
+			"  Snapshotting a dataset needs root, even for the owner of the`n" +
+			"  files on it. Either restore with privilege:`n" +
+			"`n" +
+			"      sudo pwsh -NoProfile -c 'Restore-OS7File <parameters> -Force'`n" +
+			"`n" +
+			"  or give the way back up deliberately, with -NoSafetySnapshot.`n" +
+			"`n" +
+			"  ZFS said: $($_.Exception.Message)",
+			$_.Exception)
+	}
 
 	# THE SNAPSHOT IS ASKED FOR RATHER THAN ASSUMED (docs/BUILD-NOTES.md's
 	# recurring rule). `zfs snapshot` exiting 0 is a diagnostic; this is the
