@@ -27,12 +27,27 @@
        @os7_face }`. This is the same statement for Avalonia's windows. -->
   <Style Selector="Window">
     <Setter Property="Background" Value="{DynamicResource os7_face_brush}" />
+    <Setter Property="Foreground" Value="{DynamicResource os7_text_brush}" />
     <Setter Property="FontFamily" Value="{DynamicResource os7_font}" />
     <Setter Property="FontSize"   Value="{DynamicResource os7_font_size}" />
   </Style>
 
+  <!--
+    NO Foreground HERE, and that is a fix rather than an omission.
+
+    This style used to set Foreground as well, and a STYLE SETTER BEATS AN
+    INHERITED VALUE — so every TextBlock in the product was forced to
+    os7_text, including the one inside a disabled button's ContentPresenter.
+    The result: a button that was correctly disabled, refused its click, and
+    looked exactly like an enabled one. Both applications shipped it, and it
+    was found by looking at a 4x crop of two screenshots side by side rather
+    than by any check.
+
+    Foreground now comes from the Window and is inherited, which lets a
+    control that has its own opinion — a disabled button, a selected list row —
+    actually win.
+  -->
   <Style Selector="TextBlock">
-    <Setter Property="Foreground" Value="{DynamicResource os7_text_brush}" />
     <Setter Property="FontFamily" Value="{DynamicResource os7_font}" />
     <Setter Property="FontSize"   Value="{DynamicResource os7_font_size}" />
   </Style>

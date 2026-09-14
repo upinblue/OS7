@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Versions — previous versions of a file, from the file manager.
+    docs/VERSIONS-PLAN.md.
+
+    V3: the whole feature is this one application, and the file manager's only
+    job is to run `os7-versions <absolute path>`. That one-line contract is what
+    survives a change of file manager.
+
+    READ-ONLY in this iteration (plan §8 step 3). Open and Copy to… only; the
+    first destructive verb arrives with Restore-OS7FileVersion, which is a
+    cmdlet (V9), not this.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>OS7.App.Versions</RootNamespace>
+    <AssemblyName>os7-versions</AssemblyName>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OS7.Ui\OS7.Ui.csproj" />
+    <ProjectReference Include="..\OS7.Shell\OS7.Shell.csproj" />
+  </ItemGroup>
+
+</Project>

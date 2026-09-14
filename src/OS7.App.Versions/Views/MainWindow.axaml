@@ -1,0 +1,166 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:OS7.Ui.Controls;assembly=OS7.Ui"
+        xmlns:c="clr-namespace:OS7.App.Versions.Controls"
+        xmlns:vm="clr-namespace:OS7.App.Versions.ViewModels"
+        x:Class="OS7.App.Versions.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Versions"
+        Width="860" Height="620"
+        MinWidth="660" MinHeight="480"
+        WindowStartupLocation="CenterScreen">
+
+  <!--
+    TIME MACHINE IN WINDOWS 2000'S VOCABULARY. docs/VERSIONS-PLAN.md §4.
+
+    The cascade replaces Apple's perspective (V11); the ACTIVE caption gradient
+    marks the selected time and the INACTIVE one marks everything behind it
+    (V12), which is the same pair Windows 2000 used to say "this is the one you
+    are working in"; the timeline on the right is a sunken groove of ticks and
+    the arrows are scrollbar steppers (V13). There is deliberately no starfield.
+  -->
+
+  <Grid Margin="{DynamicResource os7_window_padding}" RowDefinitions="Auto,*,Auto">
+
+    <!-- ============================================================ header -->
+    <StackPanel Grid.Row="0" Spacing="3">
+      <TextBlock Classes="heading" Text="{Binding Header}" TextWrapping="Wrap" />
+      <TextBlock Classes="muted" Text="{Binding SubHeader}" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <!-- ====================================================== the two panes -->
+    <Grid Grid.Row="1" Margin="0,10,0,0" ColumnDefinitions="*,Auto">
+
+      <!-- The cascade. Oldest at the back, selected time in front. -->
+      <ItemsControl Grid.Column="0"
+                    ItemsSource="{Binding Cascade}"
+                    IsVisible="{Binding HasEntries}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <c:CascadePanel StepX="16" StepY="12" ReservedLayers="5" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:CascadeLayer">
+            <ui:BevelBorder Theme="{DynamicResource os7_raised_pane}">
+              <DockPanel>
+
+                <!-- The caption. THIS is where the palette does the talking:
+                     the front layer gets Windows 2000's ACTIVE caption and
+                     every layer behind it gets the inactive one (V12). -->
+                <Border DockPanel.Dock="Top"
+                        Height="22"
+                        Padding="6,0"
+                        Background="{Binding IsFront,
+                                     Converter={x:Static c:CaptionBrushConverter.Instance}}">
+                  <TextBlock Text="{Binding Entry.Caption}"
+                             VerticalAlignment="Center"
+                             FontWeight="Bold"
+                             Foreground="{DynamicResource os7_titletext_brush}" />
+                </Border>
+
+                <!-- Only the front layer shows what is inside it; the ones
+                     behind are title bars, which is all a cascade shows. -->
+                <DockPanel Margin="3" IsVisible="{Binding IsFront}">
+
+                  <!-- What this version IS, in one line. -->
+                  <StackPanel DockPanel.Dock="Bottom" Margin="3,5,3,2" Spacing="1">
+                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                               Text="{Binding Entry.State}" />
+                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                               Text="{Binding Entry.Bucket, StringFormat='kept as: {0}'}" />
+                  </StackPanel>
+
+                  <!-- And what it SAYS. A timeline of five versions that shows
+                       none of them makes the operator open each one to find
+                       the right one, which is the work they came to avoid. -->
+                  <ui:BevelBorder Theme="{DynamicResource os7_sunken_pane}"
+                                  Padding="{DynamicResource os7_pane_padding}">
+                    <Panel>
+                      <ScrollViewer IsVisible="{Binding Entry.HasPreview}"
+                                    HorizontalScrollBarVisibility="Auto"
+                                    VerticalScrollBarVisibility="Auto">
+                        <TextBlock Text="{Binding Entry.Preview}"
+                                   FontFamily="monospace"
+                                   TextWrapping="NoWrap" />
+                      </ScrollViewer>
+
+                      <TextBlock Text="{Binding Entry.NoPreview}"
+                                 Classes="muted"
+                                 IsVisible="{Binding !Entry.HasPreview}"
+                                 HorizontalAlignment="Center"
+                                 VerticalAlignment="Center" />
+                    </Panel>
+                  </ui:BevelBorder>
+                </DockPanel>
+
+              </DockPanel>
+            </ui:BevelBorder>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <!-- When there is nothing, say WHICH kind of nothing (V6). -->
+      <ui:BevelBorder Grid.Column="0"
+                      Theme="{DynamicResource os7_sunken_pane}"
+                      Padding="{DynamicResource os7_pane_padding}"
+                      IsVisible="{Binding !HasEntries}">
+        <TextBlock Text="{Binding SubHeader}" TextWrapping="Wrap"
+                   VerticalAlignment="Center" />
+      </ui:BevelBorder>
+
+      <!-- ================================================== the timeline -->
+      <DockPanel Grid.Column="1" Width="200" Margin="10,0,0,0"
+                 IsVisible="{Binding HasEntries}">
+
+        <Button DockPanel.Dock="Top" Name="ForwardButton"
+                Content="&#x25B2;" FontSize="9" Height="20"
+                MinWidth="0" Padding="0"
+                HorizontalAlignment="Stretch"
+                IsEnabled="{Binding CanGoForward}"
+                ToolTip.Tip="Towards now" />
+
+        <Button DockPanel.Dock="Bottom" Name="BackButton"
+                Content="&#x25BC;" FontSize="9" Height="20"
+                MinWidth="0" Padding="0"
+                HorizontalAlignment="Stretch"
+                Margin="0,4,0,0"
+                IsEnabled="{Binding CanGoBack}"
+                ToolTip.Tip="Further back" />
+
+        <ListBox Name="Timeline" Margin="0,4,0,0"
+                 ItemsSource="{Binding Entries}"
+                 SelectedIndex="{Binding SelectedIndex, Mode=TwoWay}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:VersionEntry">
+              <Grid ColumnDefinitions="Auto,*">
+                <!-- The tick. Its width says which retention bucket the
+                     snapshot is in, so the scale draws the policy: dense in
+                     the last day, sparse across the quarter. -->
+                <Rectangle Grid.Column="0" Width="10" Height="1"
+                           Margin="0,0,6,0" VerticalAlignment="Center"
+                           Fill="{DynamicResource os7_shadow_brush}" />
+                <TextBlock Grid.Column="1" Text="{Binding Caption}"
+                           VerticalAlignment="Center" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Grid>
+
+    <!-- ============================================================ buttons -->
+    <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="Auto,*,Auto,Auto">
+      <TextBlock Grid.Column="0" Classes="muted" VerticalAlignment="Center"
+                 Text="Nothing here changes this file." />
+
+      <Button Grid.Column="2" Name="CopyButton" Content="Copy to…"
+              Margin="0,0,8,0" IsEnabled="{Binding CanOpen}" />
+      <Button Grid.Column="3" Name="OpenButton" Content="Open"
+              Theme="{DynamicResource os7_default_button}"
+              IsEnabled="{Binding CanOpen}" IsDefault="True" />
+    </Grid>
+
+  </Grid>
+</Window>

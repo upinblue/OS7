@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The one way an OS/7 application reaches the PowerShell surface
+    (docs/GUI-APPS-PLAN.md G4).
+
+    No Avalonia reference, on purpose: this is the seam between an application
+    and the machine, and nothing about it is graphical. A cmdlet-driven tool
+    with no window should be able to use it too.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>OS7.Shell</RootNamespace>
+    <AssemblyName>OS7.Shell</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -57,5 +57,29 @@
   <SolidColorBrush x:Key="os7_title_brush"       Color="{StaticResource os7_title}" />
   <SolidColorBrush x:Key="os7_titletext_brush"   Color="{StaticResource os7_titletext}" />
   <SolidColorBrush x:Key="os7_tooltip_brush"     Color="{StaticResource os7_tooltip}" />
+  <SolidColorBrush x:Key="os7_ititletext_brush"  Color="{StaticResource os7_ititletext}" />
+
+  <!--
+    THE CAPTION GRADIENTS, and the pair is load-bearing rather than decorative.
+
+    Windows 2000 used the active and inactive caption colours to mean "this is
+    the one you are working in". docs/VERSIONS-PLAN.md V12 takes that at its
+    word: in the Versions window the selected point in TIME wears the active
+    caption and every layer behind it wears the inactive one, so the palette
+    says "now versus then" with no legend and nothing invented. That is the
+    argument for the pair living here rather than inside that one application.
+
+    Both are built from the tokens above and introduce no value of their own,
+    which is what check-gui-tokens.py requires.
+  -->
+  <LinearGradientBrush x:Key="os7_caption_active_brush" StartPoint="0%,0%" EndPoint="100%,0%">
+    <GradientStop Offset="0" Color="{StaticResource os7_title}" />
+    <GradientStop Offset="1" Color="{StaticResource os7_title2}" />
+  </LinearGradientBrush>
+
+  <LinearGradientBrush x:Key="os7_caption_inactive_brush" StartPoint="0%,0%" EndPoint="100%,0%">
+    <GradientStop Offset="0" Color="{StaticResource os7_ititle}" />
+    <GradientStop Offset="1" Color="{StaticResource os7_ititle2}" />
+  </LinearGradientBrush>
 
 </ResourceDictionary>

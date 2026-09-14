@@ -1,3 +1,4 @@
+using System.Globalization;
 using OS7.App.SoftwareUpdate.Model;
 
 namespace OS7.App.SoftwareUpdate.ViewModels;
@@ -95,7 +96,34 @@ public sealed class ReleaseRow : ViewModelBase
 
 	public string Version => Release.Version;
 
-	public string Released => Release.Released ?? string.Empty;
+	/// <summary>
+	/// The release date, as a date. The full value is in the detail pane.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// FORMATTING IS PRESENTATION, NOT POLICY, so doing it here does not cross
+	/// G3. What is NOT done here is deciding anything about the release from it.
+	/// </para>
+	/// <para>
+	/// It arrives already mangled, and the mangling is upstream: the descriptor
+	/// states an ISO-8601 timestamp, `ConvertFrom-Json` turns that into a
+	/// `[datetime]`, and `Get-OS7Release`'s `[string]` cast then renders it in
+	/// the MACHINE's culture — so an operator in Berlin and one in Boston get
+	/// different text out of the same signed file. Parsing it back is a repair,
+	/// and it is deliberately tolerant: current culture first (which is what
+	/// produced it), then invariant and ISO, then give up and show whatever
+	/// arrived rather than an empty cell.
+	/// </para>
+	/// <para>
+	/// The right fix is one layer down — `Get-OS7Release` emitting a
+	/// round-trippable string — and it is recorded as owed rather than made
+	/// here, because a cmdlet's output shape is not a window's to change.
+	/// </para>
+	/// </remarks>
+	public string Released => FormatDate(Release.Released);
+
+	/// <summary>The unrepaired value, for the detail pane.</summary>
+	public string ReleasedRaw => Release.Released ?? string.Empty;
 
 	public string Channel => Release.Channel ?? string.Empty;
 
@@ -166,6 +194,64 @@ public sealed class ReleaseRow : ViewModelBase
 		}
 
 		return ReleaseBlock.None;
+	}
+
+	/// <summary>
+	/// A release date as a date: ISO, because that is the form this repository
+	/// writes dates in everywhere, and because it sorts and does not depend on
+	/// where the machine thinks it is.
+	/// </summary>
+	/// <summary>
+	/// The renderings this product actually meets, after the two culture
+	/// attempts have failed.
+	/// </summary>
+	private static readonly string[] ExplicitFormats =
+	{
+		"yyyy-MM-ddTHH:mm:ssZ", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-dd",
+		"dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy",
+		"MM/dd/yyyy HH:mm:ss", "MM/dd/yyyy",
+	};
+
+	public static string FormatDate(string? value)
+	{
+		if (string.IsNullOrWhiteSpace(value))
+		{
+			return string.Empty;
+		}
+
+		const DateTimeStyles Styles =
+			DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AdjustToUniversal;
+
+		// CURRENT CULTURE FIRST, and that ordering is the whole of the
+		// disambiguation. The string was rendered by a [string] cast on THIS
+		// machine, so this machine's culture is the one that produced it — and
+		// it is the only thing that can tell 05/06/2026 (May 6th in en-US,
+		// 5 June in en-GB) apart. Nothing downstream can recover that from the
+		// text, which is the real argument for fixing it in Get-OS7Release
+		// rather than here.
+		if (DateTime.TryParse(value, CultureInfo.CurrentCulture, Styles, out var local))
+		{
+			return local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+		}
+
+		if (DateTime.TryParse(value, CultureInfo.InvariantCulture, Styles, out var invariant))
+		{
+			return invariant.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+		}
+
+		// Then the shapes this product actually meets, spelled out rather than
+		// left to a culture list: OS/7's own ISO, and the German rendering,
+		// which an operator on a de-DE machine gets and a check running in an
+		// en-US container would otherwise never see.
+		if (DateTime.TryParseExact(value, ExplicitFormats, CultureInfo.InvariantCulture,
+			    Styles, out var exact))
+		{
+			return exact.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+		}
+
+		// Unparseable. Show what arrived rather than an empty cell: a value
+		// nobody expected is information, and a blank is not.
+		return value;
 	}
 
 	/// <summary>

@@ -251,6 +251,33 @@ public static class SelfTest
 			ReleaseRow.FormatSize(0) == "—");
 		Check("something under a mebibyte is shown in KiB",
 			ReleaseRow.FormatSize(4096) == "4 KiB");
+
+		Console.Error.WriteLine();
+		Console.Error.WriteLine("  A release date is a date, whatever shape it arrives in");
+
+		// It arrives already rendered in the machine's culture, because
+		// Get-OS7Release does [string] over a value ConvertFrom-Json made a
+		// [datetime]. Both shapes must come back as the same ISO date.
+		Check("an ISO timestamp becomes an ISO date",
+			ReleaseRow.FormatDate("2026-09-14T15:04:30Z") == "2026-09-14");
+		Check("a US-rendered timestamp becomes the same ISO date",
+			ReleaseRow.FormatDate("09/14/2026 15:04:30") == "2026-09-14");
+		Check("and so does a German-rendered one",
+			ReleaseRow.FormatDate("14.09.2026 15:04:30") == "2026-09-14");
+		Check("something that is not a date is shown as it arrived, not blanked",
+			ReleaseRow.FormatDate("whenever") == "whenever");
+		Check("and nothing stays nothing", ReleaseRow.FormatDate(null) == string.Empty);
+
+		// THE LIMIT, ASSERTED SO IT IS NOT MISTAKEN FOR A BUG LATER. A date
+		// whose day is 12 or less is genuinely ambiguous as text — 05/06/2026
+		// is May 6th to en-US and 5 June to en-GB — and only the culture that
+		// RENDERED it can say which. On a machine whose culture is not that
+		// one, this repair reads it as the current culture does, and is
+		// silently wrong. That is why fixing Get-OS7Release is owed rather
+		// than optional.
+		var ambiguous = ReleaseRow.FormatDate("05/06/2026");
+		Check("an ambiguous date still produces SOMETHING rather than falling through",
+			ambiguous.StartsWith("2026-", StringComparison.Ordinal));
 	}
 
 	// ----------------------------------------------------------- unit names

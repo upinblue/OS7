@@ -8266,3 +8266,57 @@ machine run found it; a grep prevents the next one.
 generated member that you can legally redefine is a trap, because redefining it
 silently drops the half of its work you did not know about.* The compiler has no
 opinion, and neither does anything downstream until a person clicks something.
+
+---
+
+## #153 — a global `TextBlock` foreground disabled every disabled state in the product
+
+**Found 2026-09-14 by looking at a 4× crop of two screenshots side by side**,
+which is the only way it could have been found: a button that was correctly
+disabled, correctly refused its click, and was drawn in exactly the same black
+as an enabled one.
+
+The design system had this, and it looks obviously right:
+
+```xml
+<Style Selector="TextBlock">
+  <Setter Property="Foreground" Value="{DynamicResource os7_text_brush}" />
+  ...
+</Style>
+```
+
+and the Button control theme had this, which is also obviously right:
+
+```xml
+<Style Selector="^:disabled">
+  <Setter Property="Foreground" Value="{StaticResource os7_graytext_brush}" />
+</Style>
+```
+
+**A STYLE SETTER BEATS AN INHERITED VALUE.** The button's disabled `Foreground`
+was set correctly and inherited down towards the text — and the global
+`TextBlock` style then overrode it on the way, because an inherited value loses
+to any style that targets the element directly. Every `TextBlock` in the
+product, including the one inside a disabled button's `ContentPresenter`, was
+pinned to `os7_text`.
+
+**Two applications shipped it.** Software Update's *Install* button is disabled
+whenever nothing is installable, which on a development-signed channel is
+always, and it looked pressable throughout the machine run that measured
+everything else about it. Nobody noticed, because "disabled" is a thing you
+check by clicking, and clicking it correctly did nothing.
+
+**The fix is to stop setting it there**: `Foreground` moves to the `Window`
+style and is inherited, which leaves room for a control with its own opinion —
+a disabled button, a selected row — to win. Every `ContentPresenter` in a
+control template also gained `Foreground="{TemplateBinding Foreground}"`, so the
+control's own value reaches its text rather than relying on inheritance alone.
+
+**The rule to carry:** *in a styling system with inheritance, a global setter on
+a leaf element is not a default — it is an override of everything above it.*
+Defaults belong on the container. And a state that is only visible as a colour
+is a state no test asserts: none of the four checks in this repository could
+have caught this, and the one instrument that did was a person looking at two
+pictures.
+
+---

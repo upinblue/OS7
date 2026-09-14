@@ -120,17 +120,9 @@ public sealed class UpdateRunner
 			"Import-Module Systemd -ErrorAction Stop; "
 			+ $"Start-SystemdUnit -Name '{unit}' -Confirm:$false | Out-Null";
 
-		var (exitCode, _, stderr) = await _cli.RunScriptAsync(script, ct).ConfigureAwait(false);
+		var result = await _cli.Shell.RunAsync(script, ct).ConfigureAwait(false);
 
-		if (exitCode == 0)
-		{
-			return null;
-		}
-
-		var message = stderr.Trim();
-		return message.Length > 0
-			? message
-			: $"the update unit {unit} could not be started, and nothing said why.";
+		return result.Ok ? null : result.Message;
 	}
 
 	/// <summary>Where it has got to, asked of systemd and of the journal.</summary>
@@ -151,17 +143,16 @@ public sealed class UpdateRunner
 			+ "  Latest      = [string]($j | Select-Object -Last 1 -ExpandProperty Message) "
 			+ "} | ConvertTo-Json -Depth 3";
 
-		var (exitCode, stdout, stderr) = await _cli.RunScriptAsync(script, ct)
-			.ConfigureAwait(false);
+		var result = await _cli.Shell.RunAsync(script, ct).ConfigureAwait(false);
 
-		if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+		if (!result.Ok || string.IsNullOrWhiteSpace(result.Stdout))
 		{
-			return new UpdateProgress(string.Empty, string.Empty, string.Empty, stderr.Trim());
+			return new UpdateProgress(string.Empty, string.Empty, string.Empty, result.Stderr);
 		}
 
 		try
 		{
-			using var document = JsonDocument.Parse(stdout);
+			using var document = JsonDocument.Parse(result.Stdout);
 			var root = document.RootElement;
 
 			return new UpdateProgress(

@@ -31,6 +31,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OS7.Ui\OS7.Ui.csproj" />
+    <ProjectReference Include="..\OS7.Shell\OS7.Shell.csproj" />
   </ItemGroup>
 
 </Project>

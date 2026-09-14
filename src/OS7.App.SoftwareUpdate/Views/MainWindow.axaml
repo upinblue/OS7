@@ -5,8 +5,10 @@
         x:Class="OS7.App.SoftwareUpdate.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Software Update"
-        Width="640" Height="560"
-        MinWidth="520" MinHeight="420"
+        Width="640"
+        MinWidth="520"
+        SizeToContent="Height"
+        MinHeight="420" MaxHeight="760"
         WindowStartupLocation="CenterScreen">
 
   <!--
@@ -21,7 +23,12 @@
     from these", and an Avalonia application is exactly such a client.
   -->
 
-  <Grid Margin="{DynamicResource os7_window_padding}" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+  <!-- THE LIST ROW IS Auto, NOT *, and the window sizes to its content.
+       With `*` and a fixed 560px height, two releases left half the window
+       empty white - which reads as "something failed to load" rather than as
+       "there are two". It grows to the list and stops at MaxHeight, after
+       which the list scrolls. -->
+  <Grid Margin="{DynamicResource os7_window_padding}" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
 
     <!-- ============================================================ header -->
     <StackPanel Grid.Row="0" Spacing="4">
@@ -49,6 +56,7 @@
 
     <!-- ============================================================== list -->
     <ListBox Grid.Row="2"
+             MinHeight="72" MaxHeight="300"
              ItemsSource="{Binding Rows}"
              SelectedItem="{Binding SelectedRow}">
       <ListBox.ItemTemplate>
@@ -75,11 +83,15 @@
                     Theme="{DynamicResource os7_sunken_pane}"
                     Margin="0,10,0,0"
                     Padding="{DynamicResource os7_pane_padding}"
-                    Height="130"
+                    MinHeight="130" MaxHeight="190"
                     IsVisible="{Binding HasSelection}">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="5">
           <TextBlock Text="{Binding SelectedRow.Status}" TextWrapping="Wrap" />
+          <!-- The full timestamp lives here, where there is room for it. The
+               column above shows the date alone. -->
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="{Binding SelectedRow.ReleasedRaw, StringFormat='Released: {0}'}" />
           <TextBlock Classes="muted" TextWrapping="Wrap"
                      Text="{Binding SelectedRow.Release.Suite, StringFormat='Suite: {0}'}" />
           <TextBlock Classes="muted" TextWrapping="Wrap"

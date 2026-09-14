@@ -60,6 +60,7 @@
                         InnerTopLeft="{StaticResource os7_light_brush}"
                         InnerBottomRight="{StaticResource os7_shadow_brush}">
           <ContentPresenter Name="PART_ContentPresenter"
+                            Foreground="{TemplateBinding Foreground}"
                             Content="{TemplateBinding Content}"
                             ContentTemplate="{TemplateBinding ContentTemplate}"
                             HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -103,6 +104,7 @@
                           InnerTopLeft="{StaticResource os7_light_brush}"
                           InnerBottomRight="{StaticResource os7_shadow_brush}">
             <ContentPresenter Name="PART_ContentPresenter"
+                              Foreground="{TemplateBinding Foreground}"
                               Content="{TemplateBinding Content}"
                               ContentTemplate="{TemplateBinding ContentTemplate}"
                               HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -151,6 +153,7 @@
                   IsVisible="False" />
           </ui:BevelBorder>
           <ContentPresenter Name="PART_ContentPresenter"
+                            Foreground="{TemplateBinding Foreground}"
                             Content="{TemplateBinding Content}"
                             ContentTemplate="{TemplateBinding ContentTemplate}"
                             VerticalAlignment="Center" />
@@ -210,6 +213,7 @@
                 Background="{TemplateBinding Background}"
                 Padding="{TemplateBinding Padding}">
           <ContentPresenter Name="PART_ContentPresenter"
+                            Foreground="{TemplateBinding Foreground}"
                             Content="{TemplateBinding Content}"
                             ContentTemplate="{TemplateBinding ContentTemplate}"
                             HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"

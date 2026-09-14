@@ -1,0 +1,11 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:themes="clr-namespace:Avalonia.Themes.Simple;assembly=Avalonia.Themes.Simple"
+             x:Class="OS7.App.Versions.App">
+
+  <Application.Styles>
+    <themes:SimpleTheme />
+    <StyleInclude Source="avares://OS7.Ui/Theme/Os7Theme.axaml" />
+  </Application.Styles>
+
+</Application>

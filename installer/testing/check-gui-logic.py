@@ -1,39 +1,28 @@
 #!/usr/bin/env python3
 """
-The Software Update application's DECISIONS, and the layer it is not allowed to
-reach through. No VM, no machine, no display.
+What OS/7's GUI applications are allowed to reach, and the decisions they make.
+No VM, no machine, no display.
 
-    ./check-gui-logic.py                      # the layer rule alone, seconds
-    ./check-gui-logic.py --docker os7-build:amd64   # and the app's own self-test
-    ./check-gui-logic.py --self-test          # prove the layer rule FIRES
+    ./check-gui-logic.py                            # the layer rules, seconds
+    ./check-gui-logic.py --docker os7-build:amd64   # and each app's self-test
+    ./check-gui-logic.py --self-test                # prove the rules FIRE
 
 WHY IT EXISTS. docs/GUI-APPS-PLAN.md G3: an OS/7 application decides nothing a
 cmdlet has not already decided. `Update-OS7` is RELEASE-AND-UPDATE-PLAN §4.2 as
-C10 corrects it - the clone, both repositories, the metapackage, the migrations,
-the initramfs, the menu, the driver gate, the activation, the pruning - and a
-C# re-implementation of any part of it would be a THIRD language for one
-specification. That is BUILD-NOTES #66's shape, and P3 is currently spending two
-steps deleting its second occurrence.
+C10 corrects it, and a C# re-implementation of any part of it would be a THIRD
+language for one specification — BUILD-NOTES #66's shape, and the one P3 is
+spending two steps deleting from the netplan renderer.
 
-TWO HALVES, AND THEY ARE DIFFERENT KINDS OF CHECK.
+CAPABILITIES ARE DECLARED PER PROJECT, NOT FORBIDDEN GLOBALLY, and that is
+docs/VERSIONS-PLAN.md V10. The first version of this file said no application
+may touch the filesystem, which was right for Software Update and wrong the
+moment Versions existed — a file-history window whose subject IS the filesystem.
+A blanket rule with a quiet exception carved into it stops meaning anything, so
+each project states what it may reach and WHY, the default is nothing, and the
+grant is as narrow as the file list that needs it.
 
-  The LAYER rule, here: the application may start no process but `pwsh`, may
-  touch no file, and may not name `systemctl`, `zfs`, `apt` or their kind. It is
-  checked on the SOURCE and needs nothing installed. Note what it is NOT: it
-  does not forbid MENTIONING a path in a sentence an operator reads -
-  "/var/log/os7/update.log has the whole run" is the most useful half of an
-  error message. It forbids OPENING one. The rule is about the action.
-
-  The DECISIONS, in the application's own `--self-test`, the way
-  `os7-setup --self-test` works: which sentence a blocked release gets, that
-  Development is not part of Applicable, that versions sort as versions, that
-  the button counts what it will do. That half needs .NET and therefore Docker.
-  It found a real defect the first time it ran - .NET's `$` matches before a
-  trailing newline, so a version could have carried one into a systemd unit
-  name (BUILD-NOTES #151).
-
-WHAT NEITHER HALF CHECKS: anything about how the window LOOKS. No window is
-constructed by either. O-G1 is owed and nothing here narrows it.
+WHAT NO RULE HERE CHECKS: anything about how a window LOOKS. None is
+constructed. O-G1 was answered by a machine and O-V1 by a machine, not by this.
 """
 import os
 import re
@@ -46,8 +35,40 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 SRC = os.environ.get("OS7_SCAN_ROOT", os.path.join(REPO, "src"))
 
-# The one file allowed to start a process, because it is the surface (G4).
-CLI_FILE = os.path.join("OS7.App.SoftwareUpdate", "Services", "Os7Cli.cs")
+# ---------------------------------------------------------------------------
+# WHAT EACH PROJECT MAY REACH. The default is nothing; every grant names the
+# files it applies to and the reason it exists.
+# ---------------------------------------------------------------------------
+CAPABILITIES = {
+    "OS7.Shell": {
+        "why": "the one way an application reaches the PowerShell surface (G4)",
+        "start_process": ["PowerShellRunner.cs"],
+        "open_files": [],
+    },
+    "OS7.Ui": {
+        "why": "the design system: control themes and one drawing primitive",
+        "start_process": [],
+        "open_files": [],
+    },
+    "OS7.App.SoftwareUpdate": {
+        "why": "a front-end over Get-OS7Release and a systemd unit; it has no "
+               "business touching a file",
+        "start_process": [],
+        "open_files": [],
+    },
+    "OS7.App.Versions": {
+        "why": "the filesystem IS its subject (VERSIONS-PLAN V10): the kernel's "
+               "mount table, one stat per snapshot, and reading a file the "
+               "operator already owns",
+        "start_process": [],
+        "open_files": [
+            "Services/MountTable.cs",     # /proc/self/mountinfo
+            "Services/TextPreview.cs",    # the preview of an old version
+            "Services/VersionLoader.cs",  # one stat per snapshot
+            "Views/MainWindow.axaml.cs",  # Copy to… writes the copy
+        ],
+    },
+}
 
 # Programs an OS/7 application must reach through the PowerShell surface rather
 # than run itself. `pwsh` is deliberately absent: it IS the surface.
@@ -56,7 +77,6 @@ FORBIDDEN_PROGRAMS = (
     "pkexec", "sudo", "chroot", "cryptsetup", "grub-", "update-initramfs",
 )
 
-# Reaching the filesystem at all. The application has no business doing it.
 FILE_ACCESS = re.compile(
     r"\b(File|Directory|FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo)\s*\.")
 
@@ -89,6 +109,15 @@ def strip_comments(path, text):
     return re.sub(r"//[^\n]*", blank, text)
 
 
+def projects(scan_root):
+    """Every project directory under the scan root, in order."""
+    if not os.path.isdir(scan_root):
+        return []
+    return sorted(
+        name for name in os.listdir(scan_root)
+        if os.path.isdir(os.path.join(scan_root, name)))
+
+
 def source_files(root):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in ("bin", "obj")]
@@ -97,94 +126,93 @@ def source_files(root):
                 yield os.path.join(dirpath, name)
 
 
-def can_invoke(path, text):
+def granted(project, capability, relative):
+    """Whether this file holds this capability."""
+    grants = CAPABILITIES.get(project)
+    if grants is None:
+        return False
+    allowed = grants.get(capability, [])
+    return any(relative.replace(os.sep, "/").endswith(a) for a in allowed)
+
+
+def can_invoke(text):
     """
     Whether this file is able to run anything at all.
 
-    The forbidden-program scan applies HERE and nowhere else, and that is not a
-    loophole - it is what makes the rule about the action rather than the word.
-    ReleaseRow.cs contains the string `sudo pwsh -c 'Update-OS7 ...'` because
-    that is the sentence an operator reads when a release is not signed for
-    production, and it is the same form BUILD-NOTES #148 requires every refusal
-    to carry. Flagging it would mean the fix is to stop telling operators how to
-    do the thing, which makes the product worse to satisfy a grep.
-
-    Soundness comes from the OTHER rule: only Os7Cli.cs may start a process. So
-    the set of files that can invoke anything is small, computed rather than
-    listed, and grows only when somebody adds a call - at which point this scan
-    reaches the new file automatically.
+    The forbidden-program scan applies HERE and nowhere else, which is what
+    makes the rule about the action rather than the word: ReleaseRow.cs contains
+    `sudo pwsh -c 'Update-OS7 …'` because that is the sentence #148 requires a
+    refusal to carry, and flagging it would mean the fix is to stop telling
+    operators the command that works.
     """
-    return ("RunScriptAsync(" in text
-            or "ProcessStartInfo" in text
-            or "Process.Start" in text)
+    return ("RunAsync(" in text or "ProcessStartInfo" in text or "Process.Start" in text)
 
 
-def layer_rule(scan_root):
-    print("  1. The application reaches the machine only through PowerShell")
+def layer_rules(scan_root):
+    print("  1. Every project reaches only what it has declared")
 
-    programs = []
-    files = []
-    processes = []
-    invokers = []
+    found = projects(scan_root)
+    undeclared = [p for p in found if p not in CAPABILITIES]
+    check(not undeclared,
+          "every project under src/ declares its capabilities",
+          ", ".join(undeclared) if undeclared else ", ".join(found))
 
-    for path in source_files(scan_root):
-        relative = os.path.relpath(path, scan_root)
-        text = strip_comments(path, read(path))
-        invoking = can_invoke(path, text)
+    programs, files, processes = [], [], []
 
-        if invoking:
-            invokers.append(relative)
+    for project in found:
+        root = os.path.join(scan_root, project)
 
-        for number, line in enumerate(text.splitlines(), start=1):
-            if invoking:
+        for path in source_files(root):
+            relative = os.path.relpath(path, root)
+            text = strip_comments(path, read(path))
+
+            if can_invoke(text):
                 for program in FORBIDDEN_PROGRAMS:
-                    if program in line:
-                        programs.append(f"{relative}:{number} {program.strip()}")
+                    if program in text:
+                        programs.append(f"{project}/{relative} names {program.strip()}")
 
-            if FILE_ACCESS.search(line):
-                files.append(f"{relative}:{number} {FILE_ACCESS.search(line).group(0)}")
+            for number, line in enumerate(text.splitlines(), start=1):
+                if FILE_ACCESS.search(line) and not granted(project, "open_files", relative):
+                    files.append(f"{project}/{relative}:{number}")
 
-            if PROCESS_START.search(line) and relative != CLI_FILE:
-                processes.append(f"{relative}:{number}")
+                if PROCESS_START.search(line) and not granted(project, "start_process", relative):
+                    processes.append(f"{project}/{relative}:{number}")
 
     check(not programs,
-          "no file that can invoke anything names systemctl, zfs, apt or their kind",
+          "nothing that can invoke anything names systemctl, zfs, apt or their kind",
           "; ".join(programs[:4]) if programs else "")
 
-    check(len(invokers) <= 2,
-          "the set of files that can invoke anything is still small",
-          ", ".join(sorted(invokers)))
-
     check(not files,
-          "no application file opens a file",
+          "no file is opened outside a project that declared it may",
           "; ".join(files[:4]) if files else "")
 
     check(not processes,
-          f"only {CLI_FILE} starts a process",
+          "no process is started outside a project that declared it may",
           "; ".join(processes[:4]) if processes else "")
 
+    # The grant is only as good as its narrowness: a project that declared
+    # everything would pass the rules above and mean nothing.
+    for project, grants in sorted(CAPABILITIES.items()):
+        total = len(grants.get("open_files", [])) + len(grants.get("start_process", []))
+        if total:
+            check(total <= 6,
+                  f"{project}'s grant is still narrow — {grants['why']}",
+                  f"{total} file(s)")
+
+
+def no_handwritten_initialize(scan_root):
     print()
     print("  2. No view hand-writes InitializeComponent")
 
     # BUILD-NOTES #152. Avalonia GENERATES InitializeComponent() for a partial
-    # class with a matching .axaml, and that generated method does two things:
-    # loads the XAML and assigns every x:Name'd control to its field. A
-    # hand-written
-    #
-    #     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
-    #
-    # compiles, shadows it, does the first half and not the second. The fields
-    # stay null, the constructor throws NullReferenceException, and the
-    # application dies before a window exists — with a green build, a green
-    # self-test, and nothing visible to an operator but a menu entry that does
-    # nothing. It cost a machine run to find; it costs a grep to prevent.
+    # class with a matching .axaml, and the generated one loads the XAML AND
+    # assigns every x:Name'd control to its field. A hand-written one compiles,
+    # shadows it, does the first half, and leaves every field null — so the
+    # window dies in its constructor and an operator sees a menu entry that does
+    # nothing. Green build, green self-test, green layer rules.
     handwritten = []
     for path in source_files(scan_root):
-        if not path.endswith(".cs"):
-            continue
-        # Only files that ARE a XAML code-behind: App.axaml.cs legitimately
-        # overrides Initialize(), which is a different method entirely.
-        if not os.path.exists(path[: -len(".cs")]):
+        if not path.endswith(".cs") or not os.path.exists(path[: -len(".cs")]):
             continue
         text = strip_comments(path, read(path))
         for number, line in enumerate(text.splitlines(), start=1):
@@ -195,22 +223,36 @@ def layer_rule(scan_root):
           "InitializeComponent is left to the generator, which is what assigns the fields",
           "; ".join(handwritten) if handwritten else "")
 
+
+def surface_rules(scan_root):
     print()
-    print("  3. The surface it does reach is the OS7 and Systemd modules")
+    print("  3. The surface they reach is the OS7, Zfs and Systemd modules")
 
-    cli = os.path.join(scan_root, CLI_FILE)
-    runner = os.path.join(scan_root, "OS7.App.SoftwareUpdate", "Services", "UpdateRunner.cs")
+    def at(*parts):
+        return os.path.join(scan_root, *parts)
 
-    if os.path.exists(cli):
-        text = read(cli)
-        check("Get-OS7Release" in text, "releases come from Get-OS7Release")
+    shell = at("OS7.Shell", "PowerShellRunner.cs")
+    if os.path.exists(shell):
+        text = read(shell)
         check("-NonInteractive" in text and "-NoProfile" in text,
               "pwsh is invoked non-interactively and without a profile")
         check("ArgumentList" in text,
               "arguments are passed as a list, never as one command line")
+        # The two things a machine taught, which a second copy would forget.
+        check("PSStyle" in text and "PlainText" in text,
+              "PowerShell is told to render plain text, so no ANSI reaches a window")
+        check("x1B" in text or "1B" in text,
+              "and the escapes are stripped anyway, for a pwsh that ignores it")
+    else:
+        check(False, "OS7.Shell/PowerShellRunner.cs is where it is expected", shell)
+
+    cli = at("OS7.App.SoftwareUpdate", "Services", "Os7Cli.cs")
+    if os.path.exists(cli):
+        check("Get-OS7Release" in read(cli), "releases come from Get-OS7Release")
     else:
         check(False, "Os7Cli.cs is where it is expected", cli)
 
+    runner = at("OS7.App.SoftwareUpdate", "Services", "UpdateRunner.cs")
     if os.path.exists(runner):
         text = read(runner)
         check("Start-SystemdUnit" in text,
@@ -220,62 +262,70 @@ def layer_rule(scan_root):
     else:
         check(False, "UpdateRunner.cs is where it is expected", runner)
 
+    zfs = at("OS7.App.Versions", "Services", "ZfsCli.cs")
+    if os.path.exists(zfs):
+        text = read(zfs)
+        check("Get-ZfsSnapshot" in text,
+              "snapshot times come from the Zfs module, not from stat (V2, M-V11)")
+        check("IsWellFormedDataset" in text,
+              "and a dataset name is validated before it reaches a script")
+    else:
+        check(False, "ZfsCli.cs is where it is expected", zfs)
+
+
+def refusal_rules(scan_root):
     print()
-    print("  4. What it REFUSES, it refuses the way the rest of the product does")
+    print("  4. What they REFUSE, they refuse the way the rest of the product does")
 
     row = os.path.join(scan_root, "OS7.App.SoftwareUpdate", "ViewModels", "ReleaseRow.cs")
     if os.path.exists(row):
         text = strip_comments(row, read(row))
-        # BUILD-NOTES #148: a refusal names the command that would work. The
-        # window has no -AllowDevelopment of its own on purpose - the switch
-        # exists so an operator says out loud that they are installing
-        # something of unknown provenance, and a checkbox is not that sentence.
+        # BUILD-NOTES #148: a refusal names the command that would work.
         check("sudo pwsh -c" in text,
               "a development release is refused with the sudo pwsh -c form #148 requires")
-        check("-AllowDevelopment" in text,
-              "and the switch that would work is named")
+        check("-AllowDevelopment" in text, "and the switch that would work is named")
     else:
         check(False, "ReleaseRow.cs is where it is expected", row)
 
+    store = os.path.join(scan_root, "OS7.App.Versions", "Services", "VersionStore.cs")
+    if os.path.exists(store):
+        text = read(store)
+        # V6: an empty list means "nothing changed" and no-history means
+        # "nothing is being kept". Those are opposite facts.
+        check("NotZfs" in text and "NoSnapshots" in text and "NotFound" in text,
+              "a path with no history says WHICH kind of none it is (V6)")
+    else:
+        check(False, "VersionStore.cs is where it is expected", store)
 
-def app_self_test(image):
+
+def app_self_tests(image):
     print()
-    print(f"  5. The application's own decisions, in {image}")
+    print(f"  5. Each application's own decisions, in {image}")
 
-    command = (
-        "cd /work/src/OS7.App.SoftwareUpdate && "
-        "dotnet build -c Release -v quiet --nologo >/dev/null 2>&1 && "
-        "cd bin/Release/net10.0/linux-x64 && ./os7-software-update --self-test"
-    )
+    for project, binary in (
+        ("OS7.App.SoftwareUpdate", "os7-software-update"),
+        ("OS7.App.Versions", "os7-versions"),
+    ):
+        command = (
+            f"cd /work/src/{project} && "
+            "dotnet build -c Release -v quiet --nologo >/dev/null 2>&1 && "
+            f"cd bin/Release/net10.0/linux-x64 && ./{binary} --self-test"
+        )
 
-    result = subprocess.run(
-        ["docker", "run", "--rm", "-v", f"{REPO}:/work", image, "bash", "-c", command],
-        capture_output=True, text=True)
+        result = subprocess.run(
+            ["docker", "run", "--rm", "-v", f"{REPO}:/work", image, "bash", "-c", command],
+            capture_output=True, text=True)
 
-    # The application prints its own PASS/FAIL lines to stderr; they are this
-    # check's output too, indented under it rather than summarised away.
-    for line in result.stderr.splitlines():
-        if line.strip():
-            print(f"    {line}")
-
-    check(result.returncode == 0,
-          "os7-software-update --self-test passes",
-          f"exit {result.returncode}")
+        tail = [l for l in result.stderr.splitlines() if l.strip()][-1:]
+        check(result.returncode == 0,
+              f"{binary} --self-test passes",
+              "; ".join(tail) if tail else f"exit {result.returncode}")
 
 
 def self_test():
-    """Plant defects and require the layer rule to catch each one."""
-    print("OS/7 GUI logic — does the layer rule FIRE?")
+    """Plant defects and require the rules to catch each one."""
+    print("OS/7 GUI logic — do the rules FIRE?")
     print()
-
-    plants = [
-        ("a direct systemctl call is caught",
-         ("await _cli.RunScriptAsync(script, ct)",
-          'System.Diagnostics.Process.Start("systemctl", "start x");')),
-        ("opening a file is caught",
-         ("await _cli.RunScriptAsync(script, ct)",
-          'File.ReadAllText("/var/log/os7/update.log");')),
-    ]
 
     results = []
     work = tempfile.mkdtemp(prefix="os7-gui-logic-")
@@ -284,47 +334,56 @@ def self_test():
         shutil.copytree(os.path.join(REPO, "src"), planted,
                         ignore=shutil.ignore_patterns("bin", "obj"))
 
-        target = os.path.join(planted, "OS7.App.SoftwareUpdate", "Services", "UpdateRunner.cs")
-        original = read(target)
-
-        for what, (needle, injected) in plants:
-            assert needle in original, f"the planting anchor is gone: {needle}"
-            with open(target, "w", encoding="utf-8") as handle:
-                handle.write(original.replace(needle, injected + " " + needle, 1))
-
-            code = subprocess.run(
+        def run_planted():
+            return subprocess.run(
                 [sys.executable, os.path.abspath(__file__)],
                 env={**os.environ, "OS7_SCAN_ROOT": planted},
                 capture_output=True, text=True).returncode
-            results.append((what, code != 0))
 
-        with open(target, "w", encoding="utf-8") as handle:
-            handle.write(original)
+        def plant(path, needle, injected, what):
+            target = os.path.join(planted, *path)
+            original = read(target)
+            assert needle in original, f"the planting anchor is gone: {needle}"
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write(original.replace(needle, injected + "\n" + needle, 1))
+            results.append((what, run_planted() != 0))
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write(original)
 
-        # BUILD-NOTES #152, planted where it actually happened: a view writing
-        # its own InitializeComponent. This is the defect that cost a machine
-        # run, so the rule that replaces that machine run has to be shown to
-        # catch it.
-        view = os.path.join(planted, "OS7.App.SoftwareUpdate", "Views", "MainWindow.axaml.cs")
-        view_original = read(view)
+        # A project WITHOUT the grant opening a file.
+        plant(("OS7.App.SoftwareUpdate", "Services", "Os7Cli.cs"),
+              "\t\tvar result = await _shell.RunAsync",
+              '\t\tFile.ReadAllText("/etc/passwd");',
+              "opening a file where it was not granted is caught")
+
+        # A project WITHOUT the grant starting a process.
+        plant(("OS7.App.Versions", "Services", "ZfsCli.cs"),
+              "\t\tvar result = await _shell.RunAsync",
+              '\t\tSystem.Diagnostics.Process.Start("zfs", "list");',
+              "starting a process where it was not granted is caught")
+
+        # BUILD-NOTES #152, planted where it actually happened.
+        view = os.path.join(planted, "OS7.App.Versions", "Views", "MainWindow.axaml.cs")
+        original = read(view)
         anchor = "\t\tInitializeComponent();"
-        assert anchor in view_original, "the view's planting anchor is gone"
-
+        assert anchor in original, "the view's planting anchor is gone"
         with open(view, "w", encoding="utf-8") as handle:
-            handle.write(view_original.replace(
+            handle.write(original.replace(
                 anchor,
                 anchor + "\n\t}\n\n\tprivate void InitializeComponent() "
                          "=> AvaloniaXamlLoader.Load(this);\n\n\tprivate void Unused() {",
                 1))
-
-        code = subprocess.run(
-            [sys.executable, os.path.abspath(__file__)],
-            env={**os.environ, "OS7_SCAN_ROOT": planted},
-            capture_output=True, text=True).returncode
-        results.append(("a hand-written InitializeComponent is caught (#152)", code != 0))
-
+        results.append(("a hand-written InitializeComponent is caught (#152)", run_planted() != 0))
         with open(view, "w", encoding="utf-8") as handle:
-            handle.write(view_original)
+            handle.write(original)
+
+        # A project nobody declared.
+        os.makedirs(os.path.join(planted, "OS7.App.Undeclared"))
+        with open(os.path.join(planted, "OS7.App.Undeclared", "X.cs"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("public class X { }\n")
+        results.append(("a project with no declared capabilities is caught", run_planted() != 0))
+        shutil.rmtree(os.path.join(planted, "OS7.App.Undeclared"))
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -345,17 +404,20 @@ def main():
     if "--docker" in sys.argv:
         image = sys.argv[sys.argv.index("--docker") + 1]
 
-    print("OS/7 Software Update — the decisions and the layer")
+    print("OS/7 GUI applications — what they may reach, and what they decide")
     print()
 
-    layer_rule(SRC)
+    layer_rules(SRC)
+    no_handwritten_initialize(SRC)
+    surface_rules(SRC)
+    refusal_rules(SRC)
 
     if image:
-        app_self_test(image)
+        app_self_tests(image)
     else:
         print()
-        print("  5. The application's own decisions: NOT CHECKED")
-        print("     (pass --docker os7-build:amd64 — it needs .NET)")
+        print("  5. The applications' own decisions: NOT CHECKED")
+        print("     (pass --docker os7-build:amd64 — they need .NET)")
 
     print()
     if FAILS:
