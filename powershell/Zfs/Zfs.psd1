@@ -27,6 +27,7 @@
 		# Read — the whole of this is JSON from ZFS itself (plan §4)
 		'Get-Zpool', 'Get-ZpoolStatus',
 		'Get-ZfsDataset', 'Get-ZfsSnapshot', 'Get-ZfsProperty', 'Get-ZfsSpace',
+		'Get-ZfsPool',
 		# Datasets. Every one re-reads what it changed (Z3); the destructive
 		# ones prompt by default (Z7).
 		'New-ZfsDataset', 'Remove-ZfsDataset', 'Rename-ZfsDataset',

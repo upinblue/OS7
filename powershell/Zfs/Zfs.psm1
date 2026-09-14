@@ -906,6 +906,69 @@ function Get-ZfsSpace {
 	}
 }
 
+function Get-ZfsPool {
+	<#
+	.SYNOPSIS
+		The pools, and how full they are.
+
+	.DESCRIPTION
+		`zpool list` as numbers. Get-ZfsSpace answers "where did this DATASET's
+		space go"; this answers "how much room is there at all", which is a
+		different question and the one a threshold is set against.
+
+		THE JSON NAMES ARE NOT THE COLUMN NAMES, and that is measured rather
+		than assumed: ask for `-o alloc,cap` and the JSON answers with
+		`allocated` and `capacity`. Reading it by the name you asked for
+		produces nulls that look like a pool with no space used.
+
+		`Capacity` is a WHOLE PERCENT, because that is what zpool reports — it
+		is not derived from Allocated/Size here, so a caller comparing against a
+		threshold is comparing against ZFS's own number rather than a rounding
+		of it.
+
+	.PARAMETER Name
+		One pool, or all of them.
+
+	.EXAMPLE
+		Get-ZfsPool | Where-Object Capacity -ge 70
+
+	.EXAMPLE
+		(Get-ZfsPool rpool).Free
+	#>
+	[CmdletBinding()]
+	[OutputType('OS7.Zfs.Pool')]
+	param(
+		[Parameter(Position = 0, ValueFromPipelineByPropertyName)]
+		[string[]]$Name
+	)
+
+	process {
+		$zargs = @('list', '-j', '--json-int',
+			'-o', 'name,size,allocated,free,capacity,health,fragmentation')
+		if ($Name) { $zargs += $Name }
+
+		$j = Invoke-ZfsJson -Command zpool -Arguments $zargs
+		if ($null -eq $j -or -not $j.Contains('pools')) { return }
+
+		foreach ($key in $j['pools'].Keys) {
+			$pool = $j['pools'][$key]
+			$p = $pool['properties']
+
+			[pscustomobject]@{
+				PSTypeName    = 'OS7.Zfs.Pool'
+				Name          = $key
+				State         = [string]$pool['state']
+				Health        = [string](Get-ZfsRawProperty $p 'health')
+				Size          = ConvertTo-ZfsBytes (Get-ZfsRawProperty $p 'size')
+				Allocated     = ConvertTo-ZfsBytes (Get-ZfsRawProperty $p 'allocated')
+				Free          = ConvertTo-ZfsBytes (Get-ZfsRawProperty $p 'free')
+				Capacity      = [int](Get-ZfsRawProperty $p 'capacity')
+				Fragmentation = [int](Get-ZfsRawProperty $p 'fragmentation')
+			}
+		}
+	}
+}
+
 # ---------------------------------------------------------------------------
 # THE WRITE PATH (plan phase Z-3)
 #
@@ -2382,7 +2445,7 @@ function Test-ZfsModule {
 Export-ModuleMember -Function @(
 	# Read
 	'Get-Zpool', 'Get-ZpoolStatus', 'Get-ZfsDataset', 'Get-ZfsSnapshot',
-	'Get-ZfsProperty', 'Get-ZfsSpace',
+	'Get-ZfsProperty', 'Get-ZfsSpace', 'Get-ZfsPool',
 	# Datasets
 	'New-ZfsDataset', 'Remove-ZfsDataset', 'Rename-ZfsDataset',
 	'Set-ZfsProperty', 'Clear-ZfsProperty',

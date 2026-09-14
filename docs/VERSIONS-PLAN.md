@@ -7,7 +7,12 @@ change of file manager.**
 **The read half is built and has run on a machine; nothing yet changes a file.** Every `Vn` below is
 *Proposed 2026-09-14* — the foundation is not: §2 measured, on a running OS/7 machine, that every
 technical prerequisite already exists and that the snapshots this feature would read **are already
-being taken**. Decisions are V1–V14, limitations VL1–VL8. A measurement still owed is `O-V1…`.
+being taken**. Decisions are V1–V16, limitations VL1–VL8. A measurement still owed is `O-V1…`.
+
+**V15 and V16 are DECIDED and BUILT** — the storage-pressure rule (70 warn / 80 tighten / 90
+refuse, gated on whether thinning could even work) and the boot environment that is never pruned.
+§5 has them, `powershell/OS7/OS7.Storage.ps1` implements them, and
+`installer/testing/check-storage-logic.py` holds all of it at 37 checks with no ZFS.
 
 `src/OS7.App.Versions/` draws the window, reads real snapshots, and offers *Open* and *Copy to…*
 only; **§7a is what building it measured**, including the two things about the cascade that were
@@ -280,10 +285,55 @@ So there are already two consumers of one pool with no shared budget, and Versio
 3. When the pool crosses a threshold, the machine **says so** — through the existing device/health
    surface — rather than silently thinning something.
 
-**The thresholds themselves are an open question (§7, O-V3)** and this file deliberately does not
-assert numbers. The commonly cited ZFS guidance is to stay below about 80 % pool capacity, and this
-repository's rule is that received wisdom is not a measurement: what a 37 GiB `rpool` with boot
-environments, USERDATA and `DATA` actually does at 70, 80 and 90 % has not been measured here.
+### V15 — Three levels, and the destructive one has to prove it would help. Decided 2026-09-14.
+
+Owner's decision. Pool capacity, as `zpool list` reports it:
+
+| | | |
+|---|---|---|
+| **70 %** | **Warn** | Say so. Delete nothing. |
+| **80 %** | **Tighten** | Tighten the retention policy and let **sanoid** prune under it. |
+| **90 %** | **Refuse** | Retention to the floor, no new version snapshots, say so loudly. |
+
+**70 is a notice level and not a deletion level.** The ~80 % figure quoted everywhere for ZFS is
+about performance degradation, not failure; deleting a user's file history while 30 % of the disk is
+free would astonish anybody. What 70 buys is *time*.
+
+**It deletes no snapshot itself.** At 80 % it rewrites the policy sanoid prunes *by* and sanoid does
+the deleting — one thinner (§1). A pressure rule deleting "oldest first" would delete exactly the
+monthlies sanoid is trying to keep, leaving an effective retention nobody configured.
+
+**And it is gated on whether it could work.** `Get-OS7StoragePressure`'s `WouldHelp` is `$false` when
+every snapshot and every prunable boot environment together cannot reach the target — which means
+the live data is what is full, and deleting the history would cost it and change nothing. At that
+point nothing is deleted and the reason is reported. `-Force` overrides it for an operator who has
+read why. At **Refuse** the gate does not apply: every byte counts there.
+
+**The floor is `hourly=24 daily=7`**, at any pressure. A feature that silently becomes useless under
+load is worse than one that says it is under load.
+
+### V16 — The boot environment before the last update is never pruned. Decided 2026-09-14.
+
+Owner's decision, and it closes the half of **BL5** that was open. More environments may exist and
+those are subject to V15; the running one and **the newest one older than it** — the one an operator
+would boot to undo the last update — are not candidates at any pressure.
+
+**Derived from creation order, not from a marker.** Nothing writes "this is the one before the last
+update" anywhere, and a marker would be a second source of truth that an interrupted update could
+leave pointing at the wrong environment. When the running environment cannot be identified at all —
+a live medium, a container — **every** environment is protected, because refusing to prune what you
+cannot reason about is the only safe direction.
+
+A machine that freed space by deleting its own way back cannot recover from the update it made room
+for.
+
+### What is built
+
+`powershell/OS7/OS7.Storage.ps1`: `Get-OS7StorageThreshold`, `Get-OS7StoragePressure`,
+`Invoke-OS7StorageRelief`, `Get-OS7ProtectedBootEnvironment`, `Get-OS7VersionStore` — and
+`Get-ZfsPool` in the generic layer, which did not exist and which Z1 required rather than letting
+OS/7 call `zpool` itself. `installer/testing/check-storage-logic.py` holds every decision above
+against a fake pool: 37 checks, no ZFS, seconds.
 
 ---
 
@@ -338,8 +388,11 @@ environments, USERDATA and `DATA` actually does at 70, 80 and 90 % has not been 
    and is what makes the window worth opening — the old version is readable in place rather than by
    opening each one. Unmeasured is the case that will hurt: a folder of 400 photos at four points in
    time.
-3. **O-V3 — the thresholds.** At what pool capacity does an OS/7 machine want to be told, and what
-   does ZFS on this layout actually do at 70/80/90 %? Needs measuring, not citing. Tied to BL5.
+3. ~~**O-V3 — the thresholds.**~~ — **DECIDED 2026-09-14 (V15): 70 warn, 80 tighten, 90 refuse.**
+   What is STILL not measured is what ZFS on this layout actually does at those capacities: the
+   numbers are a policy arrived at by argument, and the performance behaviour behind them is
+   received wisdom rather than anything measured here. Worth a bench run of its own before a
+   `stable` release — it could change the numbers, and cannot change the shape of the rule.
 4. **O-V4 — how many snapshots before the UI stalls?** 44 listed in 16 ms. B5's policy tops out
    around 45 per dataset, so this is comfortable today — but a machine with ten users has ten
    datasets, and `zfs list -t snapshot` without `-r <dataset>` is a different cost.

@@ -831,6 +831,7 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/OS7/OS7.Domain.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Compat.Windows.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Device.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Storage.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Update.ps1 \
 		./usr/local/share/powershell/Modules/Zfs/Zfs.psd1 \
 		./usr/local/share/powershell/Modules/Zfs/Zfs.psm1 \

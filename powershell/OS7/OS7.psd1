@@ -36,6 +36,12 @@
 		# pair activated together, and the way back. Real since 2026-08-25 and
 		# walked end to end in a VM by spike S5.
 		'Get-OS7BootEnvironment', 'New-OS7BootEnvironment',
+
+		# Storage pressure (VERSIONS-PLAN §5, BACKUP-PLAN BL5)
+		'Get-OS7StorageThreshold', 'Get-OS7StoragePressure',
+		'Invoke-OS7StorageRelief', 'Get-OS7ProtectedBootEnvironment',
+		'Get-OS7VersionStore',
+
 		'Set-OS7BootEnvironment', 'Remove-OS7BootEnvironment', 'Restore-OS7',
 		# Implemented — the classic desktop, amd64 GUI mode
 		'Get-OS7Theme', 'Set-OS7Theme',

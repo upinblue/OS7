@@ -276,6 +276,39 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   OS7_MODULE_ROOT plants the defect on
                                           #   a copy and it goes RED. Seconds,
                                           #   needs only pwsh, both hosts
+./installer/testing/check-storage-logic.py # what happens when the pool fills
+                                          #   up, against a fake pool. The
+                                          #   owner's rule (VERSIONS-PLAN V15):
+                                          #   70 warns and deletes NOTHING, 80
+                                          #   tightens the retention policy and
+                                          #   lets SANOID prune under it, 90
+                                          #   refuses. One thinner, never two.
+                                          #   Two guards carry it and both are
+                                          #   checked here. The EFFECTIVENESS
+                                          #   GATE: a snapshot holds only the
+                                          #   blocks it alone needs, so a pool
+                                          #   full of LIVE data does not get
+                                          #   better by deleting history —
+                                          #   measured 1.9 MiB held against
+                                          #   2.8 MiB live — and relief is
+                                          #   REFUSED when it could not reach
+                                          #   the target, because destructive
+                                          #   and ineffective is the worst
+                                          #   outcome available. And V16: the
+                                          #   running boot environment and the
+                                          #   newest one older than it are
+                                          #   never pruned, because a machine
+                                          #   that freed space by deleting its
+                                          #   own way back cannot recover from
+                                          #   the update it made room for. The
+                                          #   first version of that rule
+                                          #   returned a List where the caller
+                                          #   expected strings, so -notcontains
+                                          #   never matched and the RUNNING
+                                          #   environment came back prunable —
+                                          #   caught on a machine, and case 4
+                                          #   is what stops it returning.
+                                          #   37 checks, no ZFS, seconds
 ./installer/testing/check-gui-tokens.py   # G9: OS/7's GUI apps have ONE palette.
                                           #   The 17 Windows 2000 constants live
                                           #   in the desktop theme's gtk.css AND

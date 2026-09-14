@@ -2850,7 +2850,7 @@ function Restore-OS7 {
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1',
-		'OS7.Compat.Windows.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
+		'OS7.Compat.Windows.ps1', 'OS7.Storage.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
 		throw [System.IO.FileNotFoundException]::new(
@@ -2866,6 +2866,11 @@ Export-ModuleMember -Function Get-OS7Version,
 	New-OS7Storage, New-OS7BootEnvironmentName,
 	Get-OS7BootEnvironment, New-OS7BootEnvironment, Set-OS7BootEnvironment,
 	Remove-OS7BootEnvironment,
+	# Storage pressure: 70 warns, 80 tightens the retention policy, 90 refuses.
+	# It deletes no snapshot itself — sanoid prunes under the policy this
+	# writes, so there is one thinner (docs/VERSIONS-PLAN.md §5).
+	Get-OS7StorageThreshold, Get-OS7StoragePressure, Invoke-OS7StorageRelief,
+	Get-OS7ProtectedBootEnvironment, Get-OS7VersionStore,
 	Get-OS7Theme, Set-OS7Theme,
 	Set-OS7Mode, Restore-OS7,
 	# The update train (docs/RELEASE-AND-UPDATE-PLAN.md §4.2 as corrected by
