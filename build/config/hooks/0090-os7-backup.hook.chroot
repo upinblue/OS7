@@ -152,6 +152,7 @@ fi
 # where `systemctl start` would not.
 systemctl enable os7-backup-firstboot.service >/dev/null 2>&1 || true
 systemctl enable os7-backup-replicate.timer >/dev/null 2>&1 || true
+systemctl enable os7-storage-relief.timer >/dev/null 2>&1 || true
 
 # CHECKED BY LOOKING FOR THE SYMLINK, not by trusting the exit code above.
 # `systemctl enable` in a chroot can fail to talk to a bus and still exit 0, and
@@ -159,12 +160,20 @@ systemctl enable os7-backup-replicate.timer >/dev/null 2>&1 || true
 missing=0
 [ -L /etc/systemd/system/multi-user.target.wants/os7-backup-firstboot.service ] || missing=1
 [ -L /etc/systemd/system/timers.target.wants/os7-backup-replicate.timer ] || missing=1
+# THE SAME BELT AND THE SAME BRACES, and this one needed measuring. The package
+# ships /usr/lib/systemd/system/timers.target.wants/os7-storage-relief.timer, and
+# on a machine that was the ONLY symlink `systemctl is-enabled` answered
+# "disabled" while `systemctl list-dependencies timers.target` listed the unit —
+# so it runs at boot and reports that it will not. An administrator who checks
+# the obvious verb would conclude the automatic storage relief is off.
+[ -L /etc/systemd/system/timers.target.wants/os7-storage-relief.timer ] || missing=1
 if [ "${missing}" -ne 0 ]; then
 	echo "OS/7 hook 0090: systemctl enable did not leave the [Install] symlinks:" >&2
 	ls -la /etc/systemd/system/multi-user.target.wants/ /etc/systemd/system/timers.target.wants/ >&2 2>&1 || true
 	exit 1
 fi
-echo "OS/7 hook 0090:   os7-backup-firstboot.service and os7-backup-replicate.timer enabled"
+echo "OS/7 hook 0090:   os7-backup-firstboot.service, os7-backup-replicate.timer"
+echo "OS/7 hook 0090:   and os7-storage-relief.timer enabled"
 
 # sanoid.timer is enabled by the PACKAGE's postinst, unconditionally, and its
 # services are gated on a config file that does not exist yet. Reported rather

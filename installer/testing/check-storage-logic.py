@@ -1263,6 +1263,21 @@ def automatic():
     check("ln -sfn ../os7-storage-relief.timer" in packages,
           "AND THE PACKAGE CREATES THE ENABLE SYMLINK, so it is on from a fresh "
           "install — an unenabled timer is an unplugged smoke alarm")
+
+    # BELT AND BRACES, and the braces were missing until a machine said so. With
+    # only the package's /usr/lib/.../timers.target.wants symlink,
+    # `systemctl is-enabled` answered "disabled" while
+    # `systemctl list-dependencies timers.target` listed the unit: it runs at
+    # boot and reports that it will not. An administrator checking the obvious
+    # verb would conclude the automatic relief is off.
+    hook90 = read(os.path.join(REPO, "build", "config", "hooks",
+                               "0090-os7-backup.hook.chroot"), code_only=True)
+    check("systemctl enable os7-storage-relief.timer" in hook90,
+          "and the image build enables it too, so `systemctl is-enabled` says "
+          "what is true")
+    check("/etc/systemd/system/timers.target.wants/os7-storage-relief.timer" in hook90,
+          "verified by looking for the symlink, because `systemctl enable` in a "
+          "chroot can fail to reach a bus and still exit 0")
     check("OnUnitActiveSec=" in timer and "OnBootSec=" in timer,
           "it repeats, and it runs after a boot rather than waiting a full interval")
 

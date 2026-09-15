@@ -128,6 +128,65 @@ a defect.
 
 ---
 
+## 2b. The automatic half, and the packages, on a machine — 2026-09-15
+
+The owner's requirement: **the storage must be freed automatically when the system
+needs it.** `Invoke-OS7StorageRelief` had existed for a day with 137 checks behind
+it and nothing anywhere called it.
+
+| # | Question | Answer |
+|---|---|---|
+| M-V28 | Does the packaged timer install and run? | **Yes.** `dpkg -i os7-backup`, then `systemctl start os7-storage-relief.service` → `Result=success`, and `/run/os7/storage-pressure` reads `{"Level":"Normal","Capacity":12,"Reason":"The pool is 12% full. Nothing to do."}` |
+| M-V29 | Does the login banner stay silent on a healthy machine? | **Yes** — it prints nothing at Normal, which is the whole design: a banner that says "storage: ok" at every login trains people to skip the banner |
+| M-V30 | Does dpkg own the files? | **Yes**, after a real install: `os7-backup` owns the units, the script and the banner; `os7-app-versions` owns the binary and the Nautilus extension |
+| M-V31 | **Is the timer enabled by the package alone?** | **NO, AND THAT IS THE FINDING.** See below |
+| M-V32 | Does apt pull the Nautilus binding? | **Yes**: installing `os7-app-versions` brought `python3-nautilus 4.1.0-1build1` and `gir1.2-nautilus-4.1` from the archive — the version O-V6 measured |
+| M-V33 | Does the application run on the machine? | **Yes**: `/usr/lib/os7/apps/versions/os7-versions --self-test` → 58 ok, 0 failed, from the installed package |
+
+### M-V31 — a timer that runs and reports that it will not
+
+The package ships `/usr/lib/systemd/system/timers.target.wants/os7-storage-relief.timer`,
+which is how `os7-backup` pre-enables its own units and is the pattern that
+argues against `systemctl enable` in a postinst. With that symlink and nothing
+else:
+
+```
+systemctl is-enabled os7-storage-relief.timer        →  disabled
+systemctl list-dependencies timers.target            →  ● ├─os7-storage-relief.timer
+```
+
+**Both are true.** `timers.target` wants the unit, so it is pulled in at boot and
+the automatic relief runs; `is-enabled` reports only on `/etc`-level enablement
+and answers "disabled". An administrator who checks the obvious verb would
+conclude the feature is off.
+
+The sibling timer reads `enabled` because **hook 0090 also runs `systemctl
+enable` at image build** and then verifies the `/etc` symlink exists — belt and
+braces, and the braces were missing here. The hook now enables and verifies this
+one too, and `check-storage-logic.py` §10 holds both halves.
+
+Found by asking `dpkg -S` who owned the files, which also caught a contaminated
+bench: the first install was a no-op because the version already matched, so the
+files under test were the ones this session had placed by hand an hour earlier.
+BUILD-NOTES #93's shape, in a new place.
+
+---
+
+## 2c. What the packages are
+
+| package | carries |
+|---|---|
+| `os7-backup` | `os7-storage-relief.service`/`.timer`, `/usr/libexec/os7-storage-relief`, `/etc/update-motd.d/40-os7-storage`, and `VERSIONS-PLAN.md` for the units' `Documentation=` |
+| `os7-app-versions` | the window, the `NoDisplay` desktop entry, and the GNOME Files context-menu extension over `python3-nautilus` |
+| `os7-powershell` | `$PSHOME/powershell.config.json` — `LogLevel: Error`, worth 2 MB of journal per pwsh invocation (BUILD-NOTES #160) |
+
+Both new packages build from a clean tree: `os7-app-versions_1.0.0.163_amd64.deb`
+(7.3 MB, 5 required paths present, its `--self-test` run inside the build) and
+`os7-backup_1.0.0.163_all.deb` (10 required paths present, the banner at 0755 and
+the PowerShell script at 0644 with no shebang).
+
+---
+
 ## 3. What this does NOT say
 
 * **The Versions window is unaffected**, because it has no restore verb: V7 gave
@@ -142,4 +201,13 @@ a defect.
   and its strongest assertion is the one that would have passed before V19 and
   must not now: **an owner who cannot snapshot is not refused their own file.**
 * **arm64 is unmeasured**, as always.
-* **No ISO carries any of this.** The module reached the bench by file copy.
+* **THE CONTEXT MENU HAS NEVER BEEN CLICKED, and the Restore button has never
+  been pressed.** The bench has no graphical session running — its display reads
+  "Display output is not active" — so everything about this feature that needs a
+  desktop is still owed: the entry appearing in GNOME Files, the confirmation
+  dialog, and a restore performed through the window rather than through the
+  cmdlet. What IS proven is that the packages install, the extension lands where
+  nautilus-python looks, the binding comes from the archive, and the application
+  runs on the machine.
+* **No ISO carries any of this.** The packages reached the bench as `.deb` files
+  built on the host, not as a medium somebody installed from.
