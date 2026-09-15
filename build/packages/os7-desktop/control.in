@@ -8,7 +8,8 @@ Depends: os7-base (= @OS7_VERSION@),
  os7-backup (= @OS7_VERSION@),
  os7-automation (= @OS7_VERSION@),
  os7-desktop-theme (= @OS7_VERSION@),
- os7-app-softwareupdate (= @OS7_VERSION@)
+ os7-app-softwareupdate (= @OS7_VERSION@),
+ os7-app-versions (= @OS7_VERSION@)
 Conflicts: os7-server
 Homepage: https://github.com/upinblue/os7
 Description: OS/7 — the GUI product

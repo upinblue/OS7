@@ -53,6 +53,30 @@ public partial class App : Application
 	/// is not mounted, each with its own wording and its own instruction. They
 	/// arrive here as the message and go on the screen unaltered.
 	/// </remarks>
+	/// <summary>
+	/// List this path's versions again, from scratch.
+	/// </summary>
+	/// <remarks>
+	/// A RESTORE MAKES A NEW VERSION — the state it replaced (V8/V19) — and that
+	/// is the row somebody comes back for within the minute, when they realise
+	/// they put back the wrong one. A window still showing the history from
+	/// before the change would hide exactly the entry that undoes it.
+	///
+	/// The selection is reset to the newest rather than kept: the list it
+	/// indexed into no longer exists, and the row that WAS selected is now one
+	/// position further back.
+	/// </remarks>
+	internal static async Task ReloadAsync(MainWindowViewModel model)
+	{
+		model.SelectedIndex = 0;
+		model.Entries.Clear();
+		model.Message = string.Empty;
+		model.Phase = VersionsPhase.Loading;
+
+		await LoadAsync(model, model.Path);
+		model.SelectedIndex = 0;
+	}
+
 	private static async Task LoadAsync(MainWindowViewModel model, string path)
 	{
 		var result = await new VersionLoader().LoadAsync(path).ConfigureAwait(true);

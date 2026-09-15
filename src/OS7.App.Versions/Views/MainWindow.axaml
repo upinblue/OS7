@@ -151,13 +151,21 @@
     </Grid>
 
     <!-- ============================================================ buttons -->
-    <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="Auto,*,Auto,Auto">
+    <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+      <!-- The line changed when Restore arrived, because it had said the
+           opposite and a stale reassurance is worse than none. Open and Copy
+           still change nothing; Restore says so before it does anything. -->
       <TextBlock Grid.Column="0" Classes="muted" VerticalAlignment="Center"
-                 Text="Nothing here changes this file." />
+                 Text="Open and Copy change nothing. Restore asks first." />
 
-      <Button Grid.Column="2" Name="CopyButton" Content="Copy to…"
+      <Button Grid.Column="2" Name="RestoreButton" Content="Restore…"
+              Margin="0,0,8,0" IsEnabled="{Binding CanRestore}" />
+      <Button Grid.Column="3" Name="CopyButton" Content="Copy to…"
               Margin="0,0,8,0" IsEnabled="{Binding CanOpen}" />
-      <Button Grid.Column="3" Name="OpenButton" Content="Open"
+      <!-- OPEN STAYS THE DEFAULT BUTTON, and that is deliberate: Enter is the
+           key somebody presses while looking through a list, and the verb it
+           lands on should be the one that cannot hurt (V7). -->
+      <Button Grid.Column="4" Name="OpenButton" Content="Open"
               Theme="{DynamicResource os7_default_button}"
               IsEnabled="{Binding CanOpen}" IsDefault="True" />
     </Grid>

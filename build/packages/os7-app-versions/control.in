@@ -1,0 +1,39 @@
+Package: os7-app-versions
+Version: @OS7_VERSION@
+Architecture: @OS7_ARCH@
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: dotnet-runtime-10.0, libfontconfig1, libx11-6, libice6, libsm6, python3-nautilus, os7-module (= @OS7_VERSION@)
+Recommends: os7-desktop-theme (= @OS7_VERSION@)
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 Versions — previous versions of a file, from the file manager
+ Time Machine in Windows 2000's vocabulary (docs/VERSIONS-PLAN.md): a receding
+ stack of the same window at different times, and a file's history read straight
+ out of ZFS snapshots that the machine is already taking.
+ .
+ It is a READER and never a second snapshot policy. sanoid takes the snapshots
+ and prunes them under the backup policy; this lists what exists, shows what each
+ version held, and can put one back. The times come from ZFS and the contents
+ from `.zfs/snapshot`, because a snapshot DIRECTORY's own timestamp is not the
+ snapshot's — it is the dataset root's mtime inside it, and a window that read it
+ would be confidently wrong about every entry on its timeline.
+ .
+ It implements no policy. Which versions exist and which are worth showing is
+ `Get-OS7FileVersion`'s judgement, asked over the same cmdlet an administrator
+ gets over ssh, and every refusal reaches the window in the cmdlet's own words.
+ .
+ The file manager only launches it: `os7-versions <absolute path>` is the entire
+ contract, so the GNOME Files extension here is a dozen lines and the day OS/7
+ ships a different file manager only those lines change. python3-nautilus is the
+ binding that makes the context-menu entry possible; it is an archive package,
+ which is the measurement that decided this could exist at all.
+ .
+ Restoring is the only verb that changes anything, and it is never destructive
+ without a way back: what is about to be overwritten is kept first, as a ZFS
+ snapshot where the caller may take one and otherwise by renaming the file out of
+ the way — which is what Time Machine's own "Keep Both" does, and which the owner
+ of a file can do without privilege.
+ .
+ amd64 only. arm64 is server-only and has no desktop; the cmdlets work
+ everywhere, which is why they exist.

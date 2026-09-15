@@ -246,6 +246,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 			Entries.Add(entry);
 		}
 
+		// EVERY ENTRY HAS A CAPTION, and the list is what decides the format, so
+		// the list is what assigns them. This was the loader's job until
+		// RestorePrompt started reading Caption and the self-test found it
+		// empty: a second caller had appeared, and an invariant one caller
+		// happens to establish is not an invariant.
+		VersionEntry.AssignCaptions(Entries);
+
 		if (entries.Count > 0)
 		{
 			_phase = VersionsPhase.Listing;
@@ -374,6 +381,40 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 	/// </remarks>
 	public bool CanOpen => Selected?.Version is { Exists: true, IsFolder: false };
 
+	/// <summary>
+	/// Whether the selected version can be put back over the live file.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// THE ONLY VERB HERE THAT CHANGES ANYTHING (V7), and it is offered in more
+	/// cases than <see cref="CanOpen"/>: a FOLDER can be restored even though
+	/// there is nothing sensible to open, because `Restore-OS7File` copies a
+	/// tree as readily as a file.
+	/// </para>
+	/// <para>
+	/// Not for the live file itself — restoring "Now" over now is a no-op with a
+	/// confirmation dialog in front of it — and not for a boundary row, where
+	/// there is no version to put back and the cmdlet would refuse in its own
+	/// words (V17).
+	/// </para>
+	/// </remarks>
+	public bool CanRestore =>
+		Selected?.Version is { Exists: true, IsCurrent: false };
+
+	/// <summary>
+	/// What restoring the selected version would do, in one sentence.
+	/// </summary>
+	/// <remarks>
+	/// V8/V19. It says what is KEPT as well as what is replaced, because
+	/// "this can be undone" is the most important thing about the answer and
+	/// saying it afterwards is too late to inform it. The cmdlet decides which
+	/// of the two forms it can manage; this promises only the guarantee they
+	/// share.
+	/// </remarks>
+	public string RestorePrompt =>
+		$"Replace {FileName} with the version from {Selected?.Caption}?\n\n" +
+		"What is there now is kept first, so this can be undone.";
+
 	public void GoBack() => SelectedIndex = _selectedIndex + 1;
 
 	public void GoForward() => SelectedIndex = _selectedIndex - 1;
@@ -384,6 +425,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 		{
 			nameof(Phase), nameof(Selected), nameof(Cascade), nameof(SelectedIndex),
 			nameof(CanGoBack), nameof(CanGoForward), nameof(CanOpen),
+			nameof(CanRestore), nameof(RestorePrompt),
 			nameof(Header), nameof(SubHeader), nameof(HasEntries), nameof(Oldest),
 		})
 		{

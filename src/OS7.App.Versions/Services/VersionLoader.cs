@@ -67,6 +67,61 @@ public sealed class VersionLoader
 			+ "ConvertTo-Json -Depth 4 -AsArray";
 	}
 
+	/// <summary>
+	/// The one line that puts a version back — and it is a CMDLET CALL.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// VERSIONS-PLAN V9. The window performs no restore of its own: no copy, no
+	/// rename, no snapshot. `Restore-OS7File` owns which version, what is kept
+	/// first, whether that is a ZFS snapshot or a file moved aside (V8/V19), and
+	/// every refusal — and an administrator over ssh gets the identical
+	/// behaviour, which is the whole of G3.
+	/// </para>
+	/// <para>
+	/// -Force because the live file exists and is exactly what is being
+	/// replaced; the cmdlet requires it for an in-place restore precisely so
+	/// that no caller does this by accident. The operator has already been asked
+	/// in the window's own words.
+	/// </para>
+	/// <para>
+	/// -Confirm:$false because the confirmation has HAPPENED — in a dialog the
+	/// operator could read, naming the file and the moment. A second prompt on a
+	/// stream nobody is watching would hang the run until the window gave up.
+	/// </para>
+	/// <para>
+	/// Both the path and the snapshot name go through here-strings, for the
+	/// reason ScriptFor gives: a snapshot name is ZFS's and a path is the
+	/// operator's, and neither is this application's syntax.
+	/// </para>
+	/// </remarks>
+	public static string RestoreScriptFor(string path, string snapshot)
+	{
+		return "Import-Module OS7 -ErrorAction Stop; "
+			+ "$p = @'\n" + path + "\n'@; "
+			+ "$s = @'\n" + snapshot + "\n'@; "
+			+ "Restore-OS7File -Path $p -Snapshot $s -Force -Confirm:$false | "
+			+ "Select-Object RestoredTo, SnapshotName, SafetySnapshot, SafetyCopy | "
+			+ "ConvertTo-Json -Depth 3";
+	}
+
+	/// <summary>
+	/// Put a version back, and report what the machine said either way.
+	/// </summary>
+	public async Task<string?> RestoreAsync(
+		string path, string snapshot, CancellationToken ct = default)
+	{
+		var result = await _shell
+			.RunAsync(RestoreScriptFor(path, snapshot), ct)
+			.ConfigureAwait(false);
+
+		// THE CMDLET'S OWN SENTENCE, UNALTERED (V6). "'/home/u' IS the mountpoint
+		// of rpool/USERDATA/u — name a file or a folder inside it" is written
+		// once; an application that rewrote it into "restore failed" would delete
+		// the instruction it carries.
+		return result.Ok ? null : result.Message;
+	}
+
 	public async Task<LoadResult> LoadAsync(string path, CancellationToken ct = default)
 	{
 		var result = await _shell.RunAsync(ScriptFor(path), ct).ConfigureAwait(false);

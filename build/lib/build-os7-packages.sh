@@ -1185,6 +1185,79 @@ build_os7_app_softwareupdate() {
 
 
 # ---------------------------------------------------------------------------
+# os7-app-versions - the Versions window and the file manager's way in.
+#
+# docs/VERSIONS-PLAN.md. THE APPLICATION HAS EXISTED SINCE 2026-09-14 AND HAD NO
+# PACKAGE, which meant it had never been on an image: no .desktop entry, no place
+# in os7-desktop, and nothing for hook 0022 to install - so the context-menu
+# entry the whole feature was asked for had nothing to point at. That was the
+# largest gap in §8 and nobody had written it down.
+#
+# python3-nautilus IS THE MEASUREMENT THAT MADE THIS POSSIBLE (O-V6, answered
+# 2026-09-15 against the pinned archive). The plan asked for `nautilus-python`
+# and there is no such package; the binding ships as `python3-nautilus`
+# 4.1.0-1build1 in universe, which is what `nautilus-admin` and `nautilus-compare`
+# depend on too. Asking the wrong name is why it stayed open for a day.
+# ---------------------------------------------------------------------------
+build_os7_app_versions() {
+	if [[ "${OS7_ARCH}" != "amd64" ]]; then
+		echo "    os7-app-versions: SKIPPED on ${OS7_ARCH} - arm64 is server-only"
+		return 0
+	fi
+
+	local stage; stage="$(pkg_begin os7-app-versions)"
+	local dst="${stage}/usr/lib/os7/apps/versions"
+	mkdir -p "${dst}"
+
+	echo "    os7-app-versions: publishing for linux-x64"
+	DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
+		dotnet publish "${REPO}/src/OS7.App.Versions" -c Release -r linux-x64 \
+		--self-contained false -o "${dst}" --nologo
+
+	[[ -f "${dst}/os7-versions" ]] || {
+		echo "!!! dotnet publish produced no binary" >&2; exit 1; }
+
+	# THE MODE IS DECLARED - BUILD-NOTES #117. On the Windows host's bind mount
+	# every file reads 0777, so a -x test proves nothing and pkg_finish
+	# normalises 0777 down to 0644, which would ship an application that cannot
+	# be executed.
+	chmod 0755 "${dst}/os7-versions"
+	chmod 0644 "${dst}"/*.so
+	rm -f "${dst}"/*.pdb "${dst}"/*.dbg
+
+	# THE DECISIONS ARE CHECKED WHILE THE PACKAGE IS BUILT, the way hook 0080
+	# runs os7-setup --self-test inside the chroot.
+	echo "    os7-app-versions: --self-test"
+	( cd "${dst}" && ./os7-versions --self-test >/dev/null ) || {
+		echo "!!! os7-versions --self-test FAILED" >&2; exit 1; }
+
+	# The extension is Python and nautilus-python IMPORTS it; it is never
+	# executed, so 0644 and no shebang - the same rule hook 0090 holds for the
+	# PowerShell scripts under /usr/libexec, and for the same reason.
+	if head -c 2 "${SRC}/os7-app-versions/tree/usr/share/nautilus-python/extensions/os7-versions.py" \
+		| grep -q "#!"; then
+		echo "!!! the Nautilus extension carries a shebang; it is imported, not run" >&2
+		exit 1
+	fi
+
+	# IT MUST AT LEAST PARSE. A syntax error here is invisible: Nautilus logs it
+	# and carries on with no menu entry, which looks exactly like a machine where
+	# the feature was never installed.
+	python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" \
+		"${SRC}/os7-app-versions/tree/usr/share/nautilus-python/extensions/os7-versions.py" || {
+		echo "!!! the Nautilus extension is not valid Python" >&2; exit 1; }
+
+	pkg_copyright os7-app-versions "${stage}"
+	pkg_control  os7-app-versions "${stage}" "${OS7_ARCH}"
+	pkg_finish   os7-app-versions "${stage}" "${OS7_ARCH}" \
+		./usr/lib/os7/apps/versions/os7-versions \
+		./usr/lib/os7/apps/versions/OS7.Ui.dll \
+		./usr/lib/os7/apps/versions/libSkiaSharp.so \
+		./usr/share/nautilus-python/extensions/os7-versions.py \
+		./usr/share/applications/os7-versions.desktop
+}
+
+# ---------------------------------------------------------------------------
 # os7-automation - the slice, the job template and the polkit rule.
 #
 # docs/AUTOMATION-PLAN.md phase 1. THE UNIT IS THE FENCE, and it is a package
@@ -1235,7 +1308,7 @@ build_os7_automation() {
 
 # ---------------------------------------------------------------------------
 ALL=(os7-release os7-console os7-module os7-powershell os7-backup os7-automation os7-setup
-     os7-app-softwareupdate
+     os7-app-softwareupdate os7-app-versions
      os7-base os7-server os7-desktop)
 
 WANT=( "$@" )
@@ -1251,6 +1324,7 @@ for pkg in "${WANT[@]}"; do
 		os7-automation) build_os7_automation ;;
 		os7-setup)   build_os7_setup   ;;
 		os7-app-softwareupdate) build_os7_app_softwareupdate ;;
+		os7-app-versions)       build_os7_app_versions      ;;
 		os7-base|os7-server|os7-desktop) build_metapackage "${pkg}" ;;
 		*) echo "!!! unknown package '${pkg}'. Known: ${ALL[*]}" >&2; exit 1 ;;
 	esac

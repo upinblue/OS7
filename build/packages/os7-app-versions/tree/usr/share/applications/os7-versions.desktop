@@ -1,0 +1,29 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Versions
+GenericName=Previous Versions
+Comment=Show and restore previous versions of a file
+Exec=/usr/lib/os7/apps/versions/os7-versions %f
+Icon=document-open-recent
+Terminal=false
+
+# NoDisplay=true — DELIBERATELY NOT IN THE MENU, and that is the one thing about
+# this file worth reading. `os7-versions` takes a path and does nothing useful
+# without one; a Start-menu entry would open a window that can only say "name a
+# file". The ways in are the file manager's context menu (the nautilus-python
+# extension beside this) and "Open With", which is what %f and the MimeType line
+# below are for.
+#
+# It is registered as an application at all so that the second road exists: a
+# file manager OS/7 has not met yet, or one whose extension mechanism is gone,
+# still leaves an operator able to reach this from the Open With dialog. That is
+# VERSIONS-PLAN V3's "it survives a change of file manager", written as a file
+# rather than as an intention.
+NoDisplay=true
+MimeType=application/octet-stream;inode/directory;text/plain;
+
+Categories=System;Utility;FileTools;
+Keywords=versions;history;snapshot;restore;previous;backup;timemachine;
+StartupNotify=true
+StartupWMClass=os7-versions

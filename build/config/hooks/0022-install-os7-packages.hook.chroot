@@ -101,7 +101,7 @@ fi
 # holds this list against the metapackages' Depends.
 SET=( os7-console os7-powershell os7-module os7-backup os7-automation os7-setup os7-base )
 case "${ARCH}" in
-	amd64) SET+=( os7-desktop-theme os7-app-softwareupdate os7-desktop ) ;;
+	amd64) SET+=( os7-desktop-theme os7-app-softwareupdate os7-app-versions os7-desktop ) ;;
 	*)     SET+=( os7-server ) ;;
 esac
 DEBS=()

@@ -175,6 +175,37 @@ public static class SelfTest
 		Check("a folder is not openable either — Open would hand it to a text editor",
 			new MainWindowViewModel("/x", new[] { Folder() }).CanOpen == false);
 
+		// V19 made Restore safe for an ordinary user, so the window offers it.
+		// It is offered in MORE cases than Open and in fewer than "any row".
+		var verbs = new MainWindowViewModel("/home/os7admin/Angebot.txt", new[]
+		{
+			Current(),
+			Entry("2026-09-14T20:39:05+02:00", length: 77),
+			Folder(),
+			Absent("2026-09-14T20:00:02+02:00"),
+		});
+
+		verbs.SelectedIndex = 0;
+		Check("Restore is NOT offered for the live file — putting now back over now "
+			+ "is a dialog in front of nothing", !verbs.CanRestore);
+
+		verbs.SelectedIndex = 1;
+		Check("it IS offered for an older version", verbs.CanRestore);
+		Check("and the prompt names the file and the moment",
+			verbs.RestorePrompt.Contains("Angebot.txt", StringComparison.Ordinal) &&
+			verbs.RestorePrompt.Contains("2026-09-14", StringComparison.Ordinal));
+		Check("and promises the way back BEFORE the answer, not after",
+			verbs.RestorePrompt.Contains("kept first", StringComparison.Ordinal) &&
+			verbs.RestorePrompt.Contains("undone", StringComparison.Ordinal));
+
+		verbs.SelectedIndex = 2;
+		Check("a FOLDER can be restored though it cannot be opened — the cmdlet "
+			+ "copies a tree as readily as a file", verbs.CanRestore && !verbs.CanOpen);
+
+		verbs.SelectedIndex = 3;
+		Check("and the boundary row offers nothing at all",
+			!verbs.CanRestore && !verbs.CanOpen);
+
 		var failed = new MainWindowViewModel("/proc/cpuinfo", Array.Empty<VersionEntry>())
 		{
 			Phase = VersionsPhase.Failed,
@@ -205,6 +236,25 @@ public static class SelfTest
 			script.Contains("-IncludeCurrent", StringComparison.Ordinal));
 		Check("as JSON, always an array",
 			script.Contains("-AsArray", StringComparison.Ordinal));
+
+		var restore = VersionLoader.RestoreScriptFor("/home/os7admin/Angebot.txt",
+			"autosnap_2026-09-14_18:00:02_hourly");
+
+		Check("restoring asks the cmdlet too — the window copies nothing itself",
+			restore.Contains("Restore-OS7File", StringComparison.Ordinal));
+		Check("with -Force, because the live file is exactly what is being replaced",
+			restore.Contains("-Force", StringComparison.Ordinal));
+		Check("and -Confirm:$false, because the operator was already asked in a "
+			+ "dialog they could read",
+			restore.Contains("-Confirm:$false", StringComparison.Ordinal));
+		Check("it names the snapshot rather than a date, so there is no re-picking",
+			restore.Contains("-Snapshot $s", StringComparison.Ordinal));
+		Check("and it asks for what was kept, which is the way back from THIS restore",
+			restore.Contains("SafetySnapshot", StringComparison.Ordinal) &&
+			restore.Contains("SafetyCopy", StringComparison.Ordinal));
+		Check("the snapshot name reaches PowerShell inside a here-string as well",
+			restore.Contains("@'\n" + "autosnap_2026-09-14_18:00:02_hourly",
+				StringComparison.Ordinal));
 
 		// A filename may contain anything but NUL and /. A here-string with
 		// single quotes cannot be closed from inside by any of it.

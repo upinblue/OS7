@@ -22,8 +22,9 @@ not to refuse them, nor to grant them the right, but **to keep what is about to 
 the strongest means available where it stands**, which for an unprivileged owner is the one Time
 Machine itself uses: rename the file aside instead of destroying it.
 
-`src/OS7.App.Versions/` draws the window, reads real snapshots, and offers *Open* and *Copy to…*
-only; **§7a is what building it measured**, including the two things about the cascade that were
+`src/OS7.App.Versions/` draws the window, reads real snapshots, and since 2026-09-15 offers
+*Restore…* beside *Open* and *Copy to…* — it ships as `os7-app-versions`, with a GNOME Files
+context-menu entry over `python3-nautilus` (O-V6, measured); **§7a is what building it measured**, including the two things about the cascade that were
 wrong until a machine showed them. The cmdlets V9 requires do not exist yet, which is G7 the wrong
 way round and the next piece of work.
 
@@ -568,10 +569,14 @@ against a fake pool: 37 checks, no ZFS, seconds.
    under `--json-int` — the module's own comment records that as measured. So the timeline sorts by
    `DateTime` and not by text, which is the trap it would otherwise have walked into, and V8's
    pre-restore snapshot has a cmdlet waiting for it. **V2's ZFS half needs no new Zfs code at all.**
-6. **O-V6 — Nautilus's extension surface on GNOME 50.** `nautilus-python` is an archive package and
-   its API has changed across GNOME generations; whether it is in the pinned snapshot, and at what
-   version, has not been checked. If it is absent, the `.desktop`/*Open With* fallback is the v1
-   route and the context menu waits.
+6. ~~**O-V6 — Nautilus's extension surface on GNOME 50.**~~ — **ANSWERED 2026-09-15, against the
+   pinned archive, and the question had the wrong name in it.** There is no `nautilus-python`
+   package; the binding ships as **`python3-nautilus` 4.1.0-1build1** in universe, which is what
+   `nautilus-admin` and `nautilus-compare` depend on too. Nautilus itself is `1:50.0-0ubuntu2`.
+   So the context menu is buildable and the `.desktop`/*Open With* fallback ships **beside** it
+   rather than instead of it — `os7-versions.desktop` is `NoDisplay=true` with a `MimeType` line,
+   which is V3's "it survives a change of file manager" written as a file rather than an intention.
+   Asking the wrong package name is why this stayed open for a day.
 7. **O-V7 — should the boot environment's own history appear here too?** An operator asking "what
    did this config file look like last week" is asking the same question about `/etc`, which is
    inside the BE and has snapshots of a different kind. Answering it would make the feature whole
@@ -670,18 +675,28 @@ did not exist; they do, and what is left is not what this list said it was.
 3. ~~**The storage rule**~~ — **DONE 2026-09-14** (V15/V16), and ~~**`Get-OS7VersionStore`**~~ with it.
 4. ~~**V8 and V19**~~ — **DONE 2026-09-15.** `Restore-OS7File` keeps what it overwrites, by snapshot
    with privilege and by rename without, measured on a machine both ways.
-5. **THE PACKAGE.** `build/packages/os7-app-versions/` does not exist — the application is built from
-   source and has never been on an image, so it has no `.desktop` entry, no place in `os7-desktop`,
-   and nothing for hook 0022 to install. **This is now the largest gap and everything below it waits
-   on this one**, because a context-menu entry can only point at an installed program.
-6. **The Nautilus adapter**, plus the `.desktop` fallback, once O-V6 is answered — and O-V6 is
-   unanswered: whether `nautilus-python` is in the pinned archive at all. **This is the feature's
-   whole entry point.** Without it the only way to reach the window is to type `os7-versions <path>`,
-   and the request this plan came from was a context-menu entry.
-7. **Restore in the window** (V9's second half). The cmdlet is ready and V19 removed the reason to
-   wait: an ordinary user can now restore their own file with no polkit dialog, which is what the
-   window needs to be worth opening for anything but looking.
-8. **The honest space reporting**, where BL5 has to be faced.
+5. ~~**THE PACKAGE.**~~ — **DONE 2026-09-15.** `build/packages/os7-app-versions/` exists, os7-desktop
+   depends on it, and hook 0022 names it — which `check-module-parts.py` required before the commit
+   would go green, because a package apt is not handed by name is a dependency apt cannot satisfy
+   (#156).
+6. ~~**The Nautilus adapter**, plus the `.desktop` fallback~~ — **DONE 2026-09-15**, once O-V6 was
+   asked with the right package name. The extension is forty lines that decide nothing: it offers
+   the entry for any local file or folder and lets the window explain, because a menu item that
+   vanished on "this file has no history yet" would hide the sentence the operator needs (V6).
+7. ~~**Restore in the window**~~ — **DONE 2026-09-15.** V19 removed the reason to wait: an ordinary
+   user restores their own file with no polkit dialog. The window asks in a dialog naming the file
+   and the moment, promises the way back BEFORE the answer, and then hands the whole job to
+   `Restore-OS7File` — no copy, no rename, no snapshot of its own, held by `check-gui-logic.py`.
+   Open stays the default button, so the key somebody presses while browsing is the one that cannot
+   hurt.
+8. **The honest space reporting**, where BL5 has to be faced — and the automatic half of it is now
+   built: `os7-storage-relief.timer` runs the rule every fifteen minutes, and `Get-OS7RestoreAside`
+   reports what restores left behind. What is left here is the per-file question ZFS does not answer
+   cheaply (VL4).
 
-Steps 1–6 change nothing on a machine. The first destructive verb **in the window** appears at
-step 7, by which point the window has been looked at by somebody — which it now has.
+Steps 1–6 changed nothing on a machine. The first destructive verb **in the window** arrived at
+step 7, by which point the window had been looked at by somebody.
+
+**What the whole list still owes is one thing: no ISO carries any of it.** Every package here is
+built and checked; none has been installed by a machine from a medium, so the context-menu entry has
+been read but never clicked.

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using OS7.App.Versions.Services;
 using OS7.App.Versions.ViewModels;
 
 namespace OS7.App.Versions.Views;
@@ -18,6 +19,7 @@ public partial class MainWindow : Window
 		ForwardButton.Click += (_, _) => Model?.GoForward();
 		OpenButton.Click += OnOpen;
 		CopyButton.Click += OnCopy;
+		RestoreButton.Click += OnRestore;
 	}
 
 	private MainWindowViewModel? Model => DataContext as MainWindowViewModel;
@@ -50,6 +52,68 @@ public partial class MainWindow : Window
 		// and opening that would show today's contents under yesterday's
 		// caption. The bytes are the ones under .zfs/snapshot.
 		await Launcher.LaunchFileInfoAsync(new FileInfo(version.SnapshotPath));
+	}
+
+	/// <summary>
+	/// Put this version back over the live file — the only verb here that changes
+	/// anything.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// VERSIONS-PLAN V7 and V9. It asks first, in a dialog naming the file and
+	/// the moment, and then hands the whole job to <c>Restore-OS7File</c>: this
+	/// method copies nothing, renames nothing and snapshots nothing. What is kept
+	/// before the overwrite — a ZFS snapshot with privilege, the file renamed
+	/// aside without it (V8/V19) — is the cmdlet's decision, and an administrator
+	/// typing the same verb over ssh gets exactly this.
+	/// </para>
+	/// <para>
+	/// THE LIST IS RELOADED AFTERWARDS, and it is not cosmetic. A restore creates
+	/// a new version — the state it replaced — and it is the row somebody comes
+	/// back for within the minute, when they realise they restored the wrong one.
+	/// Leaving the window showing the history from before the change would hide
+	/// the one entry that undoes it.
+	/// </para>
+	/// </remarks>
+	private async void OnRestore(object? sender, RoutedEventArgs e)
+	{
+		var model = Model;
+		var version = model?.Selected?.Version;
+
+		if (model is null || version is null || !model.CanRestore ||
+			version.SnapshotName is null)
+		{
+			return;
+		}
+
+		if (!await ConfirmDialog.AskAsync(this, "Restore a previous version",
+				model.RestorePrompt))
+		{
+			return;
+		}
+
+		RestoreButton.IsEnabled = false;
+		try
+		{
+			var failure = await new VersionLoader()
+				.RestoreAsync(version.Path, version.SnapshotName);
+
+			if (failure is not null)
+			{
+				// The machine's own words, unaltered (V6). Restore-OS7File
+				// refuses in complete sentences that name the way forward, and
+				// paraphrasing one into "restore failed" deletes the instruction.
+				model.Message = failure;
+				model.Phase = VersionsPhase.Failed;
+				return;
+			}
+
+			await App.ReloadAsync(model);
+		}
+		finally
+		{
+			RestoreButton.IsEnabled = true;
+		}
 	}
 
 	/// <summary>

@@ -276,8 +276,28 @@ def surface_rules(scan_root):
         stripped = strip_comments(loader, text)
         check("mountinfo" not in stripped and "Get-ZfsSnapshot" not in stripped,
               "and it no longer resolves datasets or reads snapshot times itself")
+
     else:
         check(False, "VersionLoader.cs is where it is expected", loader)
+
+    # V9/V19. The window gained its first destructive verb on 2026-09-15, and
+    # the rule that matters is that it did NOT gain the work behind it: no
+    # copy, no rename, no snapshot, no zfs.
+    versions = "".join(
+        read(f) for f in source_files(at("OS7.App.Versions"))
+        if os.path.exists(f))
+    check("Restore-OS7File" in versions,
+          "restoring is the cmdlet's, so ssh and the window behave identically")
+    check("-Confirm:$false" in versions and "-Force" in versions,
+          "and the window supplies both switches itself, having already asked "
+          "the operator in a dialog it could show them")
+    for forbidden, why in [
+        ("Move-Item", "the file moved aside is Restore-OS7File's decision (V19)"),
+        ("New-ZfsSnapshot", "so is the snapshot in front of it (V8)"),
+        ("File.Copy(version.Path", "and nothing here writes over a live file"),
+    ]:
+        check(forbidden not in versions,
+              f"the window never does it itself — {why}")
 
 
 def refusal_rules(scan_root):
