@@ -489,7 +489,13 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   command line both ways and
                                           #   requires EXACTLY ONE argument to
                                           #   differ. No QEMU, no Docker, ~2s,
-                                          #   both hosts, 71 checks
+                                          #   both hosts, 71 checks - and that
+                                          #   is TWO printed totals, 33 and 38,
+                                          #   one per firmware mode. Reading the
+                                          #   last line of the run answers 38
+                                          #   and is wrong by a whole pass
+                                          #   (measured 2026-09-15, by nearly
+                                          #   correcting this number to it)
 ./installer/testing/run-firstrun.py       # THE DOCUMENTED FIRST RUN, TYPED BY
                                           #   THE ACCOUNT THE INSTALLER CREATED
                                           #   — the one thing every other
@@ -577,7 +583,9 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   number the check prints
 ./installer/testing/check-management-logic.py # Entra/Intune/Arc DECISIONS against
                                           #   a real image with systemd as PID 1.
-                                          #   25 checks. Proves the thing that
+                                          #   24 checks against os7img:175,
+                                          #   counted 2026-09-15; this line said
+                                          #   25 and nothing holds it. Proves the thing that
                                           #   matters: brokers.d is EMPTY, so
                                           #   Entra sign-in cannot work (C8a)
 ./installer/testing/check-ad.py           # the AD surface against a DIRECTORY
@@ -588,7 +596,10 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   with the join tooling moved out
                                           #   of PATH
 ./installer/testing/check-directory-logic.py # the Directory DECISIONS, no DC,
-                                          #   no VM: 36 checks, seconds. Two fakes,
+                                          #   no VM: 37 checks, seconds
+                                          #   (counted 2026-09-15; it said 36,
+                                          #   and the leave-stops-resolving case
+                                          #   arrived without this line moving). Two fakes,
                                           #   not one — the LDAP connection and the
                                           #   COMMAND runner, so the join's adcli
                                           #   arguments and the leave's cache
@@ -607,7 +618,20 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   the update train's driver gate: 67
                                           #   checks over a sysfs tree it builds
                                           #   and recorded dkms output. No
-                                          #   hardware, no dkms, seconds
+                                          #   hardware, no dkms, seconds.
+                                          #   LINUX ONLY, and nothing said so
+                                          #   until 2026-09-15: a PCI address is
+                                          #   `0000:00:00.0` and Windows permits
+                                          #   no colon in a path, so the tree
+                                          #   cannot be built here at all. On
+                                          #   the Windows host it gets 33 checks
+                                          #   in and then `pwsh exited 1` with a
+                                          #   message about path syntax. The 67
+                                          #   is a Linux number. Fixing it is
+                                          #   check-automation-logic.py's
+                                          #   answer - run itself in a container
+                                          #   on a non-Linux host - and is not
+                                          #   done
 ./installer/testing/check-service-logic.py # Get-OS7Service's HEALTHY rule: ten
                                           #   unit states, the WORKING ones as
                                           #   carefully as the broken. No systemd
@@ -709,10 +733,13 @@ matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/`, `powershell/Directory/` and `powershell/Hardware/` are
 the generic layers — none knows anything about OS/7, and all six would run on
 any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is **164 of the 288
-functions** — measured 2026-09-14 by asking the modules, which is the only way
-this line has ever been right for long. (It said 140 of 243 that morning; the
-automation host added sixteen product cmdlets and five to `Systemd`.) It said "126 of 229" that morning, and
+`powershell/OS7/` is the product layer on top, and it is **170 of the 295
+functions** — measured 2026-09-15 by asking the modules, which is the only way
+this line has ever been right for long, and it had drifted by six again within a
+day. (It said 164 of 288 that morning, and 140 of 243 the morning before;
+`check-module-parts.py` holds POWERSHELL-REFERENCE.md's per-module rows against
+`Get-Command` and was GREEN throughout, because nothing holds this sentence —
+which is the argument for reading the reference file and not this one.) It said "126 of 229" that morning, and
 the fourteen that changed it are not OS/7 names at all: since P1a
 (2026-09-09) the module also supplies **the Windows names Microsoft's
 `Microsoft.PowerShell.Management` does not ship on Linux** — `Get-Service` and
