@@ -296,7 +296,15 @@ for m in "${OS7_MOTD}" "${MOTD_DIR}/40-os7-storage"; do
 	chmod 0755 "${m}"
 	# A motd script that asks ZFS is a login that hangs on a degraded pool, and
 	# that is not a rule a comment can hold.
-	if grep -qE '(^|[^-[:alnum:]])(zpool|zfs)[[:space:]]' "${m}"; then
+	#
+	# COMMENTS ARE STRIPPED FIRST, and this rule failed a build to learn it: the
+	# first version matched 00-os7-header, which EXPLAINS at length why it does
+	# not ask ZFS. Naming a thing is not doing it — check-gui-tokens.py blanks
+	# comments for exactly this reason, check-storage-logic.py §10 was taught it
+	# two hours before this line was written, and the hook was written without
+	# it. A rule that forbids explaining the rule is a rule nobody can document.
+	if grep -vE '^[[:space:]]*#' "${m}" |
+		grep -qE '(^|[^-[:alnum:]])(zpool|zfs)[[:space:]]'; then
 		echo "OS/7 hook 0075: ${m} runs zfs or zpool. A login banner must not:" >&2
 		echo "OS/7 hook 0075: on a degraded pool that is a login that never returns." >&2
 		exit 1

@@ -90,7 +90,7 @@ emit os-release        cat /mnt/sq/etc/os-release
 # §6.1). dpkg is asked, file by file, because "the hook ran" is not the fact —
 # the ownership is.
 emit dpkg.os7          bash -c 'chroot /mnt/root dpkg-query -W -f="\${db:Status-Abbrev} \${Package} \${Version}\n" "os7-*" 2>/dev/null || true'
-emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
+emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice /usr/lib/systemd/system/os7-storage-relief.timer /usr/libexec/os7-storage-relief /etc/update-motd.d/40-os7-storage /opt/microsoft/powershell/7/powershell.config.json /usr/lib/os7/apps/versions/os7-versions /usr/share/nautilus-python/extensions/os7-versions.py /usr/lib/os7/apps/software-update/os7-software-update; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
 emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
@@ -1046,8 +1046,14 @@ def main() -> None:
     # inputs, and a squashfs still carrying them shipped ~150 MB for nothing.
     dpkg_os7 = img.get("dpkg.os7", "")
     meta = "os7-desktop" if arch == "amd64" else "os7-server"
-    for pkg in ("os7-release", "os7-console", "os7-powershell", "os7-module",
-                "os7-backup", "os7-automation", "os7-setup", "os7-base", meta):
+    expected = ["os7-release", "os7-console", "os7-powershell", "os7-module",
+                "os7-backup", "os7-automation", "os7-setup", "os7-base", meta]
+    if arch == "amd64":
+        # The GUI applications (GUI-APPS-PLAN). amd64 only — arm64 is
+        # server-only and has no desktop, so a headless medium must NOT carry
+        # them and this list is the only place that says so.
+        expected += ["os7-app-softwareupdate", "os7-app-versions"]
+    for pkg in expected:
         check(f"ii  {pkg} {version}" in dpkg_os7,
               f"{pkg} is installed at {version}",
               next((l for l in dpkg_os7.splitlines() if f" {pkg} " in l), "(absent)"))
@@ -1069,10 +1075,34 @@ def main() -> None:
             # a file owned by a package look identical on a running machine, and
             # only the second one rolls back with the release.
             ("/usr/lib/systemd/system/os7-job@.service", "os7-automation"),
-            ("/usr/lib/systemd/system/os7-automation.slice", "os7-automation")):
+            ("/usr/lib/systemd/system/os7-automation.slice", "os7-automation"),
+            # VERSIONS-PLAN §5: what makes the storage rule AUTOMATIC is a timer,
+            # and a timer only exists on a machine if a package put it there.
+            ("/usr/lib/systemd/system/os7-storage-relief.timer", "os7-backup"),
+            ("/usr/libexec/os7-storage-relief", "os7-backup"),
+            ("/etc/update-motd.d/40-os7-storage", "os7-backup"),
+            # BUILD-NOTES #160: without this file every pwsh invocation writes
+            # ~2 MB of its own module source to the journal, and a timer running
+            # four times an hour fills the disk the relief exists to protect.
+            ("/opt/microsoft/powershell/7/powershell.config.json", "os7-powershell")):
         check(owners.get(path_, "").strip() == owner,
               f"dpkg -S: {path_} belongs to {owner}",
               owners.get(path_, "(not asked)").strip())
+    if arch == "amd64":
+        # V3: `os7-versions <path>` is the whole contract with the file manager,
+        # and the extension is what makes it reachable by right-clicking. A
+        # medium carrying the application and not the extension has the feature
+        # in the sense that a door with no handle is a door.
+        for path_, owner in (
+                ("/usr/lib/os7/apps/versions/os7-versions", "os7-app-versions"),
+                ("/usr/share/nautilus-python/extensions/os7-versions.py",
+                 "os7-app-versions"),
+                ("/usr/lib/os7/apps/software-update/os7-software-update",
+                 "os7-app-softwareupdate")):
+            check(owners.get(path_, "").strip() == owner,
+                  f"dpkg -S: {path_} belongs to {owner}",
+                  owners.get(path_, "(not asked)").strip())
+
     check("os7-release" in img.get("dpkg.divert", ""),
           "/usr/lib/os-release is diverted by os7-release (UL10)",
           img.get("dpkg.divert", "")[:90])
@@ -1247,11 +1277,19 @@ def main() -> None:
     # so the hook enumerates and this checks the result.
     motd = [l.split() for l in img.get("motd.d", "").splitlines() if l.strip()]
     executable = sorted(name for name, mode in motd if "x" in mode)
-    check(executable == ["00-os7-header"] or executable == ["00-os7-header", "98-reboot-required"],
-          "only OS/7's header and the reboot notice run at login",
+    # OS/7's OWN are 00-os7-header (the identity) and 40-os7-storage (the pool,
+    # VERSIONS-PLAN §5); 98-reboot-required is Ubuntu's and is deliberately kept,
+    # being the one thing in that directory an operator would miss. Everything
+    # else hook 0075 disables. Written as a SET rather than as two literal lists,
+    # because the literal form had to be edited the first time OS/7 grew a second
+    # banner and would have to be edited again for a third.
+    allowed = {"00-os7-header", "40-os7-storage", "98-reboot-required"}
+    check(set(executable) <= allowed,
+          "only OS/7's own banners and the reboot notice run at login",
           " ".join(executable) or "(none)")
-    check(any(name == "00-os7-header" and "x" in mode for name, mode in motd),
-          "00-os7-header is executable")
+    for own in ("00-os7-header", "40-os7-storage"):
+        check(any(name == own and "x" in mode for name, mode in motd),
+              f"{own} is executable")
     # The one that makes a network request at login.
     news = img.get("motd-news", "")
     check("ENABLED=1" not in news, "motd-news does not fetch at login",
@@ -1830,13 +1868,14 @@ def main() -> None:
             print(f"              {ln}")
 
     want = includes_modes(arch)
-    # ONE FILE IS DELIBERATELY NOT GIT'S MODE, and naming it here is cheaper
-    # than pretending it is. Hook 0075 chmods /etc/update-motd.d/00-os7-header
+    # TWO FILES ARE DELIBERATELY NOT GIT'S MODE, and naming them here is cheaper
+    # than pretending they are. Hook 0075 chmods OS/7's motd banners
     # to 0755 because run-parts only runs what is executable — and it verifies
     # the chmod afterwards, refusing the build if the file is still not
     # executable. Two checks above already assert that it IS executable in the
     # shipped image, so dropping it here loses nothing.
-    want.pop("etc/update-motd.d/00-os7-header", None)
+    for banner in ("00-os7-header", "40-os7-storage"):
+        want.pop(f"etc/update-motd.d/{banner}", None)
     # THREE FIELDS, AND THE KIND IS ONE WORD ON PURPOSE. The first version
     # emitted `stat -c %a:%F`, whose %F is "symbolic link" -- two words -- so
     # splitting mode from path put "link" at the front of every path and the
