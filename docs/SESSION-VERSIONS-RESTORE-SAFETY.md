@@ -187,6 +187,49 @@ the PowerShell script at 0644 with no shebang).
 
 ---
 
+## 2d. From an ISO, through the context menu, to a restore — 2026-09-15
+
+**`OS7-1.0.0.231-amd64.iso`, installed onto bench `v19` (`--mode Gui`), logged in
+at the OS/7 login screen, right-clicked in GNOME Files.** The medium carries
+`os7-app-versions`, the Nautilus extension, the storage-relief timer and
+PowerShell's log config, all dpkg-owned (`check-image.py`).
+
+**THREE DEFECTS, AND NO CHECK IN THIS REPOSITORY COULD HAVE FOUND ANY OF THEM.**
+
+| # | What happened | What it was |
+|---|---|---|
+| M-V34 | The context menu had no *Versions* entry | `gi.require_version("Nautilus", "4.0")` — the namespace on GNOME 50 is **4.1**, and nautilus-python has ALREADY required it before importing extensions, so the call cannot succeed and is not needed. Nautilus logged the traceback to the session journal and drew the menu without the entry, which looks exactly like a machine where nothing was installed |
+| M-V35 | The window opened and said *the version list could not be read: The JSON value could not be converted to System.DateTimeOffset* | `Select-OS7DistinctVersion` ended with **`,@($kept)`** — the list as ONE object. `… \| Select-Object Path, Created, Length` then gives one row with every property null and `Length = 4`, the ARRAY's length |
+| M-V36 | After a successful restore the window listed four snapshots and **no "Now"** | `rsync -a` preserves mtime, so the restored file is byte-identical to the version it came from AND carries its time. `-DistinctOnly` saw a run and kept its oldest member — the snapshot. `-IncludeCurrent` promises the live file is in the list and `-DistinctOnly` silently took it out |
+
+M-V35 is the one worth dwelling on. **`check-storage-logic.py` §6 was green
+throughout**, because it asked `… | ForEach-Object { $_.SnapshotName }` and
+PowerShell's MEMBER ENUMERATION answers that correctly on an array: the names
+came back right and the shape was wrong. The check now counts what the pipeline
+delivers (`Measure-Object`) and reads the first object off it, neither of which
+member enumeration can rescue; putting the comma back reddens three assertions.
+
+M-V36 is not a collapsing bug — *"it has looked like this since 09:00"* is true.
+It is that **the current version is not a moment in history; it is the thing the
+history is about**, so it gets a row of its own whatever it resembles. The rule
+is now in `Select-OS7DistinctVersion` and held by a case built from exactly this
+sequence.
+
+### What was then proven, in order
+
+| # | Question | Answer |
+|---|---|---|
+| M-V37 | Does the entry appear? | **Yes** — *Versions*, in its own section above *Properties*, on a right-clicked file |
+| M-V38 | Does it launch the application with the path? | **Yes**: `/usr/lib/os7/apps/versions/os7-versions /home/os7admin/Dokumente/Angebot.txt` |
+| M-V39 | Does the window draw the history? | **Yes** — five versions, the cascade receding, *Now* in front with the active caption, sanoid's own `_monthly` bucket named on the row it took at 13:45 |
+| M-V40 | Is *Restore…* disabled on the live file? | **Yes**, and enabled on an older one — the rule the self-test asserts, visible on a machine |
+| M-V41 | Does the confirmation say it first? | *"Replace Angebot.txt with the version from 2026-09-15 13:40:29? What is there now is kept first, so this can be undone."* |
+| M-V42 | **Does the restore happen, as an unprivileged owner, through the window?** | **Yes.** The live file reads `Angebot v1 - Entwurf.` |
+| M-V43 | **And is V19's way back there?** | **Yes**: `Angebot.txt.os7-before-restore-20260915-134815`, 37 bytes, holding `KAPUTT - versehentlich ueberschrieben` — the work the restore replaced, renamed aside because `os7admin` may not snapshot. Time Machine's mechanism, on a machine, through a GUI, with no privilege and no polkit dialog |
+| M-V44 | Is the backup policy live on a fresh install? | **Yes** — sanoid took `autosnap_2026-09-15_11:45:04_{monthly,weekly,daily}` on its own timer, the machine's first snapshots, in UTC as its units declare |
+
+---
+
 ## 3. What this does NOT say
 
 * **The Versions window is unaffected**, because it has no restore verb: V7 gave
@@ -201,13 +244,15 @@ the PowerShell script at 0644 with no shebang).
   and its strongest assertion is the one that would have passed before V19 and
   must not now: **an owner who cannot snapshot is not refused their own file.**
 * **arm64 is unmeasured**, as always.
-* **THE CONTEXT MENU HAS NEVER BEEN CLICKED, and the Restore button has never
-  been pressed.** The bench has no graphical session running — its display reads
-  "Display output is not active" — so everything about this feature that needs a
-  desktop is still owed: the entry appearing in GNOME Files, the confirmation
-  dialog, and a restore performed through the window rather than through the
-  cmdlet. What IS proven is that the packages install, the extension lands where
-  nautilus-python looks, the binding comes from the archive, and the application
-  runs on the machine.
-* **No ISO carries any of this.** The packages reached the bench as `.deb` files
-  built on the host, not as a medium somebody installed from.
+* ~~**THE CONTEXT MENU HAS NEVER BEEN CLICKED**~~ — it has, §2d, and clicking it
+  found three defects in an hour that every check in this repository had passed.
+* ~~**No ISO carries any of this.**~~ — `OS7-1.0.0.231-amd64.iso` does, and a
+  machine was installed from it.
+* **THE THREE FIXES IN §2d HAVE NOT THEMSELVES BEEN THROUGH A FRESH INSTALL.**
+  They were copied onto the running machine and verified there; the medium that
+  installed it still carries the broken extension. The next ISO is what closes
+  that, and until it is built this is a machine that was repaired rather than one
+  that arrived working.
+* **The medium cannot reach the OS/7 repository.** Built with
+  `OS7_REPO_NO_CREDENTIAL=1`, which is four of `check-image.py`'s failures and one
+  fact. Deliberate: this build existed to be installed and clicked.

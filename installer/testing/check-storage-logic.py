@@ -559,7 +559,11 @@ def boundary():
     # months.
     body = r"""
 function V { param([string]$n, $exists, $len, $mod)
-	[pscustomobject]@{ SnapshotName = $n; Exists = $exists; Length = $len; Modified = $mod } }
+	[pscustomobject]@{ SnapshotName = $n; Exists = $exists; Length = $len; Modified = $mod
+		IsCurrent = $false } }
+function Live { param($len, $mod)
+	[pscustomobject]@{ SnapshotName = $null; Exists = $true; Length = $len; Modified = $mod
+		IsCurrent = $true } }
 
 $out = [ordered]@{}
 
@@ -596,8 +600,45 @@ $deleted = @(
 $out['deleted'] = @(Select-OS7DistinctVersion -Version $deleted |
 	ForEach-Object { $_.SnapshotName })
 
+# THE LIVE FILE SURVIVES A RUN IT BELONGS TO, which is what a machine found
+# after a restore: rsync -a preserves the mtime, so the restored file was
+# byte-identical to the version it came from AND carried its time. It looked
+# like a continuation, the run kept its oldest member — the snapshot — and the
+# window listed four snapshots and no "Now", at exactly the moment somebody had
+# restored something and most needed to see what they now had.
+$afterRestore = @(
+	V 'a' $true 21 'm1'
+	Live 21 'm1'
+	V 'b' $true 40 'm2'
+	V 'c' $true 37 'm3'
+)
+$collapsed = @(Select-OS7DistinctVersion -Version $afterRestore)
+$out['afterRestoreCount'] = $collapsed.Count
+$out['afterRestoreHasLive'] = [bool]($collapsed | Where-Object IsCurrent)
+$out['afterRestoreNames'] = @($collapsed | ForEach-Object {
+	if ($_.IsCurrent) { 'LIVE' } else { $_.SnapshotName } })
+
 $out['empty'] = @(Select-OS7DistinctVersion -Version @()).Count
 $out['one'] = @(Select-OS7DistinctVersion -Version @(V 'only' $true 1 'm')).Count
+
+# WHAT THE PIPELINE ACTUALLY DELIVERS, counted by something that cannot be
+# rescued by member enumeration.
+#
+# Every assertion above this line was green while the cmdlet returned `,@($kept)`
+# — the whole list AS ONE OBJECT. `… | ForEach-Object { $_.SnapshotName }` reads
+# correctly off an array, because PowerShell enumerates members for you, so the
+# names came back right and the shape was wrong. A machine found it: the Versions
+# window deserialises this pipeline's JSON and said the list could not be read,
+# because `Select-Object Path, Created, Length` on one array gives one row with
+# nulls and Length = the COUNT.
+#
+# Measure-Object counts objects, and nothing enumerates members on its behalf.
+$out['piped'] = (Select-OS7DistinctVersion -Version $v | Measure-Object).Count
+$out['pipedJson'] = @(Select-OS7DistinctVersion -Version $v |
+	Select-Object SnapshotName, Length | ConvertTo-Json -AsArray |
+	ConvertFrom-Json).Count
+$out['pipedFirstName'] = (Select-OS7DistinctVersion -Version $v |
+	Select-Object -First 1).SnapshotName
 
 $out | ConvertTo-Json -Depth 4
 """
@@ -626,6 +667,23 @@ $out | ConvertTo-Json -Depth 4
 
     check(got["empty"] == 0, "no versions collapse to no rows")
     check(got["one"] == 1, "one version collapses to itself")
+
+    check(got["piped"] == 4,
+          "AND THE PIPELINE DELIVERS FOUR OBJECTS, not one array wearing them — "
+          "the shape a consumer sees", str(got["piped"]))
+    check(got["pipedJson"] == 4,
+          "so JSON of it is four rows, which is what the Versions window reads",
+          str(got["pipedJson"]))
+    check(got["afterRestoreHasLive"],
+          "THE LIVE FILE IS NEVER COLLAPSED AWAY — -IncludeCurrent promises it "
+          "is in the list and -DistinctOnly must not take it out")
+    check(got["afterRestoreNames"] == ["a", "LIVE", "b", "c"],
+          "and it keeps its own row even when identical to the version it was "
+          "restored from", ", ".join(got["afterRestoreNames"]))
+
+    check(got["pipedFirstName"] == "a3",
+          "and the first object off the pipeline is a VERSION, not the list",
+          str(got["pipedFirstName"]))
 
 SAFETY_FAKES = r"""
 function N { param([string]$p) $p -replace '\\', '/' }

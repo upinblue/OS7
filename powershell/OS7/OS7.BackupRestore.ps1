@@ -275,7 +275,22 @@ function Select-OS7DistinctVersion {
 	$prev = $null
 
 	foreach ($v in $Version) {
-		$same = $prev -and $prev.Exists -eq $v.Exists -and
+		# THE LIVE FILE IS NEVER COLLAPSED INTO A RUN, and a machine is what
+		# taught that. After a restore the live file is byte-identical to the
+		# version it came from AND CARRIES ITS MTIME — rsync -a preserves times,
+		# deliberately — so it looked like a continuation of that run and the
+		# run kept its OLDEST member, which is the snapshot. The Versions window
+		# then listed four snapshots and no "Now" at all: -IncludeCurrent
+		# promises the live file is in the list and -DistinctOnly silently took
+		# it out, at exactly the moment somebody had just restored something and
+		# most needed to see what they now had.
+		#
+		# It is not a collapsing bug: "it has looked like this since 09:00" is
+		# TRUE. It is that the current version is not a moment in history — it is
+		# the thing the history is about — so it gets a row of its own whatever
+		# it resembles.
+		$same = $prev -and -not $prev.IsCurrent -and -not $v.IsCurrent -and
+			$prev.Exists -eq $v.Exists -and
 			$prev.Length -eq $v.Length -and $prev.Modified -eq $v.Modified
 		if (-not $same -and $current.Count -gt 0) {
 			$runs.Add(@($current))
@@ -294,7 +309,24 @@ function Select-OS7DistinctVersion {
 		else { $kept.Add($run[0]) }
 	}
 
-	,@($kept)
+	# ENUMERATED, NOT WRAPPED — and the comma that used to be here cost a machine
+	# run to find. `,@($kept)` returns the LIST AS ONE OBJECT, which is the
+	# defect Get-OS7ProtectedBootEnvironment had (its caller's -notcontains then
+	# compared a List to a string and the running boot environment came back
+	# prunable). Here it reached further: `Get-OS7FileVersion -DistinctOnly |
+	# Select-Object Path, Created, Length` produced ONE row with every property
+	# null and Length = 4 — the ARRAY's length — and the Versions window, which
+	# deserialises that JSON, said the version list could not be read.
+	#
+	# check-storage-logic.py §6 was green throughout, because it asked
+	# `… | ForEach-Object { $_.SnapshotName }` and PowerShell's MEMBER
+	# ENUMERATION answers that correctly on an array. The check now counts the
+	# objects the pipeline actually delivers, which is what a consumer sees.
+	#
+	# Nothing needs the wrapper: every caller here already writes
+	# `@(Get-OS7FileVersion …)`, and @() of a single object is a one-element
+	# array.
+	$kept
 }
 
 function Get-OS7FileVersion {

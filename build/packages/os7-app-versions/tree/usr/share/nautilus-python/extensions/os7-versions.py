@@ -20,10 +20,26 @@
 
 import subprocess
 
-import gi
-
-gi.require_version("Nautilus", "4.0")
-from gi.repository import GObject, Nautilus  # noqa: E402
+# NO gi.require_version("Nautilus", …) HERE, AND THAT IS A MEASUREMENT.
+#
+# The first version of this file called `gi.require_version("Nautilus", "4.0")`,
+# which is what every nautilus-python example on the internet opens with. On a
+# machine installed from the medium it threw:
+#
+#     ValueError: Namespace Nautilus is already loaded with version 4.1
+#
+# Two things wrong in one line. The namespace on GNOME 50 is **4.1** — the image
+# carries `Nautilus-4.1.typelib` and no 4.0 at all — and, more importantly,
+# nautilus-python has ALREADY required it before it imports any extension. So the
+# call cannot succeed and cannot be needed: pinning it right would only fix the
+# error message and break again on the next GNOME.
+#
+# AND THE FAILURE IS SILENT. Nautilus logs the traceback to the session journal
+# and carries on with no menu entry — which looks exactly like a machine where
+# the package was never installed. Nothing short of a real desktop finds it;
+# the package build checks that this file PARSES, and a file that parses is not
+# yet a file Nautilus can load.
+from gi.repository import GObject, Nautilus
 
 OS7_VERSIONS = "/usr/lib/os7/apps/versions/os7-versions"
 
