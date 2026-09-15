@@ -299,6 +299,32 @@ def surface_rules(scan_root):
         check(forbidden not in versions,
               f"the window never does it itself — {why}")
 
+    # V3, AND A MACHINE TAUGHT THIS ONE. The GNOME Files extension is the
+    # feature's only way in, and it fails SILENTLY: Nautilus logs a traceback to
+    # the session journal and draws the menu without the entry, which is
+    # indistinguishable from a machine where the package was never installed.
+    # The package build checks that the file parses, and a file that parses is
+    # not yet a file Nautilus can load — so the one failure that HAS been paid
+    # for is held here by name.
+    ext = os.path.join(REPO, "build", "packages", "os7-app-versions", "tree",
+                       "usr", "share", "nautilus-python", "extensions",
+                       "os7-versions.py")
+    if os.path.exists(ext):
+        code = "".join(
+            line for line in read(ext).splitlines(keepends=True)
+            if not line.lstrip().startswith("#"))
+        check("require_version" not in code,
+              "the Nautilus extension calls NO gi.require_version — the namespace "
+              "is 4.1 on GNOME 50, nautilus-python has already required it before "
+              "importing anything, and the call can only fail")
+        check("Nautilus.MenuProvider" in code,
+              "it is a MenuProvider, which is what puts an entry in the menu")
+        check("subprocess.Popen([" in code,
+              "and it starts the window with a LIST — a filename may contain "
+              "`; rm -rf ~ #` and be ordinary")
+    else:
+        check(False, "the Nautilus extension is where it is expected", ext)
+
 
 def refusal_rules(scan_root):
     print()
