@@ -103,6 +103,137 @@ for this reason.)*
 No, as expected — and the interesting half is that **nothing anywhere says it
 went**. Full transcript and consequences in **BUILD-NOTES #154**.
 
+### 2026-09-15 — the measurements Phase 1 owed, and two defects they found
+
+**M-AU3 — a representative operator script under the fence.** AUL5 said
+`ProtectSystem=strict` WILL break scripts that write where they always did, and
+said it as a worry. Eleven ordinary things, each asked of the FILESYSTEM
+afterwards rather than of an exception:
+
+```
+write /etc/myapp.conf                          CANNOT
+write /usr/local/bin/helper                    CANNOT
+write /var/log/myapp.log                       CANNOT
+write /tmp (private to this job)               CAN
+write the AU6 state directory                  CAN
+see anything in /home                          CANNOT
+see anything in /root                          CANNOT
+reach /dev/tpmrm0                              CANNOT
+resolve a name                                 CAN
+read /etc (reading was never the question)     CAN
+reach the product surface (Get-OS7Version)     CAN
+```
+
+So AUL5 with a number: **an operator script loses three write locations and
+keeps reading, the network and the product surface.**
+
+**THE FIRST VERSION OF THAT PROBE REPORTED THE OPPOSITE, and how it lied is
+this repository's oldest rule.** It wrapped each attempt in `try`/`catch` under
+`$ErrorActionPreference = 'Continue'` — and a refused `Set-Content` is a
+NON-TERMINATING error, so nothing threw, the catch never fired, and every
+blocked write was recorded as `WORKED`. It reported the fence as absent on a
+machine where a four-line control unit with the same directives had `/etc`
+read-only. Two further controls separated the machine from the probe: the
+control unit refused `/etc` while the same script with no fence wrote it, and a
+bisect of all thirteen directives — including through `pwsh` — held. *A
+diagnostic that asks whether a command threw is asking the exit code.* The
+rewritten probe asks `Test-Path` afterwards, every line.
+
+(The `/home` and `/root` lines were wrong for a second reason worth keeping:
+`ls` on an inaccessible-and-therefore-EMPTY tmpfs **succeeds**. The test has to
+be emptiness, not whether listing worked.)
+
+**M-AU5 — `DynamicUser` against a state directory. AUL4 is real, and it bites
+three times in order.** The switch produced a job that could not run at all:
+
+1. **its own spec** — `/var/lib/os7-automation/jobs/<id>/job.json` is 0600
+   root:root and a dynamic uid did not exist when it was written.
+   `Access to the path ... is denied`, one line into the runner. **Fixed**: the
+   spec now arrives by `LoadCredential=`, which PID 1 reads as root and places
+   in a tmpfs owned by the unit's user — the same delivery AU2 uses for a
+   secret. `StandardInput=file:` never had the problem, because systemd opens
+   it as root and passes a descriptor; AU3's channel needed no change.
+2. **the AU6 state directory** — 0700 root, denied.
+3. **`Write-OS7JobRecord must run as root ... This process is uid 62375`** — so
+   the run would leave an intent with no result, which AU5 reserves for a
+   machine that died.
+
+`Assert-OS7Elevated` did exactly its job on a path nobody had walked: it named
+the verb, the reason and the uid. **`-DynamicUser` now REFUSES**, with those
+three walls in the message, because a parameter that produces an unrunnable job
+is worse than no parameter.
+
+**And the same wall made `-Identity` unusable, which nobody had noticed.** A job
+started with `-Identity svc-probe` hit wall 3 and nothing else. AU5 gave the
+journal two writers — the starter for the intent, the runner for the result —
+and that was fine while every job was root. It was not a *preference* that jobs
+run as root; with the runner owning the Result record it was a REQUIREMENT, and
+open question 3's "root by default" was really "root or nothing".
+
+**The journal stays root-owned** — an evidence file the job itself could rewrite
+is not evidence. What changed is who writes the last line: `Start-OS7Job`, which
+`Assert-OS7Elevated` has already established is root, writes the Result **if the
+runner could not** — read back from the journal first, so a root job's richer
+record is never duplicated. Measured after:
+
+```
+identity recorded: svc-probe   ran as svc-probe (uid 997)
+did it leave a Result record? True
+```
+
+**AU11 — delivered, for real.** A `command` sink and a webhook that cannot be
+reached, side by side:
+
+```
+probe-cmd   command  delivered=True
+probe-web   webhook  delivered=False  Connection refused (127.0.0.1:1)
+```
+
+and the sink's stdin carried exactly `{"schema":1,"host":"os7-s5","time":…,
+"severity":"Error","subject":"the backup did not run","body":"probe body"}`.
+One result per sink, one delivered and one named — which is the whole of AU11's
+claim, now with a delivery behind it.
+
+**M-AU8 — a secret across a boot environment.**
+
+```
+secret store:  rpool/DATA/lib/os7-automation     under ROOT? no
+running root:  rpool/ROOT/os7_1.0.0.175_…
+rpool/ROOT holds 7 datasets; none is the store
+a new boot environment took ROOT from 7 to 13 datasets
+  did it swallow the store? no
+  secret openable before / during / after: True / True / True
+  journal records readable throughout: 16
+/var/lib/systemd (systemd's host key) lives on: rpool/ROOT/os7_…
+  sealed to: tpm2  <- does not use that key
+```
+
+The last two lines are the point: the host key rolls back with the release, and
+the sealing target measured on 2026-09-14 does not touch it.
+
+*(The first attempt at this printed `created mau8probe ()` and reported the
+store as INSIDE the environment — the object's field is `RootDataset`, not
+`Dataset`, so `zfs list -r ''` listed the whole pool. A probe that asked with an
+input it had not checked, twice in one afternoon.)*
+
+**polkit, the headless half.** As `os7admin` over ssh, with OS/7's own rule
+installed:
+
+```
+a job unit (os7-job@)      refused: requires interactive authentication
+the update unit            refused: requires interactive authentication
+an ordinary service        refused: requires interactive authentication
+Start-OS7Job as os7admin   refused: must run as root … This process is uid 1000
+```
+
+An unprivileged caller cannot reach a job without authenticating. **That
+`chrony.service` answers identically is the finding, not a flaw**: it confirms
+from outside what `49-os7-job.rules` claims about itself — *"it does not grant
+anything that was not already possible … Deleting this file would not open a
+door."* The rule narrows; it does not open. The `AUTH_ADMIN` dialog branch needs
+`subject.local && subject.active` and therefore a seat, which a headless bench
+does not have — unmeasured, as it is for the Software Update window.
+
 ---
 
 ## 2. What was built
@@ -253,32 +384,38 @@ than leave the next reader to assume it was run.
   **Four failed builds to get there**, and three of them were worth the time —
   BUILD-NOTES #156, #157 and #158. The module changes had reached the bench by
   `os7lab.py push` over a 1.0.0.175 install; that is no longer the only evidence.
-* **`New-OS7JobTicket` has never obtained a ticket.** AU7's private cache is
-  asserted in the drop-in (`KRB5CCNAME=FILE:%t/os7-job/<id>/krb5cc`, checked) and
-  the Directory layer's `-Keytab`/`-CachePath` path has not been exercised
-  against the Windows Server 2025 test DC. **M-AU7 stands.**
-* **`Send-OS7Notification` has never delivered anything.** The check proves one
-  result per sink and that a failure is named; no mail has been sent and no
-  webhook received. What IS measured about the no-MTA correction is exactly one
-  thing and it is worth stating narrowly: `System.Net.Mail.SmtpClient` and
-  `MailMessage` **resolve in the pinned pwsh 7.6.5 on Linux** (asked of the
-  container the logic check runs in). A type that resolves is not a mail that
-  arrives — a relay that refuses the envelope sender, a TLS requirement, an
-  authenticated submission port are all unexercised.
-* **`-DynamicUser` has never been used.** AUL4 is confirmed only by refusal:
-  `-DynamicUser` with `-Keytab` is rejected as two answers to one question.
-  **M-AU5 stands.**
-* **`-Unconfined` has never run a job.** The drop-in it writes is checked; a job
-  under it has not run. **M-AU3 stands** — nobody has yet run a representative
-  operator script under `ProtectSystem=strict` and recorded what breaks, which
-  is what would size AUL5 with a number.
-* **A secret across a rollback has not been shown.** M-AU8 is now *cheaper* than
-  the plan thought, because the sealing target no longer depends on a file in
-  the boot environment — but "cheaper" is not "done".
+* **`New-OS7JobTicket` has never obtained a ticket. M-AU7 IS THE ONE THING
+  PHASE 1 STILL OWES.** The test DC is reachable from the bench — tcp/88,
+  tcp/389, tcp/636 and tcp/464 all open, and `kinit`, `klist`, `kdestroy`,
+  `adcli` and `ktutil` are all on the image — but the machine is not joined and
+  has no `/etc/krb5.keytab`, and a keytab is what AU7 is about. The private
+  cache is asserted in the drop-in
+  (`KRB5CCNAME=FILE:%t/os7-job/<id>/krb5cc`, checked) and nothing has put a
+  ticket in it.
+* ~~**`Send-OS7Notification` has never delivered anything.**~~ **DELIVERED
+  2026-09-15** through a `command` sink, with a webhook failing beside it and
+  being named. What is STILL unexercised is SMTP: `System.Net.Mail.SmtpClient`
+  and `MailMessage` resolve in the pinned pwsh 7.6.5 on Linux, and a type that
+  resolves is not a mail that arrives — a relay that refuses the envelope
+  sender, a TLS requirement, an authenticated submission port are all
+  unmeasured.
+* ~~**`-DynamicUser` has never been used. M-AU5 stands.**~~ **DONE
+  2026-09-15**, and it found AUL4 to be three walls rather than one — see above.
+  `-DynamicUser` now refuses; `-Identity` was unusable for the same reason and
+  now works.
+* ~~**M-AU3 stands.**~~ **DONE 2026-09-15**: eleven things, five possible and
+  six not, listed above. `-Unconfined` itself has still never run a job — the
+  drop-in it writes is checked and no job has used it.
+* ~~**A secret across a rollback has not been shown.**~~ **DONE 2026-09-15**:
+  the store is outside `rpool/ROOT`, a new boot environment does not swallow it,
+  and the secret opens before, during and after. What has NOT been done is a
+  `Restore-OS7` rollback of a machine that had been updated — the dataset
+  topology is shown, the update train's own road over it is not.
 * **arm64 is unmeasured.** AUL7, as usual.
-* **polkit was never exercised.** Every run here was root. The rule is
-  `os7-update`'s, narrowed to `os7-job@`, with `AUTH_ADMIN` rather than
-  `AUTH_ADMIN_KEEP` — and no unprivileged caller has started a job.
+* ~~**polkit was never exercised.**~~ **The headless half is done
+  2026-09-15**: an unprivileged caller over ssh is refused, and the rule is
+  confirmed to narrow rather than to open. The `AUTH_ADMIN` dialog needs a seat
+  and is unmeasured, exactly as it is for the Software Update window.
 
 ---
 

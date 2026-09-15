@@ -53,7 +53,25 @@ ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-job-ru
 # contract and every job needs the same six lines to read it.
 #
 # One document, on stdin, closed. The job parses it or it fails.
+#
+# NOTE WHO OPENS THIS: systemd, as root, before the unit's own identity is
+# applied — it passes a descriptor, not a path. That is why AU3's input channel
+# needed no change when DynamicUser turned out not to work (below), and it is
+# the reason `StandardInput=file:` is the right directive rather than the job
+# reading the file itself.
 StandardInput=file:/var/lib/os7-automation/jobs/%i/input.json
+
+# THE JOB'S OWN SPEC, DELIVERED THE WAY ITS SECRET IS. AUL4, measured
+# 2026-09-15: the spec is 0600 root:root and a `DynamicUser=yes` job is a uid
+# that did not exist when it was written, so the runner died on
+#
+#     Access to the path '/var/lib/os7-automation/jobs/<id>/job.json' is denied
+#
+# one line in, before touching any state. `LoadCredential=` is read by PID 1 as
+# root and placed in the credentials tmpfs owned by the unit's user at 0400 —
+# the same delivery AU2 uses for a secret. The runner prefers it and falls back
+# to the path, so a unit an administrator starts by hand still works.
+LoadCredential=job:/var/lib/os7-automation/jobs/%i/job.json
 
 # The live view. The job JOURNAL under /var/lib/os7-automation is the evidence
 # and is written by Start-OS7Job and by the runner; this is what an operator

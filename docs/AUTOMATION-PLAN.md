@@ -563,10 +563,18 @@ Each kills or confirms a decision. Four need nothing but a VM.
 the order AU6 → AU5 → AU4 → AU2 → AU8 → AU7 → AU11, with `check-automation-logic.py`
 alongside rather than after. AU6 went first because everything else puts something somewhere.
 
-**What phase 1 still owes before it is finished rather than built:** an ISO that carries the
-package (AUL1), a ticket from a keytab (M-AU7), one delivered notification, one job under
-`-Unconfined` and one under `DynamicUser` (M-AU3, M-AU5), a secret across a rollback (M-AU8),
-one job started by an unprivileged caller through polkit, and arm64 (M-AU9).
+**What phase 1 still owes, as of 2026-09-15 — and it is down to four things:**
+
+  * **M-AU7, a ticket from a keytab.** The one measurement with nothing standing in for it.
+    The test DC answers on 88, 389, 636 and 464 from the bench and every Kerberos tool is on
+    the image; what is missing is a keytab, which needs a domain join.
+  * **`-Unconfined` has never run a job.** The drop-in it writes is checked.
+  * **A `Restore-OS7` rollback over a secret**, as opposed to the dataset topology M-AU8
+    showed.
+  * **arm64** (M-AU9), and polkit's `AUTH_ADMIN` dialog, which needs a seat.
+
+Everything else phase 1 owed on 2026-09-14 has been measured, and two of those measurements
+found defects rather than confirming a design — which is what §7 is for.
 
 **Phase 2 — the OS's own value, needed by no product.** AU13 (path and socket triggers),
 fleet execution — where the differentiator is honesty: a machine that was not reached reports

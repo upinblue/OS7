@@ -1119,11 +1119,50 @@ function Start-OS7Job {
 		throw [System.ArgumentException]::new(
 			'-Keytab needs -Principal: a keytab can hold several, and kinit picks by name.')
 	}
-	if ($DynamicUser -and $Keytab) {
-		# AUL4, met in practice rather than in a paragraph.
-		throw [System.ArgumentException]::new(
-			'-DynamicUser and -Keytab cannot both be asked for: a keytab is a NAMED identity ' +
-			"and a dynamic user's id changes between runs, so nothing can own the cache.")
+	if ($DynamicUser) {
+		# AUL4, MEASURED ON A MACHINE 2026-09-15 RATHER THAN PREDICTED, and the
+		# reason this is a refusal instead of a feature: the switch produced a
+		# job that could not run, and a parameter that does that is worse than
+		# no parameter (#148's family).
+		#
+		# Three walls, in the order a job hits them, each one the fence and the
+		# journal doing exactly what they are for:
+		#
+		#   1. its own SPEC — 0600 root:root, and a dynamic uid did not exist
+		#      when it was written. That one is FIXED anyway: the spec now
+		#      arrives by `LoadCredential=`, which PID 1 reads as root and puts
+		#      in a tmpfs owned by the unit's user. (`StandardInput=file:` never
+		#      had the problem — systemd opens it as root and passes a
+		#      descriptor, which is why AU3's channel needed no change.)
+		#
+		#   2. /var/lib/os7-automation/state — 0700 root. `Access to the path
+		#      ... is denied` out of New-Item, before the job's own work starts.
+		#
+		#   3. Write-OS7JobRecord — "must run as root: it appends to the machine
+		#      job journal ... This process is uid 62375". So the run would leave
+		#      an intent with NO result, which AU5 reserves for a machine that
+		#      died. A job indistinguishable from a crash is not one anybody can
+		#      audit.
+		#
+		# Making it work is a design decision and not a patch: it needs
+		# `StateDirectory=` for (2) and a different answer to (3) — the starter
+		# writing the Result by watching the unit, or a privileged helper — and
+		# that changes AU5's two-writer contract. AUTOMATION-PLAN AUL4 records
+		# it. Open question 3 already answered "root, inside the fence, recorded
+		# per run"; this is what the alternative costs.
+		throw [System.NotImplementedException]::new(
+			'-DynamicUser is not usable yet, and this refuses rather than producing a job ' +
+			'that cannot run. Measured 2026-09-15: a dynamic user cannot write the AU6 ' +
+			'state directory (0700 root) and cannot append to the machine job journal ' +
+			'(Write-OS7JobRecord needs root), so the run would leave an intent with no ' +
+			"result — which AU5 reserves for a machine that died.`n" +
+			"`n" +
+			'  -Identity <account> is the way to run a job as a non-root named identity, ' +
+			'and it WORKS — the record is written by Start-OS7Job when the job cannot write ' +
+			'it itself. What -Identity does not give you is a per-run identity, which is ' +
+			"the only thing -DynamicUser was for.`n" +
+			"`n" +
+			'  docs/AUTOMATION-PLAN.md AUL4 says what building this properly costs.')
 	}
 	foreach ($s in $Secret) { Assert-OS7AutomationName -Name $s -What 'secret name' }
 
@@ -1241,6 +1280,28 @@ function Start-OS7Job {
 	# mid-step — the one state AU5 exists to make detectable.
 	$phase = if ($failure) { 'Result' } else { 'Note' }
 	if (-not $failure) { $record['startedOk'] = $true }
+
+	# AND A RESULT IF THE RUNNER COULD NOT WRITE ONE. Measured 2026-09-15: a job
+	# started with -Identity runs as that account, and the journal is root-owned
+	# — so `Write-OS7JobRecord` inside the unit refused and the run left an
+	# intent with no result, which AU5 reserves for a machine that died. AU4's
+	# named identity was therefore unusable, and open question 3's "root by
+	# default" was really "root or nothing".
+	#
+	# The journal stays root-owned: an evidence file the job itself could
+	# rewrite is not evidence. What changes is who writes the last line — this
+	# function, which Assert-OS7Elevated has already established is root.
+	#
+	# ASKED, NOT ASSUMED. The journal is read back, so a root job's richer
+	# record from the runner is never duplicated or overwritten.
+	if (-not $failure -and -not $NoWait) {
+		$already = @(Get-OS7JobRecord -JobId $id -Days 1 | Where-Object Phase -eq 'Result')
+		if (-not $already.Count) {
+			$record['writtenBy'] = 'starter: the job could not write its own record'
+			$record['identity'] = $intent.identity
+			$phase = 'Result'
+		}
+	}
 	Write-OS7JobRecord -JobId $id -Phase $phase -Record $record -Confirm:$false | Out-Null
 
 	if ($failure) {

@@ -39,10 +39,29 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module OS7
 
+# THE SPEC COMES FROM THE CREDENTIALS DIRECTORY FIRST, and the path second.
+# AUL4, measured on a machine 2026-09-15: the spec on disk is 0600 root:root,
+# and a `DynamicUser=yes` job runs as a uid that did not exist when it was
+# written — so reading it by path failed here, one line in, before any state
+# was touched. systemd reads `LoadCredential=` as root and places it in a tmpfs
+# owned by the unit's user at 0400, which is the same delivery a secret gets.
+#
+# The path remains the fallback so that `systemctl start os7-job@<id>` typed by
+# an administrator still works on a unit with no credential.
 $jobDir = "/var/lib/os7-automation/jobs/$JobId"
-$specPath = Join-Path $jobDir 'job.json'
-if (-not (Test-Path -LiteralPath $specPath)) {
-	throw "no job spec at $specPath — this unit was started for an id that Start-OS7Job did not write."
+$specPath = $null
+if ($env:CREDENTIALS_DIRECTORY) {
+	$fromCred = Join-Path $env:CREDENTIALS_DIRECTORY 'job'
+	if (Test-Path -LiteralPath $fromCred) { $specPath = $fromCred }
+}
+if (-not $specPath) {
+	$byPath = Join-Path $jobDir 'job.json'
+	if (Test-Path -LiteralPath $byPath) { $specPath = $byPath }
+}
+if (-not $specPath) {
+	throw ("no job spec for '$JobId' — neither " +
+		"`$env:CREDENTIALS_DIRECTORY/job nor $jobDir/job.json. This unit was " +
+		'started for an id that Start-OS7Job did not write.')
 }
 $spec = Get-Content -Raw -LiteralPath $specPath | ConvertFrom-Json
 
@@ -104,7 +123,19 @@ $record = @{
 			(Get-ChildItem -LiteralPath $env:CREDENTIALS_DIRECTORY -ErrorAction SilentlyContinue).Name
 		})
 }
-Write-OS7JobRecord -JobId $JobId -Phase 'Result' -Record $record -Confirm:$false | Out-Null
+# A NON-ROOT JOB CANNOT WRITE THIS, and that must not fail the job. Measured
+# 2026-09-15: `-Identity svc-probe` died here with "Write-OS7JobRecord must run
+# as root ... This process is uid 997", so AU4's named identity was unusable
+# while nothing said so. The journal is root-owned on purpose (an evidence file
+# a job could rewrite is not evidence), so the answer is not to loosen it — it
+# is that Start-OS7Job, which is always root, writes the Result when this could
+# not. The line below is what tells it so.
+try {
+	Write-OS7JobRecord -JobId $JobId -Phase 'Result' -Record $record -Confirm:$false | Out-Null
+}
+catch {
+	Write-Output ("OS7-JOB-RECORD-UNWRITTEN " + $_.Exception.Message.Split([char]10)[0])
+}
 
 if ($out) { $out | Out-String | Write-Output }
 if ($exit -ne 0) {
