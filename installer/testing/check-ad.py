@@ -115,6 +115,20 @@ def build_images():
            HERE, check=True, stdout=subprocess.DEVNULL)
 
 
+def stop_dc():
+    """Remove the DC container and its network.
+
+    A FUNCTION RATHER THAN FOUR LINES IN `main`'s finally, because there is a
+    second caller since 2026-09-15: `check-automation-kerberos.py` starts this
+    file's domain controller to measure M-AU7 and has to put it away again. A
+    copy of these two docker invocations over there would be BUILD-NOTES #66 in
+    the small — the same reason `os7lab.py` calls run-s5.py's own
+    `build_release_repo` with globals rebound instead of reimplementing it.
+    """
+    docker("rm", "-f", DC_NAME, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    docker("network", "rm", NETWORK, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def start_dc():
     """Start the DC and WAIT FOR THE DIRECTORY, not for the port.
 
@@ -562,9 +576,7 @@ def main():
             print()
             print(f"    (kept: container {DC_NAME} on network {NETWORK})")
         else:
-            docker("rm", "-f", DC_NAME, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            docker("network", "rm", NETWORK, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
+            stop_dc()
             shutil.rmtree(probe_dir, ignore_errors=True)
 
     print()

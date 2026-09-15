@@ -1077,8 +1077,28 @@ function Start-OS7Job {
 		Names of secrets from New-OS7Secret to deliver.
 
 	.PARAMETER Unconfined
-		Give up the fence. It names what it gives up here, and it APPEARS IN
-		THE JOB RECORD, so an auditor can see which jobs ran without one.
+		Give up FOUR of the fence's directives — and only four. It names each
+		one in the drop-in, and it APPEARS IN THE JOB RECORD, so an auditor can
+		see which jobs ran without one.
+
+		WHAT IT DROPS: ProtectSystem, ProtectHome, PrivateTmp,
+		NoNewPrivileges. Measured 2026-09-15 against the same eleven-question
+		probe M-AU3 used: inside the fence a job can do 5 of them, under
+		-Unconfined it can do 10.
+
+		WHAT IT KEEPS, and this is deliberate rather than an oversight:
+		PrivateDevices, ProtectKernelTunables, ProtectKernelModules,
+		ProtectControlGroups, ProtectClock and RestrictSUIDSGID stay on. So a
+		job under -Unconfined still cannot reach /dev/tpmrm0 — which is the one
+		question of the eleven it still answers with CANNOT. A job has no
+		business at the TPM: AU2 hands it a secret already decrypted through
+		LoadCredentialEncrypted=, and a job that opened the TPM itself would be
+		a second route to the same material.
+
+		The parameter used to be documented as "give up the fence", which
+		over-promised: an operator whose script needs a device would reach for
+		it and still fail. Naming the four is the difference between a switch
+		and a surprise.
 
 	.PARAMETER NoWait
 		Return when systemd has accepted the job rather than when it has
@@ -1430,9 +1450,14 @@ function New-OS7JobDropInText {
 
 	if ($Unconfined) {
 		$lines.Add('')
-		$lines.Add('# -Unconfined. Each of these is switched off by name rather than')
-		$lines.Add('# by a blanket, so this drop-in is readable as a list of what was')
-		$lines.Add('# given up. It is recorded in the job journal as well.')
+		$lines.Add('# -Unconfined. Each of these is switched off BY NAME rather than by a')
+		$lines.Add('# blanket, so this drop-in is readable as a list of exactly what was')
+		$lines.Add('# given up — and of what was not. PrivateDevices, ProtectKernelTunables,')
+		$lines.Add('# ProtectKernelModules, ProtectControlGroups, ProtectClock and')
+		$lines.Add('# RestrictSUIDSGID are NOT here and stay on: a job has no business at')
+		$lines.Add('# the TPM, because AU2 hands it a secret already decrypted.')
+		$lines.Add('# Measured 2026-09-15: 5 of 11 things possible inside the fence, 10 of')
+		$lines.Add('# 11 under this, and the eleventh is /dev/tpmrm0.')
 		$lines.Add('ProtectSystem=no')
 		$lines.Add('ProtectHome=no')
 		$lines.Add('PrivateTmp=no')

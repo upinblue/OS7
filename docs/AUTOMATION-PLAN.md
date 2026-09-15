@@ -500,17 +500,55 @@ Read out of the source on 2026-09-14. This is the honest starting line.
   rewrite it. `zfs diff` against a snapshot is an independent check and is *not* tamper
   *proofing*; claiming more than that would be the kind of confident wrong answer
   BUILD-NOTES exists to record.
-- **AUL4 — `DynamicUser=yes` and a durable state directory fight**, and here is the second
-  sentence it asked for. **The default is root, inside the fence, and the job record says
-  so** — because a job that must write its own state, hold a keytab and append to the machine
-  journal cannot be a dynamic user, and a job run as the CALLER would make the fence depend on
-  who typed the command. `-Identity` and `-DynamicUser` opt out; `-DynamicUser` with
-  `-Keytab` is REFUSED as two answers to one question. That is uncomfortable and is stated
-  here so somebody can disagree with it; it answers open question 3. **M-AU5 still stands** —
-  nothing has run under `DynamicUser` at all.
-- **AUL5 — `ProtectSystem=strict` will break operator-authored scripts** that write where they always
-  did. The escape (`-Unconfined`) exists and is recorded per job; the support burden is real
-  and belongs to whoever ships the product above.
+- **AUL4 — `DynamicUser=yes` and a durable state directory fight. MEASURED 2026-09-15, and
+  it is THREE walls rather than one.** The switch produced a job that could not run:
+
+    1. its own **spec** — 0600 root:root, and a dynamic uid did not exist when it was
+       written. `Access to the path … is denied`, one line into the runner. **Fixed**: the
+       spec now arrives by `LoadCredential=`, read by PID 1 as root and placed in a tmpfs
+       owned by the unit's user — the delivery AU2 already uses for a secret.
+       `StandardInput=file:` never had the problem, because systemd opens it as root and
+       passes a descriptor, so AU3's channel needed no change.
+    2. the **AU6 state directory** — 0700 root, denied.
+    3. **`Write-OS7JobRecord must run as root … This process is uid 62375`** — so the run
+       would leave an intent with no result, which AU5 reserves for a machine that died.
+
+  **`-DynamicUser` therefore REFUSES**, naming those three walls: a parameter that produces
+  an unrunnable job is worse than no parameter (#148's family). Building it properly needs
+  `StateDirectory=` for (2) and a different answer to (3), which is a design decision rather
+  than a patch.
+
+  **AND THE SAME WALL MADE `-Identity` UNUSABLE, WHICH NOBODY HAD NOTICED.** AU5 gave the
+  journal two writers — the starter for the intent, the runner for the result — and that was
+  fine while every job was root. It was not a *preference* that a job runs as root; with the
+  runner owning the Result record it was a REQUIREMENT, and open question 3's "root by
+  default" was really "root or nothing". The journal stays root-owned (an evidence file the
+  job could rewrite is not evidence); what changed is who writes the last line.
+  `Start-OS7Job` writes the Result **if the runner could not**, reading the journal back
+  first so a root job's richer record is never duplicated. `-Identity svc-probe` now runs as
+  uid 997 and leaves a record.
+- **AUL5 — `ProtectSystem=strict` will break operator-authored scripts** that write where
+  they always did. **MEASURED 2026-09-15, and it is a list rather than a worry:** of eleven
+  ordinary things a job does, it **CANNOT** write `/etc`, write `/usr/local/bin`, write
+  `/var/log`, see anything in `/home` or `/root`, or reach `/dev/tpmrm0`; it **CAN** write
+  `/tmp`, write its AU6 state directory, resolve a name, read `/etc`, and reach the product
+  surface. Three write locations lost; reading and the network untouched.
+
+  The escape (`-Unconfined`) exists, is recorded per job, and **has run one: 10 of the same
+  11 are possible under it.** The eleventh is `/dev/tpmrm0` — it drops ProtectSystem,
+  ProtectHome, PrivateTmp and NoNewPrivileges and KEEPS PrivateDevices and the kernel
+  protections, because a job has no business at the TPM when AU2 hands it a secret already
+  decrypted. Its help used to say "give up the fence", which over-promised, and now names
+  the four it drops and the six it keeps.
+
+  *How AUL5 was nearly measured wrongly is worth as much as the answer.* The first probe
+  wrapped each attempt in `try`/`catch` under `$ErrorActionPreference = 'Continue'` — a
+  refused `Set-Content` is a NON-TERMINATING error, so nothing threw and every blocked write
+  was recorded as having worked. It reported the fence as absent on a machine where a
+  four-line control unit with the same directives had `/etc` read-only. **A diagnostic that
+  asks whether a command threw is asking the exit code.** And `ls` on an
+  inaccessible-and-therefore-empty tmpfs SUCCEEDS, so `ProtectHome` has to be tested by
+  emptiness rather than by whether a listing worked.
 - **AUL6 — No fleet story.** Everything here is one machine. `Enable-OS7Remoting` and SSH
   exist; orchestration does not.
 - **AUL7 — arm64 is unmeasured, as usual.** Nothing here should be architecture-specific, and
@@ -542,12 +580,14 @@ Each kills or confirms a decision. Four need nothing but a VM.
   `check-automation-logic.py` makes `systemctl start` fail and requires the Intent record to
   already exist. On a machine the order is visible in the timestamps — Intent 19:03:01,
   Result 19:03:02.
-- **M-AU3 — restrictive defaults against a real script.** Run a representative
-  PowerShell job under AU4's directives and record what breaks. Sizes AUL5 with a number
-  instead of a worry.
+- ~~**M-AU3 — restrictive defaults against a real script.**~~ **DONE 2026-09-15**: eleven
+  things, five possible inside the fence and ten under `-Unconfined`. AUL5 carries the list
+  and the story of how the first probe got it backwards.
 - ~~**M-AU4 — does a transient timer survive a reboot?**~~ **DONE 2026-09-14: no, and
   silently.** BUILD-NOTES #154.
-- **M-AU5 — `DynamicUser` against a state directory.** Confirms or refutes AUL4.
+- ~~**M-AU5 — `DynamicUser` against a state directory.**~~ **DONE 2026-09-15: AUL4
+  confirmed, and worse than written** — three walls, and the third also made `-Identity`
+  unusable. AUL4 carries it.
 - **M-AU6 — two jobs, one lock.** The contended path, including the holder dying.
 - **M-AU7 — a keytab-derived ticket in a private cache, across expiry.** AU7 is otherwise
   a sentence about Kerberos, and this repository has learned what those are worth.
@@ -557,9 +597,25 @@ Each kills or confirms a decision. Four need nothing but a VM.
   a subsystem that was fine. `Get-DirectoryKeytabPrincipal` had always said existence
   proves nothing; the product layer had paraphrased past it. Both now ask it, and
   `check-automation-logic.py` asserts the refusal names the keytab and never the realm.
-  **The TICKET half still needs a keytab with an entry in it.**
-- **M-AU8 — a secret's survival across a boot-environment rollback.** The point of AU6 and
-  the third appearance of open question 9; it must be shown, not argued.
+  **AND THE TICKET HALF IS DONE THE SAME DAY**, by
+  `installer/testing/check-automation-kerberos.py` — 13 checks against a real Samba AD DC in
+  a container, with no password typed anywhere: a keytab exported by the DC itself, a ticket
+  in the cache the caller named, **the default cache left empty**, two jobs with two distinct
+  caches, and destroying one leaving the other alone. That last pair is AU7's whole reason
+  for existing. **Expiry and renewal are still owed**, and the check says so on every run:
+  the shortest lifetime a DC will issue is minutes, and a harness that slept for it is one
+  nobody runs.
+
+  *It looked as though this measurement needed a person* — a keytab means a join and a join
+  means an administrator's password — and it did not. A domain controller exports keytabs for
+  its own accounts with `samba-tool domain exportkeytab`, run as root on the DC, and
+  `check-ad.py` already knew how to start one. **Being blocked was a fact about where I was
+  looking.**
+- ~~**M-AU8 — a secret's survival across a boot-environment rollback.**~~ **SHOWN
+  2026-09-15** for the dataset topology: the store is outside `rpool/ROOT`, a new boot
+  environment takes ROOT from 7 datasets to 13 and does not swallow it, and the secret opens
+  before, during and after. Still owed is a `Restore-OS7` rollback of a machine that had been
+  UPDATED — the topology is shown, the update train's own road over it is not.
 - **M-AU9 — the same on arm64.** AUL7.
 
 ---
@@ -572,13 +628,15 @@ alongside rather than after. AU6 went first because everything else puts somethi
 
 **What phase 1 still owes, as of 2026-09-15 — and it is down to four things:**
 
-  * **M-AU7, a ticket from a keytab.** The one measurement with nothing standing in for it.
-    The test DC answers on 88, 389, 636 and 464 from the bench and every Kerberos tool is on
-    the image; what is missing is a keytab, which needs a domain join.
-  * **`-Unconfined` has never run a job.** The drop-in it writes is checked.
+  * **Expiry and renewal of a job's ticket.** M-AU7's ticket half is measured;
+    `check-automation-kerberos.py` prints on every run that the lifetime question is not.
   * **A `Restore-OS7` rollback over a secret**, as opposed to the dataset topology M-AU8
     showed.
   * **arm64** (M-AU9), and polkit's `AUTH_ADMIN` dialog, which needs a seat.
+
+`-Unconfined` has now run a job: 10 of 11 things possible against 5 fenced, and the eleventh
+is `/dev/tpmrm0`, which it deliberately does not give back — it drops four directives and
+keeps six, and its help now says which.
 
 Everything else phase 1 owed on 2026-09-14 has been measured, and two of those measurements
 found defects rather than confirming a design — which is what §7 is for.
@@ -604,8 +662,11 @@ above.
    `/etc/shadow` and the secret store are one question about credentials and rollback asked
    in three places. Deciding any one alone is the mistake open question 9 already names.
 3. ~~**Which identity does a job run as by default**~~ — **ANSWERED 2026-09-14: root, inside
-   the fence, and the job record says so.** `-Identity` and `-DynamicUser` opt out. See AUL4
-   for the reasoning and for why it is stated where somebody can disagree with it.
+   the fence, and the job record says so.** `-Identity <account>` is the way out and, since
+   2026-09-15, actually works; `-DynamicUser` refuses. **THE ANSWER NEEDED A CORRECTION THE
+   DAY AFTER IT WAS WRITTEN:** "root by default" was really "root or nothing", because the
+   runner owned the Result record and the journal is root-owned. That was not a preference
+   and nobody had noticed. See AUL4.
 4. ~~**Is the journal's schema a contract?**~~ **ANSWERED: yes**, and every record carries
    `schema: 1` from the first line ever written, which is the only moment that decision can be
    made. What the implementation added to it: **the journal has two writers with different

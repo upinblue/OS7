@@ -261,6 +261,62 @@ intent-with-no-result meaning what it says.
 refusal names the keytab and never the realm, and a planted defect restores the
 existence-only test and is caught. 53 checks, ten planted defects.
 
+**M-AU7 — DONE, by a harness, with nobody typing a password.** The keytab was
+the blocker for a day, and it was the wrong thing to be blocked on:
+`check-ad.py` already stands up a **real Samba AD DC in a container**, and a
+domain controller can export a keytab for its own accounts with
+`samba-tool domain exportkeytab` — run as root on the DC, no prompt. So the
+whole measurement was two commands away from a directory this repository
+already knew how to start.
+
+`installer/testing/check-automation-kerberos.py`, 13 checks, ~2 minutes:
+
+```
+-rw------- 1 root root 213 /tmp/svc-os7job.keytab
+   2 svc-os7job@OS7.TEST                    (three entries, three enctypes)
+
+a ticket is obtained from the keytab, with no password        ok
+and it is written to the cache the caller named              ok
+THE DEFAULT CACHE STAYS EMPTY                                ok   (no credential cache)
+and the named cache is where the ticket can be read          ok   svc-os7job@OS7.TEST
+a second job gets a second cache                             ok
+and the two are not the same file                            ok
+destroying one cache empties it                              ok
+and leaves the other alone                                   ok
+```
+
+The seventh and eighth lines are AU7's whole reason for existing: *"two jobs
+sharing one cache are two jobs sharing one identity and racing over its
+lifetime"*, and the first one's `kdestroy` taking the second one's ticket is
+the failure it names. Both are now shown rather than argued.
+
+**It imports `check-ad.py` rather than copying it** — `build_images`,
+`start_dc` and a `stop_dc` extracted from that file's own `finally` so both
+callers use one. A second copy of those docker invocations would be #66 in the
+small, which is the reason `os7lab.py` calls `run-s5.py`'s
+`build_release_repo` with globals rebound instead of reimplementing it.
+
+**Expiry is still not measured, and the check says so on every run.** M-AU7
+asks for a ticket across expiry; the shortest lifetime a DC will issue is
+minutes, and a harness that slept for it is a harness nobody runs. Renewal
+before expiry is owed.
+
+**`-Unconfined` — run, and it does less than its name.** The same eleven
+questions M-AU3 asked inside the fence, asked with the switch on: **10 of 11
+possible against 5 of 11 fenced.** systemd confirms `ProtectSystem=no`,
+`ProtectHome=no`, `PrivateTmp=no`, `NoNewPrivileges=no`, the drop-in names each
+one, and the job record carries `Unconfined: True`.
+
+The eleventh question is the finding: **a job under `-Unconfined` still cannot
+reach `/dev/tpmrm0`.** `PrivateDevices`, `ProtectKernelTunables`,
+`ProtectKernelModules`, `ProtectControlGroups`, `ProtectClock` and
+`RestrictSUIDSGID` stay on, because they are in the packaged template and the
+drop-in only names four. That is defensible — a job has no business at the TPM
+when AU2 hands it a secret already decrypted — but the parameter was documented
+as *"give up the fence"*, which over-promised: an operator whose script needs a
+device would reach for it and still fail. The help now names the four it drops
+and the six it keeps.
+
 **polkit, the headless half.** As `os7admin` over ssh, with OS/7's own rule
 installed:
 
@@ -429,21 +485,16 @@ than leave the next reader to assume it was run.
   **Four failed builds to get there**, and three of them were worth the time —
   BUILD-NOTES #156, #157 and #158. The module changes had reached the bench by
   `os7lab.py push` over a 1.0.0.175 install; that is no longer the only evidence.
-* **`New-OS7JobTicket` has never obtained a ticket. M-AU7's TICKET HALF IS THE
-  ONE THING PHASE 1 STILL OWES.** The test DC is reachable from the bench —
-  tcp/88, tcp/389, tcp/636 and tcp/464 all open, and `kinit`, `klist`,
-  `kdestroy`, `adcli` and `ktutil` are all on the image — but the machine is not
-  joined, and the keytab offered for the measurement was zero bytes. The private
-  cache is asserted in the drop-in
-  (`KRB5CCNAME=FILE:%t/os7-job/<id>/krb5cc`, checked) and nothing has put a
-  ticket in it. **The REFUSAL half is now measured and fixed** (above), which is
-  the half an operator meets when something is wrong.
+* ~~**`New-OS7JobTicket` has never obtained a ticket.**~~ **DONE 2026-09-15 by
+  `check-automation-kerberos.py`** against a real KDC, with no password typed —
+  see above. What is still owed is **expiry and renewal**, and the check prints
+  that on every run rather than leaving it to be assumed.
 
-  What a usable keytab needs: an entry for a principal the domain controller
-  knows. Either the bench joins `os7test.local` — which writes
-  `/etc/krb5.keytab` itself — or the DC exports one with `ktpass` for a service
-  principal mapped to an AD account. A file created by redirection is empty, and
-  `klist -k` says so.
+  *The Hyper-V test DC is reachable from the bench* (tcp/88, 389, 636, 464 all
+  open) and would also have worked, but it needed a join and therefore an
+  administrator's password. A containerised DC needs nobody, which makes the
+  measurement repeatable — and repeatable is the only kind this repository
+  counts.
 * ~~**`Send-OS7Notification` has never delivered anything.**~~ **DELIVERED
   2026-09-15** through a `command` sink, with a webhook failing beside it and
   being named. What is STILL unexercised is SMTP: `System.Net.Mail.SmtpClient`
@@ -456,8 +507,9 @@ than leave the next reader to assume it was run.
   `-DynamicUser` now refuses; `-Identity` was unusable for the same reason and
   now works.
 * ~~**M-AU3 stands.**~~ **DONE 2026-09-15**: eleven things, five possible and
-  six not, listed above. `-Unconfined` itself has still never run a job — the
-  drop-in it writes is checked and no job has used it.
+  six not, listed above. ~~`-Unconfined` itself has still never run a job.~~
+  **It has now** — 10 of 11, and the eleventh is the TPM, which it deliberately
+  does not give back.
 * ~~**A secret across a rollback has not been shown.**~~ **DONE 2026-09-15**:
   the store is outside `rpool/ROOT`, a new boot environment does not swallow it,
   and the secret opens before, during and after. What has NOT been done is a
@@ -516,6 +568,7 @@ measurement behind it:
 | `check-privilege.py` | **both baselines held** — OS7 42/42, the generic layers 41/41 — and half of #149 is now decided: the four new mutating verbs in `powershell/Systemd` carry `Assert-SystemdElevated`, the same `/proc/self/status` read in the module's own file, so nothing calls upward and P2 still points one way. The scan accepts any `Assert-*Elevated`. The forty-one that predate it are NOT retrofitted, deliberately: adding a guard to a cmdlet whose behaviour nothing has re-tested is a change made to satisfy a check |
 | `check-module-parts.py` | green. It caught the reference file drifting by 21 functions on the first run after the module grew, which is what it is for |
 | `check-ps-traps.py` | six rules, all held at 0 |
+| `check-automation-kerberos.py` | **new 2026-09-15.** 13 checks for M-AU7 against a real Samba AD DC in a container, ~2 min, needs only docker. It exists because the measurement looked as though it needed a person — a keytab means a join, and a join means a password — and it did not: a DC exports keytabs for its own accounts with no prompt. It imports `check-ad.py` rather than copying its containers |
 | `check-image.py` | **it had stopped running on this host entirely** and the first attempt to use it found that rather than anything about the image (#158). Now green on `OS7-1.0.0.222-amd64.iso` apart from the four credential checks the `OS7_REPO_NO_CREDENTIAL=1` build deliberately fails |
 
 **And three checks gained a rule that each cost a build**, which is the honest
