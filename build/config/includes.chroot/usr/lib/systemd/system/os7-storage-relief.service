@@ -1,0 +1,56 @@
+[Unit]
+# OS/7 storage relief — docs/VERSIONS-PLAN.md §5 (V15/V16) and V19.
+#
+# THE FEATURE THIS SERVES IS "VERSIONS", AND THE THING IT PROTECTS AGAINST IS
+# ITS OWN SUCCESS. A machine that keeps a month of every file's history uses
+# space in proportion to how much work is done on it, and nothing in ZFS stops
+# a pool filling. The owner's rule (2026-09-14) is 70 % warn, 80 % tighten the
+# retention and let SANOID prune under it, 90 % tighten to the floor and refuse.
+#
+# WHAT MAKES IT AUTOMATIC IS THIS UNIT AND NOTHING ELSE. Invoke-OS7StorageRelief
+# existed as a verb an operator could type, which is not the same as a machine
+# that frees space when it needs to — and until this unit shipped, nothing
+# anywhere called it.
+Description=OS/7 storage relief — act on pool pressure
+Documentation=file:///usr/share/os7/VERSIONS-PLAN.md
+
+# The pools have to be there. Asking `zpool list` before zfs.target is reached
+# gets an answer about a machine that does not exist yet.
+Requires=zfs.target
+After=zfs.target zfs-mount.service
+
+# ONE THINNER, NEVER TWO (V1). This does not delete snapshots: it writes the
+# retention policy and lets sanoid prune under it, so it must not run while
+# sanoid is midway through a pass and reading the file it is rewriting.
+After=sanoid.service
+
+[Service]
+Type=oneshot
+
+# TZ=UTC, matching sanoid's own units and os7-backup-replicate. The timestamps
+# this writes are read by the MOTD and compared with snapshot creation times,
+# and one machine with two clocks is a bug that appears twice a year.
+Environment=TZ=UTC
+
+# -NonInteractive so that anything which would have prompted fails instead of
+# hanging. Invoke-OS7StorageRelief is ConfirmImpact=High and the script passes
+# -Confirm:$false deliberately — see it for why that is a decision and not a
+# convenience.
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-storage-relief
+
+# TimeoutStartSec=, NOT RuntimeMaxSec=. systemd IGNORES RuntimeMaxSec for
+# Type=oneshot (BUILD-NOTES #155), so a unit that looked complete ran with no
+# limit at all. This is the directive that works here, and the value is generous
+# because the run walks every snapshotted dataset for files a restore put aside.
+TimeoutStartSec=15min
+
+# A pool under pressure is already a machine under load, and this is never the
+# urgent work on it.
+Nice=10
+IOSchedulingClass=idle
+
+# It writes /run/os7/storage-pressure, which the MOTD reads. Created here rather
+# than by the script, so the directory's ownership is systemd's business.
+RuntimeDirectory=os7
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes

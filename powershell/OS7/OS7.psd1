@@ -41,6 +41,7 @@
 		'Get-OS7StorageThreshold', 'Get-OS7StoragePressure',
 		'Invoke-OS7StorageRelief', 'Get-OS7ProtectedBootEnvironment',
 		'Get-OS7VersionStore',
+		'Get-OS7RestoreAside',
 
 		'Set-OS7BootEnvironment', 'Remove-OS7BootEnvironment', 'Restore-OS7',
 		# Implemented — the classic desktop, amd64 GUI mode

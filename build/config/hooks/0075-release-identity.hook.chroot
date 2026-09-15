@@ -281,14 +281,27 @@ echo "OS/7 hook 0075:   /usr/lib/os7/product, /etc/issue and /etc/issue.net writ
 MOTD_DIR=/etc/update-motd.d
 OS7_MOTD="${MOTD_DIR}/00-os7-header"
 
-if [ ! -s "${OS7_MOTD}" ]; then
-	echo "OS/7 hook 0075: ${OS7_MOTD} is missing or empty (includes.chroot)" >&2
-	exit 1
-fi
-# It ships 0644 from includes.chroot - a git checkout on a filesystem with no
-# executable bit is the normal case here, so the mode is set rather than
-# assumed (the same trade hook 0090 makes for the backup scripts).
-chmod 0755 "${OS7_MOTD}"
+# OS/7's OWN motd scripts, both of which must survive the disabling loop below.
+# 40-os7-storage is the storage line (VERSIONS-PLAN §5): it reads
+# /run/os7/storage-pressure, which os7-storage-relief.service writes, and it
+# asks ZFS nothing - the same rule 00-os7-header states for itself.
+for m in "${OS7_MOTD}" "${MOTD_DIR}/40-os7-storage"; do
+	if [ ! -s "${m}" ]; then
+		echo "OS/7 hook 0075: ${m} is missing or empty (includes.chroot)" >&2
+		exit 1
+	fi
+	# They ship 0644 from includes.chroot - a git checkout on a filesystem with
+	# no executable bit is the normal case here, so the mode is set rather than
+	# assumed (the same trade hook 0090 makes for the backup scripts).
+	chmod 0755 "${m}"
+	# A motd script that asks ZFS is a login that hangs on a degraded pool, and
+	# that is not a rule a comment can hold.
+	if grep -qE '(^|[^-[:alnum:]])(zpool|zfs)[[:space:]]' "${m}"; then
+		echo "OS/7 hook 0075: ${m} runs zfs or zpool. A login banner must not:" >&2
+		echo "OS/7 hook 0075: on a degraded pool that is a login that never returns." >&2
+		exit 1
+	fi
+done
 
 disabled=""
 kept=""
@@ -296,7 +309,7 @@ for f in "${MOTD_DIR}"/*; do
 	[ -f "${f}" ] || continue
 	name="$(basename "${f}")"
 	case "${name}" in
-		00-os7-header)
+		00-os7-header|40-os7-storage)
 			continue ;;
 		# The reboot notice: not Ubuntu branding, not an advertisement, and the
 		# one thing in that directory an operator would miss.
@@ -326,13 +339,15 @@ fi
 still="$(find "${MOTD_DIR}" -maxdepth 1 -type f -perm -u+x -printf '%f ' 2>/dev/null || true)"
 echo "OS/7 hook 0075:   MOTD: disabled ->${disabled:- (none)}"
 echo "OS/7 hook 0075:   MOTD: still executable -> ${still:-(none)}${kept:+ (kept:${kept} )}"
-case " ${still} " in
-	*" 00-os7-header "*) ;;
-	*)
-		echo "OS/7 hook 0075: 00-os7-header is not executable after chmod." >&2
-		exit 1
-		;;
-esac
+for m in 00-os7-header 40-os7-storage; do
+	case " ${still} " in
+		*" ${m} "*) ;;
+		*)
+			echo "OS/7 hook 0075: ${m} is not executable after chmod." >&2
+			exit 1
+			;;
+	esac
+done
 
 # The mechanism that displays any of this. If no PAM stack references pam_motd,
 # nothing in that directory is ever run - and that is a NOTE rather than a

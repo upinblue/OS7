@@ -2880,7 +2880,7 @@ Export-ModuleMember -Function Get-OS7Version,
 	# It deletes no snapshot itself — sanoid prunes under the policy this
 	# writes, so there is one thinner (docs/VERSIONS-PLAN.md §5).
 	Get-OS7StorageThreshold, Get-OS7StoragePressure, Invoke-OS7StorageRelief,
-	Get-OS7ProtectedBootEnvironment, Get-OS7VersionStore,
+	Get-OS7ProtectedBootEnvironment, Get-OS7VersionStore, Get-OS7RestoreAside,
 	Get-OS7Theme, Set-OS7Theme,
 	Set-OS7Mode, Restore-OS7,
 	# The update train (docs/RELEASE-AND-UPDATE-PLAN.md §4.2 as corrected by

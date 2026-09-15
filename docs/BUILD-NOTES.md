@@ -8673,3 +8673,66 @@ Caught by `check-storage-logic.py` §7 before it reached a machine, and by
 accident: two cases of the check ran in the same second, and case G reported
 the wrong failure — a snapshot it expected to be missing was found, because it
 was the previous case's.
+
+---
+
+## #160 — PowerShell writes its own source into the journal, and the two settings you would reach for first are no-ops
+
+Building the storage-relief timer meant running `pwsh` from a systemd unit four
+times an hour. One run wrote **1.95 MB to the journal**. Almost none of it was
+output: it was the OS/7 module's source code, logged line by line as
+`ScriptBlock_Compile_Detail`, because **PowerShell on Linux logs every script
+block it compiles to syslog**.
+
+Then the bench was asked what the existing timers had already done:
+
+```
+journalctl -u os7-backup-replicate.service | wc -c   →  93,768,858
+```
+
+**93.7 MB**, hourly, accumulated on one bench — by a unit that has been shipping
+for weeks, on a product whose current feature exists to stop a disk filling up.
+
+Three things about the fix, and each of them cost a measurement.
+
+**`LogLevel: "Warning"` does nothing, and neither does `LogChannels:
+"Operational"`.** The tag on those messages reads
+`[ScriptBlock_Compile_Detail:ExecuteCommand.Create.Warning]` — they are emitted
+at **Warning** level on the **Operational** channel, so both of the settings one
+would naturally reach for keep them. `"LogLevel": "Error"` is the first value
+that silences them: 1.95 MB → **704 bytes** per run, measured, and what is left
+is the unit's own lines plus the script's output.
+
+**`/etc/powershell/powershell.config.json` is read by nobody.** It is not a
+PowerShell configuration location. The file has to be at `$PSHOME`, which on this
+product is `/opt/microsoft/powershell/7` — and that is a directory `os7-powershell`
+owns outright, because it unpacks the tarball there.
+
+**And a malformed one is far worse than a missing one.** pwsh then refuses to
+start at all:
+
+```
+PowerShell has stopped working because of a security issue:
+Cannot read the configuration file: /opt/microsoft/powershell/7/powershell.config.json
+```
+
+On a machine whose login shell is PowerShell, that is **no shell at all**. It was
+hit twice while measuring — both times by a `printf` whose escapes were mangled
+on the way through ssh — and recovering needed a channel that is not PowerShell
+(`os7lab.py exec --shell`). So the file is now shipped as a package file rather
+than generated, hook 0050 parses it before anything else runs, and the hand-off
+proof already there starts a real pwsh through it. A file that parses is not yet
+a file PowerShell accepts.
+
+*Two general forms, and the second is the reusable one:*
+
+**A log setting can be a storage bug.** Nothing about "the journal is verbose"
+suggests "the disk fills", until something runs on a timer.
+
+**When a knob does not work, ask what LEVEL the thing you want to silence is
+at, rather than turning the knob further.** Warning was not too permissive by
+accident — it was the exact level of the message, and every minute spent moving
+between `Warning`, `Operational` and per-unit rate limiting was spent because
+that had not been read off the tag that was on the screen the whole time.
+(`LogRateLimitBurst=` was tried too, and cannot help: these are a dozen enormous
+messages, and systemd rate-limits by count.)

@@ -79,6 +79,12 @@ $script:OS7StorageRetentionFloor = [ordered]@{
 # The running environment, and the one before the last update. Never fewer.
 $script:OS7BootEnvironmentFloor = 2
 
+# How old a file put aside by a restore (V19) must be before storage relief may
+# remove it, and it may ONLY ever remove one a snapshot still holds. The owner
+# chose 30 days on 2026-09-15; the `Held` test is what makes the reasoning
+# behind that number true rather than assumed. See Get-OS7RestoreAside.
+$script:OS7RestoreAsideMaxAgeDays = 30
+
 function Get-OS7StorageThreshold {
 	<#
 	.SYNOPSIS
@@ -379,6 +385,9 @@ function Invoke-OS7StorageRelief {
 
 	$pressure = Get-OS7StoragePressure -Pool $Pool
 	$removed = [System.Collections.Generic.List[string]]::new()
+	$removedAside = [System.Collections.Generic.List[string]]::new()
+	$keptAside = [System.Collections.Generic.List[string]]::new()
+	[int64]$freedBytes = 0
 	$applied = $null
 	$action = 'None'
 
@@ -407,7 +416,24 @@ function Invoke-OS7StorageRelief {
 
 		$applied = Get-OS7TightenedRetention -Current $current -Target $target
 
-		if ($PSCmdlet.ShouldProcess($Pool,
+		# A MACHINE WITH NO POLICY MUST NOT GAIN ONE HERE, and this guard is the
+		# difference between "tighten the retention" and "enable backup".
+		# Get-OS7BackupPolicy -ConfigOnly answers with DEFAULTS when there is no
+		# /etc/os7/backup.json — measured, two sources on a host that has never had
+		# the file — so Set-OS7BackupPolicy would WRITE one. That is not a
+		# tightening: it is this cmdlet turning a feature on, unattended, from a
+		# timer, on every machine that reaches 80 %. And the file it would create is
+		# exactly what os7-backup-replicate.service's ConditionPathExists waits for,
+		# so the side effect would not even stay inside backup policy.
+		#
+		# There is also nothing to tighten. No policy means no OS/7-managed
+		# snapshots, which means the history this rule exists to thin is not there.
+		if (-not [System.IO.File]::Exists($script:OS7BackupConfig)) {
+			$applied = $null
+			Write-Verbose ("no $script:OS7BackupConfig, so there is no retention to " +
+				'tighten and none will be created')
+		}
+		elseif ($PSCmdlet.ShouldProcess($Pool,
 				"tighten retention to $(($applied.GetEnumerator() |
 					ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')")) {
 			Set-OS7BackupPolicy -Retention $applied -Confirm:$false | Out-Null
@@ -436,6 +462,39 @@ function Invoke-OS7StorageRelief {
 			}
 		}
 
+		# THE FILES A RESTORE PUT ASIDE (V19/VL9), by the owner's decision of
+		# 2026-09-15: removable from the Tighten level, older than 30 days —
+		# AND ONLY WHERE A SNAPSHOT STILL HOLDS THEM.
+		#
+		# The age rule came with a reason ("by then sanoid has taken it into a
+		# snapshot"), and that reason is not safe to assume HERE of all places:
+		# the level that authorises this removal is the same one that has just
+		# tightened the retention from daily=14 to daily=7 and monthly=3 to
+		# monthly=1. A file put aside 40 days ago can fall out of history in the
+		# same pass that decides it is old enough to delete.
+		#
+		# So Get-OS7RestoreAside asks ZFS per file, and a file nothing holds is
+		# the ONLY copy of somebody's work — which is exactly why the restore
+		# put it aside, and why it stays whatever the pressure.
+		foreach ($aside in @(Get-OS7RestoreAside -OlderThanDays $script:OS7RestoreAsideMaxAgeDays)) {
+			if (-not $aside.Held) {
+				$keptAside.Add($aside.Path)
+				continue
+			}
+			if (-not $PSCmdlet.ShouldProcess($aside.Path,
+					"remove a file put aside $($aside.AgeDays) days ago by a restore")) {
+				continue
+			}
+			try {
+				Remove-Item -LiteralPath $aside.Path -Force -ErrorAction Stop
+				$removedAside.Add($aside.Path)
+				$freedBytes += [int64]$aside.Length
+			}
+			catch {
+				Write-Warning "could not remove $($aside.Path): $($_.Exception.Message)"
+			}
+		}
+
 		$action = if ($pressure.Level -eq 'Refuse') { 'Emergency' } else { 'Tightened' }
 	}
 
@@ -447,7 +506,140 @@ function Invoke-OS7StorageRelief {
 		WouldHelp        = $pressure.WouldHelp
 		AppliedRetention = $applied
 		RemovedEnvironments = @($removed)
-		Reason           = $pressure.Reason
+		# V19's files: what was removed, what was KEPT because ZFS holds no
+		# copy of it, and what the removals actually returned. The kept list is
+		# reported rather than silent — "I left these alone and here is why" is
+		# the half an operator needs in order to deal with them by hand.
+		RemovedAsideFiles = @($removedAside)
+		KeptAsideFiles    = @($keptAside)
+		FreedBytes        = [int64]$freedBytes
+		Reason            = $pressure.Reason
+	}
+}
+
+function Get-OS7RestoreAside {
+	<#
+	.SYNOPSIS
+		The files a restore put aside, what they cost, and whether ZFS still has them.
+
+	.DESCRIPTION
+		docs/VERSIONS-PLAN.md V19 and VL9. When `Restore-OS7File` cannot take a
+		ZFS snapshot — which on this product means, nearly always, that the
+		caller is the OWNER of the file and not root (M-V22) — it renames the
+		file it is about to overwrite to `<path>.os7-before-restore-<stamp>`
+		instead of destroying it. That is Time Machine's "Keep Both", and nothing
+		cleans them up on its own.
+
+		THIS IS WHAT MAKES THEM VISIBLE. An operator asking "what are all these
+		files and may I delete them" gets an answer per file rather than a
+		convention to remember, and `Invoke-OS7StorageRelief` asks the same
+		question before it removes any.
+
+		`Held` IS ASKED, NOT ASSUMED, and that is the whole point of the column.
+		The owner's decision (2026-09-15) was to remove these under pressure once
+		they are older than 30 days, on the reasoning that sanoid will have taken
+		them into a snapshot by then. That reasoning is TRUE ONLY IF THE
+		RETENTION STILL REACHES BACK THAT FAR — and the pressure level that
+		authorises the removal is the same one that TIGHTENS the retention, from
+		daily=14 to daily=7 and monthly=3 to monthly=1. So age is not evidence
+		here; `Get-OS7FileVersion` is asked whether a snapshot actually holds the
+		file, per file, and only `Held` is ever removable.
+
+		Read-only, and unprivileged: these live in the operator's own directories
+		and asking about them needs nothing.
+
+	.PARAMETER Dataset
+		Which datasets' mountpoints to walk. Defaults to the ones the backup
+		policy covers, which is where restores happen.
+
+	.PARAMETER OlderThanDays
+		Report only files put aside longer ago than this. The age comes from the
+		STAMP IN THE NAME — when the file was put aside — and not from its
+		mtime, which is the age of the contents and is usually much older.
+
+	.OUTPUTS
+		OS7.Storage.RestoreAside: Path, Dataset, Length, PutAside, AgeDays, Held.
+
+	.EXAMPLE
+		Get-OS7RestoreAside | Format-Table Path, Length, PutAside, Held
+
+	.EXAMPLE
+		Get-OS7RestoreAside -OlderThanDays 30 | Where-Object Held
+	#>
+	[CmdletBinding()]
+	[OutputType('OS7.Storage.RestoreAside')]
+	param(
+		[Parameter(Position = 0)][string[]]$Dataset,
+		[int]$OlderThanDays = 0
+	)
+
+	$roots = if ($Dataset) { @($Dataset) }
+	else {
+		$policy = Get-OS7BackupPolicy -ConfigOnly
+		if ($policy.Sources) { @($policy.Sources.Dataset) } else { @('rpool/USERDATA') }
+	}
+
+	$now = Get-Date
+	$pattern = "*.$script:OS7RestoreSafetyPrefix*"
+
+	foreach ($root in $roots) {
+		$datasets = @(Get-ZfsDataset -Name $root -Type Filesystem -Recurse -ErrorAction SilentlyContinue)
+
+		foreach ($d in $datasets) {
+			$mount = [string]$d.Mountpoint
+			if (-not $mount -or $mount -eq 'legacy' -or -not (Test-Path -LiteralPath $mount)) {
+				continue
+			}
+
+			$found = @()
+			try {
+				$found = @(Get-ChildItem -LiteralPath $mount -Filter $pattern -Recurse -File -Force -ErrorAction SilentlyContinue)
+			}
+			catch { continue }
+
+			foreach ($f in $found) {
+				# `.zfs` is snapdir=hidden and Get-ChildItem does not descend
+				# into it — but a snapshot reached by an explicit path would be
+				# read-only and undeletable, and reporting one as removable
+				# would be a lie. Cheap to exclude, so excluded.
+				if ($f.FullName -like '*/.zfs/*') { continue }
+
+				# The stamp is what this owns; the mtime belongs to the contents
+				# and is older, often by years.
+				$putAside = $null
+				$stamp = $f.Name -replace ".*$([regex]::Escape($script:OS7RestoreSafetyPrefix))", ''
+				$stamp = ($stamp -split '-')[0..1] -join '-'
+				$parsed = [datetime]::MinValue
+				if ([datetime]::TryParseExact($stamp, 'yyyyMMdd-HHmmss', $null,
+						[System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+					$putAside = $parsed
+				}
+
+				$ageDays = if ($putAside) { [int]($now - $putAside).TotalDays } else { $null }
+				if ($OlderThanDays -gt 0 -and ($null -eq $ageDays -or $ageDays -lt $OlderThanDays)) {
+					continue
+				}
+
+				# ASKED OF ZFS. A file whose content is in no snapshot is the
+				# ONLY copy of somebody's work — that is precisely why the
+				# restore put it aside — and nothing may remove it.
+				$held = $false
+				try {
+					$held = @(Get-OS7FileVersion -Path $f.FullName -ErrorAction Stop).Count -gt 0
+				}
+				catch { $held = $false }
+
+				[pscustomobject]@{
+					PSTypeName = 'OS7.Storage.RestoreAside'
+					Path       = $f.FullName
+					Dataset    = $d.Name
+					Length     = [int64]$f.Length
+					PutAside   = $putAside
+					AgeDays    = $ageDays
+					Held       = $held
+				}
+			}
+		}
 	}
 }
 

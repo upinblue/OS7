@@ -1,0 +1,150 @@
+# OS/7 storage relief — the thing the timer runs.
+#
+# docs/VERSIONS-PLAN.md §5. Run by os7-storage-relief.service as root, every
+# fifteen minutes. Not executable and carries no shebang: it is started as
+# `pwsh -NoProfile -NonInteractive -File`, which is the convention hook 0090
+# enforces on every script under /usr/libexec here.
+#
+# IT DOES TWO THINGS AND THEY ARE DELIBERATELY SEPARATE.
+#
+#   It MEASURES, always, on every machine, and writes what it found to
+#   /run/os7/storage-pressure for the MOTD to read. That file is the reason a
+#   login banner can report a filling pool without asking ZFS — and the login
+#   banner must never ask ZFS, because `zpool list` on a degraded pool is a
+#   login that hangs (the same rule 00-os7-header states for itself).
+#
+#   It ACTS only from the Tighten level up, and only through
+#   Invoke-OS7StorageRelief, which owns every decision about what may be
+#   removed. Nothing here decides anything; if a rule is wrong it is wrong in
+#   one place and check-storage-logic.py holds it.
+#
+# EXIT CODES ARE THE UNIT'S CONTRACT. 0 for "measured, and acted if needed";
+# 1 only for a run that could not measure at all. A pool at 95 % that relief
+# could not rescue is NOT a failed unit — it is a working unit reporting a
+# problem, and putting it in `failed` every fifteen minutes is how an
+# administrator learns to ignore it.
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$state = '/run/os7/storage-pressure'
+
+function Write-State {
+	param([hashtable]$Data)
+	try {
+		$dir = Split-Path -Parent $state
+		if (-not (Test-Path -LiteralPath $dir)) {
+			New-Item -ItemType Directory -Force -Path $dir | Out-Null
+		}
+		# Written whole and moved into place, so the MOTD can never read half a
+		# document. A login is allowed to happen mid-run.
+		$tmp = "$state.new"
+		($Data | ConvertTo-Json -Depth 5 -Compress) | Set-Content -LiteralPath $tmp -Encoding utf8
+		Move-Item -LiteralPath $tmp -Destination $state -Force
+	}
+	catch {
+		# The state file is a convenience for the banner. Failing to write it
+		# must not fail a run that did its actual work.
+		Write-Warning "could not write ${state}: $($_.Exception.Message)"
+	}
+}
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+}
+catch {
+	Write-Error "the OS7 module could not be loaded: $($_.Exception.Message)"
+	exit 1
+}
+
+$pressure = $null
+try {
+	$pressure = Get-OS7StoragePressure
+}
+catch {
+	# A pool that cannot be read is the one case that IS a unit failure: the
+	# machine has lost the ability to answer the question this exists to ask.
+	Write-Error "storage pressure could not be measured: $($_.Exception.Message)"
+	exit 1
+}
+
+Write-Information "pool $($pressure.Pool) at $($pressure.Capacity)% — $($pressure.Level)" -InformationAction Continue
+
+$record = @{
+	Pool     = $pressure.Pool
+	Capacity = $pressure.Capacity
+	Level    = $pressure.Level
+	Reason   = $pressure.Reason
+	Checked  = (Get-Date).ToString('o')
+	Acted    = $false
+	Relieved = $false
+	Freed    = 0
+	Kept     = 0
+}
+
+# Normal and Warn do not act — V15. Warn SAYS SO and deletes nothing, because a
+# machine that starts deleting at the first sign of pressure teaches its
+# operator that the warning means data loss.
+if ($pressure.Level -in @('Normal', 'Warn')) {
+	Write-State $record
+	exit 0
+}
+
+$result = $null
+try {
+	# -Confirm:$false IS A DECISION, not a convenience. Invoke-OS7StorageRelief
+	# is ConfirmImpact=High because typing it by hand should ask; running it
+	# from a timer cannot ask anybody, and a prompt here would hang the unit
+	# until TimeoutStartSec killed it (-NonInteractive turns it into a failure
+	# instead, which is the same outcome with a better message). The decision
+	# to act unattended was the owner's, 2026-09-15: the storage must be freed
+	# automatically when the system needs it.
+	$result = Invoke-OS7StorageRelief -Confirm:$false
+}
+catch {
+	Write-Error "storage relief failed: $($_.Exception.Message)"
+	Write-State $record
+	exit 1
+}
+
+$record.Acted = $true
+$record.Freed = [int64]$result.FreedBytes
+$record.Kept = @($result.KeptAsideFiles).Count
+
+# DID IT ACTUALLY HELP? The whole point of this repository's recurring rule: the
+# cmdlet reporting success says it ran, not that the pool has room. So the pool
+# is asked again.
+$after = $null
+try { $after = Get-OS7StoragePressure } catch { }
+if ($after) {
+	$record.Capacity = $after.Capacity
+	$record.Level = $after.Level
+	$record.Relieved = ($after.Level -in @('Normal', 'Warn'))
+	$record.Reason = $after.Reason
+}
+
+foreach ($name in @($result.RemovedEnvironments)) {
+	Write-Information "removed boot environment $name" -InformationAction Continue
+}
+foreach ($path in @($result.RemovedAsideFiles)) {
+	Write-Information "removed $path (put aside by a restore, and still held by a snapshot)" `
+		-InformationAction Continue
+}
+foreach ($path in @($result.KeptAsideFiles)) {
+	# NAMED, NOT COUNTED. These are the ones no snapshot holds — the only copy
+	# of somebody's work — and the operator is the only one who can decide they
+	# are finished with.
+	Write-Warning "kept $path — no snapshot holds it, so it is the only copy"
+}
+
+Write-State $record
+
+if (-not $record.Relieved) {
+	# Reported, not failed. See the header: a unit that goes `failed` every
+	# fifteen minutes on a full pool is a unit nobody reads.
+	Write-Warning ("pool $($record.Pool) is still at $($record.Capacity)% after relief. " +
+		'Get-OS7VersionStore says what history costs; Get-OS7RestoreAside says what ' +
+		'restores left behind.')
+}
+
+exit 0

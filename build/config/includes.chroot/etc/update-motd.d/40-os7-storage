@@ -1,0 +1,74 @@
+#!/bin/sh
+# OS/7 — the storage line of the login banner. docs/VERSIONS-PLAN.md §5.
+#
+# THIS ASKS NOTHING. It reads /run/os7/storage-pressure, which
+# os7-storage-relief.service writes every fifteen minutes, and prints a line
+# only when there is something to say.
+#
+# The rule it obeys is 00-os7-header's, stated there in capitals and just as
+# true here: **a login banner must not ask ZFS.** `zpool list` on a machine
+# whose pool is degraded is a login that hangs, and this file runs at every
+# console login, every ssh session and every GUI terminal. It also must not
+# start pwsh — a third of a second per session, on every session, to print
+# nothing on a healthy machine.
+#
+# SO THE BANNER IS ALWAYS SLIGHTLY BEHIND, by up to fifteen minutes, and that is
+# the right trade: the thing it reports is a pool filling over days.
+#
+# NO FILE MEANS SILENCE, NOT "UNKNOWN". A machine that has not measured yet —
+# one booted three minutes ago, or one with no ZFS at all — has nothing to
+# report, and a banner that says "storage: unknown" at every login is noise that
+# trains people to skip the banner where the real warning will appear.
+set -u
+
+state=/run/os7/storage-pressure
+[ -r "${state}" ] || exit 0
+
+# One `sed` over one short JSON document, rather than a parser. The file is
+# written by ConvertTo-Json -Compress from a flat hashtable, so every value is a
+# scalar and there is nothing here to nest.
+field() {
+	sed -n 's/.*"'"$1"'":"\{0,1\}\([^,"}]*\)"\{0,1\}.*/\1/p' "${state}" 2>/dev/null
+}
+
+level="$(field Level)"
+[ -n "${level}" ] || exit 0
+
+# Normal is the common case and says nothing at all.
+case "${level}" in
+	Normal) exit 0 ;;
+esac
+
+capacity="$(field Capacity)"
+relieved="$(field Relieved)"
+
+case "${level}" in
+	Warn)
+		printf 'Storage: %s%% used. Nothing has been deleted; history is still kept in full.\n' \
+			"${capacity}"
+		printf '         Get-OS7VersionStore says what that history costs.\n\n'
+		;;
+	Tighten)
+		printf 'Storage: %s%% used. Snapshot retention has been tightened automatically\n' \
+			"${capacity}"
+		printf '         and older history is being pruned.\n\n'
+		;;
+	Refuse)
+		printf 'STORAGE: %s%% USED. Retention is at its floor and the machine is out of room.\n' \
+			"${capacity}"
+		printf '         Get-OS7VersionStore says what history costs; Get-OS7RestoreAside\n'
+		printf '         says what restores left behind. Both are safe to run.\n\n'
+		;;
+esac
+
+# The half that is worth a second line: relief ran and did not get there. A
+# machine that says "tightened" and stays full has told the operator the good
+# news and kept the bad.
+if [ "${relieved}" = "false" ] || [ "${relieved}" = "False" ]; then
+	case "${level}" in
+		Tighten|Refuse)
+			printf '         Automatic relief ran and did NOT reach its target.\n'
+			printf '         Deleting history will not fix this; the space is in live data.\n\n'
+			;;
+	esac
+fi

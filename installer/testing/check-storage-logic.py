@@ -43,6 +43,7 @@ This checks what OS/7's layer CONCLUDES from it.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -72,14 +73,31 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 $script:FakePool = $null
 $script:FakeSpace = @()
+# The mounted datasets Get-OS7RestoreAside walks looking for files a restore
+# put aside (V19). Empty for every section but §9, which is about them.
+$script:FakeDatasets = @()
 $script:FakeEnvironments = @()
 $script:FakeRetention = $null
 $script:AppliedRetention = $null
 $script:RemovedEnvironments = [System.Collections.Generic.List[string]]::new()
 
+# THE POLICY FILE, AS A REAL FILE. Invoke-OS7StorageRelief refuses to tighten a
+# retention on a machine that has no /etc/os7/backup.json, because
+# Get-OS7BackupPolicy -ConfigOnly answers with DEFAULTS there and writing them
+# back would CREATE the policy — turning "tighten" into "enable backup",
+# unattended, from a timer. These sections are about a machine that HAS one, so
+# they are given one; §9 is the machine that does not.
+$script:OS7BackupConfig = (Join-Path ([System.IO.Path]::GetTempPath()) `
+	("os7-backup-" + [guid]::NewGuid().ToString('N') + ".json"))
+Set-Content -LiteralPath $script:OS7BackupConfig -Value '{{}}'
+
 function Get-ZfsPool {{ param([string[]]$Name) $script:FakePool }}
 function Get-ZfsSpace {{ param([string]$Name, [switch]$Recurse) $script:FakeSpace }}
 function Get-ZfsSnapshot {{ param([string]$Name, [switch]$NoRecurse) @() }}
+function Get-ZfsDataset {{
+	param([string]$Name, [string]$Type, [switch]$Recurse)
+	$script:FakeDatasets
+}}
 function Get-OS7BootEnvironment {{ $script:FakeEnvironments }}
 function Format-ZfsSize {{ param($Bytes) "$Bytes bytes" }}
 function Assert-OS7Elevated {{ param($Cmdlet, $Because) }}
@@ -1052,6 +1070,279 @@ Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyConti
           "and writes nothing")
 
 
+ASIDE_FAKES = r"""
+$script:Versioned = @{}          # path -> does a snapshot hold it
+$script:FileVersionCalls = [System.Collections.Generic.List[string]]::new()
+
+function Get-OS7FileVersion {
+	param([string]$Path, [switch]$IncludeCurrent, [switch]$IncludeAbsent,
+		[switch]$DistinctOnly, [switch]$AsArray)
+	$script:FileVersionCalls.Add($Path)
+	$p = $Path -replace '\\', '/'
+	if ($script:Versioned.ContainsKey($p) -and $script:Versioned[$p]) {
+		@([pscustomobject]@{ Path = $Path; SnapshotName = 'autosnap_x_daily' })
+	}
+	else { @() }
+}
+
+function N { param([string]$p) $p -replace '\\', '/' }
+
+$script:Root = N (Join-Path ([System.IO.Path]::GetTempPath()) ("os7v19-" + [guid]::NewGuid().ToString('N')))
+$script:Home7 = "$script:Root/home"
+New-Item -ItemType Directory -Force -Path $script:Home7 | Out-Null
+$script:FakeDatasets = @([pscustomobject]@{
+	Name = 'rpool/USERDATA/alice'; Type = 'filesystem'; Mountpoint = $script:Home7 })
+
+function New-Aside {
+	param([string]$Name, [string]$Stamp, [int]$Length = 100, [bool]$Held = $true)
+	$path = "$script:Home7/$Name.os7-before-restore-$Stamp"
+	Set-Content -LiteralPath $path -Value ('x' * $Length) -NoNewline
+	$script:Versioned[(N $path)] = $Held
+	$path
+}
+"""
+
+
+def asides():
+    print()
+    print("  9. The files a restore put aside: reported always, removed only when ZFS still has them")
+
+    # The owner's decision, 2026-09-15: removable from the Tighten level once
+    # older than 30 days. The reasoning was "by then sanoid has taken it into a
+    # snapshot" — and the level that authorises the removal is the SAME one that
+    # tightens the retention, so the reasoning can be false exactly here. Held is
+    # therefore asked per file rather than inferred from age.
+    body = ASIDE_FAKES + r"""
+$out = [ordered]@{}
+$now = Get-Date
+
+$old1 = New-Aside -Name 'notes.txt' -Stamp $now.AddDays(-40).ToString('yyyyMMdd-HHmmss') -Length 500 -Held $true
+$old2 = New-Aside -Name 'plan.md'   -Stamp $now.AddDays(-99).ToString('yyyyMMdd-HHmmss') -Length 300 -Held $false
+$new1 = New-Aside -Name 'draft.txt' -Stamp $now.AddDays(-2).ToString('yyyyMMdd-HHmmss')  -Length 700 -Held $true
+Set-Content -LiteralPath "$script:Home7/ordinary.txt" -Value 'not a restore leftover' -NoNewline
+
+# --- what the reporting verb says ------------------------------------------
+$all = @(Get-OS7RestoreAside)
+$out['found'] = $all.Count
+$out['names'] = @($all | ForEach-Object { Split-Path -Leaf $_.Path } | Sort-Object)
+$out['ages'] = @($all | Sort-Object Path | ForEach-Object { $_.AgeDays })
+$out['held'] = @($all | Where-Object Held | ForEach-Object { Split-Path -Leaf $_.Path } | Sort-Object)
+$out['lengths'] = @($all | Sort-Object Path | ForEach-Object { $_.Length })
+$out['olderOnly'] = @(Get-OS7RestoreAside -OlderThanDays 30).Count
+
+# --- and what relief does with them ----------------------------------------
+$script:FakePool = New-Pool -Capacity 85 -Size 100GB -Allocated ([int64](100GB * 0.85))
+$script:FakeSpace = @([pscustomobject]@{ Name='rpool'; UsedBySnapshots=[int64]40GB })
+$script:FakeEnvironments = @(New-Environment -Name 'a' -Created (Get-Date) -Running $true -Used 1GB)
+$script:FakeRetention = New-OS7BackupRetention
+
+$r = Invoke-OS7StorageRelief -Confirm:$false
+$out['removed'] = @($r.RemovedAsideFiles | ForEach-Object { Split-Path -Leaf $_ })
+$out['kept'] = @($r.KeptAsideFiles | ForEach-Object { Split-Path -Leaf $_ })
+$out['freed'] = [int64]$r.FreedBytes
+$out['onDisk'] = @(Get-ChildItem -LiteralPath $script:Home7 -File |
+	ForEach-Object { $_.Name } | Sort-Object)
+
+# --- the machine with NO backup policy -------------------------------------
+# Get-OS7BackupPolicy -ConfigOnly answers with DEFAULTS where there is no
+# config, so writing them back would CREATE one — a timer turning backup on.
+Remove-Item -LiteralPath $script:OS7BackupConfig -Force
+$script:AppliedRetention = $null
+$r2 = Invoke-OS7StorageRelief -Confirm:$false
+$out['noPolicyApplied'] = ($null -eq $r2.AppliedRetention)
+$out['noPolicyWrote'] = ($null -ne $script:AppliedRetention)
+$out['noPolicyFileBack'] = (Test-Path -LiteralPath $script:OS7BackupConfig)
+$out['noPolicyStillActs'] = ($r2.Action -ne 'None')
+
+Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue
+$out | ConvertTo-Json -Depth 4
+"""
+    got = run(body, "the aside files can be exercised")
+    if got is None:
+        return
+
+    check(got["found"] == 3,
+          "an ordinary file beside them is not one of ours — the prefix is the identity",
+          f"{got['found']} found: {', '.join(got['names'])}")
+    check("ordinary.txt" not in got["names"],
+          "and it is still there to be missed if that ever changes")
+    check(40 in got["ages"] and 99 in got["ages"] and 2 in got["ages"],
+          "and the age is the stamp's, not the file's mtime — which is the age of "
+          "the CONTENTS and is older", str(got["ages"]))
+    held = sorted(n.split(".os7-before-restore-")[0] for n in got["held"])
+    check(held == ["draft.txt", "notes.txt"],
+          "ZFS is asked per file whether a snapshot still holds it, and answers "
+          "differently for two files of the same age class", ", ".join(held))
+    check(got["olderOnly"] == 2,
+          "-OlderThanDays filters on when it was put aside", str(got["olderOnly"]))
+
+    removed = [n.split(".os7-before-restore-")[0] for n in got["removed"]]
+    kept = [n.split(".os7-before-restore-")[0] for n in got["kept"]]
+
+    check(removed == ["notes.txt"],
+          "relief removes the one that is old enough AND still held", ", ".join(removed))
+    check(kept == ["plan.md"],
+          "AND KEEPS THE ONE NOTHING HOLDS, however old — it is the only copy of "
+          "somebody's work, which is why the restore put it aside", ", ".join(kept))
+    check(not any("draft" in n for n in got["removed"]),
+          "the recent one is not touched at all — 30 days is the owner's rule")
+    check(got["freed"] == 500,
+          "and what was freed is reported in bytes, not claimed", str(got["freed"]))
+    check(sorted(got["onDisk"]) == sorted(
+              [n for n in got["names"] if not n.startswith("notes.txt")] + ["ordinary.txt"]),
+          "the filesystem agrees: exactly one file is gone",
+          ", ".join(sorted(got["onDisk"])))
+
+    check(got["noPolicyApplied"] and not got["noPolicyWrote"],
+          "a machine with NO backup policy gets no retention written")
+    check(not got["noPolicyFileBack"],
+          "AND NO POLICY FILE CREATED — relief tightens a policy, it does not "
+          "enable a feature from a timer")
+    check(got["noPolicyStillActs"],
+          "but it still acts on what it CAN free, so a policy-less machine is "
+          "not simply abandoned at 85 %")
+
+UNIT_DIR = os.path.join(REPO, "build", "config", "includes.chroot",
+                        "usr", "lib", "systemd", "system")
+LIBEXEC = os.path.join(REPO, "build", "config", "includes.chroot", "usr", "libexec")
+MOTD = os.path.join(REPO, "build", "config", "includes.chroot", "etc", "update-motd.d",
+                    "40-os7-storage")
+PACKAGES = os.path.join(REPO, "build", "lib", "build-os7-packages.sh")
+HOOK75 = os.path.join(REPO, "build", "config", "hooks",
+                      "0075-release-identity.hook.chroot")
+
+
+def read(path, code_only=False):
+    """The file, optionally with its comments removed.
+
+    NAMING A THING IS NOT DOING IT, and this check learned that the way
+    check-gui-tokens.py did — by going red on its own documentation. The
+    service explains at length why it does NOT use RuntimeMaxSec; the login
+    banner explains at length why it must never run `zpool list` or start
+    pwsh. A rule that greps the whole file forbids explaining the rule.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return ""
+
+    if not code_only:
+        return text
+
+    # Line-leading `#` only: it covers every comment in a systemd unit and in
+    # these scripts, and it cannot swallow a `#` that is part of a command.
+    return chr(10).join(line for line in text.splitlines()
+                        if not line.lstrip().startswith("#"))
+
+
+def automatic():
+    print()
+    print("  10. And the part that makes it AUTOMATIC, which is a file and not a rule")
+
+    # Invoke-OS7StorageRelief existed as a verb an operator could type. That is
+    # not a machine that frees space when it needs to, and until these units
+    # shipped nothing anywhere called it. Everything below is the difference.
+    service = read(os.path.join(UNIT_DIR, "os7-storage-relief.service"), code_only=True)
+    timer = read(os.path.join(UNIT_DIR, "os7-storage-relief.timer"), code_only=True)
+    script = read(os.path.join(LIBEXEC, "os7-storage-relief"))
+    script_code = read(os.path.join(LIBEXEC, "os7-storage-relief"), code_only=True)
+    motd = read(MOTD, code_only=True)
+    packages = read(PACKAGES)
+    hook = read(HOOK75)
+
+    check(bool(service) and bool(timer) and bool(script),
+          "the unit, the timer and the script all exist")
+
+    check("WantedBy=timers.target" in timer,
+          "the timer is installable into timers.target")
+    # THE SYMLINK BEING CREATED, not merely the path being named. The first
+    # version of this check looked for the path and passed against a package
+    # that had stopped creating it — because pkg_finish's required-path list
+    # names the same string. A planted defect is what found that.
+    check("ln -sfn ../os7-storage-relief.timer" in packages,
+          "AND THE PACKAGE CREATES THE ENABLE SYMLINK, so it is on from a fresh "
+          "install — an unenabled timer is an unplugged smoke alarm")
+    check("OnUnitActiveSec=" in timer and "OnBootSec=" in timer,
+          "it repeats, and it runs after a boot rather than waiting a full interval")
+
+    # BUILD-NOTES #155, found by a machine while every check was green.
+    check("RuntimeMaxSec" not in service,
+          "the service does NOT use RuntimeMaxSec — systemd IGNORES it for "
+          "Type=oneshot (#155), so it would look complete and time out nothing")
+    check("TimeoutStartSec=" in service,
+          "and it uses the directive that does work on a oneshot")
+    check("Type=oneshot" in service, "it is a oneshot")
+    check("pwsh" in service and "-File /usr/libexec/os7-storage-relief" in service,
+          "and it runs the script the way hook 0090 requires: pwsh -File")
+    check(not script.startswith("#!"),
+          "so the script carries no shebang and is never execve'd into /bin/sh")
+
+    check("-NonInteractive" in service,
+          "-NonInteractive, so a prompt fails the run instead of hanging it "
+          "until the timeout")
+    check("-Confirm:$false" in script_code,
+          "and the script says -Confirm:$false explicitly, because "
+          "Invoke-OS7StorageRelief is ConfirmImpact=High and a timer cannot answer")
+
+    # THE MOTD RULE, and it is the one with a real failure behind it: 00-os7-header
+    # states in capitals that a login banner must not ask ZFS, because `zpool
+    # list` on a degraded pool is a login that hangs.
+    check(bool(motd), "the login banner has a storage line")
+    check(not re.search(r"(^|[^-\w])(zpool|zfs)\s", motd),
+          "IT ASKS ZFS NOTHING — a banner that does is a login that hangs on a "
+          "degraded pool")
+    check("pwsh" not in motd,
+          "and it starts no PowerShell: this runs at every ssh session and every "
+          "terminal window")
+    check("/run/os7/storage-pressure" in motd and "/run/os7/storage-pressure" in script,
+          "both sides name the same file, which is the whole mechanism")
+    check("RuntimeDirectory=os7" in service,
+          "and systemd owns that directory rather than the script creating it")
+
+    check("40-os7-storage" in hook,
+          "hook 0075 knows about the banner — it disables every motd script it "
+          "does not name, so an unlisted one ships switched off")
+
+    for path in ("./usr/lib/systemd/system/os7-storage-relief.service",
+                 "./usr/lib/systemd/system/os7-storage-relief.timer",
+                 "./usr/libexec/os7-storage-relief",
+                 "./etc/update-motd.d/40-os7-storage"):
+        check(path in packages,
+              f"the package's required-path list names {path.rsplit('/', 1)[-1]}")
+
+    check("os7-storage-relief" in packages and "usr/share/os7/VERSIONS-PLAN.md" in packages,
+          "and it ships the document both units name in Documentation=, because "
+          "one pointing at a file the machine lacks is worse than none")
+
+    # BUILD-NOTES #160, and it is a storage rule even though it looks like a
+    # logging one: without this file every pwsh invocation writes ~2 MB of its
+    # own module source to the journal, so a timer that runs four times an hour
+    # fills the disk it exists to protect. Measured: 1.95 MB a run before,
+    # 704 bytes after.
+    conf = read(os.path.join(REPO, "build", "packages", "os7-powershell",
+                             "powershell.config.json"))
+    check(bool(conf), "PowerShell's own log level is shipped as a file")
+    try:
+        parsed = json.loads(conf) if conf else {}
+    except ValueError:
+        parsed = None
+    check(parsed is not None,
+          "AND IT IS VALID JSON — pwsh refuses to START on a malformed one, and "
+          "on this product pwsh is the login shell")
+    check(isinstance(parsed, dict) and parsed.get("LogLevel") in ("Error", "Critical", "None"),
+          "at Error or stricter, because the messages it silences are themselves "
+          "WARNING level — Warning and Informational are exact no-ops",
+          str(parsed.get("LogLevel") if isinstance(parsed, dict) else parsed))
+    check("/opt/microsoft/powershell/7/powershell.config.json" in packages,
+          "and it is installed into $PSHOME, not /etc/powershell — which is not "
+          "a PowerShell configuration location and is read by nobody")
+
+    hook50 = read(os.path.join(REPO, "build", "config", "hooks",
+                               "0050-powershell-interactive-shell.hook.chroot"), code_only=True)
+    check("powershell.config.json" in hook50,
+          "a build-time hook parses it, and then starts a real pwsh through it")
+
 def main():
     print("OS/7 storage pressure — the decisions, with no ZFS")
     print()
@@ -1068,6 +1359,8 @@ def main():
     boundary()
     safety()
     confirmation()
+    asides()
+    automatic()
 
     print()
     if FAILS:

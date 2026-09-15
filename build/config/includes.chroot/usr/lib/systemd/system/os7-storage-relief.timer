@@ -1,0 +1,25 @@
+[Unit]
+Description=OS/7 storage relief, every fifteen minutes
+Documentation=file:///usr/share/os7/VERSIONS-PLAN.md
+
+[Timer]
+# FIFTEEN MINUTES, AND THE NUMBER IS SANOID'S RATHER THAN A GUESS. This unit
+# frees nothing directly: at 80 % it rewrites the retention policy and SANOID
+# prunes under it on sanoid.timer's next tick, which is `*:0/15`. Checking more
+# often than that would decide the same thing again and wait the same fifteen
+# minutes for it to take effect; checking less often would leave a pool filling
+# for no reason, since asking `zpool list -j` costs milliseconds.
+OnBootSec=3min
+OnUnitActiveSec=15min
+
+# NO Persistent=. A missed pressure reading is not work to catch up on — it is
+# a measurement of a moment that has passed, and OnBootSec covers the only gap
+# that matters. Persistent=true here would fire a catch-up run at every boot on
+# top of the one three minutes later.
+
+# Fleets exist, and two hundred machines all rewriting a retention policy on the
+# quarter hour is a decision about somebody's storage, made by accident.
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

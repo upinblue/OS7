@@ -863,7 +863,8 @@ build_os7_backup() {
 	local unit
 
 	for unit in os7-backup-firstboot.service os7-backup-replicate.service \
-	            os7-backup-replicate.timer; do
+	            os7-backup-replicate.timer \
+	            os7-storage-relief.service os7-storage-relief.timer; do
 		install -Dm644 "${inc}/usr/lib/systemd/system/${unit}" \
 			"${stage}/usr/lib/systemd/system/${unit}"
 	done
@@ -871,11 +872,22 @@ build_os7_backup() {
 	# scripts, never executed — hook 0090 refuses a shebang on them for the
 	# same reason, and until 2026-08-28 the package shipped them 0755 while
 	# the hook enforced 0644, a disagreement the switch to packages surfaced.
-	for unit in os7-backup-firstboot os7-backup-replicate; do
+	for unit in os7-backup-firstboot os7-backup-replicate os7-storage-relief; do
 		install -Dm644 "${inc}/usr/libexec/${unit}" "${stage}/usr/libexec/${unit}"
 	done
 
+	# The login banner's storage line. 0755 and it HAS a shebang, which is the
+	# opposite of the rule above and for the opposite reason: run-parts execve's
+	# it, so it is a /bin/sh script that must be executable. Hook 0075 asserts
+	# both, and asserts it never runs zfs.
+	install -Dm755 "${inc}/etc/update-motd.d/40-os7-storage" \
+		"${stage}/etc/update-motd.d/40-os7-storage"
+
 	install -Dm644 "${REPO}/docs/BACKUP-PLAN.md" "${stage}/usr/share/os7/BACKUP-PLAN.md"
+	# Both storage units carry Documentation=file:///usr/share/os7/VERSIONS-PLAN.md,
+	# and a Documentation= naming a file the machine does not have is worse than
+	# none at all.
+	install -Dm644 "${REPO}/docs/VERSIONS-PLAN.md" "${stage}/usr/share/os7/VERSIONS-PLAN.md"
 
 	# Pre-enable by shipping the symlinks rather than by calling `systemctl
 	# enable` from postinst — the same reasoning as os7-desktop-theme's user
@@ -888,6 +900,11 @@ build_os7_backup() {
 	install -d "${stage}/usr/lib/systemd/system/timers.target.wants"
 	ln -sfn ../os7-backup-replicate.timer \
 		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-backup-replicate.timer"
+	# ENABLED BY DEFAULT, and that is what "automatic" means. A machine whose
+	# pool fills because nobody enabled the thing that frees it has the feature
+	# in the same sense that an unplugged smoke alarm is a smoke alarm.
+	ln -sfn ../os7-storage-relief.timer \
+		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-storage-relief.timer"
 
 	pkg_copyright os7-backup "${stage}"
 	pkg_control  os7-backup "${stage}" all
@@ -895,7 +912,13 @@ build_os7_backup() {
 		./usr/lib/systemd/system/os7-backup-replicate.timer \
 		./usr/lib/systemd/system/timers.target.wants/os7-backup-replicate.timer \
 		./usr/libexec/os7-backup-replicate \
-		./usr/share/os7/BACKUP-PLAN.md
+		./usr/lib/systemd/system/os7-storage-relief.service \
+		./usr/lib/systemd/system/os7-storage-relief.timer \
+		./usr/lib/systemd/system/timers.target.wants/os7-storage-relief.timer \
+		./usr/libexec/os7-storage-relief \
+		./etc/update-motd.d/40-os7-storage \
+		./usr/share/os7/BACKUP-PLAN.md \
+		./usr/share/os7/VERSIONS-PLAN.md
 }
 
 # ---------------------------------------------------------------------------
@@ -1018,6 +1041,31 @@ build_os7_powershell() {
 	install -d "${stage}/usr/bin"
 	ln -sfn /opt/microsoft/powershell/7/pwsh "${stage}/usr/bin/pwsh"
 
+	# THE LOG LEVEL, AND IT IS WORTH 2 MB PER INVOCATION (BUILD-NOTES #160).
+	# PowerShell on Linux logs every script block it compiles to syslog, so a
+	# machine running OS/7 cmdlets from timers writes its own module source into
+	# the journal on a schedule: 1.95 MB per run measured on a bench, and 93.7 MB
+	# already accumulated there from os7-backup-replicate alone. With this file
+	# the same run writes 704 bytes.
+	#
+	# "Error" AND NOT "Warning". Those messages are emitted at WARNING level on
+	# the OPERATIONAL channel, so both of the settings one would reach for first
+	# — LogLevel=Warning and LogChannels=Operational — are exact no-ops. Measured,
+	# both of them, before this line was written.
+	#
+	# IT GOES IN $PSHOME AND NOWHERE ELSE. /etc/powershell/ is not a PowerShell
+	# configuration location; a file there is read by nobody and looks like it
+	# works. This package owns /opt/microsoft/powershell/7 outright — it unpacks
+	# the tarball there — so there is no other package to conflict with.
+	#
+	# AND IT MUST BE VALID JSON. pwsh refuses to START on a malformed one, with
+	# "PowerShell has stopped working because of a security issue", which on a
+	# machine whose shell is PowerShell means no shell at all. Hook 0050 parses
+	# it and then runs pwsh through it, because a file that parses is not yet a
+	# file PowerShell accepts.
+	install -Dm644 "${SRC}/os7-powershell/powershell.config.json" \
+		"${dest}/powershell.config.json"
+
 	# The interactive-shell hand-off, from its one source. Every guard in it
 	# exists to avoid breaking something specific — see the file's own header
 	# and BUILD-NOTES #86 for the half that had never fired.
@@ -1047,6 +1095,7 @@ build_os7_powershell() {
 	pkg_control os7-powershell "${stage}" "${OS7_ARCH}" "OS7_ICU=${icu}"
 	pkg_finish  os7-powershell "${stage}" "${OS7_ARCH}" \
 		./opt/microsoft/powershell/7/pwsh \
+		./opt/microsoft/powershell/7/powershell.config.json \
 		./usr/bin/pwsh \
 		./etc/profile.d/95-os7-powershell.sh
 }

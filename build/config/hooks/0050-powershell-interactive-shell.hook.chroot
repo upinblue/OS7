@@ -63,6 +63,51 @@ fi
 # shellcheck source=/dev/null
 . /usr/lib/os7/release.conf
 
+# ---------------------------------------------------------------------------
+# The log level, before anything tries to start PowerShell (BUILD-NOTES #160).
+#
+# TWO THINGS ARE CHECKED AND THEY FAIL IN OPPOSITE DIRECTIONS.
+#
+#   A MISSING file costs 2 MB of journal per pwsh invocation. PowerShell on
+#   Linux logs every script block it compiles to syslog, so os7-backup-replicate
+#   and os7-storage-relief write this repository's own module source into the
+#   journal on a timer. Measured on a bench: 1.95 MB a run, and 93.7 MB already
+#   accumulated. With LogLevel=Error the same run writes 704 bytes.
+#
+#   A MALFORMED file is far worse: pwsh REFUSES TO START, with "PowerShell has
+#   stopped working because of a security issue". On a machine whose login shell
+#   is PowerShell that is no shell at all, and recovering it needs a channel
+#   that is not PowerShell. So this parses the file here, and the hand-off proof
+#   below then starts a real pwsh through it - because a file that parses is not
+#   yet a file PowerShell accepts.
+# ---------------------------------------------------------------------------
+PS_CONF=/opt/microsoft/powershell/7/powershell.config.json
+
+if [ ! -s "${PS_CONF}" ]; then
+	echo "OS/7 hook 0050: ${PS_CONF} is missing (os7-powershell should ship it)." >&2
+	echo "OS/7 hook 0050:   without it every pwsh run writes ~2 MB to the journal." >&2
+	exit 1
+fi
+if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${PS_CONF}" 2>/dev/null; then
+	echo "OS/7 hook 0050: ${PS_CONF} is not valid JSON." >&2
+	echo "OS/7 hook 0050:   pwsh refuses to START on a malformed one, and this" >&2
+	echo "OS/7 hook 0050:   image's login shell IS pwsh." >&2
+	exit 1
+fi
+# Error or stricter. Warning is a no-op: the messages this exists to silence are
+# themselves emitted at WARNING level, which is the trap that cost the measuring.
+LEVEL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("LogLevel",""))' 	"${PS_CONF}" 2>/dev/null || true)"
+case "${LEVEL}" in
+	Error|Critical|None)
+		echo "OS/7 hook 0050:   ok: PowerShell LogLevel=${LEVEL} (script-block spam off)" ;;
+	*)
+		echo "OS/7 hook 0050: ${PS_CONF} has LogLevel='${LEVEL}'." >&2
+		echo "OS/7 hook 0050:   Warning and Informational do NOT silence the" >&2
+		echo "OS/7 hook 0050:   script-block log - those messages ARE Warning." >&2
+		exit 1
+		;;
+esac
+
 echo "OS/7 hook 0050: proving the hand-off"
 
 CLEAN_ENV=(env -i HOME=/root TERM=dumb

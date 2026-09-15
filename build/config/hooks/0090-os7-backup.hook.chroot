@@ -107,7 +107,8 @@ echo "OS/7 hook 0090:   no backup policy in the image (correct - it is written o
 # ---------------------------------------------------------------------------
 # OS/7's own units
 # ---------------------------------------------------------------------------
-for f in /usr/libexec/os7-backup-replicate /usr/libexec/os7-backup-firstboot; do
+for f in /usr/libexec/os7-backup-replicate /usr/libexec/os7-backup-firstboot \
+         /usr/libexec/os7-storage-relief; do
 	if [ ! -s "${f}" ]; then
 		echo "OS/7 hook 0090: ${f} is missing or empty (includes.chroot)" >&2
 		exit 1
