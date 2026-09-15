@@ -551,6 +551,13 @@ Each kills or confirms a decision. Four need nothing but a VM.
 - **M-AU6 — two jobs, one lock.** The contended path, including the holder dying.
 - **M-AU7 — a keytab-derived ticket in a private cache, across expiry.** AU7 is otherwise
   a sentence about Kerberos, and this repository has learned what those are worth.
+  **THE REFUSAL HALF IS DONE 2026-09-15 and it found two defects**: given a zero-byte
+  keytab, `New-OS7JobTicket` reported `kinit: Cannot find KDC for realm "OS7TEST.LOCAL"`
+  and `Start-OS7Job` reported "the control process exited with error code" — both blaming
+  a subsystem that was fine. `Get-DirectoryKeytabPrincipal` had always said existence
+  proves nothing; the product layer had paraphrased past it. Both now ask it, and
+  `check-automation-logic.py` asserts the refusal names the keytab and never the realm.
+  **The TICKET half still needs a keytab with an entry in it.**
 - **M-AU8 — a secret's survival across a boot-environment rollback.** The point of AU6 and
   the third appearance of open question 9; it must be shown, not argued.
 - **M-AU9 — the same on arm64.** AUL7.

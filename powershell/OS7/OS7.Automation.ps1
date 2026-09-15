@@ -1186,6 +1186,35 @@ function Start-OS7Job {
 			"no such secret: $($missing -join ', '). Get-OS7Secret lists what is sealed.")
 	}
 
+	# THE KEYTAB, FOR THE SAME REASON AND ONE MORE. Measured 2026-09-15: a job
+	# given a zero-byte keytab started, the unit failed inside the runner, and
+	# all the caller got back was
+	#
+	#     systemctl start os7-job@kt-0bd8b147.service exited 1: Job for
+	#     os7-job@kt-0bd8b147.service failed because the control process exited
+	#     with error code.
+	#
+	# — a sentence about a control process, for a file the caller had just
+	# named. Asked here, the refusal names the keytab; and the job never gets
+	# an Intent record for work that could not have run, which keeps AU5's
+	# intent-with-no-result meaning what it says.
+	if ($Keytab) {
+		Import-OS7DirectoryLayer
+		$kt = Get-DirectoryKeytabPrincipal -KeytabPath $Keytab
+		if (-not $kt.Known) {
+			throw [System.InvalidOperationException]::new(
+				"'$Keytab' could not be read as a keytab: $($kt.Reason)")
+		}
+		if (-not @($kt.Principal).Count) {
+			throw [System.InvalidOperationException]::new(
+				"'$Keytab' holds no principals, so this job could not get a ticket.")
+		}
+		if ($Principal -notin @($kt.Principal)) {
+			throw [System.InvalidOperationException]::new(
+				"'$Keytab' does not hold '$Principal'. It holds: $(@($kt.Principal) -join ', ')")
+		}
+	}
+
 	if (-not $PSCmdlet.ShouldProcess($unit, "start job '$Name'")) { return }
 
 	[System.IO.Directory]::CreateDirectory($dir) | Out-Null
@@ -1554,6 +1583,43 @@ function New-OS7JobTicket {
 		throw [System.IO.FileNotFoundException]::new(
 			"no keytab at '$Keytab'. A job with -Keytab needs one that exists at the moment " +
 			'the unit starts, not at the moment the job was registered.')
+	}
+
+	# EXISTENCE PROVES NOTHING, AND THIS CODE USED TO STOP AT IT. Measured
+	# 2026-09-15 with a zero-byte keytab: the file passed `Exists`, kinit was
+	# run anyway, and the operator was told
+	#
+	#     kinit: Cannot find KDC for realm "OS7TEST.LOCAL"
+	#
+	# — which sends a person to DNS and to the domain controller while the
+	# actual problem is an empty file on this machine. A diagnostic that blames
+	# the wrong subsystem is worse than none.
+	#
+	# `Get-DirectoryKeytabPrincipal` already knew this. Its own header says
+	# "THE KEYTAB IS THE MACHINE'S PASSWORD AND ITS EXISTENCE PROVES NOTHING. A
+	# file of the right name can be empty, can be left over from a previous
+	# join, or can hold a key version the domain controller has since rotated
+	# past." The knowledge was one layer down and this verb paraphrased past
+	# it — #66's shape at its smallest. Asking it also keeps `klist` out of
+	# powershell/OS7, which is P2-directory.
+	$inKeytab = Get-DirectoryKeytabPrincipal -KeytabPath $Keytab
+	if (-not $inKeytab.Known) {
+		throw [System.InvalidOperationException]::new(
+			"'$Keytab' could not be read as a keytab: $($inKeytab.Reason). A file of the " +
+			'right name is not a keytab — an empty one and a truncated one both look like ' +
+			'this, and neither is a problem with the realm.')
+	}
+	$have = @($inKeytab.Principal)
+	if (-not $have.Count) {
+		throw [System.InvalidOperationException]::new(
+			"'$Keytab' is readable and holds NO principals, so there is nothing for kinit " +
+			'to use. This is what a keytab looks like before a join has written to it.')
+	}
+	if ($Principal -notin $have) {
+		throw [System.InvalidOperationException]::new(
+			"'$Keytab' does not hold '$Principal'. It holds: $($have -join ', '). kinit " +
+			'picks by name, so a keytab with the wrong principal fails as though the ' +
+			'password were wrong.')
 	}
 
 	$dir = [System.IO.Path]::GetDirectoryName($CachePath)

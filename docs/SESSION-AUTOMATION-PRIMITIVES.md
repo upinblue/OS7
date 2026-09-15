@@ -216,6 +216,51 @@ store as INSIDE the environment — the object's field is `RootDataset`, not
 `Dataset`, so `zfs list -r ''` listed the whole pool. A probe that asked with an
 input it had not checked, twice in one afternoon.)*
 
+**M-AU7 — an empty keytab, and the two defects it found.** The keytab handed
+over for this measurement was zero bytes, so the ticket half of M-AU7 is still
+owed. As an INPUT it was worth more than a working one, because it went down a
+path nothing had walked:
+
+```
+the generic layer   Known: False
+                    Reason: klist exited 1: Unsupported key table format number
+                    Principal: 0 entries
+      (and for a path that does not exist:  Known: True, Reason: 'no keytab')
+
+New-OS7JobTicket    refused: kinit: Cannot find KDC for realm "OS7TEST.LOCAL"
+Start-OS7Job        refused: … the control process exited with error code
+```
+
+**Both refusals blamed the wrong thing.** The first sends a person to DNS and to
+the domain controller; the second is a sentence about a control process, for a
+file the caller had just named. The actual problem was an empty file on this
+machine, and `Get-DirectoryKeytabPrincipal` had known it all along — its own
+header reads *"THE KEYTAB IS THE MACHINE'S PASSWORD AND ITS EXISTENCE PROVES
+NOTHING. A file of the right name can be empty, can be left over from a previous
+join, or can hold a key version the domain controller has since rotated past."*
+My verb checked `File::Exists` and stopped. **The knowledge was one layer down
+and the product layer paraphrased past it — #66 at its smallest, and the third
+time in two days.**
+
+Both now ask the generic layer, which also keeps `klist` out of `powershell/OS7`
+(P2-directory, still 1). After:
+
+```
+New-OS7JobTicket    refused: '/tmp/au/os7-s5.keytab' could not be read as a
+                    keytab: klist exited 1: … A file of the right name is not a
+                    keytab — an empty one and a truncated one both look like
+                    this, and NEITHER IS A PROBLEM WITH THE REALM.
+Start-OS7Job        refused: … could not be read as a keytab: …
+```
+
+`Start-OS7Job` now checks it **before writing anything**, so no Intent record is
+written for work that could not have run — which keeps AU5's
+intent-with-no-result meaning what it says.
+
+**And the rule is a check**: `check-automation-logic.py` asserts that the
+refusal names the keytab and never the realm, and a planted defect restores the
+existence-only test and is caught. 53 checks, ten planted defects.
+
 **polkit, the headless half.** As `os7admin` over ssh, with OS/7's own rule
 installed:
 
@@ -384,14 +429,21 @@ than leave the next reader to assume it was run.
   **Four failed builds to get there**, and three of them were worth the time —
   BUILD-NOTES #156, #157 and #158. The module changes had reached the bench by
   `os7lab.py push` over a 1.0.0.175 install; that is no longer the only evidence.
-* **`New-OS7JobTicket` has never obtained a ticket. M-AU7 IS THE ONE THING
-  PHASE 1 STILL OWES.** The test DC is reachable from the bench — tcp/88,
-  tcp/389, tcp/636 and tcp/464 all open, and `kinit`, `klist`, `kdestroy`,
-  `adcli` and `ktutil` are all on the image — but the machine is not joined and
-  has no `/etc/krb5.keytab`, and a keytab is what AU7 is about. The private
+* **`New-OS7JobTicket` has never obtained a ticket. M-AU7's TICKET HALF IS THE
+  ONE THING PHASE 1 STILL OWES.** The test DC is reachable from the bench —
+  tcp/88, tcp/389, tcp/636 and tcp/464 all open, and `kinit`, `klist`,
+  `kdestroy`, `adcli` and `ktutil` are all on the image — but the machine is not
+  joined, and the keytab offered for the measurement was zero bytes. The private
   cache is asserted in the drop-in
   (`KRB5CCNAME=FILE:%t/os7-job/<id>/krb5cc`, checked) and nothing has put a
-  ticket in it.
+  ticket in it. **The REFUSAL half is now measured and fixed** (above), which is
+  the half an operator meets when something is wrong.
+
+  What a usable keytab needs: an entry for a principal the domain controller
+  knows. Either the bench joins `os7test.local` — which writes
+  `/etc/krb5.keytab` itself — or the DC exports one with `ktpass` for a service
+  principal mapped to an AD account. A file created by redirection is empty, and
+  `klist -k` says so.
 * ~~**`Send-OS7Notification` has never delivered anything.**~~ **DELIVERED
   2026-09-15** through a `command` sink, with a webhook failing beside it and
   being named. What is STILL unexercised is SMTP: `System.Net.Mail.SmtpClient`

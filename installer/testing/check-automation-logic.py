@@ -378,6 +378,43 @@ Say 'WRITEAHEAD_INTENT_SURVIVES'   ([bool](@($ahead | Where-Object Phase -eq 'In
 # write one — an intent with no result is reserved for a machine that died.
 Say 'WRITEAHEAD_START_FAILURE_IS_RESULT' ([bool](@($ahead | Where-Object Phase -eq 'Result').Count -eq 1))
 
+# ---- AU7: a keytab is READ, not merely found -------------------------------
+# Measured on a machine 2026-09-15 with a zero-byte keytab: the file passed
+# `File::Exists`, kinit ran anyway, and the operator was told
+#
+#     kinit: Cannot find KDC for realm "OS7TEST.LOCAL"
+#
+# which sends a person to DNS and to the domain controller while the actual
+# problem is an empty file on this machine. `Get-DirectoryKeytabPrincipal`
+# already knew — its own header says existence proves nothing — and this verb
+# had paraphrased past it.
+#
+# The rule is about WHICH THING the refusal names. In this container there is no
+# `klist`, so the generic layer answers "klist is not installed" rather than
+# "unsupported key table format"; either way the refusal must be about the
+# KEYTAB and must not mention the realm.
+$empty = Join-Path $scratch 'empty.keytab'
+Set-Content -Path $empty -Value '' -NoNewline
+$ktMsg = $null
+try { New-OS7JobTicket -Keytab $empty -Principal 'host/x@EXAMPLE.TEST' -CachePath (Join-Path $scratch 'cc') | Out-Null }
+catch { $ktMsg = $_.Exception.Message }
+Say 'AU7_KEYTAB_REFUSED'      ([bool]$ktMsg)
+Say 'AU7_REFUSAL_NAMES_KEYTAB' ([bool]($ktMsg -and $ktMsg -match 'keytab'))
+Say 'AU7_REFUSAL_NOT_REALM'    ([bool]($ktMsg -and $ktMsg -notmatch 'Cannot find KDC|realm "'))
+
+# And the same before a job is ever started, so no Intent record is written for
+# work that could not have run.
+$jobMsg = $null
+try {
+	Start-OS7Job -Name kt -Command 'Get-Date' -Keytab $empty `
+		-Principal 'host/x@EXAMPLE.TEST' -Confirm:$false | Out-Null
+}
+catch { $jobMsg = $_.Exception.Message }
+Say 'AU7_JOB_REFUSED_EARLY'    ([bool]($jobMsg -and $jobMsg -match 'keytab'))
+Say 'AU7_NO_INTENT_FOR_IT'     ([bool](@(Get-OS7JobRecord | Where-Object {
+			$_.PSObject.Properties['Record'] -and $_.Record -and
+			$_.Record.PSObject.Properties['name'] -and $_.Record.name -eq 'kt' }).Count -eq 0))
+
 # ---- AU6: the refusals -----------------------------------------------------
 $underRoot = $null
 try { New-OS7ServiceDataset -Name 'probe' -Pool 'rpool/ROOT' -Confirm:$false | Out-Null }
@@ -440,6 +477,13 @@ PROBES = [
     ("WRITEAHEAD_INTENT_SURVIVES", "AU5 — THE WRITE-AHEAD PROPERTY: the intent was on disk first"),
     ("WRITEAHEAD_START_FAILURE_IS_RESULT",
      "AU5 — a unit that never started gets a Result, so 'interrupted' stays unambiguous"),
+    ("AU7_KEYTAB_REFUSED", "AU7 — an unreadable keytab is refused at all"),
+    ("AU7_REFUSAL_NAMES_KEYTAB", "AU7 — and the refusal names the KEYTAB"),
+    ("AU7_REFUSAL_NOT_REALM", "AU7 — and never the realm: an empty file on this machine is "
+     "not a domain controller problem"),
+    ("AU7_JOB_REFUSED_EARLY", "AU7 — Start-OS7Job refuses before it starts anything"),
+    ("AU7_NO_INTENT_FOR_IT", "AU7 — so no Intent record is written for work that could not "
+     "have run, and 'interrupted' keeps its meaning"),
     ("AU6_REFUSES_ROOT", "AU6 — a dataset under ROOT is refused, not defaulted away from"),
     ("AU6_REFUSES_VARLIBOS7", "AU6 — and so is /var/lib/os7, the obvious wrong answer"),
     ("AU2_GETSECRET_NO_VALUE", "AU2 — Get-OS7Secret has no field that could carry a value"),
@@ -511,6 +555,10 @@ DEFECTS = [
     ("AU6 — the ROOT refusal removed",
      "module", lambda t: t.replace("if ($dataset -match \"(^|/)ROOT(/|$)\") {",
                                    "if ($false) {")),
+    ("AU7 — the keytab checked for existence only, as it was before 2026-09-15",
+     "module", lambda t: t.replace(
+         "\t$inKeytab = Get-DirectoryKeytabPrincipal -KeytabPath $Keytab",
+         "\t$inKeytab = [pscustomobject]@{ Known = $true; Principal = @($Principal) }")),
     ("AU8 — a lock that does not say who holds it",
      "module", lambda t: t.replace("holder   = $Holder", "holder   = ''")),
     ("AU11 — a failing sink collapsed into one answer",
