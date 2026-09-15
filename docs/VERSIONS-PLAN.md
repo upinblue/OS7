@@ -4,29 +4,37 @@
 from, what the window is, what a restore means, what it costs in disk space, and how it survives a
 change of file manager.**
 
-**The read half is built and has run on a machine; nothing yet changes a file.** Every `Vn` below is
-*Proposed 2026-09-14* — the foundation is not: §2 measured, on a running OS/7 machine, that every
-technical prerequisite already exists and that the snapshots this feature would read **are already
-being taken**. Decisions are V1–V19, limitations VL1–VL9. A measurement still owed is `O-V1…`.
+**THE FEATURE IS BUILT AND HAS BEEN USED ON A MACHINE INSTALLED FROM AN ISO.** On
+`OS7-1.0.0.233-amd64.iso`: right-click a file in GNOME Files → *Versions* → the window draws the
+history → pick an older version → *Restore…* → a dialog naming the file and the moment → the file is
+back, and the work it replaced is beside it. Nothing was copied onto that machine
+([SESSION-VERSIONS-RESTORE-SAFETY.md](SESSION-VERSIONS-RESTORE-SAFETY.md) §2e).
 
-**V8, V15, V16, V17, V18 and V19 are DECIDED and BUILT** — what a restore keeps before it
-overwrites anything and how that degrades without privilege, the storage-pressure rule (70 warn / 80 tighten / 90 refuse, gated on whether
-thinning could even work), the boot environment that is never pruned, the "did not exist" boundary,
-and the window asking the cmdlet instead of deciding for itself. `powershell/OS7/OS7.Storage.ps1`
-and `OS7.BackupRestore.ps1` implement them, and `installer/testing/check-storage-logic.py` holds all
-of it at **102 checks** with no ZFS and no VM. **V8 and V19 have run against real ZFS on a machine**
-([SESSION-VERSIONS-RESTORE-SAFETY.md](SESSION-VERSIONS-RESTORE-SAFETY.md)). The machine is what
-raised V19 and then settled it: `zfs snapshot` is root's, so the owner of a file can list every
-version of it and cannot take the snapshot that makes restoring one undoable — and the answer was
-not to refuse them, nor to grant them the right, but **to keep what is about to be overwritten by
-the strongest means available where it stands**, which for an unprivileged owner is the one Time
-Machine itself uses: rename the file aside instead of destroying it.
+Decisions are **V1–V19**, limitations **VL1–VL9**, owed measurements **O-V1…O-V7** (§7).
 
-`src/OS7.App.Versions/` draws the window, reads real snapshots, and since 2026-09-15 offers
-*Restore…* beside *Open* and *Copy to…* — it ships as `os7-app-versions`, with a GNOME Files
-context-menu entry over `python3-nautilus` (O-V6, measured); **§7a is what building it measured**, including the two things about the cascade that were
-wrong until a machine showed them. The cmdlets V9 requires do not exist yet, which is G7 the wrong
-way round and the next piece of work.
+**What is built:** `Get-OS7FileVersion` and `Restore-OS7File` in
+`powershell/OS7/OS7.BackupRestore.ps1`; the storage rule and `Get-OS7RestoreAside` in
+`OS7.Storage.ps1`; `os7-storage-relief.service`/`.timer` and the login banner in the `os7-backup`
+package; the window, the `NoDisplay` desktop entry and the GNOME Files extension in
+`os7-app-versions`. `installer/testing/check-storage-logic.py` holds the decisions at **149 checks**
+with no ZFS and no VM, and `check-gui-logic.py` holds what the window may and may not do.
+
+**What is NOT built:** the honest per-file space reporting (§8 step 8, VL4), German strings (v1 is
+English only, GUI-APPS-PLAN), and boot-environment history in the same window (O-V7). **arm64 has
+none of it and is not meant to** — the window is amd64-GUI only (VL5); the cmdlets work everywhere,
+which is why they exist.
+
+**Three decisions a reader should not re-derive.** V1: this is a READER — sanoid takes and prunes
+the snapshots, and the one exception is the safety point a restore makes, which OS/7 therefore also
+prunes. V15/V16: 70 % warns, 80 % tightens and lets sanoid prune, 90 % refuses — gated on whether
+thinning could even reach the target, and the running boot environment and the newest one older than
+it are never pruned. V19: a restore keeps what it overwrites **by the strongest means available
+where it stands** — a ZFS snapshot with privilege, a rename without — because `zfs snapshot` is
+root's and the owner of a file is exactly who uses this.
+
+`src/OS7.App.Versions/` draws the window and offers *Open*, *Copy to…* and *Restore…*; **§7a is what
+building it measured**, including the two things about the cascade that were wrong until a machine
+showed them.
 
 It exists because of a question — *"can we put a Versions entry in the file manager's context menu
 that brings up a Time-Machine-like UI, and is ZFS up to it?"* — and the short answer is that ZFS is
@@ -697,6 +705,32 @@ did not exist; they do, and what is left is not what this list said it was.
 Steps 1–6 changed nothing on a machine. The first destructive verb **in the window** arrived at
 step 7, by which point the window had been looked at by somebody.
 
-**What the whole list still owes is one thing: no ISO carries any of it.** Every package here is
-built and checked; none has been installed by a machine from a medium, so the context-menu entry has
-been read but never clicked.
+**Steps 1–7 have now been through an ISO, an install and a click** —
+`OS7-1.0.0.233-amd64.iso`, §2e of the session document — and clicking found three defects in an hour
+that every check here had passed (§2d). Two of them are now BUILD-NOTES **#161** and **#162**, and
+both are held by checks proven to fire.
+
+---
+
+### What is left, for whoever picks this up
+
+1. **The honest space reporting (step 8 above, VL4).** `Get-OS7VersionStore` answers per DATASET —
+   how many snapshots, how far back, and `usedbysnapshots`. What an operator asks is *"which of my
+   files is costing me 8 GiB"*, and ZFS does not answer that cheaply. Decide whether to answer it
+   approximately, expensively, or not at all; BL5 is where the collision is written down.
+2. **German.** v1 is English only by decision (GUI-APPS-PLAN), and the question that started this
+   feature asked for "Versionen". That is a translation job for the whole application family, not a
+   string to change in the Nautilus extension.
+3. **O-V7 — boot-environment history in the same window.** *"What did this config file look like
+   last week"* is the same question asked of `/etc`, which is inside the boot environment and has
+   snapshots of a different kind.
+4. **O-V2 and O-V4** — the preview cost and how many snapshots the window can list before it stalls.
+   Both are narrowed, neither is measured.
+5. **VL7 — domain users have no versions at all.** Their homes are under
+   `/var/lib/os7/domain-homes` on `rpool/DATA`, outside B5's policy. On a domain-joined machine the
+   feature is dead for the people who actually use it, and that is the largest functional hole left.
+6. **arm64 is unmeasured**, and the window is amd64-only by design (VL5). What should be checked
+   there is the CMDLETS.
+7. **A release-grade medium.** Every ISO in this story was built with `OS7_REPO_NO_CREDENTIAL=1`, so
+   the machines it installs cannot reach the OS/7 repository — four of `check-image.py`'s failures
+   and one fact. `scripts/setup-release-credentials.sh` is what closes it.

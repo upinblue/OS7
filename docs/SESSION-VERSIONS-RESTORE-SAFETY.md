@@ -1,18 +1,31 @@
-# V8 and V19 on a machine — what a restore keeps, against real ZFS
+# The Versions feature on machines — what a restore keeps, and what clicking found
 
-**2026-09-14 and 2026-09-15, bench `gui`: an installed, booted OS/7 1.0.0.163
-amd64 machine, from the named snapshot `v8-ready`.** Everything below was typed at
-that machine.
+**2026-09-14 and 2026-09-15, three machines.** Everything here was typed at one of
+them; nothing is reasoned about.
 
-`installer/testing/check-storage-logic.py` §7 and §8 are the harness and they run
-against a fake ZFS. This is what a fake cannot answer: whether `zfs snapshot`
-accepts these names, whether the snapshot HOLDS the bytes the restore destroyed,
-whether restoring it gives the work back — and **who is allowed to take one**.
+| bench | what it was | what it answered |
+|---|---|---|
+| `gui` | an installed 1.0.0.163 machine, from the named snapshot `v8-ready` | §1, §2, §2a, §2b — V8 and V19 against real ZFS, and the automatic storage relief |
+| `v19` | installed from `OS7-1.0.0.231-amd64.iso` | §2d — the first ISO, the first click, and three defects |
+| `v20` | installed from `OS7-1.0.0.233-amd64.iso`, nothing copied on | §2e — the same sequence again, from a medium that carries the fixes |
 
-The last of those is the finding. It reversed a property the plan was built on,
-and answering it changed the feature: **V19, decided by the owner 2026-09-15** —
-a restore keeps what it is about to overwrite by the strongest means available
-where it stands, and the weaker means is the one Time Machine itself uses.
+**The short version.** `check-storage-logic.py` §7–§8 run against a fake ZFS and
+answer what a fake can. A machine answered the rest — whether `zfs snapshot`
+accepts these names, whether the snapshot HOLDS the bytes a restore destroyed,
+and **who is allowed to take one**. That last question reversed a property the
+plan was built on and produced **V19**: a restore keeps what it is about to
+overwrite by the strongest means available where it stands — a ZFS snapshot with
+privilege, and otherwise the file renamed aside, which is what Time Machine
+itself does.
+
+Then the feature was packaged, put on an ISO, installed and **clicked**, and
+clicking found three defects in an hour that every check in this repository had
+passed (§2d). Two are now BUILD-NOTES **#161** (member enumeration hides arity)
+and **#162** (an extension that fails to import looks exactly like one that was
+never installed).
+
+**Read §2d before adding a check to this feature.** It is the clearest record in
+this repository of a green instrument measuring the wrong thing.
 
 ---
 

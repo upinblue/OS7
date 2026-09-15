@@ -8736,3 +8736,78 @@ between `Warning`, `Operational` and per-unit rate limiting was spent because
 that had not been read off the tag that was on the screen the whole time.
 (`LogRateLimitBurst=` was tried too, and cannot help: these are a dozen enormous
 messages, and systemd rate-limits by count.)
+
+---
+
+## #161 — a check that reads a property off a collection cannot see that it IS a collection
+
+`Select-OS7DistinctVersion` ended with `,@($kept)` — the comma operator, which
+returns the whole list **as one object**. `check-storage-logic.py` §6 had eight
+cases over it and every one was green, because they all asked the same shape of
+question:
+
+```powershell
+@(Select-OS7DistinctVersion -Version $v | ForEach-Object { $_.SnapshotName })
+```
+
+**PowerShell's MEMBER ENUMERATION answers that correctly on an array.** `$_` is
+the whole list, `.SnapshotName` on a list yields the list of names, and the check
+got exactly the names it expected. The names were right and the shape was wrong,
+and nothing in eight cases could tell the difference.
+
+What found it was a consumer that cannot member-enumerate: the Versions window
+runs the cmdlet and deserialises its JSON.
+
+```
+the version list could not be read: The JSON value could not be converted
+to System.DateTimeOffset. Path: $[0].Created
+```
+
+because `… | Select-Object Path, Created, Length` on one array gives ONE row with
+every property null and `Length = 4` — the array's length. It cost an ISO build
+and a 25-minute install to see.
+
+*The general form:* **member enumeration is a convenience that hides arity.** Any
+assertion of the form "the values that come back are right" is blind to whether
+they came back as N objects or as one object with N members. To see arity you
+have to ask something that does not enumerate members for you — `Measure-Object`,
+`.Count` on the pipeline's output, or `Select-Object -First 1` and then a
+property, which returns the LIST when the shape is wrong.
+
+The same comma had already been paid for once, in
+`Get-OS7ProtectedBootEnvironment`: its caller's `-notcontains` compared a List to
+a string, never matched, and reported the RUNNING boot environment as prunable.
+Twice is a pattern; §6 now counts what the pipeline delivers.
+
+---
+
+## #162 — a desktop extension that fails to import is indistinguishable from one that was never installed
+
+`os7-versions.py` is a GNOME Files extension and opened with the line every
+nautilus-python example opens with:
+
+```python
+gi.require_version("Nautilus", "4.0")
+```
+
+On GNOME 50 that throws. Two things are wrong with it and only one is the
+version: the image carries `Nautilus-4.1.typelib` and no 4.0 at all, **and
+nautilus-python has already required the namespace before it imports any
+extension**, so the call cannot succeed and cannot be needed. Pinning it to "4.1"
+would fix the message and break on the next GNOME; the line is deleted.
+
+**The failure is silent in the way that matters.** Nautilus writes the traceback
+to the session journal and carries on, drawing a context menu with no entry —
+which looks exactly like a machine where the package was never installed. The
+package build already asserted that the file PARSES, and that is precisely the
+gap: **a file that parses is not yet a file the host can load.**
+
+This is #85 and #111's family — declared, installed, verified, and never loaded
+— arriving through a fourth door. The pattern each time: the thing that checks is
+not the thing that loads. `rsvg-convert` parses an SVG that GdkPixbuf sniffs and
+rejects (#111); `python3 -c ast.parse` accepts a module that `gi` refuses (#162).
+
+What is now held without a machine (`check-gui-logic.py`): the extension calls no
+`require_version`, is a `MenuProvider`, and starts the window with an argument
+LIST. What still needs a desktop is whether GNOME actually loads it, and the
+honest answer is that nothing short of clicking finds that.
