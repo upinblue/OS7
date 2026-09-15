@@ -658,15 +658,30 @@ path is.
 
 ## 8. Order of work
 
-1. ~~**A mock-up of the window**~~ and ~~**3. `os7-versions <path>`, read-only**~~ — **DONE
-   2026-09-14**, together: the real read path drew the real window, so the mock-up was the product
-   and nothing was thrown away. §7a is what it measured.
-2. **`Get-OS7FileVersion`** and its check, with no window: it is what V9 needs and what a headless
-   or arm64 machine gets, and it is now the largest gap — the window exists and the cmdlet does
-   not, which is G7 the wrong way round.
-4. **The Nautilus adapter**, plus the `.desktop` fallback, once O-V6 is answered.
-5. **`Restore-OS7FileVersion`** with V8's pre-snapshot, and Restore in the window.
-6. **`Get-OS7VersionStore`**, and the honest space reporting — which is where BL5 has to be faced.
+**Corrected 2026-09-15 by asking the module rather than the plan.** Steps 2 and 5 said the cmdlets
+did not exist; they do, and what is left is not what this list said it was.
 
-Steps 1–4 change nothing on a machine. The first destructive verb appears at step 5, by which point
-the window has been looked at by somebody.
+1. ~~**A mock-up of the window**~~ and ~~**`os7-versions <path>`, read-only**~~ — **DONE 2026-09-14**,
+   together: the real read path drew the real window, so the mock-up was the product and nothing was
+   thrown away. §7a is what it measured.
+2. ~~**`Get-OS7FileVersion`** and its check~~ — **DONE 2026-09-14.** It already existed, and asking
+   it found a refusal that could never fire (§7b). `-IncludeAbsent`, `-DistinctOnly`,
+   `-IncludeCurrent`; the window asks it rather than deciding for itself (V18).
+3. ~~**The storage rule**~~ — **DONE 2026-09-14** (V15/V16), and ~~**`Get-OS7VersionStore`**~~ with it.
+4. ~~**V8 and V19**~~ — **DONE 2026-09-15.** `Restore-OS7File` keeps what it overwrites, by snapshot
+   with privilege and by rename without, measured on a machine both ways.
+5. **THE PACKAGE.** `build/packages/os7-app-versions/` does not exist — the application is built from
+   source and has never been on an image, so it has no `.desktop` entry, no place in `os7-desktop`,
+   and nothing for hook 0022 to install. **This is now the largest gap and everything below it waits
+   on this one**, because a context-menu entry can only point at an installed program.
+6. **The Nautilus adapter**, plus the `.desktop` fallback, once O-V6 is answered — and O-V6 is
+   unanswered: whether `nautilus-python` is in the pinned archive at all. **This is the feature's
+   whole entry point.** Without it the only way to reach the window is to type `os7-versions <path>`,
+   and the request this plan came from was a context-menu entry.
+7. **Restore in the window** (V9's second half). The cmdlet is ready and V19 removed the reason to
+   wait: an ordinary user can now restore their own file with no polkit dialog, which is what the
+   window needs to be worth opening for anything but looking.
+8. **The honest space reporting**, where BL5 has to be faced.
+
+Steps 1–6 change nothing on a machine. The first destructive verb **in the window** appears at
+step 7, by which point the window has been looked at by somebody — which it now has.
