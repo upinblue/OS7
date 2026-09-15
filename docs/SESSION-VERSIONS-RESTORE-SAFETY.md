@@ -230,6 +230,32 @@ sequence.
 
 ---
 
+## 2e. The same thing again, from a medium that carries the fixes — 2026-09-15
+
+§2d's run ended on a machine that had been REPAIRED: the three defects were fixed
+by copying files onto it, and the medium that installed it still carried the
+broken extension. `OS7-1.0.0.233-amd64.iso` was built from the fixed tree and a
+second machine (`v20`) installed from it, with nothing copied on afterwards.
+
+| # | Question | Answer |
+|---|---|---|
+| M-V45 | Does the medium carry the fixes? | **Yes**, asked of the installed machine: the extension is `os7-app-versions`'s and contains no `require_version` outside comments; `,@($kept)` is gone; the `-not $prev.IsCurrent` guard is at line 292 |
+| M-V46 | Is the entry in the context menu? | **Yes**, first try, nothing restarted |
+| M-V47 | Does the window draw? | **Yes** — three versions, *Now* in front, *Restore…* disabled on the live file |
+| M-V48 | Does the restore work? | **Yes**: `Angebot.txt` is `Angebot v1 - Entwurf.` (21 bytes) |
+| M-V49 | Is the way back there? | **Yes**: `Angebot.txt.os7-before-restore-20260915-151110`, 37 bytes, `KAPUTT - versehentlich ueberschrieben` |
+| M-V50 | **Does "Now" survive the reload?** | **Yes** — the M-V36 fix, from the medium. The window shows *Now* with the restored contents, where §2d's run had lost it |
+
+**And one question §2d could not answer, asked on the repaired machine first
+(M-V51): does the fixed extension load in a FRESH SESSION?** §2d had killed
+Nautilus mid-session and let it restart, which is not the same as a reboot and a
+login. `v19` was rebooted, logged in at the OS/7 login screen, and the entry was
+there — with both files visible in the folder, `Angebot.txt` beside
+`Angebot.txt.os7-before-restore-…`, which is what V19's mechanism is FOR: the way
+back is a file the operator can see and deal with.
+
+---
+
 ## 3. What this does NOT say
 
 * **The Versions window is unaffected**, because it has no restore verb: V7 gave
@@ -248,11 +274,9 @@ sequence.
   found three defects in an hour that every check in this repository had passed.
 * ~~**No ISO carries any of this.**~~ — `OS7-1.0.0.231-amd64.iso` does, and a
   machine was installed from it.
-* **THE THREE FIXES IN §2d HAVE NOT THEMSELVES BEEN THROUGH A FRESH INSTALL.**
-  They were copied onto the running machine and verified there; the medium that
-  installed it still carries the broken extension. The next ISO is what closes
-  that, and until it is built this is a machine that was repaired rather than one
-  that arrived working.
+* ~~**THE THREE FIXES IN §2d HAVE NOT THEMSELVES BEEN THROUGH A FRESH INSTALL.**~~
+  — they have, §2e. `OS7-1.0.0.233-amd64.iso`, a second machine, nothing copied
+  on, and the whole sequence worked first try.
 * **The medium cannot reach the OS/7 repository.** Built with
   `OS7_REPO_NO_CREDENTIAL=1`, which is four of `check-image.py`'s failures and one
   fact. Deliberate: this build existed to be installed and clicked.
