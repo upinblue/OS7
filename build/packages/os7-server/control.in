@@ -4,7 +4,8 @@ Architecture: all
 Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
 Section: metapackages
 Priority: important
-Depends: os7-base (= @OS7_VERSION@), os7-backup (= @OS7_VERSION@)
+Depends: os7-base (= @OS7_VERSION@), os7-backup (= @OS7_VERSION@),
+ os7-automation (= @OS7_VERSION@)
 Conflicts: os7-desktop
 Homepage: https://github.com/upinblue/os7
 Description: OS/7 — the headless product

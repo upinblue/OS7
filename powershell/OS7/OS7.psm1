@@ -2842,6 +2842,15 @@ function Restore-OS7 {
 # the same reason Time is where it is: both answer a question about the
 # machine rather than acting on it.
 #
+# OS7.Automation.ps1 sits after the Directory files and before Compat.Windows,
+# and the rule is the one this whole comment is: after everything it depends on.
+# It calls Import-OS7SystemdLayer (OS7.Service.ps1), Import-OS7ZfsLayer and
+# Get-OS7ZfsPropertyValue (this file), Get-/Set-OS7BackupPolicy (the backup
+# files) and Assert-OS7Elevated (this file) — and nothing below it calls it, so
+# it could sit anywhere after Backup. It does not sit anywhere: "after
+# everything it does not depend on" survives the next file being added and
+# "somewhere in the middle" does not.
+#
 # OS7.Compat.Windows.ps1 is SECOND TO LAST, and the position is the same rule
 # once more: it is the only file here that calls across nearly all the others —
 # Get-OS7Service and its verbs, Set-OS7TimeZone, Get-OS7Domain, Get-OS7Version
@@ -2850,6 +2859,7 @@ function Restore-OS7 {
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1',
+		'OS7.Automation.ps1',
 		'OS7.Compat.Windows.ps1', 'OS7.Storage.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -3003,6 +3013,42 @@ Export-ModuleMember -Function Get-OS7Version,
 	# because an operator who was blocked has to be able to look at the same
 	# comparison the update looked at.
 	Get-OS7DriverRegression,
+	# ---------------------------------------------------------------------
+	# The automation host (docs/AUTOMATION-PLAN.md phase 1, OS7.Automation.ps1)
+	#
+	# AU1 is the line: the OS provides primitives, a product above provides
+	# policy. Not one of these names contains `approval`, `target system`,
+	# `role`, `entitlement` or `connector`, and that is decidable by grep —
+	# which is how a boundary written in a document becomes one that holds.
+	# ---------------------------------------------------------------------
+	# AU6. Durable state OUTSIDE the boot environment, and it REFUSES to create
+	# a dataset under ROOT rather than defaulting away from it: "outside the
+	# boot environment" is the one property of this dataset that cannot be
+	# added after six months of writing.
+	New-OS7ServiceDataset, Get-OS7ServiceDataset,
+	# AU2. Get- returns METADATA ONLY and has no field that could hold a value,
+	# so its output is safe to log — a cmdlet that returns a secret SOMETIMES
+	# is a cmdlet whose output is unsafe to log ALWAYS. Unprotect- is the
+	# deliberate exception, returns a securestring, and records every call.
+	New-OS7Secret, Get-OS7Secret, Remove-OS7Secret, Unprotect-OS7Secret,
+	# AU3/AU4/AU7/AU10. Start-OS7Job is the mechanism the Software Update
+	# window already proved on a machine (f9ca2b5, O-G6) WIDENED — a templated
+	# unit, Start-SystemdUnit, polkit, the journal — and not a second one.
+	Start-OS7Job, Get-OS7Job,
+	# AU7. Called from INSIDE the unit: obtaining the ticket in Start-OS7Job
+	# would put it in the caller's cache, which is the sharing AU7 exists to
+	# prevent.
+	New-OS7JobTicket,
+	# AU5. The machine's own record, written and fsynced BEFORE the action, so
+	# a run killed mid-step leaves an intent with no result — the state a
+	# product above re-plans on rather than re-runs.
+	Write-OS7JobRecord, Get-OS7JobRecord,
+	# AU8. Locks name their holder, because the question an operator has is not
+	# "is it locked" but "who has it and should I be worried".
+	Lock-OS7Resource, Unlock-OS7Resource, Get-OS7Lock,
+	# AU11. One result per sink and never one answer: "sent" over three sinks
+	# of which one worked is how an alerting system quietly stops alerting.
+	Send-OS7Notification, Get-OS7NotificationSink, Set-OS7NotificationSink,
 	# The only cmdlet in this product that sends anything to a third party.
 	# Nothing calls it.
 	Send-OS7HardwareProbe

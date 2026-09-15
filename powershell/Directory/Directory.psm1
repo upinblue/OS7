@@ -1908,7 +1908,12 @@ function Get-DirectoryTicket {
 		OS/7 image rather than a broken one. A shape that changes with the
 		answer makes every caller of it conditional on something it cannot see.
 	#>
-	param()
+	param(
+		# AU7: the cache a job was given, rather than the process's default
+		# one. Empty means the default, which is what every caller before
+		# 2026-09-14 meant and still means.
+		[string]$CachePath
+	)
 
 	if (-not (Test-DirectoryTool -Name 'klist')) {
 		return [pscustomobject]@{
@@ -1919,7 +1924,9 @@ function Get-DirectoryTicket {
 		}
 	}
 
-	$result = Invoke-DirectoryCommand -Command 'klist' -Arguments @()
+	$klistArgs = @()
+	if ($CachePath) { $klistArgs = @('-c', $CachePath) }
+	$result = Invoke-DirectoryCommand -Command 'klist' -Arguments $klistArgs
 	if ($result.ExitCode -ne 0) {
 		# klist exits non-zero when there is simply no cache, which is an
 		# answer and not a failure.
@@ -1961,11 +1968,31 @@ function New-DirectoryTicket {
 
 	.DESCRIPTION
 		The password goes to kinit on standard input, never in an argument.
+
+		TWO WAYS TO PROVE WHO YOU ARE, and they are different products. A
+		PASSWORD is a person at a keyboard. A KEYTAB is a service account that
+		nobody types for, and it is what an unattended job has — so -Keytab is
+		not a convenience here, it is the only shape in which the
+		AUTOMATION-PLAN's AU7 can exist at all.
+
+	.PARAMETER CachePath
+		Write the ticket into THIS cache instead of the process's default one.
+
+		AU7's whole point, and the reason it is a parameter rather than
+		something a caller does with an environment variable afterwards: two
+		jobs sharing one credential cache are two jobs sharing one identity and
+		racing over its lifetime, and `kdestroy` at the end of the first one
+		takes the second one's ticket with it. The path is exported to the
+		child as KRB5CCNAME by whoever runs the job; here it is passed to kinit
+		with -c so that the ticket lands there and NOT in the default cache on
+		the way.
 	#>
-	[CmdletBinding()]
+	[CmdletBinding(DefaultParameterSetName = 'Password')]
 	param(
 		[Parameter(Mandatory)][string]$Principal,
-		[Parameter(Mandatory)][securestring]$Password
+		[Parameter(Mandatory, ParameterSetName = 'Password')][securestring]$Password,
+		[Parameter(Mandatory, ParameterSetName = 'Keytab')][string]$Keytab,
+		[string]$CachePath
 	)
 
 	if (-not (Test-DirectoryTool -Name 'kinit')) {
@@ -1973,14 +2000,30 @@ function New-DirectoryTicket {
 			'a domain join adds; an outbound LDAPS session needs none of it.')
 	}
 
-	$plain = [System.Net.NetworkCredential]::new('', $Password).Password
-	$result = Invoke-DirectoryCommand -Command 'kinit' -Arguments @($Principal) -StandardInput $plain
+	$kinitArgs = @()
+	if ($CachePath) { $kinitArgs = $kinitArgs + @('-c', $CachePath) }
+
+	$plain = $null
+	if ($PSCmdlet.ParameterSetName -eq 'Keytab') {
+		if (-not [System.IO.File]::Exists($Keytab)) {
+			throw "no keytab at '$Keytab'."
+		}
+		# -k -t: use a keytab, this one. Nothing is read from stdin, and the
+		# keytab's PATH is an argument while its CONTENT never is.
+		$kinitArgs = $kinitArgs + @('-k', '-t', $Keytab, $Principal)
+	}
+	else {
+		$plain = [System.Net.NetworkCredential]::new('', $Password).Password
+		$kinitArgs = $kinitArgs + @($Principal)
+	}
+
+	$result = Invoke-DirectoryCommand -Command 'kinit' -Arguments $kinitArgs -StandardInput $plain
 	$plain = $null
 
 	if ($result.ExitCode -ne 0) {
 		throw ("kinit could not obtain a ticket for '$Principal': " + $result.StdErr.Trim())
 	}
-	return (Get-DirectoryTicket)
+	return (Get-DirectoryTicket -CachePath $CachePath)
 }
 
 function Remove-DirectoryTicket {
@@ -1989,14 +2032,18 @@ function Remove-DirectoryTicket {
 		Destroy the credential cache.
 	#>
 	[CmdletBinding(SupportsShouldProcess)]
-	param()
+	param([string]$CachePath)
 
 	if (-not (Test-DirectoryTool -Name 'kdestroy')) {
 		throw 'kdestroy is not installed.'
 	}
-	if (-not $PSCmdlet.ShouldProcess('the Kerberos credential cache', 'destroy')) { return $null }
-	$null = Invoke-DirectoryCommand -Command 'kdestroy' -Arguments @()
-	return (Get-DirectoryTicket)
+	if (-not $PSCmdlet.ShouldProcess(
+			($CachePath ? "the Kerberos credential cache at $CachePath" : 'the Kerberos credential cache'),
+			'destroy')) { return $null }
+	$kdArgs = @()
+	if ($CachePath) { $kdArgs = @('-c', $CachePath) }
+	$null = Invoke-DirectoryCommand -Command 'kdestroy' -Arguments $kdArgs
+	return (Get-DirectoryTicket -CachePath $CachePath)
 }
 
 function Get-DirectoryIdentityResolution {

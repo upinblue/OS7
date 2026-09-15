@@ -209,6 +209,44 @@
 		# comparison it makes, exposed so that an operator who was blocked can
 		# look at the same thing it looked at.
 		'Get-OS7DriverRegression',
+		# -------------------------------------------------------------
+		# The automation host (docs/AUTOMATION-PLAN.md phase 1)
+		#
+		# AU1: the OS provides primitives, a product above provides policy.
+		# None of these names carries a word from the policy vocabulary —
+		# approval, target system, role, entitlement, connector — and
+		# check-automation-logic.py holds that by grep.
+		# -------------------------------------------------------------
+		# AU6: durable state outside the boot environment. It refuses a
+		# dataset under ROOT, sets canmount and mountpoint EXPLICITLY
+		# (BUILD-NOTES #63) and asks ZFS back rather than reporting four
+		# exit codes.
+		'New-OS7ServiceDataset', 'Get-OS7ServiceDataset',
+		# AU2: sealed to the TPM ALONE by default, which is measured and not
+		# preferred — systemd's `host` key is a file inside the boot
+		# environment, so a secret sealed with it survives a rollback and its
+		# KEY does not (2026-09-14).
+		'New-OS7Secret', 'Get-OS7Secret', 'Remove-OS7Secret', 'Unprotect-OS7Secret',
+		# AU3/AU4/AU7/AU10: the job contract. Input on stdin as one JSON
+		# document, secrets by LoadCredentialEncrypted=, the fence in a
+		# PACKAGED template unit and only the per-run parts in a drop-in.
+		'Start-OS7Job', 'Get-OS7Job',
+		# AU7: a ticket from a keytab in a cache PRIVATE to one job, obtained
+		# inside the unit so it cannot land in the caller's cache. systemd
+		# removes the RuntimeDirectory it lives in when the unit stops.
+		'New-OS7JobTicket',
+		# AU5: the job journal — evidence, not progress. journald is the right
+		# place for "what is this run doing right now" and the wrong one for
+		# "what did this machine change eight months ago".
+		'Write-OS7JobRecord', 'Get-OS7JobRecord',
+		# AU8: named locks, in /run, that say who holds them. Stale is asked
+		# of /proc and not of the clock — held for six hours by a live process
+		# is slow, not stale, and the two send an operator to different places.
+		'Lock-OS7Resource', 'Unlock-OS7Resource', 'Get-OS7Lock',
+		# AU11: the machine's own bad news. NO MTA — SMTP submission to the
+		# organisation's relay, which corrects the plan's assumption that this
+		# needed a package.
+		'Send-OS7Notification', 'Get-OS7NotificationSink', 'Set-OS7NotificationSink',
 		# The ONLY cmdlet in this product that transmits anything about the
 		# machine to a third party. Nothing calls it, ConfirmImpact is High, and
 		# the tool it needs is deliberately not on an OS/7 image.

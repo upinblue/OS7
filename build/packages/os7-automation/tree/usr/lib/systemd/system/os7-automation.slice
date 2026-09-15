@@ -1,0 +1,40 @@
+[Unit]
+# Every OS/7 job runs inside this. docs/AUTOMATION-PLAN.md AU4.
+#
+# WHY A SLICE AND NOT PER-UNIT LIMITS ALONE. The motivating case is a product
+# above running SCRIPTS WRITTEN BY THE OPERATOR, and the failure that case
+# produces is not one job misbehaving — it is one job taking the machine down
+# and with it the process that was going to record what happened. A per-unit
+# MemoryMax caps one job; a slice caps ALL of them together, which is the number
+# that matters when a schedule fires forty of them at once.
+#
+# THE VALUES ARE PERCENTAGES OF THE MACHINE, ON PURPOSE. An absolute figure that
+# is generous on a 64 GiB server is the whole of a 4 GiB VM, and this product
+# installs on both. `MemoryMax=60%` is read against the machine's real memory by
+# systemd, so one number is right on both.
+Description=OS/7 automation jobs
+Documentation=file:///usr/share/os7/AUTOMATION-PLAN.md
+Before=slices.target
+
+[Slice]
+# Sixty per cent, so that a runaway job leaves the machine reachable, the
+# journal writable and sshd able to fork. NOT ninety: the point of the cap is
+# what is left over, not what is allowed.
+MemoryMax=60%
+
+# systemd kills inside the slice when this is exceeded rather than letting the
+# kernel's global OOM killer choose — and the kernel's choice is by badness
+# score, which on a machine running one enormous job and one small database is
+# not reliably the job.
+MemoryAccounting=yes
+
+# Three quarters of one CPU-equivalent per core is not what this says: CPUQuota
+# on a slice is a share of ONE CPU. 200% is two cores' worth in total for every
+# job on the machine, which leaves an interactive session responsive on any
+# machine with more than two.
+CPUQuota=200%
+CPUAccounting=yes
+
+# A fork bomb in an operator-authored script is the ordinary case, not the
+# exotic one.
+TasksMax=512

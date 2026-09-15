@@ -4,11 +4,11 @@ The layering rules: powershell/OS7 reaches a subsystem only through its module.
 
     ./check-layering.py            report, and fail if any rule got worse
 
-SIX RULES SINCE 2026-08-27, and they are the same rule six times. This line
-read TWO while the list below held four, and FIVE while it held five and
-gained a sixth: every one of P2-time, P2-systemd, P2-directory and
-P2-hardware went in under it and only some of them touched it. Count the
-RULES list, not this sentence.
+SEVEN RULES SINCE 2026-08-27, and they are the same rule seven times. This
+line read TWO while the list below held four, FIVE while it held five and
+gained a sixth, and SIX while P2-automation went in: every one of P2-time,
+P2-systemd, P2-directory, P2-hardware and P2-automation arrived under it and
+only some of them touched it. Count the RULES list, not this sentence.
 
 Z1 (docs/ZFS-POWERSHELL-PLAN.md) says Layer 3 (`powershell/OS7`) never invokes
 `zfs` or `zpool` itself — every ZFS operation goes through Layer 2
@@ -210,6 +210,49 @@ RULES = [
          "rmmod", "lsmod", "depmod", "ubuntu-drivers", "hw-probe", "udevadm",
          "hwinfo"),
         "powershell/OS7 reaches hardware only through the Hardware module",
+    ),
+    Rule(
+        "P2-automation", "does powershell/OS7 reach systemd's credential and "
+        "transient-unit tooling directly?", "Systemd",
+        # 0, AND 0 THE DAY IT WAS WRITTEN (2026-09-14, with the automation
+        # host) - the cheapest moment to draw a line, which is the argument P2
+        # made for the network and P2-hardware made for devices. The whole
+        # surface went in above this rule rather than under it.
+        #
+        # WHY IT IS A SEVENTH RULE AND NOT MORE TOKENS ON P2-systemd. That rule
+        # stands at a baseline of 2 - `systemctl enable --now` for the backup
+        # timer and `systemctl reboot` at the end of the update train - so it
+        # can never assert that a subsystem is at zero; it can only assert that
+        # it has not got worse. These programs have no such history, and the
+        # difference between "no worse than two" and "none, ever" is worth a
+        # rule of its own for the one subsystem where a violation is silent:
+        #
+        #   systemd-creds   a secret sealed with the wrong key or the wrong
+        #                   PCRs opens today and stops opening after an update
+        #                   (M-AU1: --tpm2-pcrs defaults to empty, and a blob
+        #                   bound to PCR 7 dies exactly as BUILD-NOTES #69
+        #                   describes). New-SystemdCredential decides those two
+        #                   in one place and reads the blob back; a second
+        #                   caller would decide them again, differently, and
+        #                   nothing would say so until a machine took a shim
+        #                   update.
+        #
+        #   systemd-run     the whole of AU4. A transient unit assembles the
+        #                   fence out of arguments at run time, so the fence is
+        #                   whatever the caller passed and exists in no file an
+        #                   auditor can read. It also does not survive a reboot,
+        #                   measured 2026-09-14 (M-AU4, BUILD-NOTES #154), with
+        #                   nothing said about it in any journal.
+        #
+        # `systemd-analyze` is here because Test-SystemdTpm2 is the one place
+        # that asks it: `systemd-creds has-tpm2` is deprecated in systemd 259
+        # and answers with a sentence about its own name on stdout, and one
+        # reader of that is a bug to be found once rather than three times.
+        0,
+        ("systemd-creds", "systemd-run", "systemd-analyze", "systemd-tmpfiles",
+         "systemd-escape", "systemd-notify", "systemd-id128", "varlinkctl"),
+        "powershell/OS7 reaches systemd's credential and transient-unit "
+        "tooling only through the Systemd module",
     ),
 ]
 

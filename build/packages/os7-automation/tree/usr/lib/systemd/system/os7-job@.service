@@ -1,0 +1,145 @@
+[Unit]
+# One job, one instance. docs/AUTOMATION-PLAN.md AU4, AU3 and AU10.
+#
+# THIS UNIT IS THE FENCE, AND IT IS IN A PACKAGE FOR THAT REASON. Everything
+# below the [Service] header is the same for every job on every OS/7 machine: it
+# can be read, it is signed by the repository that delivered it, it rolls back
+# with the release, and `grep` can check it. Start-OS7Job adds only the per-run
+# parts — the timeout, the limits, the credential, the identity — as a drop-in
+# under /run, where they have a run's lifetime.
+#
+# THE ALTERNATIVE WAS `systemd-run`, AND IT WAS REJECTED. A transient unit
+# assembles the whole fence out of arguments at run time, which means the fence
+# is whatever the caller passed, is not reviewable anywhere, and does not exist
+# in any file an auditor can read. It also does not survive a reboot — measured
+# 2026-09-14 (M-AU4): `LoadState=not-found`, nothing on disk, and not one line
+# in either boot's journal saying it went.
+#
+# IT IS THE SAME SHAPE AS os7-update@.service, deliberately. That pattern has
+# RUN ON A MACHINE (f9ca2b5, GUI-APPS-PLAN O-G6): a templated unit, started
+# through Start-SystemdUnit, governed by polkit, with progress in the journal.
+# Two independent problems — a window that needs root, a product above that
+# needs a job runner — arrived at one mechanism, and building the second one
+# separately would be BUILD-NOTES #66 with one of the two routes already proven.
+Description=OS/7 job %i
+Documentation=file:///usr/share/os7/AUTOMATION-PLAN.md
+
+# A job clones nothing and mounts nothing, but it routinely talks to a directory
+# server, and a job that starts before the network is a job that fails for a
+# reason that has nothing to do with it.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# THE SLICE. Without this line every directive below caps one job and nothing
+# caps the machine.
+Slice=os7-automation.slice
+
+# -File, not -Command: the job id is bound as a PARAMETER and validated in one
+# place, rather than surviving systemd's %i substitution and PowerShell's
+# parsing as a string. os7-update-run.ps1 exists for the same reason and says so
+# at length.
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-job-run.ps1 -JobId %i
+
+# AU3 — THE INPUT CHANNEL, AND THE WHOLE REASON IT IS A UNIT DIRECTIVE.
+#
+# Not the environment: /proc/<pid>/environ is readable by the same user and by
+# root, and a job's input routinely carries an identity, a department and a
+# manager's address. Not the command line: it is world-readable in `ps` and in
+# systemd's own tooling, which Register-OS7ScheduledTask already says in
+# capitals. Not a file the job opens by name, because then the path is the
+# contract and every job needs the same six lines to read it.
+#
+# One document, on stdin, closed. The job parses it or it fails.
+StandardInput=file:/var/lib/os7-automation/jobs/%i/input.json
+
+# The live view. The job JOURNAL under /var/lib/os7-automation is the evidence
+# and is written by Start-OS7Job and by the runner; this is what an operator
+# watches while it runs, and what a window would read. Two questions, and only
+# one of them has a retention requirement.
+StandardOutput=journal
+StandardError=journal
+
+# NOT RemainAfterExit. Anything asking whether this job is still running reads
+# ActiveState, and RemainAfterExit would leave every finished job reporting
+# active forever — which is how Get-OS7Job's Interrupted field would become a
+# field that is never true.
+RemainAfterExit=no
+
+# ---------------------------------------------------------------------------
+# AU4 — THE ISOLATION, RESTRICTIVE BY DEFAULT.
+#
+# systemd has done all of this for a decade; nothing here is new except that it
+# is switched on, and stated. -Unconfined switches each of these off BY NAME in
+# the drop-in, so a job that ran without a fence says so in a file and in its
+# journal record, rather than being indistinguishable from one that did not.
+# ---------------------------------------------------------------------------
+
+# /usr, /boot and /efi read-only, and /etc read-only. AUL5 is honest about this:
+# it WILL break operator-authored scripts that write where they always did.
+ProtectSystem=strict
+
+# But the job's own state has to be writable, or AU6's dataset is decoration.
+ReadWritePaths=/var/lib/os7-automation
+
+# A private /tmp, so two jobs cannot see each other's scratch files — and so a
+# predictable temporary name is not a way into one job from another.
+PrivateTmp=yes
+
+# /home, /root and /run/user are not visible. A job that provisions identities
+# has no business in anybody's home directory, and the one that does needs
+# -Unconfined and a sentence in its record.
+ProtectHome=yes
+
+# setuid binaries cannot raise privilege from inside the job. This is what makes
+# User= worth anything at all: without it, a job running as an unprivileged
+# identity can still reach root through any setuid program on the image.
+NoNewPrivileges=yes
+
+# The kernel's own knobs, none of which a job has a reason to touch.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+
+# A private /dev with the usual pseudo-devices and nothing else. The TPM is NOT
+# in it, deliberately: a job receives its secret already decrypted, through
+# LoadCredentialEncrypted=, and never opens /dev/tpmrm0 itself.
+PrivateDevices=yes
+
+# TimeoutStartSec=, NOT RuntimeMaxSec=, AND A MACHINE IS WHY. BUILD-NOTES #155:
+# systemd prints
+#
+#     os7-job@probe.service: RuntimeMaxSec= has no effect in combination
+#     with Type=oneshot. Ignoring.
+#
+# ...to the JOURNAL, loads the unit, starts it, and every job on the machine
+# then has no timeout at all. `systemctl show -p RuntimeMaxSec` answers with an
+# empty string, which is what caught it. A oneshot unit is `activating` for its
+# whole life — it never reaches `active` — so the directive that bounds it is
+# the one that bounds STARTING.
+#
+# os7-update@.service had this right from the day it was written
+# (TimeoutStartSec=3600) and this file had it wrong, which is BUILD-NOTES #66
+# at miniature scale and in the one place that should have been immune: a
+# paraphrase of a pattern that had already run on a machine, made by the file
+# whose header says it is widening that pattern rather than restating it. The
+# spike boots; the paraphrase never had.
+#
+# A ceiling, so that a drop-in that forgot its own still ends. Start-OS7Job
+# always writes one; this is what catches a unit started by hand.
+TimeoutStartSec=7200
+
+# The per-job runtime directory AU7's Kerberos cache lives in. systemd creates
+# it at start and REMOVES it at stop, which is what makes "destroyed with the
+# unit" a property of the system rather than of the runner remembering.
+RuntimeDirectory=os7-job/%i
+RuntimeDirectoryMode=0700
+
+[Install]
+# Deliberately none. A job is started on demand and is never enabled: a job that
+# ran at every boot is not a job, it is a surprise. Register-OS7ScheduledTask is
+# where a schedule lives (AU12).

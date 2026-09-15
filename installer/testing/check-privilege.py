@@ -89,6 +89,18 @@ BASELINE = 42
 # would invert P2's direction. That is BUILD-NOTES #149 and it is deliberately
 # not decided here. This number is an inventory of the debt, and it may not
 # grow while the decision is open.
+#
+# HALF OF #149 IS NOW DECIDED, and the number did not move, which is the point.
+# The automation host (2026-09-14) added four mutating verbs to
+# powershell/Systemd — the credential and drop-in plumbing AU2 and AU4 need —
+# and every one of them carries `Assert-SystemdElevated`: the same /proc read
+# in the module's OWN file, so nothing calls upward and P2 still points one
+# way. The scan above accepts any `Assert-*Elevated`, so a layer that guards
+# itself is counted as guarded rather than as debt.
+#
+# The forty-one are the ones that were here before that and are NOT retrofitted,
+# deliberately: adding a guard to a cmdlet whose behaviour nothing has re-tested
+# is a change made to satisfy a check. They stay named on every run.
 BASELINE_LAYERS = 41
 
 SCAN = r'''
@@ -203,7 +215,12 @@ foreach ($f in $files) {
         foreach ($c in $fn.Body.FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
             $cn = $c.GetCommandName()
-            if ($cn -eq 'Assert-OS7Elevated') { $guarded = $true }
+            # Assert-OS7Elevated in the product layer, Assert-<Layer>Elevated in a
+            # generic one. The second shape arrived on 2026-09-14 with the automation
+            # host's plumbing: a generic module cannot call the product's guard without
+            # inverting P2 (#149), so it carries its own — and a guard the scan cannot
+            # see is a guard that reads here as debt.
+            if ($cn -match '^Assert-\w*Elevated$') { $guarded = $true }
             if ($cn -and $cn -match $layerWrite) { $why += "layer:$cn" }
         }
         foreach ($s in $fn.Body.FindAll({ param($n)
@@ -320,8 +337,8 @@ def main():
     n = len(own)
     m = len(layers)
     print(f"      OS7: {n} unguarded; baseline {BASELINE}")
-    print(f"      the generic layers: {m}; baseline {BASELINE_LAYERS} — no guard "
-          "exists to call yet (#149)")
+    print(f"      the generic layers: {m}; baseline {BASELINE_LAYERS} — these predate "
+          "Assert-<Layer>Elevated (#149)")
     if m > BASELINE_LAYERS:
         print()
         print(f"{m - BASELINE_LAYERS} MORE mutating cmdlet(s) in the generic layers")

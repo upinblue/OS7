@@ -829,6 +829,7 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/OS7/OS7.Directory.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.DirectoryObject.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Domain.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Automation.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Compat.Windows.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Device.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Storage.ps1 \
@@ -1133,8 +1134,58 @@ build_os7_app_softwareupdate() {
 		./usr/share/applications/os7-software-update.desktop
 }
 
+
 # ---------------------------------------------------------------------------
-ALL=(os7-release os7-console os7-module os7-powershell os7-backup os7-setup
+# os7-automation - the slice, the job template and the polkit rule.
+#
+# docs/AUTOMATION-PLAN.md phase 1. THE UNIT IS THE FENCE, and it is a package
+# for that reason: ProtectSystem=strict, the slice, the private /dev and the
+# input channel are the same for every job on every machine, so they belong in
+# a file that is signed, readable, greppable and rolled back with the release.
+# Start-OS7Job writes only the per-run drop-in.
+#
+# It creates NO dataset. `New-OS7ServiceDataset -Name os7-automation` does that,
+# and the separation is deliberate: a postinst that created a ZFS dataset would
+# run in a chroot with no pool imported and would report success - which is the
+# shape of half the defects in BUILD-NOTES.
+#
+# The design document ships too, because both the slice and the template carry
+# Documentation=file:///usr/share/os7/AUTOMATION-PLAN.md and a Documentation=
+# naming a file the machine does not have is worse than none - the same rule
+# os7-backup follows.
+# ---------------------------------------------------------------------------
+build_os7_automation() {
+	local stage; stage="$(pkg_begin os7-automation)"
+	local tree="${REPO}/build/packages/os7-automation/tree"
+
+	install -Dm644 "${tree}/usr/lib/systemd/system/os7-automation.slice" \
+		"${stage}/usr/lib/systemd/system/os7-automation.slice"
+	install -Dm644 "${tree}/usr/lib/systemd/system/os7-job@.service" \
+		"${stage}/usr/lib/systemd/system/os7-job@.service"
+	install -Dm644 "${tree}/usr/share/polkit-1/rules.d/49-os7-job.rules" \
+		"${stage}/usr/share/polkit-1/rules.d/49-os7-job.rules"
+
+	# 0644, NOT 0755: this is a `pwsh -NoProfile -NonInteractive -File` script,
+	# never executed, exactly like os7-update-run.ps1 and the backup scripts.
+	# BUILD-NOTES #117 is the other half of this - on the Windows host's bind
+	# mount every file reads 0777, so a -x test proves nothing.
+	install -Dm644 "${tree}/usr/libexec/os7-job-run.ps1" \
+		"${stage}/usr/libexec/os7-job-run.ps1"
+
+	install -Dm644 "${REPO}/docs/AUTOMATION-PLAN.md" "${stage}/usr/share/os7/AUTOMATION-PLAN.md"
+
+	pkg_copyright os7-automation "${stage}"
+	pkg_control  os7-automation "${stage}" all
+	pkg_finish   os7-automation "${stage}" all \
+		./usr/lib/systemd/system/os7-automation.slice \
+		./usr/lib/systemd/system/os7-job@.service \
+		./usr/share/polkit-1/rules.d/49-os7-job.rules \
+		./usr/libexec/os7-job-run.ps1 \
+		./usr/share/os7/AUTOMATION-PLAN.md
+}
+
+# ---------------------------------------------------------------------------
+ALL=(os7-release os7-console os7-module os7-powershell os7-backup os7-automation os7-setup
      os7-app-softwareupdate
      os7-base os7-server os7-desktop)
 
@@ -1148,6 +1199,7 @@ for pkg in "${WANT[@]}"; do
 		os7-module)  build_os7_module  ;;
 		os7-powershell) build_os7_powershell ;;
 		os7-backup)  build_os7_backup  ;;
+		os7-automation) build_os7_automation ;;
 		os7-setup)   build_os7_setup   ;;
 		os7-app-softwareupdate) build_os7_app_softwareupdate ;;
 		os7-base|os7-server|os7-desktop) build_metapackage "${pkg}" ;;

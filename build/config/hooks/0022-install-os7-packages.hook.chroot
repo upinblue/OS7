@@ -87,7 +87,19 @@ fi
 # they conflict. os7-setup is named because it is deliberately NOT a member of
 # os7-base (a machine that is finished installing does not need the installer,
 # but the MEDIUM does).
-SET=( os7-console os7-powershell os7-module os7-backup os7-setup os7-base )
+# EVERY PACKAGE A METAPACKAGE DEPENDS ON MUST BE NAMED HERE, and that is the
+# trap this line cost a build to learn (2026-09-14). These are .deb FILES on
+# a command line, not a repository: apt resolves a dependency only against
+# what it is offered plus the archive, so a package sitting in
+# /usr/lib/os7/packages that nobody names is a package apt reports as
+#
+#     os7-desktop : Depends: os7-automation (= 1.0.0.220) but it is not
+#     installable ... [no choices]
+#
+# with the file right there. os7-backup has always been here for the same
+# reason and nothing said so. installer/testing/check-module-parts.py now
+# holds this list against the metapackages' Depends.
+SET=( os7-console os7-powershell os7-module os7-backup os7-automation os7-setup os7-base )
 case "${ARCH}" in
 	amd64) SET+=( os7-desktop-theme os7-app-softwareupdate os7-desktop ) ;;
 	*)     SET+=( os7-server ) ;;

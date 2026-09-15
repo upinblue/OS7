@@ -62,7 +62,7 @@ here either — this file points, they rule.
 | Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. Both stages are now proven against a real **Windows Server 2025** DC on a machine ([SESSION-AD-REAL-DC.md](docs/SESSION-AD-REAL-DC.md), [SESSION-AD-JOIN.md](docs/SESSION-AD-JOIN.md)); what is still unexercised is the INSTALLER's road to the join (screen 9D) and arm64 |
 | Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **the decisions are still *Proposed*; v1 of the surface is BUILT and has run on a machine.** `Enable-`/`Test-`/`Disable-OS7RemoteDesktop` were exercised against the real daemon and a real RDP client on the GUI bench (§13a). The allow-list is built and measured safe in all four quadrants (§13b); a local account signs in over RDP to the OS/7 desktop (M-R50, after #128 withdrew a false defect); the account lockout is built too, in `common-auth` and therefore ACCOUNT-WIDE (`Set-OS7AccountLockout`, §13c). The session verbs are built over the Systemd module's `Get-/Stop-SystemdSession` (§13d); there is no `Disconnect-`, because logind has one verb and it ENDS the session |
 | OS/7's own GUI applications: the toolkit, what an app may contain, the design system, decisions G1–G12 | [docs/GUI-APPS-PLAN.md](docs/GUI-APPS-PLAN.md) — **the toolkit is Avalonia and that is decided (2026-09-14); everything from G3 on is a proposal and nothing is built.** The argument is not "we already write C#" — it is that `os7-classic.css` already documents that GTK 4 cannot wear this product's face. Measured before writing: 22.1 MiB framework-dependent against 100.8 MiB self-contained, **13.3 MiB of it identical in every app** (so `os7-ui` is arithmetic, not taste), no Wayland backend in Avalonia 12.1.2 → XWayland, and AT-SPI ships ([SESSION-AVALONIA-FOOTPRINT.md](docs/SESSION-AVALONIA-FOOTPRINT.md)). **An app implements no policy** — it is a front-end over cmdlets that already have a test (P12), which is #66's shape pointed at a new surface. **The first application, Software Update, HAS RUN ON A MACHINE (2026-09-14)**: the window draws with Mutter's themed title bar, lists real releases from a signed repository, and polkit prompts by name before systemd runs `Update-OS7` as root ([SESSION-SOFTWARE-UPDATE-APP.md](docs/SESSION-SOFTWARE-UPDATE-APP.md)). What it has NEVER done is a successful update — every release the bench reaches is development-signed — and no ISO has yet carried the package |
-| What the OS owes an automation workload — and what it deliberately leaves to a product above, decisions AU1–AU14 | [docs/AUTOMATION-PLAN.md](docs/AUTOMATION-PLAN.md) — **every decision *Proposed*, nothing run, written 2026-09-14.** Its governing rule is AU1: **the OS provides primitives, a product above provides policy**, because the alternative is the engine twice in two languages with nobody at the seam (#66). Measured and named there: `Register-OS7ScheduledTask` exposes **no limit, no timeout and no isolation parameter**; there is **no secret store, no lock verb, no notification verb and no MTA anywhere in this repository**; `systemd-creds` is mentioned nowhere. Its one fact that has been near a computer is somebody else's — the templated-unit + polkit + journal pattern the Software Update window proved (O-G6), which AU10 reaches from the other side and which `Start-OS7Job` must **widen rather than replace**. AU2 is the third place the same credential-and-rollback question has appeared (DECISIONS open questions 7 and 9, SETUP-PLAN L26) and it joins them rather than resolving them |
+| What the OS owes an automation workload — and what it deliberately leaves to a product above, decisions AU1–AU14 | [docs/AUTOMATION-PLAN.md](docs/AUTOMATION-PLAN.md) — **PHASE 1 IS BUILT AND HAS RUN ON A MACHINE (2026-09-14)**: secrets, the job journal, the job contract, the service dataset, locks, per-job Kerberos caches and notification, in `powershell/OS7/OS7.Automation.ps1` and `build/packages/os7-automation/` ([SESSION-AUTOMATION-PRIMITIVES.md](docs/SESSION-AUTOMATION-PRIMITIVES.md)). Its governing rule is AU1: **the OS provides primitives, a product above provides policy**, because the alternative is the engine twice in two languages with nobody at the seam (#66) — and it is decidable by grep, held at 0 by `check-automation-logic.py`. `Start-OS7Job` **widens** the templated-unit + polkit + journal pattern the Software Update window proved (O-G6) rather than replacing it. **FOUR OF ITS DECISIONS WERE WRONG AND ARE CORRECTED IN PLACE**, each with the measurement that did it: `--tpm2-pcrs=` defaults to EMPTY so `host+tpm2` does NOT inherit #69/#100 (AUL2 shrinks); systemd's host key lives at `/var/lib/systemd/credential.secret`, which is INSIDE the boot environment, so **`tpm2` alone is the sealing target** and `host+tpm2` would have put the KEY back where AU6 keeps the SECRET out of; AU11 needs **no MTA**; and the journal's schema IS a contract. **AND A MACHINE FOUND THREE DEFECTS WHILE EVERY CHECK HERE WAS GREEN** — a directory the cmdlet's own error message promised and did not create, a property read that throws under strict mode because the journal has two writers, and `RuntimeMaxSec=`, which systemd IGNORES for `Type=oneshot` so that every job ran with no timeout (#155). What is still owed: **no ISO carries any of it**, no ticket has been obtained, nothing has been notified, and arm64 is unmeasured |
 | The identity and access management application on top of OS/7: what it is, the layer cut against the OS, decisions IG1–IG14 | [docs/IAM-PLAN.md](docs/IAM-PLAN.md), with [docs/IAM-SCOPE.md](docs/IAM-SCOPE.md) as its capability scope — **all *Proposed*, nothing built.** It is **not an OS feature and must not become one**: AU1 is the line, and routing roles, attestation and separation of duties through the cmdlet surface would end with two hundred cmdlets of business logic in `powershell/OS7/`. Two decisions do most of the work — **IG5**, every derived fact carries its derivation (without it, individual-versus-role reporting and attestation of any kind are unimplementable *late*), and **IG6**, the plan is an artifact, which turns the reconciler, attestation and separation of duties into producers and validators of plans rather than three more engines. **The AD cmdlets are deliberately NOT its foundation** — a .NET application has `S.DS.P` natively, so what transfers is [AD-PLAN.md](docs/AD-PLAN.md)'s measured knowledge and not its code, and OS/7's AD surface should stop growing toward being a provisioning engine |
 | Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is the one decision it still owes** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md) M-V22) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
@@ -391,6 +391,29 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   window died in its constructor and
                                           #   an operator saw a menu entry that
                                           #   did nothing
+./installer/testing/check-automation-logic.py
+                                          #   AU14: the automation host's
+                                          #   DECISIONS against a scratch tree.
+                                          #   48 checks and NINE planted defects,
+                                          #   every one required to FIRE. It runs
+                                          #   ITSELF IN A CONTAINER on a non-Linux
+                                          #   host, and that is not convenience:
+                                          #   SetUnixFileMode throws on Windows
+                                          #   and /proc/<pid> is how a lock's
+                                          #   staleness is decided, so two rules
+                                          #   are not expressible there at all.
+                                          #   AU5's write-ahead is proven with no
+                                          #   VM by making the ACTION fail and
+                                          #   requiring the INTENT to be on disk
+                                          #   already. One rule is NEGATIVE and
+                                          #   that is #155's lesson: a check that
+                                          #   asserts a directive is PRESENT
+                                          #   cannot see one being IGNORED, and
+                                          #   RuntimeMaxSec= is ignored for
+                                          #   Type=oneshot - so every job ran with
+                                          #   no timeout while the unit file
+                                          #   looked complete and every other
+                                          #   instrument was green
 ./installer/testing/check-vm-arch.py      # the harness port's own check: the
                                           #   arm64 command lines byte-identical
                                           #   to the pre-port construction, the
@@ -620,9 +643,10 @@ matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/`, `powershell/Directory/` and `powershell/Hardware/` are
 the generic layers — none knows anything about OS/7, and all six would run on
 any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is **140 of the 243
-functions** — measured 2026-09-09 by asking the modules, which is the only way
-this line has ever been right for long. It said "126 of 229" that morning, and
+`powershell/OS7/` is the product layer on top, and it is **164 of the 288
+functions** — measured 2026-09-14 by asking the modules, which is the only way
+this line has ever been right for long. (It said 140 of 243 that morning; the
+automation host added sixteen product cmdlets and five to `Systemd`.) It said "126 of 229" that morning, and
 the fourteen that changed it are not OS/7 names at all: since P1a
 (2026-09-09) the module also supplies **the Windows names Microsoft's
 `Microsoft.PowerShell.Management` does not ship on Linux** — `Get-Service` and
@@ -655,9 +679,12 @@ table against parameter sets recorded from a real Windows pwsh 7.6.5.
 
 Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units, **P2-directory**
-about the directory and **P2-hardware** about devices and DKMS;
-`check-layering.py` holds **all six** at baselines that may fall and may not
-rise. The full inventory, generated by asking the modules rather
+about the directory, **P2-hardware** about devices and DKMS, and — since
+2026-09-14 — **P2-automation** about `systemd-creds`, `systemd-run` and
+`systemd-analyze`; `check-layering.py` holds **all seven** at baselines that may
+fall and may not rise. P2-automation is a rule of its own rather than more
+tokens on P2-systemd because that one stands at 2 and can therefore never assert
+that a subsystem is at ZERO — only that it has not got worse. The full inventory, generated by asking the modules rather
 than written from memory, is [docs/POWERSHELL-REFERENCE.md](docs/POWERSHELL-REFERENCE.md).
 
 This line said "four" until 2026-08-28 and had been wrong since `Systemd` landed.
@@ -1110,18 +1137,29 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             the os7-module .deb (hook 0022) and NOT by staging;
                             build.sh stages the tests/ fixtures alone
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four of
-                            the NINETEEN files DOT-SOURCED by OS7.psm1, so a copy
-                            that took the .psm1 alone is a real failure mode -
-                            hook 0060 names all nineteen, and so does the .deb
-                            content check since the 2026-08-28 merge.
-                            THIS NUMBER HAS BEEN WRONG FIVE TIMES: it said
+                            the TWENTY-TWO files DOT-SOURCED by OS7.psm1, so a
+                            copy that took the .psm1 alone is a real failure
+                            mode - hook 0060 names all twenty-two, and so does
+                            the .deb content check since the 2026-08-28 merge.
+                            THIS NUMBER HAS BEEN WRONG SEVEN TIMES: it said
                             "four ... all five" while the file said FOURTEEN
                             sixty lines below it; FOURTEEN again when
                             OS7.ScheduledTask.ps1 made it fifteen; FIFTEEN
                             until 2026-09-09, by which point AccountLockout,
                             RemoteDesktop and SecureBoot had made it eighteen;
-                            and EIGHTEEN for the rest of that same day, until
-                            OS7.Compat.Windows.ps1 made it nineteen.
+                            EIGHTEEN for the rest of that same day, until
+                            OS7.Compat.Windows.ps1 made it nineteen; and
+                            and NINETEEN until 2026-09-14, when it was wrong
+                            by TWO at once and in two directions: OS7.Storage.ps1
+                            and OS7.Automation.ps1 landed the same afternoon,
+                            from two sessions in one worktree, and each edited
+                            the four asserted places without either touching
+                            this line. The correct number was twenty-two and
+                            BOTH sessions' first correction of it said twenty.
+                            check-module-parts.py caught every asserted list;
+                            this sentence is the one thing it cannot hold, which
+                            is the argument for reading it as a map and asking
+                            the check for the number.
                             SINCE 2026-09-09 IT IS CHECKED:
                             installer/testing/check-module-parts.py requires
                             the .psm1 foreach, hook 0060, the .deb's required
@@ -1194,9 +1232,24 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
                             purpose (P10): a wall of forty devices in equal weight
                             is what `lspci -k` already is. Get-OS7DriverRegression
                             is what Update-OS7 asks before it activates anything
+  OS7.Automation.ps1        the automation host (docs/AUTOMATION-PLAN.md phase
+                            1): secrets sealed by systemd-creds, the job
+                            journal, the job contract, named locks, per-job
+                            Kerberos caches and notification. AU1 is its line
+                            and it is decidable by grep - no cmdlet here
+                            contains `approval`, `target system`, `role`,
+                            `entitlement` or `connector`, and
+                            check-automation-logic.py holds that at 0.
+                            Start-OS7Job is os7-update@'s proven pattern
+                            WIDENED, not a second job starter: a packaged
+                            template unit, Start-SystemdUnit, polkit, the
+                            journal. The fence lives in the PACKAGE
+                            (build/packages/os7-automation), where it is
+                            signed, readable and rolled back with the release;
+                            only the per-run drop-in is written at run time
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. LAST of the
-                            NINETEEN dot-sourced files, and last because it
+                            TWENTY-TWO dot-sourced files, and last because it
                             calls every helper above it and PowerShell defines
                             functions as the script runs - which is the one
                             thing about the list that is ORDER and not a set,

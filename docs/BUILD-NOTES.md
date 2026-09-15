@@ -8320,6 +8320,316 @@ have caught this, and the one instrument that did was a person looking at two
 pictures.
 
 ---
+
+## #154 — a transient systemd timer does not survive a reboot, and NOTHING anywhere says it went
+
+**Measured 2026-09-14**, on an installed 1.0.0.175 amd64 machine
+(`os7lab.py` bench `manual`), because `docs/AUTOMATION-PLAN.md` AU12 was written
+on the expectation and an expectation is not a measurement. It is the expected
+answer. The entry is here for the *second* half, which is not.
+
+Registered before the reboot, side by side:
+
+```
+# systemd-run --on-calendar='2026-10-01 06:00' --unit=mau4-probe \
+      /bin/bash -c 'echo MAU4-FIRED >> /var/log/mau4.log'
+Running timer as unit: mau4-probe.timer
+     Loaded: loaded (/run/systemd/transient/mau4-probe.timer; transient)
+  Transient: yes
+    Trigger: Thu 2026-10-01 06:00:00 CEST; 2 weeks 2 days left
+```
+
+and an ordinary `.timer` in `/etc/systemd/system`, enabled, for the same
+instant. `list-timers` showed both.
+
+After `systemctl reboot` (a genuinely different boot — `boot_id`
+`16daea21…` → `f93b0f07…`):
+
+```
+# systemctl list-timers --all | grep -i mau4
+Thu 2026-10-01 06:00:00 CEST  …  mau4-persistent.timer   mau4-persistent.service
+
+# systemctl show -p LoadState --value mau4-probe.timer
+not-found
+# ls /run/systemd/transient/
+session-1.scope  session-5.scope
+```
+
+**And then the part that matters:**
+
+```
+# journalctl -b   | grep -i mau4   →  one line, about the PERSISTENT timer
+# journalctl -b -1 | grep -iE 'mau4.*(stop|remov|lost|gone)'  →  nothing
+```
+
+Neither the boot that lost it nor the boot before it says one word about it.
+There is no failure, no warning and no unit to ask: `/run` is a tmpfs, the
+transient unit was a file in it, and the file is simply not there any more.
+
+**Why this is worth a numbered entry rather than a shrug.** An implementation
+that registers a future action as
+`systemd-run --on-calendar '2026-10-01 06:00'` — an employee's department change
+on the first of the month, a certificate renewal, a deferred retry — works
+perfectly in every test anybody runs in one sitting, and loses the work at the
+next reboot **with a green machine and a silent journal**. That is the same
+failure shape as #113, and #113 cost this repository a whole scheduled-task
+surface.
+
+The consequences are recorded rather than left to be rediscovered:
+
+* **AU12** — a product above holds due work in its own store and wakes on ONE
+  heartbeat. `Register-OS7ScheduledTask` writes a real unit file and is where a
+  schedule lives.
+* **AU4 / `os7-job@.service`** — the job fence is a PACKAGED template unit, not
+  a `systemd-run` invocation. A drop-in under `/run` parameterises one run, and
+  a run does not survive a reboot either, so the lifetimes agree instead of
+  disagreeing quietly. `check-layering.py`'s **P2-automation** keeps
+  `systemd-run` out of `powershell/OS7` entirely.
+
+---
+
+## #155 — `RuntimeMaxSec=` is IGNORED for `Type=oneshot`, so every job ran with no timeout while the unit looked complete
+
+**Found by a machine on 2026-09-14**, in the hour after
+`check-automation-logic.py` went green at 46 checks, `check-layering.py` held
+seven rules and `check-privilege.py` held both baselines. The unit file
+contained the directive. The check asserted the directive was there. systemd
+loaded the unit, started it, ran the job — and printed this into the journal:
+
+```
+os7-job@probe-22edae9c.service: RuntimeMaxSec= has no effect in combination
+with Type=oneshot. Ignoring.
+```
+
+The proof is one question to systemd, and it is the question nobody had asked:
+
+```
+# systemctl show -p RuntimeMaxSec --value os7-job@probe-22edae9c.service
+                                          ← empty
+```
+
+A `Type=oneshot` unit is `activating` for its entire life; it never reaches
+`active`, so the directive that bounds *running* has nothing to bound. The one
+that applies is `TimeoutStartSec=`. After the change, on the same machine, with
+a job that sleeps for 300 seconds and a `-TimeoutSec 8`:
+
+```
+TimeoutStartUSec   8s
+RuntimeMaxUSec     infinity
+…
+os7-job@tmo-2dcae3f3.service: start operation timed out. Terminating.
+os7-job@tmo-2dcae3f3.service: Main process exited, code=killed, status=15/TERM
+os7-job@tmo-2dcae3f3.service: Failed with result 'timeout'.
+```
+
+`DurationSec : 8.268`.
+
+**Three things this is an instance of, and the third is the uncomfortable one.**
+
+1. **#62 and #85's shape**: every declaration satisfied, and the thing they were
+   about decided elsewhere. The package list did not decide the kernel; the
+   theme keyfile did not decide the session; the timeout directive did not
+   decide the timeout.
+
+2. **A check that asserts a directive is PRESENT cannot see a directive being
+   IGNORED.** The fix is a negative rule beside the positive one —
+   `check-automation-logic.py` now requires that `RuntimeMaxSec=` and
+   `Type=oneshot` never appear in the same unit, and a planted defect proves it
+   fires. The general form is worth stating: *for any directive whose effect
+   depends on another directive, the check has to name the combination, not the
+   directive.*
+
+3. **#66, at miniature scale, in the one file that should have been immune.**
+   `os7-update@.service` — the templated unit that has RUN ON A MACHINE
+   (`f9ca2b5`, GUI-APPS-PLAN O-G6) — has carried `TimeoutStartSec=3600` since
+   the day it was written. `os7-job@.service` was written from the same notes,
+   by a file whose own header says in capitals that it WIDENS that proven
+   pattern rather than restating it, and it reached for a different directive.
+   The spike boots; the paraphrase never had. *Diff the new one against the one
+   that ran* is the rule, and "I am deliberately copying it" is not a substitute
+   for doing so.
+
+---
+
+## #156 — a package can be built, staged, and still "not installable", because hook 0022 hands apt FILES
+
+**2026-09-14**, twenty minutes into an ISO build, with every check in
+`installer/testing/` green:
+
+```
+The following packages have unmet dependencies:
+ os7-desktop : Depends: os7-automation (= 1.0.0.220) but it is not installable
+E: Unable to satisfy dependencies. Reached two conflicting assignments:
+   1. os7-desktop:amd64=1.0.0.220 is selected for install
+   2. os7-desktop:amd64 Depends os7-automation (= 1.0.0.220)
+      but none of the choices are installable:
+      [no choices]
+```
+
+The package existed. `build-os7-packages.sh` had built it
+(`os7-automation_1.0.0.220_all.deb (22584 bytes, 5 required paths present)`),
+and the file was **in the chroot**, at
+`/usr/lib/os7/packages/os7-automation_1.0.0.220_all.deb`, listed in the build's
+own output. apt still said "no choices".
+
+**`config/hooks/0022-install-os7-packages.hook.chroot` installs .deb FILES on a
+command line, not a repository.** apt resolves a dependency from what it is
+handed plus the archive — and nothing indexes `/usr/lib/os7/packages`. A package
+that is built, staged, and simply not NAMED in that hook's `SET` is invisible to
+the solver with the file sitting beside it.
+
+So **a new OS/7 package has FIVE places to be named**, not the four a new module
+FILE has:
+
+1. `build/packages/<name>/control.in`
+2. `build-os7-packages.sh` — a `build_<name>()` and an entry in `ALL=`
+3. the metapackage's `Depends:` (`os7-server`, `os7-desktop`, or both)
+4. **hook 0022's `SET`** — this one
+5. `check-image.py`, if the artefact is to be asked about it
+
+`os7-backup` had been in that `SET` since the day it was written, for exactly
+this reason, and nothing anywhere said so. `installer/testing/check-module-parts.py`
+now holds it: every `os7-*` a metapackage depends on must be named in hook 0022,
+every name there must have a `control.in`, and each must be built — by `ALL=` or
+by a named script (`os7-desktop-theme` has its own builder and always has).
+Proven to fire by removing the entry again.
+
+Two things the rule had to learn from the build rather than from the file:
+`os7-release` is installed **separately, before the set**, because its postinst
+brands the identity and the hook verifies that before installing anything else;
+and `os7-desktop-theme` is built by `build/lib/build-desktop-theme.sh`, not by
+`ALL=`. A first version of the rule cried wolf about both.
+
+---
+
+## #157 — a literal `\n` where a line continuation belongs, and a check scoped to where the bug was found
+
+**Two builds, 2026-09-14.** An edit to the module file lists wrote a literal
+two-character `\n` — backslash, letter `n` — instead of a real newline:
+
+```
+		./usr/local/share/powershell/Modules/OS7/OS7.Storage.ps1 \n		./usr/local/share/powershell/Modules/OS7/OS7.Update.ps1 \
+```
+
+Bash reads `\n` outside quotes as the single character `n`. So the list gained an
+argument called `n`, and the two consumers said:
+
+```
+build-os7-packages.sh   !!! os7-module: built package is missing n
+hook 0060               /usr/local/share/powershell/Modules/OS7/n is missing or empty
+```
+
+Neither message names anything an operator can find. `bash -n` accepts the file:
+it is valid shell, it just says something else.
+
+**AND `check-module-parts.py` WAS GREEN THROUGH BOTH.** That check exists to hold
+four lists of module files against each other, and it did — because it reads them
+with a **regex over paths**, and a regex does not care what bash makes of the
+line. *The lists agreed and the files were unreadable.* A parser that extracts
+what it is looking for cannot see a file that has stopped meaning what it says.
+
+**The second build is the more useful half.** A rule was added for it — and
+scoped to `pkg_finish` blocks in `build-os7-packages.sh`, which is where the bug
+had been found. It went green, the build was started, and twenty minutes later
+hook 0060 died of the identical defect three files away, from the same edit.
+
+> A rule scoped to where the bug was found catches that bug exactly once.
+
+The rule now reads **every shell file this repository owns**, every line, and is
+about SHAPE rather than about a list: a backslash before a letter, anywhere
+outside a quoted stretch, is an escape bash will act on, and none of these files
+has a reason to contain one. Quoted stretches are blanked first, because a
+`printf '\n'` is legitimate — the same reason `check-gui-tokens.py` blanks
+comments before it scans.
+
+**A postscript on where it came from, and the rule that now holds it.** These
+files were also rewritten with CRLF line endings in the same edit — 18 tracked
+files gained CR bytes that `HEAD` does not have. `.gitattributes` declares
+`eol=lf` and BUILD-NOTES #70 explains why, but that defends the **checkout**;
+nothing in the repository defended against a writer that emits CRLF, and
+`git status` shows none of it. On a shell script the symptom is
+`/bin/bash^M: bad interpreter`, which is #70's own sentence arriving from the
+other direction.
+
+They were normalised, and **the same eighteen came back within the afternoon** —
+`OS7.psm1`, `OS7.psd1` and `POWERSHELL-REFERENCE.md` among them, after having
+been fixed once already. A worktree that repairs itself and is re-damaged by the
+next write is not repaired.
+
+So `check-module-parts.py` holds it, and the interesting part is **who it asks**:
+
+    git ls-files --eol
+
+which reports, per file, the index ending, the WORKING TREE ending, and the
+attributes that decide both. The exemptions are therefore `.gitattributes`' own
+and cannot drift out of step with it — and that matters more here than
+anywhere, because **the exempt files are evidence**: 47 of them are the manual's
+serial-console transcripts, whose CRs are the measurement (#16). A rule carrying
+its own hardcoded skip list would eventually edit one.
+
+Two things it took a wrong turn on first, both recorded because a check's own
+false positives are how it gets switched off:
+
+* **`w/-text` is git saying "I detected binary content", not "CRLF".** The first
+  version treated it as a violation and went red on the manual's two PDFs, which
+  are not in `.gitattributes`' binary block and so ride on `text=auto`.
+* **Comparing against `HEAD` is the wrong question.** An earlier hand scan asked
+  "does HEAD have CRs here too?" and skipped the file if so — which silently
+  blesses anything committed wrong. Git's own answer does not have that hole.
+
+Baseline 0, 467 text files, and proven to fire: a planted CRLF file is named
+with its path and its `w/crlf`. The control runs on every green pass — 47 files
+carry CRLF at this moment and the rule stays green, because git is told to leave
+them alone.
+
+---
+
+## #158 — `check-image.py` had stopped running on Windows, twice, for two different reasons in one call
+
+**2026-09-14.** Trying to ask a freshly built medium what it is:
+
+```
+FileNotFoundError: [WinError 206] The filename or extension is too long
+```
+
+The traceback names `subprocess`, `CreateProcess` and a file length, which reads
+as a missing docker or a bad path and is neither. **Windows refuses an argument
+list past about 32 KB**, and `read_image()` passes the whole probe — several
+hundred lines of shell — as one `bash -c` argument. It had grown past the limit
+at some point and nobody had run it here since; the version in `HEAD` fails
+identically, so this was not a regression from the work that found it. macOS has
+no such limit, which is why the shape survived from the day it was written.
+
+CLAUDE.md lists this check as running on both hosts. It did not.
+
+**The fix moved the probe to stdin — and the second failure was hiding behind
+the first:**
+
+```
+bash: line 1: $'\r': command not found
+bash: line 474: syntax error: unexpected end of file
+```
+
+`subprocess.run(..., input=probe, text=True)` opens the child's stdin in TEXT
+mode, and **on Windows text mode translates every `\n` into `\r\n` on the way
+out.** The probe arrived in the container with a CR on every line. Read the
+first message alone and the natural conclusion is that the ISO is corrupt: the
+mounts fail, the squashfs will not open, and the output is a page of
+`mount: ... does not exist`.
+
+`input=probe.encode("utf-8")` with no `text=True`, decoding stdout and stderr
+afterwards, keeps the bytes the bytes.
+
+**Both halves are BUILD-NOTES #70 arriving through a third door.** That entry is
+about line endings in FILES, and `.gitattributes` defends those on checkout.
+This is a string that was never a file — so nothing defended it, and the
+symptom was a diagnosis about the artefact rather than about the pipe.
+
+*The general form, and it is the reason this is numbered:* **a long script handed
+to a container is an argument until it is too long to be one, and a pipe is a
+text stream until the platform decides what a newline is.** Neither is visible
+in the code.
+
 ---
 
 ## #159 — a name made from the clock is unique only if the thing is made more slowly than the clock ticks

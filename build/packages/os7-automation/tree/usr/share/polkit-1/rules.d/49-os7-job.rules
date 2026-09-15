@@ -1,0 +1,59 @@
+// OS/7 — who may start a job, and how they prove it.
+// docs/AUTOMATION-PLAN.md AU10.
+//
+// THIS IS os7-update's RULE POINTED AT A SECOND KIND OF WORK, deliberately and
+// not by copying: the mechanism AU10 names is the one the Software Update
+// window proved on a machine (f9ca2b5, GUI-APPS-PLAN O-G6), and a product above
+// that needs to start a job is the same problem as a window that needs to start
+// an update. One narrowing, one verb, one session test.
+//
+// WHAT THIS DOES NOT DO: it does not grant anything that was not already
+// possible. systemd's default policy for `manage-units` on a system unit is
+// already auth_admin — an unprivileged caller is already asked for an
+// administrator's password. Deleting this file would not open a door.
+//
+// WHAT IT DOES: it scopes the decision to OS/7's own job units.
+//
+// AND IT DIFFERS FROM os7-update's IN ONE DELIBERATE WAY: there is no
+// AUTH_ADMIN_KEEP here. The update window's argument for keeping the
+// authorisation was that installing three releases in one sitting otherwise
+// means typing the password three times, and a prompt that appears more often
+// than it means anything is one people learn to clear without reading. A job is
+// the opposite case: an unattended product above starts hundreds of them, and
+// an authorisation kept for the session is an authorisation nobody is present
+// for. A product that runs jobs unattended runs as root or as its own service
+// account and never reaches polkit at all; a PERSON starting a job by hand is
+// exactly the case that should be asked each time.
+//
+// 49- rather than 50-: below the range a local administrator would use, so a
+// site policy in /etc/polkit-1/rules.d/ wins without having to know this file
+// exists.
+
+polkit.addRule(function (action, subject) {
+	if (action.id !== "org.freedesktop.systemd1.manage-units") {
+		return polkit.Result.NOT_HANDLED;
+	}
+
+	var unit = action.lookup("unit");
+	if (!unit || unit.indexOf("os7-job@") !== 0) {
+		return polkit.Result.NOT_HANDLED;
+	}
+
+	// `verb` is start/stop/restart. Only starting is scoped here. STOPPING is
+	// left at the default policy on purpose and for a reason this product has
+	// already met once: a job killed halfway leaves an intent with no result,
+	// which is the state AU5 reserves for a machine that died — so ending one
+	// deliberately should carry the default policy's full weight.
+	if (action.lookup("verb") !== "start") {
+		return polkit.Result.NOT_HANDLED;
+	}
+
+	// An active local session only. A remote or inactive session gets the
+	// default policy rather than this one — the same distinction polkit draws
+	// everywhere.
+	if (subject.local && subject.active) {
+		return polkit.Result.AUTH_ADMIN;
+	}
+
+	return polkit.Result.NOT_HANDLED;
+});

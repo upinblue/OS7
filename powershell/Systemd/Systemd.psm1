@@ -295,10 +295,21 @@ function Set-SystemdUnitState {
 	#>
 	param(
 		[Parameter(Mandatory)][string]$Verb,
-		[Parameter(Mandatory)][string]$Name
+		[Parameter(Mandatory)][string]$Name,
+		[switch]$NoBlock
 	)
 
-	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @($Verb, $Name)
+	# --no-block: return when the job has been ENQUEUED rather than when it has
+	# finished. It matters for exactly one shape and that shape is `Type=oneshot`
+	# — `systemctl start` on a oneshot unit blocks for as long as the work takes,
+	# which is right for an administrator at a prompt and wrong for anything
+	# that wants to watch the journal while it runs. The caller then has a unit
+	# that is `activating`, which is why this function re-reads the unit either
+	# way rather than reporting the exit code.
+	$a = @($Verb)
+	if ($NoBlock) { $a = $a + '--no-block' }
+	$a = $a + $Name
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments $a
 	if ($r.ExitCode -ne 0) {
 		throw [System.InvalidOperationException]::new(
 			"systemctl $Verb $Name exited $($r.ExitCode): $($r.StdErr.Trim())")
@@ -312,9 +323,14 @@ function Start-SystemdUnit {
 		Starts a unit and reports what it became.
 	#>
 	[CmdletBinding(SupportsShouldProcess)]
-	param([Parameter(Mandatory)][string]$Name)
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		# Return when systemd has ACCEPTED the job, not when the unit has
+		# finished it. See Set-SystemdUnitState.
+		[switch]$NoBlock
+	)
 	if (-not $PSCmdlet.ShouldProcess($Name, 'start')) { return @(Get-SystemdUnit -Name $Name) }
-	Set-SystemdUnitState -Verb 'start' -Name $Name
+	Set-SystemdUnitState -Verb 'start' -Name $Name -NoBlock:$NoBlock
 }
 
 function Stop-SystemdUnit {
@@ -1843,6 +1859,520 @@ function Set-SystemdHostName {
 	return @($after)
 }
 
+# =============================================================================
+# CREDENTIALS AND PER-INSTANCE DROP-INS — the plumbing docs/AUTOMATION-PLAN.md
+# AU2, AU4 and AU10 need, and nothing above it.
+#
+# This is Layer 2 and it stays Layer 2: it knows `systemd-creds` and
+# `systemd-analyze`, it knows where a drop-in goes, and it knows nothing about
+# OS/7's dataset, OS/7's secret names or OS/7's job contract. Everything in that
+# sentence is `powershell/OS7/OS7.Automation.ps1`'s.
+#
+# WHAT WAS MEASURED BEFORE ANY OF IT WAS WRITTEN, on an installed 1.0.0.175
+# machine on 2026-09-14 (docs/SESSION-AUTOMATION-PRIMITIVES.md, M-AU1). Four
+# facts, and each one decides a parameter below:
+#
+#   1. `--tpm2-pcrs=` DEFAULTS TO EMPTY — "binds the encryption key to no PCRs
+#      at all (this is also the default if this option is not used)", and the
+#      machine agrees with its own man page: PCR 7 was extended with
+#      `tpm2_pcrextend` and a blob sealed with plain `--with-key=host+tpm2`
+#      still opened, while one sealed with `--tpm2-pcrs=7` died with
+#      "TPM policy does not match current system state" — BUILD-NOTES #69's
+#      sentence, from the other end. So $Pcrs defaults to EMPTY here and a
+#      caller who wants the fragility has to ask for it by name.
+#
+#   2. `--with-key=host` and `--with-key=host+tpm2` BOTH DEPEND ON A FILE INSIDE
+#      THE BOOT ENVIRONMENT — `/var/lib/systemd/credential.secret`, and `/var/lib`
+#      on an OS/7 machine is `rpool/ROOT/<be>/var/lib`. Moved aside, both failed
+#      with "Failed to determine local credential key"; `--with-key=tpm2` opened
+#      in the same second. That is why $With defaults to `tpm2` and not to
+#      systemd's own `auto`.
+#
+#   3. `LoadCredentialEncrypted=` DELIVERS AS ADVERTISED: /run/credentials/<unit>,
+#      a tmpfs mounted `ro,nosuid,nodev,noexec,nosymfollow,size=1024k,mode=700`,
+#      the file `-r--------` root:root, and the directory GONE the moment the
+#      unit stops. Nothing here has to emulate any of that.
+#
+#   4. `systemd-creds has-tpm2` IS DEPRECATED IN systemd 259 — it prints "The
+#      'systemd-creds has-tpm2' command has been replaced by 'systemd-analyze
+#      has-tpm2'. Redirecting invocation." ON STDOUT and then answers anyway.
+#      Test-SystemdTpm2 asks `systemd-analyze` so that the answer is not a
+#      deprecation notice with a word in it.
+# =============================================================================
+
+# The seam the logic checks use, the way $script:SystemdCommandOverride is the
+# seam for systemctl. SEPARATE, because these calls carry bytes on stdin and a
+# fake that only knew (command, arguments) would silently see none of them —
+# and the input IS the secret, so a check that could not see it could not
+# assert that it never reaches a command line.
+$script:SystemdCredentialOverride = $null
+
+# Where a per-instance drop-in is written. /run, not /etc: a drop-in for a
+# TRANSIENT-in-spirit instance is per-boot state, and M-AU4 measured what
+# happens to the /run half of systemd at a reboot — it is gone, silently. Here
+# that is the correct lifetime and not a trap, because the instance it
+# parameterises cannot survive a reboot either.
+$script:SystemdDropInDirectory = '/run/systemd/system'
+
+function Assert-SystemdElevated {
+	<#
+	.SYNOPSIS
+		Internal. Refuse, in a sentence, unless this process is root.
+
+	.DESCRIPTION
+		BUILD-NOTES #148's guard, in a generic layer, and #149 is the reason it
+		is HERE rather than a call to OS7's `Assert-OS7Elevated`: that function
+		lives in `powershell/OS7`, this module sits BELOW it, and a layer
+		calling up into the product inverts P2 — the one direction the whole
+		module split exists to keep.
+
+		SO YES, THIS IS THE SAME TWENTY LINES TWICE, and that deserves a
+		sentence rather than silence, because BUILD-NOTES #66 is about exactly
+		that shape. What #66 is really about is two implementations of a
+		DECISION drifting apart — the installer's TPM step taking a different
+		route from the spike, the netplan document spelled two ways. There is
+		no decision here to drift: "effective uid is 0" has one implementation
+		and will have one forever. What differs between the two copies is the
+		MESSAGE, which is per-cmdlet anyway.
+
+		It does not guard the twenty-odd older mutating verbs in this module.
+		Those are #149's open debt, `check-privilege.py` names every one of
+		them on every run, and adding a guard to a cmdlet whose behaviour
+		nothing here has re-tested is a change made to satisfy a check rather
+		than to fix a defect.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Cmdlet,
+		[Parameter(Mandatory)][string]$Because
+	)
+
+	# The KERNEL is asked, not a command: no subprocess, no PATH, and it cannot
+	# be confused by an account that happens to be called root.
+	$status = '/proc/self/status'
+	if (-not [System.IO.File]::Exists($status)) { return }
+
+	$uid = $null
+	foreach ($line in [System.IO.File]::ReadAllLines($status)) {
+		if (-not $line.StartsWith('Uid:')) { continue }
+		# label, real, EFFECTIVE, saved-set, filesystem — tab separated. The
+		# effective one is what decides whether a write succeeds.
+		$f = $line.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)
+		if ($f.Count -ge 3) { $uid = $f[2] }
+		break
+	}
+	# An unreadable /proc is NOT a refusal: this exists to replace a bad
+	# message with a good one and must not invent a failure of its own.
+	if ($null -eq $uid -or $uid -eq '0') { return }
+
+	throw [System.InvalidOperationException]::new(
+		"$Cmdlet must run as root: it $Because. This process is uid $uid.`n" +
+		"`n" +
+		"  sudo $Cmdlet  DOES NOT WORK: every cmdlet in these modules is a`n" +
+		"  PowerShell function and sudo resolves executables. Elevate the`n" +
+		"  shell instead:`n" +
+		"`n" +
+		"      sudo pwsh -NoProfile -c '$Cmdlet <parameters> -Confirm:`$false'")
+}
+
+function Invoke-SystemdCredentialCommand {
+	<#
+	.SYNOPSIS
+		Internal. Run a program with bytes on stdin, and return stdout as
+		BYTES, stderr as text and the exit code, without judging any of them.
+
+	.DESCRIPTION
+		NOT Invoke-SystemdCommand, and not a widening of it. Two differences,
+		both of which matter for exactly one caller each:
+
+		  * stdin carries the plaintext. `systemd-creds encrypt - out` is the
+			only invocation shape in which the secret is never an argument, so
+			it is never in `ps`, never in `/proc/<pid>/cmdline` and never in
+			systemd's own tooling — which is the whole of AU2's claim, and the
+			same reason Register-OS7ScheduledTask says in capitals that a
+			secret does not go on a command line.
+
+		  * stdout is BYTES. `systemd-creds decrypt f -` returns whatever was
+			sealed, which is not required to be text and is not required to be
+			UTF-8. PowerShell's native-command pipeline decodes stdout with the
+			console encoding and splits it into lines; both of those are
+			lossy, and a secret that survives a round trip only when it happens
+			to be ASCII is a secret store that fails on a password with an
+			umlaut in it.
+
+		System.Diagnostics.Process rather than the call operator for both.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Command,
+		[string[]]$Arguments = @(),
+		[byte[]]$InputBytes = $null
+	)
+
+	if ($script:SystemdCredentialOverride) {
+		return & $script:SystemdCredentialOverride $Command $Arguments $InputBytes
+	}
+
+	$psi = [System.Diagnostics.ProcessStartInfo]::new()
+	$psi.FileName = $Command
+	foreach ($a in $Arguments) { $psi.ArgumentList.Add($a) }
+	$psi.RedirectStandardInput = $true
+	$psi.RedirectStandardOutput = $true
+	$psi.RedirectStandardError = $true
+	$psi.UseShellExecute = $false
+
+	$p = $null
+	try {
+		$p = [System.Diagnostics.Process]::Start($psi)
+	}
+	catch [System.ComponentModel.Win32Exception] {
+		# The program is not on this machine. That is an ANSWER — "this image
+		# has no systemd-creds" — and the caller turns it into a sentence. It
+		# is not the same as the program running and failing, so it must not
+		# come back as an exit code.
+		return [pscustomobject]@{ StdOut = [byte[]]@(); StdErr = $_.Exception.Message; ExitCode = $null }
+	}
+
+	if ($InputBytes) { $p.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length) }
+	$p.StandardInput.BaseStream.Flush()
+	$p.StandardInput.Close()
+
+	$ms = [System.IO.MemoryStream]::new()
+	$p.StandardOutput.BaseStream.CopyTo($ms)
+	$err = $p.StandardError.ReadToEnd()
+	$p.WaitForExit()
+
+	return [pscustomobject]@{
+		StdOut   = $ms.ToArray()
+		StdErr   = $err
+		ExitCode = $p.ExitCode
+	}
+}
+
+function ConvertFrom-SystemdSecureString {
+	<#
+	.SYNOPSIS
+		Internal. A [securestring] as UTF-8 bytes, with the unmanaged copy
+		freed.
+
+	.DESCRIPTION
+		There is no route from a securestring to bytes in PowerShell that does
+		not pass through managed memory, and pretending otherwise is the kind
+		of claim BUILD-NOTES exists to record. What this does do is free the
+		UNMANAGED copy immediately — ZeroFreeBSTR, in a finally — so the window
+		is one statement rather than a garbage collection away.
+	#>
+	param([Parameter(Mandatory)][securestring]$Value)
+
+	$bstr = [System.IntPtr]::Zero
+	try {
+		$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+		$plain = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+		return [System.Text.Encoding]::UTF8.GetBytes($plain)
+	}
+	finally {
+		if ($bstr -ne [System.IntPtr]::Zero) {
+			[System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+		}
+	}
+}
+
+function Test-SystemdTpm2 {
+	<#
+	.SYNOPSIS
+		Can this machine seal to a TPM2 at all?
+
+	.DESCRIPTION
+		`systemd-analyze has-tpm2`, and NOT `systemd-creds has-tpm2`: the
+		second is deprecated in systemd 259 and prints its deprecation notice
+		ON STDOUT before answering (measured 2026-09-14), so a caller that read
+		stdout would read a sentence about a command name.
+
+		THREE OUTCOMES, deliberately, the same shape
+		Get-OS7TimeSynchronization has: $null when the question could not be
+		asked (no systemd-analyze on this image), $false when it was asked and
+		the answer is no, $true when it is yes. A machine with no TPM and a
+		machine that could not be asked send an operator to two different
+		places, and collapsing them is how "your secret store is not available"
+		becomes "your secret store is broken".
+	#>
+	[CmdletBinding()]
+	param()
+
+	$r = Invoke-SystemdCommand -Command 'systemd-analyze' -Arguments @('has-tpm2', '--quiet')
+	if ($null -eq $r.ExitCode) { return $null }
+	return ($r.ExitCode -eq 0)
+}
+
+function New-SystemdCredential {
+	<#
+	.SYNOPSIS
+		Seals a value into a `systemd-creds` blob, and asks the machine to open
+		it again before saying it worked.
+
+	.PARAMETER Name
+		The credential name. It is part of the encryption — a blob sealed under
+		one name does not decrypt under another — so it must be the name the
+		unit's `LoadCredentialEncrypted=<name>:<path>` will use.
+
+	.PARAMETER Value
+		The plaintext. It goes to the program on STDIN and is never an
+		argument.
+
+	.PARAMETER Path
+		Where to write the blob.
+
+	.PARAMETER With
+		`tpm2`, `host` or `host+tpm2`. DEFAULTS TO `tpm2`, which is not
+		systemd's own default, and the reason is measured rather than
+		preferred: the `host` half is a file at
+		/var/lib/systemd/credential.secret, `/var/lib` on an OS/7 machine is
+		inside the boot environment, and D10's rule is that nothing a rollback
+		may un-say belongs in there. Moved aside, `host` and `host+tpm2` both
+		fail; `tpm2` opens.
+
+	.PARAMETER Pcrs
+		PCRs to bind to. EMPTY BY DEFAULT, which is also systemd's default and
+		is here restated because the plan this implements assumed otherwise:
+		binding to PCR 7 means a shim or `dbx` update makes the blob
+		unopenable, with no escrow anywhere in this product (BUILD-NOTES #69,
+		#100, DECISIONS open question 7).
+
+	.PARAMETER Force
+		Overwrite an existing blob at $Path.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][securestring]$Value,
+		[Parameter(Mandatory)][string]$Path,
+		[ValidateSet('tpm2', 'host', 'host+tpm2')][string]$With = 'tpm2',
+		[int[]]$Pcrs = @(),
+		[switch]$Force
+	)
+
+	# The name reaches systemd-creds as an argument and reaches a unit file as
+	# the left half of `LoadCredentialEncrypted=`. Both have a vocabulary.
+	Assert-SystemdElevated -Cmdlet 'New-SystemdCredential' -Because (
+		'writes a sealed credential and asks the TPM to seal against it, which needs the ' +
+		'TPM resource manager and the credential key under /var/lib/systemd')
+
+	if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+		throw [System.ArgumentException]::new(
+			"'$Name' is not a credential name — letters, digits, dot, dash and underscore, " +
+			'starting with a letter or digit, at most 64 characters. It is part of the ' +
+			'encryption and part of a unit file line, and both are stricter than a filename.')
+	}
+	foreach ($p in $Pcrs) {
+		if ($p -lt 0 -or $p -gt 23) {
+			throw [System.ArgumentException]::new("PCR $p does not exist — a TPM2 has 0 to 23.")
+		}
+	}
+	if ([System.IO.File]::Exists($Path) -and -not $Force) {
+		throw [System.InvalidOperationException]::new("$Path already exists. -Force overwrites it.")
+	}
+
+	if (-not $PSCmdlet.ShouldProcess($Path, "seal credential '$Name' with $With")) { return }
+
+	# NOT $args. That is an automatic variable, and this repository has already
+	# paid for one name collision of exactly that family (BUILD-NOTES #65:
+	# `$from` IS the -From parameter, because PowerShell's variable names are
+	# case-insensitive and a typed parameter coerces in silence).
+	$sealArgs = @('encrypt', "--name=$Name", "--with-key=$With")
+	if ($Pcrs.Count) { $sealArgs = $sealArgs + ("--tpm2-pcrs=" + ($Pcrs -join '+')) }
+	$sealArgs = $sealArgs + @('-', $Path)
+
+	$bytes = ConvertFrom-SystemdSecureString -Value $Value
+	try {
+		$r = Invoke-SystemdCredentialCommand -Command 'systemd-creds' -Arguments $sealArgs -InputBytes $bytes
+	}
+	finally {
+		if ($bytes) { [System.Array]::Clear($bytes, 0, $bytes.Length) }
+	}
+
+	if ($null -eq $r.ExitCode) {
+		throw [System.InvalidOperationException]::new(
+			"systemd-creds could not be run on this machine: $($r.StdErr.Trim())")
+	}
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemd-creds encrypt exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	# THE ASSERTION. `systemd-creds encrypt` exiting 0 says the program ran; it
+	# does not say the blob opens. A TPM that accepted a seal and will not
+	# unseal it is the failure this whole file is about, and it is exactly the
+	# shape BUILD-NOTES calls a diagnostic that trusts an exit code. So: open
+	# it, here, now, and refuse to report success on a blob that did not.
+	#
+	# The plaintext comes back into this process, which is not a new exposure —
+	# it arrived here as the caller's parameter one statement ago.
+	$back = Invoke-SystemdCredentialCommand -Command 'systemd-creds' `
+		-Arguments @('decrypt', "--name=$Name", $Path, '-') -InputBytes $null
+	if ($back.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"the blob at $Path was written and does NOT open again: " +
+			"systemd-creds decrypt exited $($back.ExitCode): $($back.StdErr.Trim())")
+	}
+
+	$size = if ([System.IO.File]::Exists($Path)) { (Get-Item -LiteralPath $Path).Length } else { 0 }
+	return [pscustomobject]@{
+		Name     = $Name
+		Path     = $Path
+		SealedTo = $With
+		Pcrs     = @($Pcrs)
+		Size     = $size
+		Verified = $true
+	}
+}
+
+function Unprotect-SystemdCredential {
+	<#
+	.SYNOPSIS
+		Opens a `systemd-creds` blob and returns a [securestring].
+
+	.DESCRIPTION
+		A [securestring] and not a string, so that the value cannot reach
+		ConvertTo-Json, a log line or a pipeline display by accident — P7, and
+		the reason AU2 calls the cmdlet above this one a smell rather than a
+		pattern. A job gets its secret from `LoadCredentialEncrypted=` and
+		never calls this.
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Path
+	)
+
+	Assert-SystemdElevated -Cmdlet 'Unprotect-SystemdCredential' -Because (
+		'reads a root-owned sealed blob and asks the TPM to unseal it')
+
+	if (-not [System.IO.File]::Exists($Path)) {
+		throw [System.IO.FileNotFoundException]::new("no credential blob at $Path")
+	}
+
+	$r = Invoke-SystemdCredentialCommand -Command 'systemd-creds' `
+		-Arguments @('decrypt', "--name=$Name", $Path, '-') -InputBytes $null
+	if ($null -eq $r.ExitCode) {
+		throw [System.InvalidOperationException]::new(
+			"systemd-creds could not be run on this machine: $($r.StdErr.Trim())")
+	}
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemd-creds decrypt exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	$text = [System.Text.Encoding]::UTF8.GetString($r.StdOut)
+	$s = [securestring]::new()
+	foreach ($c in $text.ToCharArray()) { $s.AppendChar($c) }
+	$s.MakeReadOnly()
+	return $s
+}
+
+function New-SystemdUnitDropIn {
+	<#
+	.SYNOPSIS
+		Writes a drop-in for one unit — including one INSTANCE of a template —
+		and asks systemd whether the unit still loads.
+
+	.DESCRIPTION
+		WHY A DROP-IN AND NOT A TRANSIENT UNIT. `systemd-run` builds a whole
+		unit out of arguments; a drop-in parameterises a unit file that was
+		written once, reviewed once and ships in a package. For OS/7 that
+		difference is the whole of AU4: the fence — the slice, the limits, the
+		Protect* directives — lives in the packaged template where it can be
+		read, rolled back with the release and checked by a grep, and only the
+		per-run parts are assembled at run time.
+
+		It is also what keeps M-AU4's trap from mattering. A transient unit
+		lives under /run and vanishes at a reboot with NOTHING said about it
+		(measured 2026-09-14: `LoadState=not-found`, no file, and not one line
+		in either boot's journal). A drop-in under /run has the same lifetime —
+		but it parameterises a run, and a run does not survive a reboot either,
+		so the lifetimes agree instead of disagreeing silently.
+
+	.PARAMETER Unit
+		The unit, with its suffix — `os7-job@abc123.service`.
+
+	.PARAMETER Name
+		The drop-in file's name without `.conf`.
+
+	.PARAMETER Content
+		The drop-in's text, verbatim. systemd's vocabulary, including what `%`
+		means there.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][string]$Unit,
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$Content
+	)
+
+	Assert-SystemdElevated -Cmdlet 'New-SystemdUnitDropIn' -Because (
+		'writes a unit drop-in under /run/systemd/system and makes systemd re-read its ' +
+		'configuration')
+
+	if ($Unit -match '[/\s]' -or $Unit -notmatch '\.(service|timer|socket|path|slice|target|mount)$') {
+		throw [System.ArgumentException]::new(
+			"'$Unit' is not a unit name — a unit name carries no path separator, no whitespace " +
+			'and a suffix.')
+	}
+	if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+		throw [System.ArgumentException]::new("'$Name' is not a drop-in name.")
+	}
+
+	$dir = Join-Path $script:SystemdDropInDirectory "$Unit.d"
+	$path = Join-Path $dir "$Name.conf"
+
+	if (-not $PSCmdlet.ShouldProcess($path, 'write the drop-in')) { return $path }
+
+	[System.IO.Directory]::CreateDirectory($dir) | Out-Null
+	[System.IO.File]::WriteAllText($path, ($Content.TrimEnd("`n") + "`n"))
+
+	$r = Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload')
+	if ($r.ExitCode -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl daemon-reload exited $($r.ExitCode): $($r.StdErr.Trim())")
+	}
+
+	# The same assertion New-SystemdService makes, for the same reason: a
+	# drop-in with a directive systemd does not know makes the UNIT fail to
+	# load, and daemon-reload exits 0 either way.
+	$state = Get-SystemdUnitLoadState -Name $Unit
+	if ($state -ne 'loaded') {
+		throw [System.InvalidOperationException]::new(
+			"$path was written and systemd reports LoadState=$state for $Unit. " +
+			'The drop-in is what changed; read `systemctl status ' + $Unit + '`.')
+	}
+	return $path
+}
+
+function Remove-SystemdUnitDropIn {
+	<#
+	.SYNOPSIS
+		Removes a drop-in directory this module could have written.
+
+	.DESCRIPTION
+		ONLY UNDER $script:SystemdDropInDirectory, and only a directory whose
+		name is `<unit>.d`. A package's drop-ins live under /usr/lib and
+		/etc/systemd/system and are not this function's to delete — the same
+		rule Remove-SystemdService and Unregister-OS7ScheduledTask both carry,
+		and for the same reason: a cleanup verb that can reach a package's
+		files is one bad instance name away from removing somebody else's.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+	param([Parameter(Mandatory)][string]$Unit)
+
+	Assert-SystemdElevated -Cmdlet 'Remove-SystemdUnitDropIn' -Because (
+		'deletes a unit drop-in under /run/systemd/system, which is root-owned')
+
+	$dir = Join-Path $script:SystemdDropInDirectory "$Unit.d"
+	if (-not [System.IO.Directory]::Exists($dir)) { return $false }
+	if (-not $PSCmdlet.ShouldProcess($dir, 'remove the drop-in directory')) { return $false }
+
+	[System.IO.Directory]::Delete($dir, $true)
+	Invoke-SystemdCommand -Command 'systemctl' -Arguments @('daemon-reload') | Out-Null
+	return (-not [System.IO.Directory]::Exists($dir))
+}
+
 function Test-SystemdModule {
 	<#
 	.SYNOPSIS
@@ -2369,5 +2899,7 @@ Export-ModuleMember -Function @(
 	'Invoke-SystemdShutdown',
 	'Get-SystemdUnitFreezerState', 'Suspend-SystemdUnit', 'Resume-SystemdUnit',
 	'New-SystemdService', 'Remove-SystemdService',
+	'Test-SystemdTpm2', 'New-SystemdCredential', 'Unprotect-SystemdCredential',
+	'New-SystemdUnitDropIn', 'Remove-SystemdUnitDropIn',
 	'Get-SystemdHostName', 'Set-SystemdHostName',
 	'Test-SystemdModule')

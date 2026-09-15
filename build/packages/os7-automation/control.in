@@ -1,0 +1,32 @@
+Package: os7-automation
+Version: @OS7_VERSION@
+Architecture: @OS7_ARCH@
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: polkitd, os7-module (= @OS7_VERSION@)
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 automation host — the fence a job runs inside
+ docs/AUTOMATION-PLAN.md phase 1. The slice, the templated job unit and the
+ polkit rule that governs starting one — the parts of the job contract that
+ must live in a file rather than be assembled at run time.
+ .
+ THE UNIT IS THE FENCE AND THAT IS WHY IT IS A PACKAGE. `os7-job@.service`
+ carries the slice, ProtectSystem=strict, ProtectHome, PrivateTmp,
+ NoNewPrivileges, the private /dev and the input channel — the same for every
+ job on every machine. Because it ships here it is signed by the repository that
+ delivered it, it can be read by an auditor, `grep` can check it, and it rolls
+ back with the release. Start-OS7Job adds only the per-run parts — the timeout,
+ the limits, the credential, the identity — as a drop-in under /run.
+ .
+ The alternative was `systemd-run`, which assembles the whole unit out of
+ arguments: the fence would then be whatever the caller passed, would exist in
+ no file, and would not survive a reboot.
+ .
+ It implements no policy. What should run, and why, belongs to a product above
+ (AU1); this package decides only what a job may reach while it runs.
+ .
+ It does NOT create the dataset the contract's paths live on.
+ `New-OS7ServiceDataset -Name os7-automation` does, and it is a separate verb on
+ purpose: a package postinst that created a ZFS dataset would do it in a chroot
+ where the pool is not imported, and would report success.

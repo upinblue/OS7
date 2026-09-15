@@ -243,6 +243,11 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Get-OS7RemoteDesktopSession Stop-OS7RemoteDesktopSession \
 	Get-OS7EntraStatus Get-OS7IntuneEnrollment Get-OS7ArcStatus \
 	Get-OS7ManagementStatus \
+	New-OS7ServiceDataset Get-OS7ServiceDataset \
+	New-OS7Secret Get-OS7Secret Remove-OS7Secret Unprotect-OS7Secret \
+	Start-OS7Job Get-OS7Job New-OS7JobTicket Write-OS7JobRecord Get-OS7JobRecord \
+	Lock-OS7Resource Unlock-OS7Resource Get-OS7Lock \
+	Send-OS7Notification Get-OS7NotificationSink Set-OS7NotificationSink \
 	Get-OS7Device Get-OS7Driver Get-OS7DeviceStatus \
 	Install-OS7Driver Repair-OS7Driver Get-OS7DriverRegression \
 	Send-OS7HardwareProbe
@@ -267,6 +272,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
 	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.SecureBoot.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.ScheduledTask.ps1 OS7.RemoteDesktop.ps1 OS7.AccountLockout.ps1 OS7.Management.ps1 \
 	OS7.Directory.ps1 OS7.DirectoryObject.ps1 OS7.Domain.ps1 \
+	OS7.Automation.ps1 \
 	OS7.Compat.Windows.ps1 OS7.Device.ps1 \
 	OS7.Storage.ps1 \
 	OS7.Update.ps1 \

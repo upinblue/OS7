@@ -90,7 +90,7 @@ emit os-release        cat /mnt/sq/etc/os-release
 # §6.1). dpkg is asked, file by file, because "the hook ran" is not the fact —
 # the ownership is.
 emit dpkg.os7          bash -c 'chroot /mnt/root dpkg-query -W -f="\${db:Status-Abbrev} \${Package} \${Version}\n" "os7-*" 2>/dev/null || true'
-emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
+emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
 emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
@@ -587,15 +587,43 @@ def read_image(arch: str) -> dict[str, str]:
                            " ".join(sorted(includes_modes(arch))) or "/dev/null")
                   .replace("EFIARCH", efi_arch(arch))
                   .replace("GRUBTARGET", grub_target(arch)))
+    # THE PROBE GOES IN ON STDIN, NOT ON THE COMMAND LINE, and that is a
+    # Windows limit rather than a preference. `CreateProcess` refuses an
+    # argument list past ~32 KB with
+    #
+    #     FileNotFoundError: [WinError 206] The filename or extension is too long
+    #
+    # and this probe crossed it. The traceback names `subprocess` and the file
+    # length, which reads as a missing docker or a bad path and is neither —
+    # the first twenty minutes of looking for it went to the ISO. macOS has no
+    # such limit, which is why the `bash -c` form survived from the day this was
+    # written until somebody ran it on the Windows host with a probe this long.
+    #
+    # `bash -s` reads the script from stdin and is otherwise identical, so
+    # nothing about what is asked of the image changes. `-i` keeps stdin open
+    # for it.
     out = subprocess.run(
-        ["docker", "run", "--rm", "--privileged", "--platform", f"linux/{arch}",
+        ["docker", "run", "--rm", "-i", "--privileged", "--platform", f"linux/{arch}",
          "-v", f"{os.path.join(REPO, 'out')}:/iso:ro", f"os7-build:{arch}",
-         "bash", "-c", probe],
-        capture_output=True, text=True)
+         "bash", "-s"],
+        # BYTES, NOT text=True, AND THAT IS THE WHOLE POINT OF THIS LINE.
+        # `text=True` opens the child's stdin in TEXT mode, and on Windows text
+        # mode translates every \n into \r\n on the way out. The probe then
+        # reaches bash with a CR on every line and the first thing it says is
+        #
+        #     bash: line 1: $'\r': command not found
+        #     bash: line 474: syntax error: unexpected end of file
+        #
+        # which reads as a corrupt image and is a corrupt PIPE. It is
+        # BUILD-NOTES #70's lesson arriving through a third door: the repo
+        # defends its files' line endings and this is a string that never was a
+        # file. Encoding here and decoding below keeps the bytes the bytes.
+        input=probe.encode("utf-8"), capture_output=True)
     if out.returncode != 0:
-        sys.exit(f"could not read the image:\n{out.stderr[-2000:]}")
+        sys.exit("could not read the image:\n" +
+                 out.stderr.decode("utf-8", "replace")[-2000:])
 
-    return parse_sections(out.stdout)
+    return parse_sections(out.stdout.decode("utf-8", "replace"))
 
 
 def parse_sections(text: str) -> dict[str, str]:
@@ -1019,7 +1047,7 @@ def main() -> None:
     dpkg_os7 = img.get("dpkg.os7", "")
     meta = "os7-desktop" if arch == "amd64" else "os7-server"
     for pkg in ("os7-release", "os7-console", "os7-powershell", "os7-module",
-                "os7-backup", "os7-setup", "os7-base", meta):
+                "os7-backup", "os7-automation", "os7-setup", "os7-base", meta):
         check(f"ii  {pkg} {version}" in dpkg_os7,
               f"{pkg} is installed at {version}",
               next((l for l in dpkg_os7.splitlines() if f" {pkg} " in l), "(absent)"))
@@ -1034,7 +1062,14 @@ def main() -> None:
             ("/usr/lib/os7/release.json", "os7-release"),
             ("/etc/apt/sources.list.d/os7.sources", "os7-release"),
             ("/etc/profile.d/95-os7-powershell.sh", "os7-powershell"),
-            ("/usr/libexec/os7-migrate-firstboot", "os7-release")):
+            ("/usr/libexec/os7-migrate-firstboot", "os7-release"),
+            # AUTOMATION-PLAN AU4: the job fence is a PACKAGED unit, which is
+            # only true if the package reaches the medium. Asked of dpkg for the
+            # same reason as the rest of this list — a file placed by a hook and
+            # a file owned by a package look identical on a running machine, and
+            # only the second one rolls back with the release.
+            ("/usr/lib/systemd/system/os7-job@.service", "os7-automation"),
+            ("/usr/lib/systemd/system/os7-automation.slice", "os7-automation")):
         check(owners.get(path_, "").strip() == owner,
               f"dpkg -S: {path_} belongs to {owner}",
               owners.get(path_, "(not asked)").strip())

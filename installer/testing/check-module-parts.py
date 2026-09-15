@@ -30,9 +30,31 @@ branch added a file where the other was not looking"). This is that comment
 turned into a check, on the day a fifth file was added by hand to all three
 and the fourth list was noticed.
 
+AND SINCE 2026-09-14 THE SAME RULE FOR PACKAGES, which cost a full ISO build to
+learn. `build/config/hooks/0022-install-os7-packages.hook.chroot` installs an
+explicit list of .deb FILES — not a repository — so apt can satisfy a
+dependency only from what it is handed plus the archive. A package that is
+built, staged into `/usr/lib/os7/packages/` and simply not NAMED in that list
+produces
+
+    os7-desktop : Depends: os7-automation (= 1.0.0.220) but it is not
+    installable ... [no choices]
+
+with the file sitting right there, twenty minutes into a build. `os7-backup` had
+always been in that list for exactly this reason and nothing said so. So: every
+`os7-*` a metapackage Depends on must be named in hook 0022.
+
+AND SINCE 2026-09-14 THE LINE ENDINGS, which is the same species one level
+down: `.gitattributes` says every text file here is LF in the working tree and
+BUILD-NOTES #70 says what a CR does to a shebang, but that defends the CHECKOUT.
+A writer that emits CRLF is invisible to `git status`, and eighteen files were
+rewritten that way twice in one afternoon. Asked of `git ls-files --eol`, so the
+exemptions are `.gitattributes`' own — the manual's serial transcripts are
+`-text` and their CRs are the measurement (#16).
+
 WHAT IT DOES NOT DO: it does not read PowerShell. Every list here is a literal
-in a file, and the point is that the literals agree — so it is four greps and
-a set comparison, and it needs neither pwsh nor an image.
+in a file, and the point is that the literals agree — so it is greps and set
+comparisons, and it needs neither pwsh nor an image.
 """
 import os
 import re
@@ -48,6 +70,10 @@ PSD1 = os.path.join(REPO, "powershell", "OS7", "OS7.psd1")
 HOOK = os.path.join(REPO, "build", "config", "hooks", "0060-os7-module.hook.chroot")
 PKGS = os.path.join(REPO, "build", "lib", "build-os7-packages.sh")
 MODDIR = os.path.join(REPO, "powershell", "OS7")
+PKGDIR = os.path.join(REPO, "build", "packages")
+HOOK0022 = os.path.join(
+    REPO, "build", "config", "hooks",
+    "0022-install-os7-packages.hook.chroot")
 
 _ok = 0
 _bad = 0
@@ -137,8 +163,281 @@ def defined(paths):
     return names
 
 
+
+
+def metapackage_depends():
+    """Every os7-* a metapackage Depends on, per metapackage.
+
+    Read out of control.in, which is the file dpkg is handed. A Depends line
+    wraps onto continuation lines beginning with a space, so this joins them
+    before splitting — a parser that read only the first line would report
+    os7-desktop as depending on os7-base alone, which is the half-right answer
+    that is hardest to notice.
+    """
+    out = {}
+    for meta in ("os7-base", "os7-server", "os7-desktop"):
+        ctl = os.path.join(PKGDIR, meta, "control.in")
+        if not os.path.exists(ctl):
+            continue
+        text, collecting, buf = read(ctl), False, []
+        for line in text.split("\n"):
+            if line.startswith("Depends:"):
+                collecting = True
+                buf.append(line[len("Depends:"):])
+                continue
+            if collecting:
+                if line.startswith(" ") or line.startswith("\t"):
+                    buf.append(line)
+                    continue
+                break
+        names = set()
+        for part in " ".join(buf).split(","):
+            name = part.strip().split(" ")[0].strip()
+            if name.startswith("os7-"):
+                names.add(name)
+        out[meta] = names
+    return out
+
+
+def hook0022_set():
+    """The packages hook 0022 hands to apt as FILES, both arches' branches.
+
+    `pick` AS WELL AS `SET`, and that is not tidiness: `os7-release` is
+    installed on its own line, in its own transaction, BEFORE the set — because
+    its postinst is what brands the identity and the hook verifies that before
+    it installs anything else. A rule that read only SET reported os7-base as
+    depending on a package nobody hands over, which is the check crying wolf
+    about the one arrangement the hook is careful about.
+    """
+    text = read(HOOK0022)
+    names = set()
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        for pat in (r"SET=\(([^)]*)\)", r"SET\+=\(([^)]*)\)"):
+            m = re.search(pat, stripped)
+            if m:
+                names |= {w for w in m.group(1).split() if w.startswith("os7-")}
+        for m in re.finditer(r"pick\s+(os7-[A-Za-z0-9.+-]+)", stripped):
+            names.add(m.group(1))
+    return names
+
+
+def check_packages():
+    print("\n### the packages, in the places that name them")
+
+    deps = metapackage_depends()
+    handed = hook0022_set()
+    print(f"    hook 0022 hands apt: {len(handed)} package file(s)")
+
+    for meta, needs in sorted(deps.items()):
+        if meta not in handed:
+            # A metapackage nobody installs is not this rule's business — only
+            # os7-base and the two products are handed over, and which of the
+            # two depends on the architecture.
+            continue
+        missing = sorted(n for n in needs if n not in handed)
+        check(not missing,
+              f"every os7-* {meta} depends on is named in hook 0022",
+              ("hook 0022 never names " + ", ".join(missing) +
+               " — apt cannot satisfy that from a file it was not handed"
+               if missing else f"{len(needs)} dependency(ies)"))
+
+    # And the other direction: a package named in hook 0022 that nothing builds
+    # is a `pick` that fails at build time with a shell error rather than an
+    # apt one.
+    built = set()
+    for entry in sorted(os.listdir(PKGDIR)):
+        if os.path.exists(os.path.join(PKGDIR, entry, "control.in")):
+            built.add(entry)
+    unbuilt = sorted(n for n in handed if n not in built)
+    check(not unbuilt,
+          "every package hook 0022 names has a control.in under build/packages",
+          ", ".join(unbuilt) if unbuilt else f"{len(handed)} named, all built")
+
+    # And that build-os7-packages.sh knows how to build each of them. ALL= is
+    # what a bare invocation builds, and a package missing from it is one that
+    # exists in the tree and never reaches /usr/lib/os7/packages.
+    allline = re.search(r"ALL=\(([^)]*)\)", read(PKGS), re.S)
+    allnames = set(allline.group(1).split()) if allline else set()
+    # os7-desktop-theme has its own builder and always has —
+    # build/lib/build-desktop-theme.sh, which rasterises icons and composes a
+    # GTK stylesheet rather than copying a tree. Named here rather than allowed
+    # by a pattern, so that the NEXT package with its own script has to be added
+    # deliberately: "some packages are built somewhere else" is how a list stops
+    # being a list.
+    ELSEWHERE = {"os7-desktop-theme": "build/lib/build-desktop-theme.sh"}
+    notbuilt = sorted(n for n in handed if n not in allnames and n not in ELSEWHERE)
+    check(bool(allline) and not notbuilt,
+          "and each is built — by build-os7-packages.sh's ALL= or by a named script",
+          ", ".join(notbuilt) if notbuilt
+          else f"{len(allnames)} in ALL=, plus " +
+               ", ".join(f"{k} ({v})" for k, v in sorted(ELSEWHERE.items())))
+
+
+
+def check_continuations():
+    """A literal two-character `\\n` is not a line continuation.
+
+    TWO BUILDS LOST TO IT, 2026-09-14, and the second one is the reason this
+    function reads whole FILES rather than one block in one of them.
+
+    An edit wrote `\\n` — backslash, letter n — where a real newline belongs, in
+    a list of module files. Bash reads that outside quotes as the single
+    character `n`, so:
+
+        build-os7-packages.sh   !!! os7-module: built package is missing n
+        hook 0060               /usr/local/share/powershell/Modules/OS7/n is
+                                missing or empty
+
+    Neither message names anything an operator can find, and every list check
+    above stayed GREEN throughout both, because they read the files with a
+    regex over PATHS — and a regex does not care what bash would make of the
+    line. The lists agreed; the files were unreadable.
+
+    THE FIRST VERSION OF THIS RULE ONLY LOOKED AT `pkg_finish` BLOCKS IN
+    build-os7-packages.sh. It went green, the build was started, and twenty
+    minutes later hook 0060 died of the identical defect three files away. A
+    rule scoped to where the bug was found is a rule that catches that bug
+    once. So: every shell file this repository owns, every line, and the rule
+    is about SHAPE — a backslash inside a line, before a letter, is an escape
+    bash will act on, and none of these files has a reason to contain one.
+    """
+    import glob
+    files = []
+    for pat in ("build/lib/*.sh", "build/build.sh", "build/config/hooks/*.chroot",
+                "build/config/hooks/*/*.chroot"):
+        files += sorted(glob.glob(os.path.join(REPO, pat)))
+
+    bad = []
+    for path in files:
+        try:
+            text = read(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for n, line in enumerate(text.split("\n"), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            # A backslash at END of line is the real thing and is fine. One
+            # followed by a letter, anywhere, is an escape — and `\\n`, `\\t`
+            # and `\\r` inside a quoted printf are legitimate, so quoted
+            # stretches are blanked first.
+            probe = re.sub(r"'[^']*'", "''", line)
+            probe = re.sub(r'"[^"]*"', '""', probe)
+            if re.search(r"\\[A-Za-z]", probe):
+                bad.append((os.path.relpath(path, REPO), n, line.strip()[:70]))
+
+    for rel, n, line in bad:
+        print(f"    {rel}:{n}  {line}")
+    check(not bad,
+          "no shell file carries a literal backslash-escape where a "
+          "continuation belongs",
+          f"{len(bad)} line(s) bash would read as an extra argument"
+          if bad else f"{len(files)} shell file(s), every continuation a real one")
+
+
+
+def check_line_endings():
+    """Every file git calls TEXT is LF in the working tree. Baseline 0.
+
+    BUILD-NOTES #70 and #157. `.gitattributes` declares `* text=auto eol=lf`
+    and says why at length: OS/7 is a Linux, every executable text file here is
+    read by one, and a CR before the newline is part of the interpreter's name.
+    A shell script that gains CRLF dies with
+
+        /bin/bash^M: bad interpreter: No such file or directory
+
+    **But .gitattributes defends the CHECKOUT.** Nothing in this repository
+    defends against a WRITER that emits CRLF — an editor, a tool, a script that
+    opened a file in text mode on Windows — and `git status` shows none of it,
+    because the content is unchanged in git's eyes once the filter has run. On
+    2026-09-14 eighteen files were rewritten that way by tooling in this
+    worktree, twice, and the second time was after they had already been
+    normalised once. That is the whole argument for a check rather than a
+    paragraph: the paragraph is `.gitattributes`, it is excellent, and it
+    cannot see this.
+
+    IT ASKS GIT, NOT A LIST OF PATHS. `git ls-files --eol` reports, per file,
+    the index ending, the WORKING TREE ending, and the attributes that decide
+    both:
+
+        i/lf    w/lf    attr/text=auto eol=lf   powershell/OS7/OS7.psm1
+        i/crlf  w/crlf  attr/-text              docs/manual/transcripts/50-services.raw
+
+    So the exemptions come from `.gitattributes` itself and cannot drift out of
+    step with it — which matters here more than usual, because the exempt files
+    are EVIDENCE. The 47 `-text` transcripts above are serial-console captures
+    and their CRs are the measurement (BUILD-NOTES #16); a rule with its own
+    hardcoded skip list would eventually edit one.
+
+    `w/none` is a file with no line endings at all — a single line, no trailing
+    newline — and is not a violation.
+    """
+    if not shutil.which("git"):
+        # A check that cannot look must say so rather than pass. This one needs
+        # git and nothing else, so it is not conditional on much.
+        check(False, "line endings: git is on PATH to be asked",
+              "NOT CHECKED — without git this rule cannot distinguish evidence "
+              "from damage, and guessing is how a transcript gets edited")
+        return
+
+    out = subprocess.run(["git", "ls-files", "--eol"], cwd=REPO,
+                         capture_output=True, text=True, encoding="utf-8",
+                         errors="replace")
+    if out.returncode != 0:
+        check(False, "line endings: git could answer",
+              (out.stderr or "").strip()[:200] or "git ls-files --eol failed")
+        return
+
+    bad, seen = [], 0
+    for line in out.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        fields, path = line.split("\t", 1)
+        # "i/lf    w/crlf  attr/text=auto eol=lf"
+        parts = fields.split()
+        if len(parts) < 3:
+            continue
+        work = parts[1]
+        attr = " ".join(parts[2:])
+        if "-text" in attr:
+            continue          # git is told to leave it alone; so is this rule
+        # WHAT THE WORKING-TREE FIELD CAN SAY, and three of the four are fine:
+        #
+        #   w/lf     what this repository wants
+        #   w/none   no line endings at all — one line, no trailing newline
+        #   w/-text  GIT DETECTED BINARY CONTENT and left the file alone. This
+        #            is not an attribute; it is a finding about the bytes. The
+        #            first version of this rule treated it as a violation and
+        #            went red on the manual's two PDFs, which are not named in
+        #            .gitattributes' binary block and so ride on `text=auto`.
+        #            A rule that reports a PDF for its line endings is a rule
+        #            somebody switches off.
+        #   w/crlf   the violation
+        #   w/mixed  the violation, and worse — half a file converted
+        if work in ("w/lf", "w/none", "w/-text"):
+            if work != "w/-text":
+                seen += 1
+            continue
+        seen += 1
+        bad.append((path.strip(), work))
+
+    for path, work in bad:
+        print(f"    {path}  ({work})")
+    check(not bad,
+          "every file git calls text is LF in the working tree (#70)",
+          (f"{len(bad)} file(s) carry CRLF — .gitattributes defends the checkout "
+           "and cannot defend against a writer") if bad
+          else f"{seen} text file(s), all LF")
+
+
 def main():
     print("\n### the OS7 module's parts, in the four places that name them")
+
+    check_packages()
+    check_continuations()
+    check_line_endings()
 
     psm1, psd1 = read(PSM1), read(PSD1)
     lists = {

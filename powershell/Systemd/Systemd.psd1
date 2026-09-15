@@ -72,6 +72,24 @@
 		# anything that is not a plain file there — a mask is a symlink at
 		# exactly that path.
 		'New-SystemdService', 'Remove-SystemdService',
+		# Credentials (docs/AUTOMATION-PLAN.md AU2). `systemd-creds encrypt`
+		# takes the plaintext on STDIN and never as an argument, so it is
+		# never in `ps`; `LoadCredentialEncrypted=` puts it in a tmpfs at
+		# /run/credentials/<unit>, 0400, that is GONE when the unit stops —
+		# all three measured on an installed machine 2026-09-14. New- refuses
+		# to report success on a blob that does not open again, because
+		# `encrypt` exiting 0 says the program ran and not that the TPM will
+		# unseal it. Test-SystemdTpm2 asks systemd-analyze, not systemd-creds:
+		# the latter's has-tpm2 is deprecated in 259 and prints a sentence
+		# about its own name on stdout before answering.
+		'Test-SystemdTpm2', 'New-SystemdCredential', 'Unprotect-SystemdCredential',
+		# Per-instance drop-ins — how one PACKAGED template unit is
+		# parameterised for one run without a second unit being authored at
+		# run time. Under /run, whose lifetime is a boot: M-AU4 measured that
+		# the /run half of systemd goes at a reboot with nothing said about it
+		# anywhere, and a drop-in for a run is the one case where that is the
+		# right lifetime rather than a trap.
+		'New-SystemdUnitDropIn', 'Remove-SystemdUnitDropIn',
 		# The machine's name: static, transient and pretty are three names, and
 		# /etc/hosts is part of the operation — sudo resolves its own host name
 		# on every invocation.
