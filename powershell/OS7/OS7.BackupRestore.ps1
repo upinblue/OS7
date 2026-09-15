@@ -577,13 +577,13 @@ function New-OS7RestoreSafetySnapshot {
 		How many of these one dataset keeps. Negative disables pruning.
 
 	.OUTPUTS
-		The full snapshot name (`dataset@os7-before-restore-<stamp>`), or $null
-		when the destination is not on a mounted ZFS filesystem — in which case
-		OS/7 cannot protect it and the caller is told so rather than being left
-		to believe there is a way back.
+		An object with `Snapshot` and `Copy`, exactly one of which is set.
+		`Snapshot` is a ZFS snapshot of the destination's dataset; `Copy` is the
+		destination itself, renamed out of the way. See V19 above for why there
+		are two.
 	#>
 	[CmdletBinding()]
-	[OutputType([string])]
+	[OutputType('OS7.Backup.SafetyPoint')]
 	param(
 		[Parameter(Mandatory)][string]$Path,
 		[System.Collections.IDictionary]$Taken,
@@ -591,20 +591,63 @@ function New-OS7RestoreSafetySnapshot {
 	)
 
 	$owner = Get-OS7PathDataset -Path $Path
-	if (-not $owner) {
-		# Not a refusal. Restoring onto a USB stick or an NFS mount is a
-		# legitimate thing to do; it just cannot be made undoable by ZFS.
-		Write-Warning ("'$Path' is not on a mounted ZFS filesystem, so no " +
-			'snapshot can be taken before it is written. The restore itself is ' +
-			'unaffected; there will be no way back from it.')
-		return $null
+
+	# ZFS FIRST WHEREVER IT IS AVAILABLE, and the fallback is not a consolation
+	# prize — it is what Time Machine and Windows' Previous Versions both do.
+	# But a snapshot is better wherever it can be had: it is atomic, it covers a
+	# whole folder, it costs nothing, it is invisible, and OS/7 prunes it.
+	if ($owner -and -not ($Taken -and $Taken[$owner.Dataset] -eq $false)) {
+		if ($Taken -and $Taken.Contains($owner.Dataset)) {
+			return New-OS7SafetyPoint -Snapshot ([string]$Taken[$owner.Dataset])
+		}
+
+		$point = New-OS7RestoreSafetySnapshotInternal -Owner $owner -Keep $Keep
+		if ($point) {
+			if ($Taken) { $Taken[$owner.Dataset] = $point.Snapshot }
+			return $point
+		}
+
+		# It could not be had. Remember that, so a hundred files in one pipeline
+		# do not ask ZFS a hundred times and warn a hundred times.
+		if ($Taken) { $Taken[$owner.Dataset] = $false }
 	}
 
-	if ($Taken -and $Taken.Contains($owner.Dataset)) {
-		return [string]$Taken[$owner.Dataset]
-	}
+	Move-OS7RestoreTargetAside -Path $Path
+}
 
-	$existing = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse)
+function New-OS7SafetyPoint {
+	<#
+	.SYNOPSIS
+		Internal. The one shape both halves of V19 answer in.
+	#>
+	param([string]$Snapshot, [string]$Copy)
+
+	[pscustomobject]@{
+		PSTypeName = 'OS7.Backup.SafetyPoint'
+		Snapshot   = if ($Snapshot) { $Snapshot } else { $null }
+		Copy       = if ($Copy) { $Copy } else { $null }
+	}
+}
+
+function New-OS7RestoreSafetySnapshotInternal {
+	<#
+	.SYNOPSIS
+		Internal. The ZFS half: snapshot the dataset, verify it, prune ours.
+
+	.DESCRIPTION
+		Returns a safety point, or **$null** when ZFS would not make one — which
+		on this product means, nearly always, that the caller is the OWNER of the
+		file rather than root (M-V22). That is not an error and the caller has a
+		second road; anything else wrong with the pool will surface there instead,
+		in the warning this writes.
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)][object]$Owner,
+		[int]$Keep = $script:OS7RestoreSafetyKeep
+	)
+
+	$existing = @(Get-ZfsSnapshot -Name $Owner.Dataset -NoRecurse)
 
 	# The name a person can read, and then whatever it takes to make it unique.
 	# A second invocation in the same second is a script's `foreach`, which the
@@ -616,7 +659,7 @@ function New-OS7RestoreSafetySnapshot {
 		$suffix++
 		$snapshotName = "$script:OS7RestoreSafetyPrefix$stamp-$suffix"
 	}
-	$full = "$($owner.Dataset)@$snapshotName"
+	$full = "$($Owner.Dataset)@$snapshotName"
 
 	# -Confirm:$false ON PURPOSE. The operator has already confirmed the
 	# restore, and this snapshot is part of that restore rather than a second
@@ -624,55 +667,41 @@ function New-OS7RestoreSafetySnapshot {
 	# reading. `Restore-OS7File -WhatIf` never reaches here at all, because its
 	# own ShouldProcess returns first.
 	try {
-		New-ZfsSnapshot -Name $owner.Dataset -SnapshotName $snapshotName -Confirm:$false |
+		New-ZfsSnapshot -Name $Owner.Dataset -SnapshotName $snapshotName -Confirm:$false |
 			Out-Null
 	}
 	catch {
-		# #148'S RULE, AND A MACHINE IS WHAT FOUND THIS ONE (M-V20). The common
+		# NOT AN ERROR, AND A MACHINE IS WHAT TAUGHT THAT (M-V22). The common
 		# case here is not a broken pool: it is the OWNER of the file, restoring
 		# their own work, as themselves. Reading a version needs no privilege at
-		# all (M-V5) and `zfs snapshot` needs root, so the safety net is the one
-		# part of this feature an ordinary user cannot reach — and what they saw
-		# was `cannot create snapshots : permission denied`, which names neither
-		# a verb nor a way forward.
-		#
-		# NOTHING HAS BEEN WRITTEN AT THIS POINT, and saying so is half the
-		# message: the file they were about to lose is still there.
-		throw [System.InvalidOperationException]::new(
-			"the safety snapshot '$full' could not be taken, so '$Path' has NOT " +
-			"been written and nothing is lost.`n" +
-			"`n" +
-			"  Snapshotting a dataset needs root, even for the owner of the`n" +
-			"  files on it. Either restore with privilege:`n" +
-			"`n" +
-			"      sudo pwsh -NoProfile -c 'Restore-OS7File <parameters> -Force'`n" +
-			"`n" +
-			"  or give the way back up deliberately, with -NoSafetySnapshot.`n" +
-			"`n" +
-			"  ZFS said: $($_.Exception.Message)",
-			$_.Exception)
+		# all (M-V5) and `zfs snapshot` needs root, so this is the one part of
+		# the feature an ordinary user cannot reach — and refusing them their own
+		# file over it would be the wrong answer to a question Time Machine
+		# answers by moving the file aside. The caller does that next.
+		Write-Verbose "no ZFS safety snapshot on $($Owner.Dataset): $($_.Exception.Message)"
+		return $null
 	}
 
 	# THE SNAPSHOT IS ASKED FOR RATHER THAN ASSUMED (docs/BUILD-NOTES.md's
 	# recurring rule). `zfs snapshot` exiting 0 is a diagnostic; this is the
 	# thing itself. If it is not there, the caller must not go on to overwrite
-	# a file believing it is protected.
-	$made = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse |
+	# a file believing it is protected — and unlike the permission case this IS
+	# a fault, because ZFS reported success. It gets its own sentence rather
+	# than a quiet fall back to the weaker road.
+	$made = @(Get-ZfsSnapshot -Name $Owner.Dataset -NoRecurse |
 		Where-Object { $_.SnapshotName -eq $snapshotName })
 	if ($made.Count -eq 0) {
 		throw [System.InvalidOperationException]::new(
-			"the safety snapshot '$full' was requested and does not exist. " +
-			'Nothing has been written. Use -NoSafetySnapshot to restore anyway, ' +
-			'knowing there will be no way back from it.')
+			"the safety snapshot '$full' was requested, ZFS reported success, and " +
+			'it does not exist. Nothing has been written. Use -NoSafetyPoint to ' +
+			'restore anyway, knowing there will be no way back from it.')
 	}
-
-	if ($Taken) { $Taken[$owner.Dataset] = $full }
 
 	# Prune ours, and only ours. Matched on the prefix rather than on a
 	# property, because a property would have to be read back from a snapshot
 	# somebody may have renamed, and the name is what this owns.
 	if ($Keep -ge 0) {
-		$ours = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse |
+		$ours = @(Get-ZfsSnapshot -Name $Owner.Dataset -NoRecurse |
 			Where-Object { $_.SnapshotName -and
 				$_.SnapshotName.StartsWith($script:OS7RestoreSafetyPrefix, 'Ordinal') } |
 			Sort-Object Creation)
@@ -692,7 +721,87 @@ function New-OS7RestoreSafetySnapshot {
 		}
 	}
 
-	$full
+	New-OS7SafetyPoint -Snapshot $full
+}
+
+function Move-OS7RestoreTargetAside {
+	<#
+	.SYNOPSIS
+		Internal. The way back that needs no privilege: rename, do not destroy.
+
+	.DESCRIPTION
+		docs/VERSIONS-PLAN.md V19, decided by the owner 2026-09-15, and it is
+		**the mechanism Time Machine itself uses**. Time Machine takes no
+		snapshot before a restore at all: when something is already at the
+		destination it offers *Keep Original / Keep Both / Replace*, and "Keep
+		Both" puts the existing file aside under another name. Windows' Previous
+		Versions is the same shape — VSS snapshots are an administrator's, and
+		the tab offers *Copy* beside *Restore*.
+
+		IT NEEDS ONLY WHAT THE CALLER ALREADY HAS. A rename needs write on the
+		containing directory, which the owner of a file in their own home has;
+		`zfs snapshot` needs root, which they do not (M-V22). So this is the road
+		for the everyday case of the feature, and the ZFS snapshot is the road
+		for everything privileged — same promise, two strengths.
+
+		AND IT COSTS NO SPACE. A rename is the same inode: nothing is copied, no
+		second copy of the bytes exists, and §5's storage rule is untouched. That
+		is the whole reason it is a rename rather than a copy.
+
+		NOTHING PRUNES THESE. They are visible, they are in the operator's own
+		directory, and they belong to whoever owns that directory — an invisible
+		cleaner deleting files out of somebody's home is the opposite of what
+		this product does elsewhere. Time Machine does not clean up its "Keep
+		Both" copies either. VL9 is that cost written down.
+	#>
+	[CmdletBinding()]
+	[OutputType('OS7.Backup.SafetyPoint')]
+	param([Parameter(Mandatory)][string]$Path)
+
+	$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+	$aside = "$Path.$script:OS7RestoreSafetyPrefix$stamp"
+
+	# #159's lesson in a second place: a name made from the clock is unique only
+	# if the thing is made more slowly than the clock ticks, and a `process{}`
+	# block runs once per pipeline item.
+	$suffix = 1
+	while (Test-Path -LiteralPath $aside) {
+		$suffix++
+		$aside = "$Path.$script:OS7RestoreSafetyPrefix$stamp-$suffix"
+	}
+
+	try {
+		Move-Item -LiteralPath $Path -Destination $aside -ErrorAction Stop
+	}
+	catch {
+		# BOTH ROADS ARE NOW SHUT, so this is the refusal — and the first clause
+		# is the one a person needs: the file they came here about is still
+		# there. #148's form, because the likeliest cause after this is a
+		# directory the caller may read and not write.
+		throw [System.InvalidOperationException]::new(
+			"'$Path' could not be put aside before being written over, so it has " +
+			"NOT been written and nothing is lost.`n" +
+			"`n" +
+			"  A ZFS snapshot of it was not possible either. Either restore with`n" +
+			"  privilege:`n" +
+			"`n" +
+			"      sudo pwsh -NoProfile -c 'Restore-OS7File <parameters> -Force'`n" +
+			"`n" +
+			"  or give the way back up deliberately, with -NoSafetyPoint.`n" +
+			"`n" +
+			"  The move failed with: $($_.Exception.Message)",
+			$_.Exception)
+	}
+
+	# ASKED FOR RATHER THAN ASSUMED, the same rule the snapshot half obeys.
+	if (-not (Test-Path -LiteralPath $aside)) {
+		throw [System.IO.IOException]::new(
+			"'$Path' was moved to '$aside', the move reported success, and " +
+			'nothing is there. Nothing further has been written.')
+	}
+
+	Write-OS7Step "put $Path aside as $(Split-Path -Leaf $aside)"
+	New-OS7SafetyPoint -Copy $aside
 }
 
 function Restore-OS7File {
@@ -740,14 +849,16 @@ function Restore-OS7File {
 	.PARAMETER Force
 		Overwrite. Required to restore over the live path.
 
-	.PARAMETER NoSafetySnapshot
-		Do not snapshot the destination's dataset before writing over it.
+	.PARAMETER NoSafetyPoint
+		Do not make the restore undoable: write over the destination directly.
 
-		The snapshot is what makes the restore itself undoable (V8), so this
-		switch is the named way to give that up — for a destination whose
-		dataset must not gain snapshots, or when one could not be taken and the
-		operator has read why and wants the file anyway. It changes nothing
-		when there was nothing at the destination to lose.
+		Normally what is about to be overwritten is kept first — as a ZFS
+		snapshot of the destination's dataset where that is possible, and
+		otherwise by renaming the destination out of the way (V8, V19). This
+		switch is the named way to give that up, for a destination whose dataset
+		must not gain snapshots, or an operator who wants the file and nothing
+		beside it. It changes nothing when there was nothing at the destination
+		to lose.
 
 	.EXAMPLE
 		Restore-OS7File /home/os7/notes.txt -Destination /home/os7/notes.restored.txt
@@ -767,7 +878,7 @@ function Restore-OS7File {
 		[Parameter()][datetime]$AsOf,
 		[Parameter()][string]$Destination,
 		[switch]$Force,
-		[switch]$NoSafetySnapshot
+		[switch]$NoSafetyPoint
 	)
 
 	begin {
@@ -838,14 +949,14 @@ function Restore-OS7File {
 		# destructive where it lands on something: a -Destination that is not
 		# there yet takes nothing away, and a safety snapshot for it would cost
 		# a name, a prune and a row in every later version listing for nothing.
-		$takeSafety = $targetExists -and -not $NoSafetySnapshot
+		$takeSafety = $targetExists -and -not $NoSafetyPoint
 
 		$what = "restore from $($pick.SnapshotName) ($($pick.Created)) to $target"
 		if ($takeSafety) {
 			# SAID BEFORE IT HAPPENS, not reported after. The operator is being
 			# asked to approve overwriting a file, and whether that is reversible
 			# is the most important thing about the answer.
-			$what += " (snapshotting $target first, so this can be undone)"
+			$what += " (keeping $target first, so this can be undone)"
 		}
 		if (-not $PSCmdlet.ShouldProcess($pick.Path, $what)) { return }
 
@@ -900,10 +1011,13 @@ function Restore-OS7File {
 			Created      = $pick.Created
 			Length       = if ($pick.IsFolder) { $null } else { [uint64]$now.Length }
 			IsFolder     = $pick.IsFolder
-			# The way back from this restore, named so it can be typed:
-			#   Restore-OS7File <path> -Snapshot os7-before-restore-… -Force
-			# $null means nothing was overwritten, or the operator gave that up.
-			SafetySnapshot = $safety
+			# THE WAY BACK FROM THIS RESTORE, in whichever of the two forms
+			# was available here (V19). Exactly one is ever set, and both are
+			# null when nothing was overwritten or the operator gave it up.
+			#   SafetySnapshot  Restore-OS7File <path> -Snapshot os7-before-… -Force
+			#   SafetyCopy      the old file, sitting beside the new one
+			SafetySnapshot = if ($safety) { $safety.Snapshot } else { $null }
+			SafetyCopy     = if ($safety) { $safety.Copy } else { $null }
 		}
 	}
 }

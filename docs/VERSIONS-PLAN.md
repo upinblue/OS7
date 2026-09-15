@@ -7,18 +7,20 @@ change of file manager.**
 **The read half is built and has run on a machine; nothing yet changes a file.** Every `Vn` below is
 *Proposed 2026-09-14* — the foundation is not: §2 measured, on a running OS/7 machine, that every
 technical prerequisite already exists and that the snapshots this feature would read **are already
-being taken**. Decisions are V1–V18 and the open V19, limitations VL1–VL8. A measurement still owed is `O-V1…`.
+being taken**. Decisions are V1–V19, limitations VL1–VL9. A measurement still owed is `O-V1…`.
 
-**V8, V15, V16, V17 and V18 are DECIDED and BUILT** — the snapshot a restore takes before it
-overwrites anything, the storage-pressure rule (70 warn / 80 tighten / 90 refuse, gated on whether
+**V8, V15, V16, V17, V18 and V19 are DECIDED and BUILT** — what a restore keeps before it
+overwrites anything and how that degrades without privilege, the storage-pressure rule (70 warn / 80 tighten / 90 refuse, gated on whether
 thinning could even work), the boot environment that is never pruned, the "did not exist" boundary,
 and the window asking the cmdlet instead of deciding for itself. `powershell/OS7/OS7.Storage.ps1`
 and `OS7.BackupRestore.ps1` implement them, and `installer/testing/check-storage-logic.py` holds all
-of it at **92 checks** with no ZFS and no VM. **V8 has now also run against real ZFS on a machine**
-([SESSION-VERSIONS-RESTORE-SAFETY.md](SESSION-VERSIONS-RESTORE-SAFETY.md)), which is what raised
-**V19 — the one decision this feature still owes an answer to**: `zfs snapshot` is root's, so the
-owner of a file can list every version of it and cannot take the snapshot that makes restoring one
-undoable.
+of it at **102 checks** with no ZFS and no VM. **V8 and V19 have run against real ZFS on a machine**
+([SESSION-VERSIONS-RESTORE-SAFETY.md](SESSION-VERSIONS-RESTORE-SAFETY.md)). The machine is what
+raised V19 and then settled it: `zfs snapshot` is root's, so the owner of a file can list every
+version of it and cannot take the snapshot that makes restoring one undoable — and the answer was
+not to refuse them, nor to grant them the right, but **to keep what is about to be overwritten by
+the strongest means available where it stands**, which for an unprivileged owner is the one Time
+Machine itself uses: rename the file aside instead of destroying it.
 
 `src/OS7.App.Versions/` draws the window, reads real snapshots, and offers *Open* and *Copy to…*
 only; **§7a is what building it measured**, including the two things about the cascade that were
@@ -229,7 +231,7 @@ count was 32 before the prune and 32 after.
 **The machine also found what no fake could**: `zfs snapshot` is root's, so the OWNER of a file can
 list every version of it and cannot take the safety snapshot in front of restoring one. V8 therefore
 narrows who can restore, the refusal is now a sentence in this product's voice rather than ZFS's,
-and what to do about it is **V19**, below.
+and what to do about it is **V19**, below — which is now decided and built.
 
 ### V9 — Restoring is done by the PowerShell surface, not by the window. Proposed 2026-09-14.
 
@@ -304,35 +306,57 @@ an administrator over ssh is covered by them too.
 **Every refusal is now the cmdlet's own sentence**, reaching the window unaltered — which is what
 makes V6 real rather than a rule the window re-implements.
 
-### V19 — Who may take the safety snapshot. OPEN, and it needs the owner. Raised 2026-09-14.
+### V19 — Two strengths of safety point, and the weaker one is Time Machine's. Decided 2026-09-15.
 
-Measured, not reasoned about (M-V22): `os7admin` can list three versions of a file in their own home
+Measured, not reasoned about (M-V22): `os7admin` can list every version of a file in their own home
 and **cannot snapshot the dataset it is on** — `cannot create snapshots : permission denied`. ZFS
 gives `zfs snapshot` to root, delegation aside, whoever owns the files.
 
-That collides with M-V5, which this plan is partly built on: *browsing and restoring into one's own
-home need no privilege and therefore no polkit*. Half of it survives — reading is still free. The
-other half now costs either root or the safety net.
+That collided with M-V5, which this plan is partly built on: *browsing and restoring into one's own
+home need no privilege and therefore no polkit*. Half of it survived — reading is still free. The
+other half suddenly cost either root or the safety net.
 
-Three roads.
+**WHAT TIME MACHINE ACTUALLY DOES SETTLED IT, AND IT IS NOT A SNAPSHOT.** `backupd` is a root daemon
+and the APFS snapshots are the system's; a user cannot make one. Before a *restore* Time Machine
+takes no snapshot at all — when something is already at the destination it offers *Keep Original /
+Keep Both / Replace*, and "Keep Both" **puts the existing file aside under another name**. Windows'
+Previous Versions is the same shape: VSS snapshots are an administrator's, and the tab offers *Copy*
+beside *Restore*. (Recalled rather than measured — there is no macOS machine here.)
 
-1. **Leave it.** The owner elevates (`sudo pwsh -NoProfile -c 'Restore-OS7File …'`) or passes
-   `-NoSafetySnapshot`, and the refusal says both. Honest, costs nothing, and makes the everyday
-   case of a Time-Machine feature an elevated one.
-2. **Route the restore through polkit and a templated unit**, the way `os7-update@.service` does
-   (G5) and `Start-OS7Job` widens (AU1). Correct, consistent with the rest of the product, and heavy
-   for "put my file back" — it also puts a root-run rsync where a user-run one would do.
-3. **`zfs allow -u <owner> snapshot` on that account's own USERDATA dataset**, set by
-   `New-OS7Storage` at creation with a firstboot migration for existing machines. ZFS's own mechanism
-   for exactly this, and it gives M-V5 back whole. **`snapshot` alone, never `destroy`**: an account
-   that could destroy snapshots of its home could destroy sanoid's, and the backup policy is the
-   thing this feature reads. Pruning therefore stays root's, so a user-driven restore leaves one
-   snapshot for the next privileged restore or relief pass to clear.
+So OS/7 keeps what is about to be overwritten by **the strongest means available where it stands**:
 
-Road 3 changes what every OS/7 machine's storage layout grants its accounts, which is not a decision
-a restore cmdlet may make on its own. **It becomes urgent the day V9's restore verb reaches the
-window** — until then `os7-versions` offers *Open* and *Copy to…* only (V7), and neither writes
-anything.
+| available | what is kept | who can do it |
+|---|---|---|
+| the destination is on ZFS and the caller may snapshot | a snapshot of the destination's dataset | root |
+| anything else | the destination itself, **renamed** to `<path>.os7-before-restore-<stamp>` | whoever may write in that directory — which is the owner |
+
+Both are `Restore-OS7File`'s output: `SafetySnapshot` or `SafetyCopy`, exactly one ever set, and both
+`$null` when nothing was overwritten or `-NoSafetyPoint` was given. **The switch turns off both**,
+which is why it is no longer called `-NoSafetySnapshot`.
+
+**A RENAME, NEVER A COPY.** It is the same inode: nothing is duplicated, no second copy of the bytes
+exists, and §5's storage rule is untouched. That is the whole reason this is affordable as a default.
+
+**ZFS FIRST WHEREVER IT CAN BE HAD**, because a snapshot is better in every way that matters — atomic,
+covers a whole folder at once, invisible, and pruned by OS/7 (V8). The rename is what happens when it
+cannot, and "cannot" includes a destination that is not on ZFS at all, which used to be a warning and
+no protection.
+
+**A FAILURE ZFS REPORTS AS SUCCESS IS STILL A REFUSAL.** Falling back is for ZFS saying no; a snapshot
+ZFS said it made and did not is a fault, and the restore stops rather than quietly taking the weaker
+road.
+
+**Why not the other two roads**, both of which were on the table:
+
+* *Route the restore through polkit and a templated unit*, as `os7-update@.service` does (G5) and
+  `Start-OS7Job` widens (AU1). Correct and consistent — and it puts a root-run `rsync` where a
+  user-run one would do, for "put my file back".
+* *`zfs allow -u <owner> snapshot` on each account's own USERDATA dataset*, set by `New-OS7Storage`
+  with a firstboot migration. Technically the prettiest, and it permanently changes what every
+  machine's storage layout grants its accounts — bought for a case the rename already answers. It
+  also has no counterpart in either reference product: macOS grants no user the right to snapshot.
+
+Neither is ruled out for ever. Neither is needed now.
 
 ## 4. The window: Time Machine in Windows 2000's vocabulary
 
@@ -510,6 +534,12 @@ against a fake pool: 37 checks, no ZFS, seconds.
   and not in B5's policy. **A domain user would have no versions at all**, and that is the same open
   question arriving in a third place.
 - **VL8 — nothing here is built.**
+- **VL9 — nothing prunes the files V19 puts aside.** The ZFS snapshots are pruned (V8, newest five
+  per dataset); a `notes.txt.os7-before-restore-20260915-073919` sitting in somebody's home is not.
+  It costs no space — it is a rename, the same inode — but it accumulates in the listing, and only
+  the person who owns the directory can reasonably decide it is finished with. An invisible cleaner
+  deleting files out of a home directory is the opposite of what this product does elsewhere, and
+  Time Machine does not tidy its "Keep Both" copies either.
 
 **Open questions**
 

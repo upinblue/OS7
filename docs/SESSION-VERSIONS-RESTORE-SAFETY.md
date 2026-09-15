@@ -1,15 +1,18 @@
-# V8 on a machine — the snapshot a restore takes, against real ZFS
+# V8 and V19 on a machine — what a restore keeps, against real ZFS
 
-**2026-09-14, bench `gui`: an installed, booted OS/7 1.0.0.163 amd64 machine, from
-the named snapshot `v8-ready`.** Everything below was typed at that machine.
+**2026-09-14 and 2026-09-15, bench `gui`: an installed, booted OS/7 1.0.0.163
+amd64 machine, from the named snapshot `v8-ready`.** Everything below was typed at
+that machine.
 
 `installer/testing/check-storage-logic.py` §7 and §8 are the harness and they run
 against a fake ZFS. This is what a fake cannot answer: whether `zfs snapshot`
 accepts these names, whether the snapshot HOLDS the bytes the restore destroyed,
 whether restoring it gives the work back — and **who is allowed to take one**.
 
-The last of those is the finding, and it reverses a property the plan was built
-on.
+The last of those is the finding. It reversed a property the plan was built on,
+and answering it changed the feature: **V19, decided by the owner 2026-09-15** —
+a restore keeps what it is about to overwrite by the strongest means available
+where it stands, and the weaker means is the one Time Machine itself uses.
 
 ---
 
@@ -48,71 +51,95 @@ restoring into one's own home need no privilege and therefore no polkit"* — me
 a fact about ZFS: `zfs snapshot` is root's, delegation aside, even on a dataset
 whose files belong to the caller.
 
-So V8, as built, **narrows who can restore**. Before it, an owner could restore
-their own file as themselves. After it, they are refused unless they elevate or
-give the safety snapshot up. Nothing about that is visible from a fake ZFS, and
-nothing about it was visible in the plan.
+So V8, **as built on 2026-09-14, narrowed who could restore.** Before it, an owner
+restored their own file as themselves; for one day after it, they were refused
+unless they elevated or gave the safety net up. Nothing about that is visible from
+a fake ZFS, and nothing about it was visible in the plan.
 
-**Two things were fixed the same hour, and one was left open on purpose.**
+**The first fix was the sentence**, and it still stands where it applies. What the
+owner saw was `cannot create snapshots : permission denied` — a raw tool error
+naming no verb and no way forward, which is BUILD-NOTES #148's and #149's
+signature. Every refusal on this path now leads with the clause that matters to a
+person — *the file you came here about has NOT been written and nothing is lost* —
+then both roads in #148's exact form, then the tool's own words, because they say
+why.
 
-**Fixed: the sentence.** What the owner first saw was `cannot create snapshots :
-permission denied` — a raw tool error naming no verb and no way forward, which is
-BUILD-NOTES #148's and #149's signature. It is now a refusal in this product's
-voice, measured on the machine:
+**The second fix was the decision, the next day, and it removed the refusal from
+this case entirely.** V19, and the answer came from asking what Time Machine
+actually does.
 
-```
-the safety snapshot '…@os7-before-restore-…' could not be taken, so
-'/home/os7admin/v8/notes.txt' has NOT been written and nothing is lost.
+Time Machine takes **no snapshot before a restore at all**. `backupd` is a root
+daemon and the APFS snapshots are the system's — a user cannot make one — and
+when something is already at the restore destination the choice offered is *Keep
+Original / Keep Both / Replace*, where "Keep Both" **puts the existing file aside
+under another name**. Windows' Previous Versions has the same shape: VSS
+snapshots are an administrator's, and the tab offers *Copy* beside *Restore*.
+(Recalled rather than measured — there is no macOS machine here, and this
+document says so rather than dressing it up as a reading.)
 
-  Snapshotting a dataset needs root, even for the owner of the
-  files on it. Either restore with privilege:
+So OS/7 keeps what is about to be overwritten **by the strongest means available
+where it stands**: a ZFS snapshot of the destination's dataset where that can be
+had, and otherwise the destination itself, renamed to
+`<path>.os7-before-restore-<stamp>`. A rename needs only write permission on the
+containing directory, which the owner of a file in their own home has, and it is
+the same inode, so it costs no space. §2a is that, measured.
 
-      sudo pwsh -NoProfile -c 'Restore-OS7File <parameters> -Force'
+The refusal above now fires only where **both** roads are shut — and, separately
+and deliberately, where ZFS reported success and produced no snapshot, which is a
+fault rather than a "no" and must not quietly take the weaker road.
 
-  or give the way back up deliberately, with -NoSafetySnapshot.
+**The two roads NOT taken**, both of which were on the table and neither of which
+is ruled out for ever:
 
-  ZFS said: …
-```
+1. **Route the restore through polkit and a templated unit**, the way
+   `os7-update@.service` does (G5) and `Start-OS7Job` widens (AU1). Correct and
+   consistent with the product — and it puts a root-run `rsync` where a user-run
+   one would do, for "put my file back".
+2. **`zfs allow -u <owner> snapshot` on their own USERDATA dataset**, set by
+   `New-OS7Storage` at creation with a firstboot migration. ZFS's own mechanism
+   for precisely this, and it would give M-V5 back whole. `snapshot` alone and
+   **never `destroy`** — an account able to destroy snapshots of its home could
+   destroy sanoid's, and that is the backup policy this feature reads. It would
+   permanently change what every machine's storage layout grants its accounts, to
+   buy a case the rename already answers; and it has no counterpart in either
+   reference product, since macOS grants no user the right to snapshot.
 
-The first clause is the one that matters to a person: **nothing was written**.
-They came here because a file was in danger, and it is still there.
+---
 
-**Fixed: the behaviour is a refusal, not a silent weakening.** A restore that
-could not be made undoable is not performed. Warning and carrying on would have
-left exactly the case the feature exists for — a user overwriting today's work
-with yesterday's — protected by nothing, quietly.
+## 2a. V19 measured, as the owner, uid 1000
 
-**Left open: V19**, which needs a decision rather than a fix. Three roads, and
-the third is the one this repository would normally take:
+Same bench, same account, with the decision built:
 
-1. **Leave it.** The owner elevates, or passes `-NoSafetySnapshot`. Honest, and
-   it makes the everyday case of the feature an elevated one.
-2. **Route the restore through polkit and a templated unit**, the way
-   `os7-update@.service` does (G5) and `Start-OS7Job` widens (AU1). Correct, and
-   heavy for "put my file back".
-3. **`zfs allow -u <owner> snapshot` on their own USERDATA dataset**, set by
-   `New-OS7Storage` at creation with a firstboot migration for existing machines.
-   ZFS's own mechanism for precisely this, and it restores the property M-V5
-   measured. `snapshot` alone, **not** `destroy` — a user who could destroy
-   snapshots on their home could destroy sanoid's, which is the backup policy
-   this feature is a reader of. The prune would then stay root's work, so a
-   user-driven restore leaves one snapshot behind that the next privileged
-   restore, or the next relief pass, would have to clear.
+| # | Question | Answer |
+|---|---|---|
+| M-V23 | Is the owner still refused? | **No.** `SafetySnapshot` empty, `SafetyCopy = /home/os7admin/v8/notes.txt.os7-before-restore-20260915-073919`, live file restored — as uid 1000, no `sudo`, no prompt |
+| M-V24 | Does the copy hold the work the restore replaced? | **Yes**: `TODAYS WORK, unsnapshotted`, which was in no snapshot anywhere. Moving it back by hand put the work back |
+| M-V25 | Two restores of one file? | Two distinct copies, `…073919` and `…073920`, each holding its own moment (`first work` / `second work`) |
+| M-V26 | What does the prompt say now? | `… (keeping /home/os7admin/v8/notes.txt first, so this can be undone)` — the word changed with the mechanism |
+| M-V27 | Does root still get the better road? | **Yes.** As root the same restore produced `SafetySnapshot = rpool/USERDATA/os7admin_af456a8e@os7-before-restore-20260915-073944`, holding `root work`, and **no** copy was made |
 
-Road 3 changes what every OS/7 machine's storage layout grants, which is not a
-thing to decide inside a restore cmdlet.
+**One cosmetic wart, recorded rather than fixed.** `New-ZfsSnapshot` writes its
+`ZFS-STEP snapshot …` progress line *before* invoking `zfs`, so an unprivileged
+restore prints a step that did not happen, immediately above the
+`OS7-STEP put … aside` line that did. It is stderr progress, not a claim in any
+output object, and fixing it means changing Layer 2's step-then-do order for
+every verb in the Zfs module. Named here so the next reader does not report it as
+a defect.
 
 ---
 
 ## 3. What this does NOT say
 
 * **The Versions window is unaffected**, because it has no restore verb: V7 gave
-  it *Open* and *Copy to…* only, both read-only. M-V22 is about the cmdlet, and
-  it will be about the window on the day V9's restore verb reaches it — which is
-  the day V19 has to be answered.
+  it *Open* and *Copy to…* only, both read-only. M-V22 is about the cmdlet — and
+  because V19 is answered, the day V9's restore verb reaches the window it will
+  work for an ordinary user without a polkit dialog, which is what M-V5 promised
+  and V8 had briefly taken away.
 * **Nothing here was run by a harness.** The bench is for looking
   (`.claude/skills/os7-lab`). What makes V8 true is `check-storage-logic.py`
-  §7–§8, which is 92 checks against real files and a fake ZFS with four planted
-  defects proven to fire. M-V22's refusal is case I there.
+  §7–§8, in a file of 102 checks against real files with a fake ZFS around them.
+  Eight planted defects are proven to fire, one per rule. M-V22 is case I there,
+  and its strongest assertion is the one that would have passed before V19 and
+  must not now: **an owner who cannot snapshot is not refused their own file.**
 * **arm64 is unmeasured**, as always.
 * **No ISO carries any of this.** The module reached the bench by file copy.

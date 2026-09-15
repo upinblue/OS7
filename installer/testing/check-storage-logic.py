@@ -618,7 +618,19 @@ $script:Removed   = [System.Collections.Generic.List[string]]::new()
 $script:DatasetFor = @{}
 $script:SnapshotVanishes = $false
 $script:SnapshotDenied = $false
+$script:MoveDenied = $false
 $script:OldFile = $null
+
+# A function beats a cmdlet in PowerShell's resolution order, so this shadows
+# the real Move-Item for the one case where BOTH roads have to be shut.
+function Move-Item {
+	param([string]$LiteralPath, [string]$Destination,
+		[System.Management.Automation.ActionPreference]$ErrorAction)
+	if ($script:MoveDenied) {
+		throw [System.UnauthorizedAccessException]::new("Access to the path '$Destination' is denied.")
+	}
+	Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+}
 
 function New-Snap {
 	param([string]$Dataset, [string]$Name, [datetime]$Created)
@@ -754,7 +766,7 @@ $out['crossSnapshot'] = $r.SafetySnapshot
 # --- D: the named way to give it up ----------------------------------------
 $script:Created.Clear()
 Set-Content -LiteralPath $script:Live -Value 'work again' -NoNewline
-$r = Restore-OS7File -Path $script:Live -Force -NoSafetySnapshot
+$r = Restore-OS7File -Path $script:Live -Force -NoSafetyPoint
 $out['optedOutSnapshot'] = $r.SafetySnapshot
 $out['optedOutCreated'] = @($script:Created).Count
 $out['optedOutBytes'] = Get-Content -LiteralPath $script:Live -Raw
@@ -784,15 +796,15 @@ $out['pruneLeftOther'] = @($script:Snapshots |
 	Where-Object { $_.Dataset -eq 'rpool/DATA/shared' } |
 	ForEach-Object { $_.SnapshotName })
 
-# --- F: a destination ZFS does not own -------------------------------------
+# --- F: a destination ZFS does not own — the file is put ASIDE -------------
 $script:DatasetFor = @{}
 $script:Created.Clear()
 Set-Content -LiteralPath $script:Live -Value 'on a usb stick' -NoNewline
-$w = $null
-$r = Restore-OS7File -Path $script:Live -Force -WarningVariable w -WarningAction SilentlyContinue
+$r = Restore-OS7File -Path $script:Live -Force
 $out['noZfsSnapshot'] = $r.SafetySnapshot
+$out['noZfsCopy'] = $r.SafetyCopy
 $out['noZfsCreated'] = @($script:Created).Count
-$out['noZfsWarning'] = (@($w | ForEach-Object { [string]$_ }) -join ' ')
+$out['noZfsAside'] = if ($r.SafetyCopy) { Get-Content -LiteralPath $r.SafetyCopy -Raw } else { '' }
 $out['noZfsBytes'] = Get-Content -LiteralPath $script:Live -Raw
 
 # --- G: asked for, and not there -------------------------------------------
@@ -821,14 +833,56 @@ $out['pipelineBytes'] = @((Get-Content -LiteralPath $a -Raw), (Get-Content -Lite
 # Measured on a machine (M-V20): reading a version needs no privilege and
 # `zfs snapshot` needs root, so this is the COMMON case, not a broken pool.
 $script:SnapshotDenied = $true
+$script:Created.Clear()
 Set-Content -LiteralPath $script:Live -Value 'the users own work' -NoNewline
-$out['deniedError'] = ''
-try { Restore-OS7File -Path $script:Live -Force | Out-Null }
-catch { $out['deniedError'] = $_.Exception.Message }
+
+# CAUGHT ON PURPOSE. The single most important thing V19 decided is that this
+# does NOT throw, so the check has to be able to say "it threw" rather than die
+# of it — a crashing check names a line number where a sentence belongs.
+$out['deniedThrew'] = ''
+$r = $null
+try { $r = Restore-OS7File -Path $script:Live -Force }
+catch { $out['deniedThrew'] = $_.Exception.Message }
+$out['deniedSnapshot'] = if ($r) { $r.SafetySnapshot } else { $null }
+$out['deniedCopy'] = if ($r) { $r.SafetyCopy } else { $null }
+$out['deniedAside'] = if ($r.SafetyCopy) { Get-Content -LiteralPath $r.SafetyCopy -Raw } else { '' }
 $out['deniedBytes'] = Get-Content -LiteralPath $script:Live -Raw
 
-$r = Restore-OS7File -Path $script:Live -Force -NoSafetySnapshot
-$out['deniedOptOut'] = Get-Content -LiteralPath $script:Live -Raw
+# --- J: two asides in one second are two files, not one --------------------
+Set-Content -LiteralPath $script:Live -Value 'and more work' -NoNewline
+$r2 = $null
+try { $r2 = Restore-OS7File -Path $script:Live -Force }
+catch { $out['deniedThrew'] += " / second: $($_.Exception.Message)" }
+$out['asideDistinct'] = ($null -ne $r2 -and $r.SafetyCopy -ne $r2.SafetyCopy)
+$out['asideBoth'] = if ($r2) {
+	@((Get-Content -LiteralPath $r.SafetyCopy -Raw), (Get-Content -LiteralPath $r2.SafetyCopy -Raw))
+} else { @() }
+
+# --- K: ZFS is asked ONCE per invocation even when it says no --------------
+$script:Created.Clear()
+Set-Content -LiteralPath $a -Value 'work a' -NoNewline
+Set-Content -LiteralPath $b -Value 'work b' -NoNewline
+$rs = @(@([pscustomobject]@{ FullName = $a }, [pscustomobject]@{ FullName = $b }) |
+	Restore-OS7File -Force)
+$out['deniedPipelineZfsTries'] = @($script:Created).Count
+$out['deniedPipelineCopies'] = @($rs | ForEach-Object { $_.SafetyCopy }).Count
+
+# --- L: the switch turns BOTH roads off ------------------------------------
+$script:Created.Clear()
+Set-Content -LiteralPath $script:Live -Value 'no net wanted' -NoNewline
+$r3 = Restore-OS7File -Path $script:Live -Force -NoSafetyPoint
+$out['optedOutBoth'] = ($null -eq $r3.SafetySnapshot -and $null -eq $r3.SafetyCopy)
+$out['optedOutZfsTries'] = @($script:Created).Count
+$out['optedOutBytes'] = Get-Content -LiteralPath $script:Live -Raw
+
+# --- M: both roads shut is the refusal -------------------------------------
+$script:MoveDenied = $true
+Set-Content -LiteralPath $script:Live -Value 'precious and stuck' -NoNewline
+$out['stuckError'] = ''
+try { Restore-OS7File -Path $script:Live -Force | Out-Null }
+catch { $out['stuckError'] = $_.Exception.Message }
+$out['stuckBytes'] = Get-Content -LiteralPath $script:Live -Raw
+$script:MoveDenied = $false
 $script:SnapshotDenied = $false
 
 Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue
@@ -861,7 +915,7 @@ $out | ConvertTo-Json -Depth 4
           str(got["crossSnapshot"]))
 
     check(got["optedOutSnapshot"] is None and got["optedOutCreated"] == 0,
-          "-NoSafetySnapshot is the named way to give the way back up")
+          "-NoSafetyPoint is the named way to give the way back up")
     check(got["optedOutBytes"] == "yesterday",
           "and it still restores")
 
@@ -886,16 +940,19 @@ $out | ConvertTo-Json -Depth 4
 
     check(got["noZfsSnapshot"] is None and got["noZfsCreated"] == 0,
           "a destination ZFS does not own cannot be snapshotted")
-    check("ZFS" in got["noZfsWarning"] and "no way back" in got["noZfsWarning"],
-          "and the operator is told that, rather than left to assume there is "
-          "a way back", got["noZfsWarning"][:90])
+    check(got["noZfsCopy"] is not None and "os7-before-restore-" in str(got["noZfsCopy"]),
+          "so the file is PUT ASIDE instead — Time Machine's own answer (V19)",
+          str(got["noZfsCopy"]).rsplit("/", 1)[-1])
+    check(got["noZfsAside"] == "on a usb stick",
+          "and the copy beside it holds what was about to be destroyed")
     check(got["noZfsBytes"] == "yesterday",
-          "restoring onto a USB stick is legitimate and is not refused")
+          "restoring onto a USB stick is legitimate, is not refused, and is "
+          "no longer unprotected")
 
     check("os7-before-restore-" in got["vanishError"],
-          "a snapshot that was requested and is not there stops the restore",
-          got["vanishError"][:90])
-    check("-NoSafetySnapshot" in got["vanishError"],
+          "a snapshot ZFS SAID it made and did not stops the restore",
+          got["vanishError"][:80])
+    check("-NoSafetyPoint" in got["vanishError"],
           "and the message names the way past it")
     check(got["vanishBytes"] == "precious",
           "AND NOTHING WAS WRITTEN — `zfs snapshot` exiting 0 is a diagnostic, "
@@ -911,21 +968,50 @@ $out | ConvertTo-Json -Depth 4
     check(got["pipelineBytes"] == ["yesterday", "yesterday"],
           "and both files were actually restored")
 
-    denied = got["deniedError"]
-    check("sudo pwsh -NoProfile -c" in denied,
-          "an owner who cannot snapshot is told to elevate, in #148's form",
-          denied.splitlines()[0][:80] if denied else "(no error)")
-    check("-NoSafetySnapshot" in denied,
-          "and told the other road, which is to give the way back up on purpose")
-    check("nothing is lost" in denied,
-          "and told the file is still there — the sentence a person needs first")
-    check("permission denied" in denied,
-          "with ZFS's own words kept, because they say WHY")
-    check(got["deniedBytes"] == "the users own work",
+    # V19, decided 2026-09-15. The owner of a file cannot snapshot the dataset
+    # it is on (M-V22, measured), and refusing them their own file over that
+    # would answer a question Time Machine answers by moving the file aside.
+    check(got["deniedThrew"] == "",
+          "AN OWNER WHO CANNOT SNAPSHOT IS NOT REFUSED THEIR OWN FILE — V19's "
+          "whole decision", got["deniedThrew"][:80])
+    check(got["deniedSnapshot"] is None,
+          "they get no snapshot, because ZFS would not give them one")
+    check(got["deniedCopy"] is not None,
+          "they get the OTHER road: the file is renamed out of the way",
+          str(got["deniedCopy"]).rsplit("/", 1)[-1])
+    check(got["deniedAside"] == "the users own work",
+          "and the renamed file IS their work — a rename, so it costs no bytes")
+    check(got["deniedBytes"] == "yesterday",
+          "the restore they asked for happened, as themselves, with no sudo")
+
+    check(got["asideDistinct"],
+          "two restores in the same second put aside two files, not one (#159 "
+          "in a second place)")
+    check(got["asideBoth"] == ["the users own work", "and more work"],
+          "and each holds its own moment", " / ".join(got["asideBoth"]))
+
+    check(got["deniedPipelineZfsTries"] == 1,
+          "ZFS is asked ONCE per invocation even when it says no — a hundred "
+          "files are not a hundred refusals", str(got["deniedPipelineZfsTries"]))
+    check(got["deniedPipelineCopies"] == 2,
+          "and each file still gets its own way back, because a rename is "
+          "per-file by nature")
+
+    check(got["optedOutBoth"] and got["optedOutZfsTries"] == 0,
+          "-NoSafetyPoint turns BOTH roads off, and asks ZFS nothing")
+    check(got["optedOutBytes"] == "yesterday", "and it restores")
+
+    stuck = got["stuckError"]
+    check("nothing is lost" in stuck,
+          "with both roads shut it refuses, and says the file is still there "
+          "first", stuck.splitlines()[0][:80] if stuck else "(no error)")
+    check("sudo pwsh -NoProfile -c" in stuck,
+          "in #148's form")
+    check("-NoSafetyPoint" in stuck,
+          "and names the deliberate way past it")
+    check(got["stuckBytes"] == "precious and stuck",
           "AND THE FILE IS UNTOUCHED: a restore that could not be made undoable "
-          "is not performed")
-    check(got["deniedOptOut"] == "yesterday",
-          "-NoSafetySnapshot is the road, and it works")
+          "by either road is not performed")
 
 
 def confirmation():
@@ -954,10 +1040,10 @@ Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyConti
     overwriting = text.split("--- overwriting ---")[-1].split("--- new path ---")[0]
     fresh = text.split("--- new path ---")[-1].split("--- created:")[0]
 
-    check("snapshotting" in overwriting and "undone" in overwriting,
-          "overwriting a file says a snapshot is taken first, in the prompt",
+    check("keeping" in overwriting and "undone" in overwriting,
+          "overwriting a file says the old one is kept first, in the prompt",
           overwriting.strip()[:110])
-    check("snapshotting" not in fresh,
+    check("keeping" not in fresh,
           "and a restore that overwrites nothing does not promise one",
           fresh.strip()[:110])
     check("--- created: 0" in text,
