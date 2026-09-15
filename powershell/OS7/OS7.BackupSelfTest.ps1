@@ -69,7 +69,8 @@ function Test-OS7Backup {
 		if (ok "the guard refuses $d" $threw) { $pass++ } else { $fail.Add("guard let $d through") }
 	}
 
-	$allow = @('rpool/USERDATA', 'rpool/USERDATA/os7_1a2b3c4d', 'rpool/DATA/srv', 'tank/data')
+	$allow = @('rpool/USERDATA', 'rpool/USERDATA/os7_1a2b3c4d', 'rpool/DATA/srv',
+		'rpool/DATA/lib/os7-domain-homes', 'tank/data')
 	foreach ($d in $allow) {
 		$threw = $false
 		try { Assert-OS7DatasetSafe -Name $d } catch { $threw = $true }
@@ -89,6 +90,43 @@ function Test-OS7Backup {
 			@{ n = 'a boot-environment snapshot name does not end in `ly`'
 			   c = (-not $beName.EndsWith('ly')) }
 		)) { if (ok $t.n $t.c "(name was '$beName')") { $pass++ } else { $fail.Add($t.n) } }
+
+	# ------------------------------------------------------------------
+	# 1a. WHAT THE DEFAULT POLICY COVERS, and the one it forgot
+	# ------------------------------------------------------------------
+	#
+	# VERSIONS-PLAN VL7. A LOCAL account's home is a dataset under
+	# rpool/USERDATA and the first default covers it. A DOMAIN account's home
+	# is a directory under /var/lib/os7/domain-homes, which is
+	# rpool/DATA/lib/os7-domain-homes — created for A9 on 2026-09-07 and put
+	# into no policy by anything. Measured on an install from
+	# OS7-1.0.0.233-amd64.iso: zero snapshots, so no backups, no retention and
+	# no previous versions of any domain user's work.
+	#
+	# THIS IS A LIST IN ONE PLACE AND A CONSEQUENCE IN THREE — the snapshot
+	# schedule, the backup, and the Versions window — which is why it is
+	# asserted rather than read.
+	$defaults = @($script:OS7BackupDefaultSources)
+	foreach ($t in @(
+			@{ n = "the default policy covers local accounts' homes"
+			   c = ($defaults -contains 'rpool/USERDATA') }
+			@{ n = 'the default policy covers /srv'
+			   c = ($defaults -contains 'rpool/DATA/srv') }
+			@{ n = "THE DEFAULT POLICY COVERS DOMAIN USERS' HOMES (VL7)"
+			   c = ($defaults -contains 'rpool/DATA/lib/os7-domain-homes') }
+		)) { if (ok $t.n $t.c "(defaults: $($defaults -join ', '))") { $pass++ } else { $fail.Add($t.n) } }
+
+	# NOT children-only, and that is the difference from rpool/USERDATA. The
+	# homes under it are DIRECTORIES, not datasets — sssd's pam_mkhomedir
+	# creates a directory at first login and nothing creates a dataset — so
+	# snapshotting only the children would snapshot nothing at all.
+	$domainShape = (New-OS7BackupSourceShape -Dataset 'rpool/DATA/lib/os7-domain-homes')
+	foreach ($t in @(
+			@{ n = 'the domain-home dataset is snapshotted ITSELF, not children-only'
+			   c = (-not $domainShape.ChildrenOnly) }
+			@{ n = 'while rpool/USERDATA, whose accounts ARE datasets, stays children-only'
+			   c = ((New-OS7BackupSourceShape -Dataset 'rpool/USERDATA').ChildrenOnly) }
+		)) { if (ok $t.n $t.c) { $pass++ } else { $fail.Add($t.n) } }
 
 	# -----------------------------------------------------------------------
 	# 2. The rendered sanoid.conf

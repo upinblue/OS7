@@ -1260,7 +1260,26 @@ def run_remote(b, script, elevated=False, shell=False, timeout=600):
         remote = "pwsh -NoProfile -NonInteractive -EncodedCommand " + enc
     stdin = None
     if elevated:
-        remote = "sudo -S -p '' " + remote
+        if shell:
+            # `sudo -S -p '' <script>` ELEVATES ONLY THE FIRST COMMAND, and
+            # that is not obvious from reading it. The whole string is handed
+            # to the guest's bash, which parses `a; b; c` into three commands
+            # with `sudo` a word of the first — so `--sudo --shell` ran `a` as
+            # root and `b` and `c` as the login account, reporting the account's
+            # answers as root's. Measured 2026-09-15 while asking a bench about
+            # ZFS: `id -u` printed 0 and the `zfs destroy` after it on the same
+            # line answered `permission denied`, which reads as a ZFS fact and
+            # is a quoting one.
+            #
+            # base64 because it contains nothing a shell reacts to, so the
+            # script survives whatever quotes, dollars and newlines it carries
+            # — the same argument as -EncodedCommand above. The `$( )` runs in
+            # a subshell before sudo starts and does not touch sudo's stdin,
+            # which is the password.
+            enc = base64.b64encode(script.encode("utf-8")).decode()
+            remote = 'sudo -S -p \'\' bash -c "$(echo ' + enc + ' | base64 -d)"'
+        else:
+            remote = "sudo -S -p '' " + remote
         stdin = PASSWORD + "\n"
     # encoding= AND errors=, BOTH REQUIRED, and this is not a nicety.
     #

@@ -41,11 +41,21 @@ geprüft, bevor sie installiert wird.
 
 ## 12.2 Die Richtlinie ändern
 
-Welche Datasets gesichert werden:
+Welche Datasets gesichert werden. **Der Befehl ersetzt die Liste, er ergänzt
+sie nicht** — nennen Sie jedes Dataset, das gesichert werden soll, auch die
+bereits vorhandenen:
 
 ```powershell
-Set-OS7BackupPolicy -Dataset rpool/USERDATA, rpool/DATA/srv
+Set-OS7BackupPolicy -Dataset rpool/USERDATA, rpool/DATA/srv, rpool/DATA/lib/os7-domain-homes
 ```
+
+Das ist die Standardliste. `rpool/USERDATA` enthält die Benutzerverzeichnisse
+lokaler Konten, je eines pro Konto; `rpool/DATA/lib/os7-domain-homes` enthält
+die Benutzerverzeichnisse der Konten, die sich aus der Domäne anmelden. Lässt
+man das dritte weg, bewahrt die Maschine für Domänenbenutzer nichts mehr auf —
+keine Snapshots, keine Sicherung und keine früheren Versionen ihrer Dateien.
+
+`Get-OS7BackupPolicy` zeigt die geltende Liste, bevor Sie sie ändern.
 
 Wie lange die Snapshots behalten werden:
 
@@ -199,6 +209,41 @@ Restore-OS7File /home/mmustermann/angebot.docx `
 Ohne `-Destination` wird die vorhandene Datei ersetzt, und dafür verlangt der
 Befehl `-Force`.
 
+**Was da war, wird aufbewahrt — ein Zurückholen lässt sich also selbst
+rückgängig machen.** Bevor etwas überschrieben wird, bewahrt die Maschine den
+aktuellen Stand mit dem stärksten Mittel, das ihr an dieser Stelle zur Verfügung
+steht, und die Rückfrage sagt es, bevor Sie antworten:
+
+* als **root** ein ZFS-Snapshot des Ziel-Datasets, benannt
+  `os7-before-restore-<Datum>-<Zeit>`. Das Ergebnis nennt ihn in
+  `SafetySnapshot`, und `Restore-OS7File -Snapshot <dieser Name> -Force` stellt
+  den vorherigen Zustand wieder her.
+* als **Eigentümer der Datei** die vorhandene Datei, **umbenannt** in
+  `<Datei>.os7-before-restore-<Datum>-<Zeit>`, im selben Verzeichnis daneben.
+  Das Ergebnis nennt sie in `SafetyCopy`. Das Umbenennen kostet keinen
+  Plattenplatz, und es ist sichtbar: Sie entscheiden, wann die Datei erledigt
+  ist, und niemand löscht sie für Sie.
+
+`-NoSafetyPoint` schaltet beides ab. Liegt das Ziel gar nicht auf ZFS — ein
+USB-Stick, eine Netzwerkfreigabe —, wird trotzdem zurückgeholt, und Sie erfahren,
+dass es sich nicht rückgängig machen lässt.
+
 > Ein Benutzer, dem die Datei gehört, braucht dafür keinen Administrator:
 > Snapshots sind für ihn lesbar, und `Get-OS7FileVersion` läuft ohne erhöhte
 > Rechte.
+
+**„has NO snapshots at all" heißt nicht „die Datei hat sich nie geändert".**
+Antwortet der Befehl
+
+```
+rpool/DATA/tmp has NO snapshots at all, so nothing on this machine holds an
+earlier version of '/var/tmp/bericht.txt'...
+```
+
+dann bewahrt dieses Dataset überhaupt keine Historie auf — entweder steht es
+nicht in der Sicherungsrichtlinie (`Get-OS7BackupPolicy` zeigt, welche Datasets
+darin stehen, `Set-OS7BackupPolicy` nimmt eines auf, §12.2), oder die Maschine
+wurde vor wenigen Minuten installiert und hat ihren ersten Snapshot noch nicht
+genommen. Standardmäßig werden nur `rpool/USERDATA`, `rpool/DATA/srv` und
+`rpool/DATA/lib/os7-domain-homes` gesichert; `/var/log`, `/var/tmp` und
+Wechselmedien nicht.

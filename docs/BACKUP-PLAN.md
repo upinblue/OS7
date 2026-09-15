@@ -187,6 +187,27 @@ success.
 a machine that has `rpool/USERDATA`. Replication does nothing until a target is
 defined.
 
+**THE DEFAULT POLICY COVERS THREE DATASETS SINCE 2026-09-15**, and the third was
+missing for eight days: `rpool/USERDATA`, `rpool/DATA/srv`, and
+**`rpool/DATA/lib/os7-domain-homes`**, which is where every DOMAIN user's home
+is. A local account's home is a dataset under USERDATA and the first entry
+covers it; a domain account's is a directory in that third one, created for A9
+on 2026-09-07 and put into no policy by anything. So a domain-joined machine was
+snapshotting nobody's work and replicating nobody's work — measured on an
+install from `OS7-1.0.0.233-amd64.iso`
+([SESSION-VERSIONS-DOMAIN-HOMES.md](SESSION-VERSIONS-DOMAIN-HOMES.md), VERSIONS-PLAN
+VL7). Machines already installed are taken by the firstboot migration
+`71-domain-homes-in-backup-policy`, because `Set-OS7BackupPolicy` with no
+`-Dataset` keeps what is CONFIGURED — an update must not silently rewrite an
+administrator's dataset list.
+
+**It is `childrenOnly = false`, unlike `rpool/USERDATA`**, and that decides
+whether anything is snapshotted at all: USERDATA's accounts ARE datasets, and
+domain homes are DIRECTORIES in one. `New-OS7BackupSourceShape` is where that
+lives now — it was inline in `Set-OS7BackupPolicy`, where no check could reach
+it without rendering a real policy through sanoid. `Test-OS7Backup` asks it
+directly.
+
 **Not baked into the image**, and hook 0090 fails the build if it ever is: the
 policy names datasets that exist only on an installed machine, so a
 `sanoid.conf` on the ISO would un-skip sanoid's services on the **live medium**,
@@ -446,7 +467,7 @@ for test code only.
 
 | Tier | What | Where | State |
 |---|---|---|---|
-| 1 | `Test-OS7Backup` — the guard, the renderer, path resolution, the syncoid command line | in the module; anywhere pwsh runs | **63 checks, green** |
+| 1 | `Test-OS7Backup` — the guard, the renderer, path resolution, the syncoid command line, what the DEFAULT POLICY covers | in the module; anywhere pwsh runs | **69 checks, green** |
 | 1b | the same, against the **shipped** module in a chroot | `check-image.py` | written, needs an ISO |
 | 2 | `Test-OS7Backup -Live` and a full cycle against real ZFS and real sanoid | `run-backup.py`, a booted VM | **written, never run** |
 
@@ -649,7 +670,7 @@ depends on a cache rather than on the subsystem.
 and `installer/testing/run-phase3.py` (the account is `os7admin`).
 
 **M-B6 — the two self-tests are green here.** `Test-ZfsModule` 75 checks,
-`Test-OS7Backup` 63 checks, both run under the same PowerShell 7.6.5 the image
+`Test-OS7Backup` 69 checks, both run under the same PowerShell 7.6.5 the image
 ships, on the machine this was written on. `check-layering.py` reports **0**
 direct `zfs`/`zpool` invocations in `powershell/OS7`, so Z1 holds across the new
 code including the remote reads.
@@ -667,7 +688,7 @@ by this code. `run-backup.py` is the thing that would change that.
 |---|---|---|---|
 | **B-0** | Measure the package and both programs | §13 | **done** |
 | **B-1** | Z14: `-ComputerName` reads and `Clear-ZpoolLabel` in the Zfs module | `Test-ZfsModule` green | **done — 75 checks** |
-| **B-2** | Policy, sanoid.conf renderer, guard, status, coverage | `Test-OS7Backup` green | **done — 63 checks** |
+| **B-2** | Policy, sanoid.conf renderer, guard, status, coverage | `Test-OS7Backup` green | **done — 69 checks** |
 | **B-3** | Targets, replication, target creation, restore | tier 1 green | **done** |
 | **B-4** | Image: the package, the units, hooks 0060/0075/0090, `check-image.py` | a built ISO | **written, no ISO built** |
 | **B-5** | **`./installer/testing/run-backup.py all` on a booted VM** | tier 2 green | **NOT DONE — the gate** |

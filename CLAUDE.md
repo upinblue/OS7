@@ -64,7 +64,7 @@ here either — this file points, they rule.
 | OS/7's own GUI applications: the toolkit, what an app may contain, the design system, decisions G1–G12 | [docs/GUI-APPS-PLAN.md](docs/GUI-APPS-PLAN.md) — **the toolkit is Avalonia and that is decided (2026-09-14); everything from G3 on is a proposal and nothing is built.** The argument is not "we already write C#" — it is that `os7-classic.css` already documents that GTK 4 cannot wear this product's face. Measured before writing: 22.1 MiB framework-dependent against 100.8 MiB self-contained, **13.3 MiB of it identical in every app** (so `os7-ui` is arithmetic, not taste), no Wayland backend in Avalonia 12.1.2 → XWayland, and AT-SPI ships ([SESSION-AVALONIA-FOOTPRINT.md](docs/SESSION-AVALONIA-FOOTPRINT.md)). **An app implements no policy** — it is a front-end over cmdlets that already have a test (P12), which is #66's shape pointed at a new surface. **The first application, Software Update, HAS RUN ON A MACHINE (2026-09-14)**: the window draws with Mutter's themed title bar, lists real releases from a signed repository, and polkit prompts by name before systemd runs `Update-OS7` as root ([SESSION-SOFTWARE-UPDATE-APP.md](docs/SESSION-SOFTWARE-UPDATE-APP.md)). What it has NEVER done is a successful update — every release the bench reaches is development-signed — and no ISO has yet carried the package |
 | What the OS owes an automation workload — and what it deliberately leaves to a product above, decisions AU1–AU14 | [docs/AUTOMATION-PLAN.md](docs/AUTOMATION-PLAN.md) — **PHASE 1 IS BUILT AND HAS RUN ON A MACHINE (2026-09-14)**: secrets, the job journal, the job contract, the service dataset, locks, per-job Kerberos caches and notification, in `powershell/OS7/OS7.Automation.ps1` and `build/packages/os7-automation/` ([SESSION-AUTOMATION-PRIMITIVES.md](docs/SESSION-AUTOMATION-PRIMITIVES.md)). Its governing rule is AU1: **the OS provides primitives, a product above provides policy**, because the alternative is the engine twice in two languages with nobody at the seam (#66) — and it is decidable by grep, held at 0 by `check-automation-logic.py`. `Start-OS7Job` **widens** the templated-unit + polkit + journal pattern the Software Update window proved (O-G6) rather than replacing it. **FOUR OF ITS DECISIONS WERE WRONG AND ARE CORRECTED IN PLACE**, each with the measurement that did it: `--tpm2-pcrs=` defaults to EMPTY so `host+tpm2` does NOT inherit #69/#100 (AUL2 shrinks); systemd's host key lives at `/var/lib/systemd/credential.secret`, which is INSIDE the boot environment, so **`tpm2` alone is the sealing target** and `host+tpm2` would have put the KEY back where AU6 keeps the SECRET out of; AU11 needs **no MTA**; and the journal's schema IS a contract. **AND A MACHINE FOUND THREE DEFECTS WHILE EVERY CHECK HERE WAS GREEN** — a directory the cmdlet's own error message promised and did not create, a property read that throws under strict mode because the journal has two writers, and `RuntimeMaxSec=`, which systemd IGNORES for `Type=oneshot` so that every job ran with no timeout (#155). **AND PHASE 1'S MEASUREMENTS ARE DONE SINCE 2026-09-15** — M-AU3 (the fence, eleven questions asked of the FILESYSTEM after the first probe reported the opposite by asking whether a command threw), M-AU5 (AUL4 is three walls, and the third made `-Identity` unusable: the journal is root-owned, so the STARTER now writes the Result when the job cannot), M-AU7 (a real KDC in a container, no password typed: the ticket lands in the named cache and the default one STAYS EMPTY), M-AU8 (the store is outside `rpool/ROOT` and a new boot environment does not swallow it), a delivered notification, `-Unconfined` (10 of 11, and the eleventh is the TPM it deliberately keeps), and polkit's headless half. **A zero-byte keytab found two more defects**: both refusals blamed the realm for a file on this machine, while `Get-DirectoryKeytabPrincipal` had always said existence proves nothing. What is still owed: **ticket expiry and renewal**, a `Restore-OS7` rollback over a secret, polkit's dialog (needs a seat) and arm64 |
 | The identity and access management application on top of OS/7: what it is, the layer cut against the OS, decisions IG1–IG14 | [docs/IAM-PLAN.md](docs/IAM-PLAN.md), with [docs/IAM-SCOPE.md](docs/IAM-SCOPE.md) as its capability scope — **all *Proposed*, nothing built.** It is **not an OS feature and must not become one**: AU1 is the line, and routing roles, attestation and separation of duties through the cmdlet surface would end with two hundred cmdlets of business logic in `powershell/OS7/`. Two decisions do most of the work — **IG5**, every derived fact carries its derivation (without it, individual-versus-role reporting and attestation of any kind are unimplementable *late*), and **IG6**, the plan is an artifact, which turns the reconciler, attestation and separation of duties into producers and validators of plans rather than three more engines. **The AD cmdlets are deliberately NOT its foundation** — a .NET application has `S.DS.P` natively, so what transfers is [AD-PLAN.md](docs/AD-PLAN.md)'s measured knowledge and not its code, and OS/7's AD surface should stop growing toward being a provisioning engine |
-| Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is what a machine taught it** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable (M-V22). The answer is Time Machine's own: Apple takes no pre-restore snapshot either, it moves the existing file aside, so OS/7 keeps what it is about to overwrite by the strongest means available where it stands — a snapshot with privilege, a rename without ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md)) |
+| Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is what a machine taught it** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable (M-V22). The answer is Time Machine's own: Apple takes no pre-restore snapshot either, it moves the existing file aside, so OS/7 keeps what it is about to overwrite by the strongest means available where it stands — a snapshot with privilege, a rename without ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md)). **AND SINCE 2026-09-15 DOMAIN USERS HAVE VERSIONS AT ALL** (VL7, closed): `rpool/DATA/lib/os7-domain-homes` — where every domain account's home is — was in no backup policy, so a domain-joined machine snapshotted nobody's work. One line of defaults and a firstboot migration for machines already installed. Measuring it found the bigger one beside it: a dataset with NO snapshots returned an empty list in silence, and the window turned that into a claim — *"1 versions, back to today"* — because it asks with `-IncludeCurrent`, so V6's own sentence was unreachable for every file that EXISTS (#163). Then clicking found the refusal arriving as PowerShell's ConciseView stack trace, drawn twice ([SESSION-VERSIONS-DOMAIN-HOMES.md](docs/SESSION-VERSIONS-DOMAIN-HOMES.md)) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -356,7 +356,29 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   bytes, and the owner is never
                                           #   refused their own file. Eight
                                           #   planted defects go red, one per
-                                          #   rule. 102 checks, no ZFS, seconds
+                                          #   rule.
+                                          #   AND THE FOURTH NOTHING (V6, #163):
+                                          #   a dataset with NO snapshots is a
+                                          #   REFUSAL, not an empty list, and
+                                          #   not even with -IncludeCurrent —
+                                          #   which is the switch that made the
+                                          #   empty branch unreachable for every
+                                          #   file that exists, so the window
+                                          #   drew "1 versions, back to today"
+                                          #   for a file nothing is kept for.
+                                          #   Every ZFS dataset outside the
+                                          #   backup policy was in that state:
+                                          #   /var/log, /var/tmp, and until the
+                                          #   same day every DOMAIN user's home.
+                                          #   §11 asks it with the window's
+                                          #   exact call; §12 holds the
+                                          #   migration that takes machines
+                                          #   already installed. Remove the
+                                          #   guard on a copy (OS7_RESTORE_MODULE)
+                                          #   and nine assertions go red with
+                                          #   windowCount = 1, the number off
+                                          #   the screen.
+                                          #   176 checks, no ZFS, seconds
 ./installer/testing/check-gui-tokens.py   # G9: OS/7's GUI apps have ONE palette.
                                           #   The 17 Windows 2000 constants live
                                           #   in the desktop theme's gtk.css AND
@@ -645,7 +667,7 @@ The two self-tests need no VM, no ZFS and no ISO, and both are green:
 
 ```bash
 pwsh -c 'Import-Module ./powershell/Zfs/Zfs.psd1 -Force; Test-ZfsModule'   # 75
-pwsh -c 'Import-Module ./powershell/OS7/OS7.psd1 -Force; Test-OS7Backup'   # 63
+pwsh -c 'Import-Module ./powershell/OS7/OS7.psd1 -Force; Test-OS7Backup'   # 69
 ```
 
 **Boot environments are real since 2026-08-25**, and none of it is a ZFS
@@ -1157,11 +1179,31 @@ src/                        OS/7's own GUI applications and the design system
                             the whole visual grammar in one control, and it names
                             no colour - the four edges are properties the control
                             themes fill from tokens
+  OS7.Shell/                the ONE channel from an application to the
+                            PowerShell surface (G4). Small, and shared rather
+                            than copied because everything it gets right was got
+                            wrong first and cost a machine run: PlainText
+                            rendering (a window drew `[31;1m` at an operator),
+                            an ANSI strip as the belt, NormalView (PowerShell's
+                            default renders a `throw` as a SOURCE EXCERPT with
+                            the sentence in `| ` fragments beneath it, #163), and
+                            Message, which drops what NormalView appends and the
+                            OS7-STEP progress lines - never "the first line",
+                            because a refusal may be several on purpose
   OS7.App.SoftwareUpdate/   the first application. amd64 GUI only. It implements
                             no policy: Applicable is READ off Get-OS7Release and
                             never recomputed, and the update runs in
                             os7-update@<version>.service so the app never has
-                            root. --self-test is 46 decisions with no display
+                            root. --self-test is 57 decisions with no display
+  OS7.App.Versions/         the second. `os7-versions <path>` is the WHOLE
+                            contract with whatever file manager is installed
+                            (V3), and the window decides nothing a cmdlet has
+                            not: it calls Get-OS7FileVersion for what to show
+                            and Restore-OS7File to put one back - no copy, no
+                            rename, no snapshot of its own. Four of its files
+                            LEFT when V18 made it ask rather than compute.
+                            --self-test is 70 decisions with no ZFS and no
+                            display
 powershell/Directory/       the GENERIC directory layer (P2-directory). LDAP
                             over System.DirectoryServices.Protocols, which ships
                             inside pwsh and needs no Add-Type, plus realm

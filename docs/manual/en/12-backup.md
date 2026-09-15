@@ -38,11 +38,21 @@ before it is installed.
 
 ## 12.2 Changing the policy
 
-Which datasets are backed up:
+Which datasets are backed up. **This replaces the list, it does not add to
+it** — name every dataset you want kept, including the ones that were already
+there:
 
 ```powershell
-Set-OS7BackupPolicy -Dataset rpool/USERDATA, rpool/DATA/srv
+Set-OS7BackupPolicy -Dataset rpool/USERDATA, rpool/DATA/srv, rpool/DATA/lib/os7-domain-homes
 ```
+
+That is the default list. `rpool/USERDATA` holds local accounts' home
+directories, one dataset each; `rpool/DATA/lib/os7-domain-homes` holds the home
+directories of accounts that sign in from the domain. Leaving the third one out
+stops the machine keeping anything at all for domain users — no snapshots, no
+backup, and no previous versions of their files.
+
+`Get-OS7BackupPolicy` shows the list in force before you change it.
 
 How long the snapshots are kept:
 
@@ -193,5 +203,36 @@ Restore-OS7File /home/jsmith/quote.docx `
 Without `-Destination` the existing file is replaced, and for that the command
 requires `-Force`.
 
+**What was there is kept, so a restore can itself be undone.** Before anything
+is overwritten the machine keeps the current state by the strongest means it
+has where the file stands, and the confirmation says which before you answer:
+
+* as **root**, a ZFS snapshot of the destination's dataset, named
+  `os7-before-restore-<date>-<time>`. The result's `SafetySnapshot` names it,
+  and `Restore-OS7File -Snapshot <that name> -Force` puts things back.
+* as the **file's owner**, the existing file **renamed** to
+  `<file>.os7-before-restore-<date>-<time>`, beside it in the same directory.
+  The result's `SafetyCopy` names it. Renaming costs no disk space, and it is
+  visible: you decide when it is finished with, and nothing deletes it for you.
+
+`-NoSafetyPoint` turns both off. If the destination is not on ZFS at all — a USB
+stick, a network share — the restore still happens and you are told that it
+could not be made undoable.
+
 > A user who owns the file needs no administrator for this: snapshots are
 > readable to them, and `Get-OS7FileVersion` runs without elevation.
+
+**"has NO snapshots at all" is not "the file never changed".** If the command
+answers
+
+```
+rpool/DATA/tmp has NO snapshots at all, so nothing on this machine holds an
+earlier version of '/var/tmp/report.txt'...
+```
+
+then that dataset is keeping no history — either it is not in the backup policy
+(`Get-OS7BackupPolicy` shows which datasets are, and `Set-OS7BackupPolicy` is
+how one is added, §12.2) or the machine was installed minutes ago and has not
+taken its first snapshot yet. Only `rpool/USERDATA`, `rpool/DATA/srv` and
+`rpool/DATA/lib/os7-domain-homes` are snapshotted by default; `/var/log`,
+`/var/tmp` and removable media are not.

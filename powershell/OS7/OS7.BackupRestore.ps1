@@ -358,6 +358,13 @@ function Get-OS7FileVersion {
 		snapshots, and hiding it is what makes findoid's answer smaller than the
 		truth.
 
+		A DATASET WITH NO SNAPSHOTS IS A REFUSAL, not an empty list, and not
+		even with -IncludeCurrent. VERSIONS-PLAN V6: an empty list reads as
+		"nothing changed" and the fact is "nothing is being kept". Domain users'
+		homes are the case that made it real — /var/lib/os7/domain-homes is on
+		rpool/DATA, outside the snapshot policy, so every file in them answered
+		silently until 2026-09-15.
+
 	.PARAMETER Path
 		The file or folder, as it is on the live filesystem — the same path you
 		would type to open it. It does not have to still exist.
@@ -439,6 +446,46 @@ function Get-OS7FileVersion {
 
 		$snaps = @(Get-ZfsSnapshot -Name $owner.Dataset -NoRecurse | Sort-Object Creation)
 
+		# THE FOURTH NOTHING, and it is the one V6 was written about. The three
+		# below it all presuppose that the dataset HAS snapshots and the path is
+		# not in them. A dataset with NONE is a different fact entirely — the
+		# machine is keeping no history here at all — and until 2026-09-15 it
+		# was the one case that said nothing.
+		#
+		# MEASURED ON A MACHINE, on an install from OS7-1.0.0.233-amd64.iso: a
+		# file under /var/lib/os7/domain-homes, where every DOMAIN user's home
+		# is, returned zero versions and raised nothing. The window then drew
+		# "1 versions, back to <today>" and a single `Now` card, because it asks
+		# with -IncludeCurrent and the live file is always there — so the
+		# NoHistory sentence App.axaml.cs holds for exactly this case was
+		# unreachable for any file that exists. A reader was told its history
+		# reaches back to this morning when nothing about it is being kept.
+		#
+		# It is thrown BEFORE the loop and regardless of -IncludeCurrent,
+		# because "what is there now" is not an answer to "what is kept".
+		#
+		# THE POLICY IS NOT CONSULTED, and that is a measurement rather than a
+		# simplification: /etc/os7/backup.json is 0600 root:root (measured), so
+		# the unprivileged owner who sees this message cannot read the file that
+		# would say which of the two reasons applies. A diagnostic that depended
+		# on it would be right only for the reader who needs it least. Both
+		# reasons are named instead, with the verb that separates them.
+		if ($snaps.Count -eq 0) {
+			# NO BACKTICKS AROUND THE CMDLET NAMES. In a double-quoted PowerShell
+			# string a backtick is the escape character, so a message assembled
+			# from both quote styles comes out with the marks on one name and not
+			# the other — which is what this said until it was read off a machine.
+			throw [System.InvalidOperationException]::new(
+				"$($owner.Dataset) has NO snapshots at all, so nothing on this machine " +
+				"holds an earlier version of '$full'. This is NOT 'the file has never " +
+				"changed' — no history is being kept for this dataset. " +
+				'Get-OS7BackupPolicy says which datasets this machine snapshots; if ' +
+				"$($owner.Dataset) is not among them, Set-OS7BackupPolicy is what adds " +
+				'it, and if it IS among them this machine has simply not taken its first ' +
+				'snapshot yet — sanoid takes one within fifteen minutes of a fresh ' +
+				'install.')
+		}
+
 		$out = [System.Collections.Generic.List[object]]::new()
 		$denied = 0
 		foreach ($s in $snaps) {
@@ -512,9 +559,11 @@ function Get-OS7FileVersion {
 			}
 		}
 
-		# THREE DIFFERENT NOTHINGS, and they need three different sentences. A
-		# cmdlet that returns an empty set for all of them sends the operator to
-		# look for a file that is right there behind a permission or a property.
+		# THE REMAINING NOTHINGS, and they need a sentence each. A cmdlet that
+		# returns an empty set for all of them sends the operator to look for a
+		# file that is right there behind a permission or a property. The
+		# dataset-has-no-snapshots case is the fourth and is thrown above,
+		# before any of this runs.
 		if ($out.Count -eq 0 -and $snaps.Count -gt 0) {
 			if ($denied -gt 0) {
 				throw [System.UnauthorizedAccessException]::new(

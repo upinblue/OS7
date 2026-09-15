@@ -12,7 +12,76 @@ public sealed record ShellResult(int ExitCode, string Stdout, string Stderr)
 	/// The machine's own words about a failure, cleaned of decoration but not
 	/// of meaning.
 	/// </summary>
-	public string Message => Stderr.Length > 0 ? Stderr : $"pwsh exited {ExitCode} without saying why.";
+	/// <remarks>
+	/// <para>
+	/// WHAT IS REMOVED IS EVERYTHING THAT IS NOT THE SENTENCE, and both kinds
+	/// were read off a machine on 2026-09-15, in the Versions window, showing a
+	/// cmdlet's refusal:
+	/// </para>
+	/// <list type="bullet">
+	///   <item><description>
+	///     <c>PowerShellRunner.PlainTextPrefix</c> asks for NormalView, which
+	///     puts the message FIRST and whole. What it appends —
+	///     <c>At /path/to.ps1:478 char:4</c>, the source excerpt, CategoryInfo,
+	///     FullyQualifiedErrorId — is about the module's source and belongs to
+	///     nobody reading a window. (ConciseView, the default, is worse: it
+	///     wraps the sentence into <c>| </c>-prefixed fragments UNDER a source
+	///     excerpt, which is what an operator actually saw.)
+	///   </description></item>
+	///   <item><description>
+	///     <c>OS7-STEP</c> and <c>ZFS-STEP</c> progress lines, which go to
+	///     stderr and are not errors. They can even name a step that did not
+	///     happen: <c>New-ZfsSnapshot</c> writes its line BEFORE invoking zfs,
+	///     so an unprivileged restore prints one for a snapshot it was then
+	///     refused (docs/SESSION-VERSIONS-RESTORE-SAFETY.md §2a).
+	///   </description></item>
+	/// </list>
+	/// <para>
+	/// THE SENTENCE ITSELF IS NEVER TOUCHED, however many lines it has. A
+	/// refusal may legitimately carry the tool's own words on their own lines
+	/// (V19's does), so nothing here takes "the first line" — it removes two
+	/// recognisable shapes and keeps the rest.
+	/// </para>
+	/// </remarks>
+	public string Message
+	{
+		get
+		{
+			var kept = new List<string>();
+			foreach (var line in Stderr.Split('\n'))
+			{
+				var text = line.TrimEnd('\r');
+				var trimmed = text.TrimStart();
+
+				if (trimmed.StartsWith("OS7-STEP ", StringComparison.Ordinal)
+					|| trimmed.StartsWith("ZFS-STEP ", StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				// NormalView's trailer starts here and runs to the end.
+				if (ErrorTrailer.IsMatch(trimmed))
+				{
+					break;
+				}
+
+				kept.Add(text);
+			}
+
+			var message = string.Join(Environment.NewLine, kept).Trim();
+			return message.Length > 0
+				? message
+				: $"pwsh exited {ExitCode} without saying why.";
+		}
+	}
+
+	/// <summary>
+	/// NormalView's <c>At &lt;file&gt;:&lt;line&gt; char:&lt;column&gt;</c>, which
+	/// is where the message ends and PowerShell's account of its own source
+	/// begins.
+	/// </summary>
+	private static readonly Regex ErrorTrailer =
+		new(@"^At .+:\d+ char:\d+$", RegexOptions.Compiled);
 }
 
 /// <summary>
@@ -54,7 +123,18 @@ public sealed class PowerShellRunner
 	/// Prefixed to every script. See the class remarks — this is the real fix,
 	/// and <see cref="AnsiEscape"/> is the belt.
 	/// </summary>
-	public const string PlainTextPrefix = "$PSStyle.OutputRendering = 'PlainText'; ";
+	/// <remarks>
+	/// <c>$ErrorView = 'NormalView'</c> is the third of the same kind, and it
+	/// cost a machine run like the other two. PowerShell 7's default is
+	/// ConciseView, which renders a thrown exception as a SOURCE EXCERPT with
+	/// the message wrapped into <c>| </c>-prefixed fragments beneath it — so the
+	/// Versions window drew <c>OperationStopped: …/OS7.BackupRestore.ps1:478</c>
+	/// and a row of tildes at an operator, around the one sentence that told
+	/// them what to do. NormalView puts the message first and whole;
+	/// <see cref="ShellResult.Message"/> drops what it appends.
+	/// </remarks>
+	public const string PlainTextPrefix =
+		"$PSStyle.OutputRendering = 'PlainText'; $ErrorView = 'NormalView'; ";
 
 	/// <summary>ANSI SGR and cursor sequences.</summary>
 	private static readonly Regex AnsiEscape =

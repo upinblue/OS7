@@ -16,13 +16,22 @@ Decisions are **V1–V19**, limitations **VL1–VL9**, owed measurements **O-V1�
 `powershell/OS7/OS7.BackupRestore.ps1`; the storage rule and `Get-OS7RestoreAside` in
 `OS7.Storage.ps1`; `os7-storage-relief.service`/`.timer` and the login banner in the `os7-backup`
 package; the window, the `NoDisplay` desktop entry and the GNOME Files extension in
-`os7-app-versions`. `installer/testing/check-storage-logic.py` holds the decisions at **149 checks**
+`os7-app-versions`. `installer/testing/check-storage-logic.py` holds the decisions at **176 checks**
 with no ZFS and no VM, and `check-gui-logic.py` holds what the window may and may not do.
 
 **What is NOT built:** the honest per-file space reporting (§8 step 8, VL4), German strings (v1 is
 English only, GUI-APPS-PLAN), and boot-environment history in the same window (O-V7). **arm64 has
 none of it and is not meant to** — the window is amd64-GUI only (VL5); the cmdlets work everywhere,
 which is why they exist.
+
+**DOMAIN USERS HAVE VERSIONS SINCE 2026-09-15**, which VL7 said they did not.
+`rpool/DATA/lib/os7-domain-homes` is in the default backup policy and a firstboot migration puts it
+into the policy of machines already installed; the cost is that retention is shared across all of
+them (**VL10**). Measuring it found the larger defect beside it: a dataset with no snapshots
+returned an empty list in silence and **the window turned that into a claim about the past** —
+*"1 versions, back to <today>"* — because it asks with `-IncludeCurrent` and the live file is always
+there, so V6's own sentence was unreachable for every file that exists
+([SESSION-VERSIONS-DOMAIN-HOMES.md](SESSION-VERSIONS-DOMAIN-HOMES.md)).
 
 **Three decisions a reader should not re-derive.** V1: this is a READER — sanoid takes and prunes
 the snapshots, and the one exception is the safety point a restore makes, which OS/7 therefore also
@@ -165,11 +174,30 @@ Right-clicking a **file** shows that file's versions. Right-clicking a **folder*
 of one) browses the folder *as it was*, which is the case that finds a file somebody deleted three
 weeks ago — measured possible in M-V4 and the thing an operator cannot do today by any means.
 
-### V6 — A path with no version history says so. Proposed 2026-09-14.
+### V6 — A path with no version history says so. Proposed 2026-09-14. **Enforced 2026-09-15.**
 
 `/etc`, `/var/log`, a USB stick, an NFS mount: no ZFS dataset, or one nobody snapshots. The window
 says which of those it is. It must never show an empty list, because an empty list means "nothing
 changed" and this means "nothing is being kept".
+
+**FOR A YEAR OF THIS PLAN'S LIFE THAT WAS A SENTENCE AND NOT A RULE, AND THE CASE IT WAS WRITTEN FOR
+IS THE ONE IT MISSED.** `Get-OS7FileVersion` had three refusals for three different nothings — not
+on ZFS, the mountpoint itself, a dataset that is not mounted — and none for **a dataset with no
+snapshots at all**, which is every ZFS dataset outside the backup policy: `/var/log`, `/var/tmp`,
+`/srv`'s siblings, and until the same day every domain user's home. It returned an empty list in
+silence, and the window — which asks with `-IncludeCurrent`, so the live file is always in it —
+never saw zero rows and drew *"1 versions, back to <today>"*.
+
+So the fourth nothing is a refusal now, thrown BEFORE the snapshot loop and regardless of
+`-IncludeCurrent`, because *what is there now* is not an answer to *what is kept*. It names the
+dataset, says out loud what the empty list would have meant, and carries **both** reasons — not in
+the policy, or in it and not yet snapshotted — with the verb that separates them.
+
+**IT READS NO POLICY TO DECIDE WHICH.** `/etc/os7/backup.json` is 0600 root:root (measured), so the
+unprivileged owner this message is for cannot open the file that would say. A diagnostic that asked
+would be right only for the reader who needs it least. `check-storage-logic.py` §11 holds that as a
+source rule and asks about a CALL, not about the names appearing — they are in the sentence on
+purpose (#148).
 
 ### V7 — Three verbs, and only one of them changes anything. Proposed 2026-09-14.
 
@@ -502,7 +530,9 @@ for.
 `Invoke-OS7StorageRelief`, `Get-OS7ProtectedBootEnvironment`, `Get-OS7VersionStore` — and
 `Get-ZfsPool` in the generic layer, which did not exist and which Z1 required rather than letting
 OS/7 call `zpool` itself. `installer/testing/check-storage-logic.py` holds every decision above
-against a fake pool: 37 checks, no ZFS, seconds.
+against a fake pool — its sections 1 to 4, which were 37 checks when they were
+all there was. The file is 176 now and covers the restore, the asides, the
+units and V6's refusal beside them.
 
 ---
 
@@ -538,11 +568,23 @@ against a fake pool: 37 checks, no ZFS, seconds.
 - **VL6 — a renamed or moved file loses its thread.** The path is the identity, so
   `notes.txt` → `notes-old.txt` looks like a deletion and a creation. Time Machine behaves the same
   way; naming it here stops it being reported as a defect.
-- **VL7 — domain users' homes are not on USERDATA datasets.** They live under
-  `/var/lib/os7/domain-homes` ([DECISIONS.md](DECISIONS.md) open question 10), which is `rpool/DATA`
-  and not in B5's policy. **A domain user would have no versions at all**, and that is the same open
-  question arriving in a third place.
+- ~~**VL7 — domain users' homes are not on USERDATA datasets.**~~ — **CLOSED 2026-09-15.** They do
+  live under `/var/lib/os7/domain-homes` on `rpool/DATA/lib/os7-domain-homes`, and that dataset is
+  in the default backup policy now, with a firstboot migration for machines already installed. The
+  measurement that decided it: with snapshots on that dataset the whole feature works through it
+  **unchanged** — cascade, timeline, preview, restore — so this was a policy line and never a
+  missing capability. Its cost is VL10.
 - **VL8 — nothing here is built.**
+- **VL10 — every domain user shares one dataset's retention and one `usedbysnapshots`.**
+  Local accounts get a dataset each (`rpool/USERDATA/<user>_<suffix>`, #74); domain accounts get a
+  DIRECTORY in one shared dataset, because sssd's `pam_mkhomedir` makes a directory at first login
+  and nothing makes a dataset. So `Get-OS7VersionStore` answers for all of them at once, one busy
+  account's history is charged to the group, and the retention policy is not per-person. That
+  sharpens VL4 rather than adding a new problem, and it is the deliberate price of the simplest
+  answer that closes VL7 — a per-account layout would need a root-run mechanism in front of PAM
+  (BUILD-NOTES #78), for a machine that will have a handful of domain accounts. **It costs nothing
+  in confidentiality**: a snapshot keeps the permissions the files had, measured in both directions
+  with a second unprivileged account as the control (M-V56).
 - **VL9 — nothing prunes the files V19 puts aside.** The ZFS snapshots are pruned (V8, newest five
   per dataset); a `notes.txt.os7-before-restore-20260915-073919` sitting in somebody's home is not.
   It costs no space — it is a rename, the same inode — but it accumulates in the listing, and only
@@ -595,7 +637,7 @@ against a fake pool: 37 checks, no ZFS, seconds.
 ## 7a. What building steps 1–3 measured, 2026-09-14
 
 **`src/OS7.App.Versions/` is built and read-only, and it has run on a machine
-against real snapshots.** `--self-test` is 62 checks with no ZFS and no display;
+against real snapshots.** `--self-test` is 70 checks with no ZFS and no display;
 `check-gui-logic.py` holds the layer rules for both applications.
 
 | | |
@@ -700,7 +742,12 @@ did not exist; they do, and what is left is not what this list said it was.
 8. **The honest space reporting**, where BL5 has to be faced — and the automatic half of it is now
    built: `os7-storage-relief.timer` runs the rule every fifteen minutes, and `Get-OS7RestoreAside`
    reports what restores left behind. What is left here is the per-file question ZFS does not answer
-   cheaply (VL4).
+   cheaply (VL4), now with VL10 beside it: domain users share a dataset, so what it reports for them
+   is a group total.
+9. ~~**Domain users (VL7)**~~ — **DONE 2026-09-15**, and it is one line of policy plus one
+   migration, because the feature already worked through that dataset and only the snapshots were
+   missing. The measurement that mattered was made BEFORE the code: two snapshots taken by hand, and
+   the window drew the cascade.
 
 Steps 1–6 changed nothing on a machine. The first destructive verb **in the window** arrived at
 step 7, by which point the window had been looked at by somebody.
@@ -726,11 +773,28 @@ both are held by checks proven to fire.
    snapshots of a different kind.
 4. **O-V2 and O-V4** — the preview cost and how many snapshots the window can list before it stalls.
    Both are narrowed, neither is measured.
-5. **VL7 — domain users have no versions at all.** Their homes are under
-   `/var/lib/os7/domain-homes` on `rpool/DATA`, outside B5's policy. On a domain-joined machine the
-   feature is dead for the people who actually use it, and that is the largest functional hole left.
-6. **arm64 is unmeasured**, and the window is amd64-only by design (VL5). What should be checked
+5. ~~**VL7 — domain users have no versions at all.**~~ — **CLOSED 2026-09-15**, and closing it
+   found the defect above it. `rpool/DATA/lib/os7-domain-homes` is in the default policy and
+   migration `71-domain-homes-in-backup-policy` puts it into the policy of machines already
+   installed; sanoid then takes its four buckets on its own timer, and the window draws a domain
+   home's history unchanged. What is left of it is **VL10**: they share one dataset's retention and
+   one `usedbysnapshots`, which sharpens VL4.
+   [SESSION-VERSIONS-DOMAIN-HOMES.md](SESSION-VERSIONS-DOMAIN-HOMES.md).
+6. **A dataset that keeps nothing still reads as a FAILURE in the window's heading.** The cmdlet
+   refuses (V6), the window reads a refusal as `Failed`, and the heading says *"Previous versions
+   could not be listed."* Nothing failed; nothing is kept. `check-gui-logic.py` already holds the
+   rule that those are different states, and the window cannot honour it while the only channel is
+   a thrown exception's text. Fixing it properly means giving the cmdlet a STRUCTURED error — a JSON
+   answer rather than a throw — which touches both applications and every refusal they show, and is
+   a decision rather than a patch. Fixing it improperly means the window parsing the message, which
+   is the coupling V18 removed. Left open deliberately.
+7. **arm64 is unmeasured**, and the window is amd64-only by design (VL5). What should be checked
    there is the CMDLETS.
-7. **A release-grade medium.** Every ISO in this story was built with `OS7_REPO_NO_CREDENTIAL=1`, so
+8. **A release-grade medium.** Every ISO in this story was built with `OS7_REPO_NO_CREDENTIAL=1`, so
    the machines it installs cannot reach the OS/7 repository — four of `check-image.py`'s failures
    and one fact. `scripts/setup-release-credentials.sh` is what closes it.
+9. **And the next medium is what proves the packaged path for any of §8's later steps.** Everything
+   measured on 2026-09-15 was measured with the module file and the application copied onto a bench
+   by hand (BUILD-NOTES #93), which is why each rule is also held by a check that needs no machine.
+   §2e of [SESSION-VERSIONS-RESTORE-SAFETY.md](SESSION-VERSIONS-RESTORE-SAFETY.md) is the shape that
+   run should take: a fresh ISO, a fresh install, nothing copied on.

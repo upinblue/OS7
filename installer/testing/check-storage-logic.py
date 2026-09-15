@@ -50,8 +50,17 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-STORAGE = os.path.join(REPO, "powershell", "OS7", "OS7.Storage.ps1")
-RESTORE = os.path.join(REPO, "powershell", "OS7", "OS7.BackupRestore.ps1")
+# OS7_STORAGE_MODULE and OS7_RESTORE_MODULE redirect these at another copy of
+# the file, which is how a rule here is proven to FIRE rather than only to stay
+# quiet: copy the file aside, remove the guard in the copy, point this at it,
+# and require RED. check-secureboot-logic.py's OS7_SB_MODULE and
+# check-ps-traps.py's OS7_SCAN_ROOT exist for the same reason and it is the same
+# argument — a rule that has only ever been green is a rule nobody has seen
+# work. §11's own defect was planted this way before it was believed.
+STORAGE = os.environ.get("OS7_STORAGE_MODULE") or os.path.join(
+    REPO, "powershell", "OS7", "OS7.Storage.ps1")
+RESTORE = os.environ.get("OS7_RESTORE_MODULE") or os.path.join(
+    REPO, "powershell", "OS7", "OS7.BackupRestore.ps1")
 
 FAILS = []
 
@@ -1294,6 +1303,202 @@ def read(path, code_only=False):
                         if not line.lstrip().startswith("#"))
 
 
+NO_HISTORY_FAKES = r"""
+function N { param([string]$p) $p -replace '\\', '/' }
+
+# The REAL Get-OS7FileVersion runs here — that is the whole point of this
+# section. Only what is UNDER it is faked: the ZFS layer's two verbs and the
+# module import, so the cmdlet's own decisions are the thing being measured.
+$script:Snaps = @()
+$script:Sets  = @()
+
+function Import-OS7ZfsLayer { }
+function Write-OS7Step { param([string]$Message) }
+
+function Get-ZfsDataset {
+	param([string]$Name, [string]$Type, [switch]$Recurse)
+	$script:Sets
+}
+
+function Get-ZfsSnapshot {
+	param([string]$Name, [switch]$NoRecurse)
+	@($script:Snaps | Where-Object { $_.Dataset -eq $Name })
+}
+
+function New-Set {
+	param([string]$Name, [string]$Mountpoint)
+	[pscustomobject]@{ Name = $Name; Mountpoint = $Mountpoint; Mounted = $true }
+}
+
+function New-Snap {
+	param([string]$Dataset, [string]$Name, [datetime]$Created)
+	[pscustomobject]@{
+		Name = "$Dataset@$Name"; Dataset = $Dataset
+		SnapshotName = $Name; Creation = $Created }
+}
+
+# Real directories, because the cmdlet stats real files: a snapshot's copy of a
+# path is reached as <mountpoint>/.zfs/snapshot/<name>/<relative>, and whether
+# it is THERE is what separates a version from a boundary.
+$script:Root = N (Join-Path ([System.IO.Path]::GetTempPath()) ("os7v6-" + [guid]::NewGuid().ToString('N')))
+$script:HomeDir = "$script:Root/domain-homes"
+New-Item -ItemType Directory -Force -Path "$script:HomeDir/mueller" | Out-Null
+Set-Content -LiteralPath "$script:HomeDir/mueller/Angebot.txt" -Value 'live work' -NoNewline
+
+# One caught call, reduced to the two things a check can ask: did it throw, and
+# what did it say.
+function Invoke-Versions {
+	param([scriptblock]$Body)
+	try {
+		$v = @(& $Body)
+		return [pscustomobject]@{ threw = $false; count = $v.Count; message = '' }
+	}
+	catch {
+		return [pscustomobject]@{ threw = $true; count = 0; message = $_.Exception.Message }
+	}
+}
+"""
+
+
+def nohistory():
+    print()
+    print("  11. A dataset with NO snapshots is a refusal, not an empty list")
+
+    # docs/VERSIONS-PLAN.md V6: "It must never show an empty list, because an
+    # empty list means 'nothing changed' and this means 'nothing is being
+    # kept'." The cmdlet had three sentences for three different nothings and
+    # none for the fourth, which is the one an operator actually meets.
+    #
+    # MEASURED ON A MACHINE, 2026-09-15, on an install from
+    # OS7-1.0.0.233-amd64.iso: a file under /var/lib/os7/domain-homes — where
+    # every DOMAIN user's home is — came back as zero versions with no error,
+    # and the window then drew "1 versions, back to <today>" over a single Now
+    # card, because it asks with -IncludeCurrent and the live file is always
+    # there. So App.axaml.cs's NoHistory sentence, written for exactly this,
+    # was unreachable for any file that exists. A reader was told its history
+    # reaches back to this morning when nothing about it is kept at all.
+    body = NO_HISTORY_FAKES + r"""
+$out = [ordered]@{}
+$script:Sets = @(New-Set -Name 'rpool/DATA/lib/os7-domain-homes' -Mountpoint $script:HomeDir)
+$file = "$script:HomeDir/mueller/Angebot.txt"
+
+# --- A: no snapshots at all -------------------------------------------------
+$script:Snaps = @()
+$a = Invoke-Versions { Get-OS7FileVersion -Path $file }
+$out['plainThrew'] = $a.threw
+$out['plainMessage'] = $a.message
+
+# --- B: and -IncludeCurrent does not make it an answer ----------------------
+# THE WINDOW'S OWN CALL. It asks with -DistinctOnly -IncludeCurrent
+# -IncludeAbsent, and the live file is always there — so this is the one path
+# that decides whether a reader is told the truth.
+$b = Invoke-Versions { Get-OS7FileVersion -Path $file -IncludeCurrent -DistinctOnly -IncludeAbsent }
+$out['windowThrew'] = $b.threw
+$out['windowCount'] = $b.count
+
+# --- C: one snapshot is enough to make it an ordinary answer again ----------
+# The control. A guard that fired on a dataset that DOES keep history would
+# have replaced a silent wrong answer with a loud one.
+# The name carries no colons, and sanoid's do. A snapshot's contents are
+# reached through a DIRECTORY here, and Windows refuses a colon in a path — so
+# this section would run on one host and not the other. What it measures is the
+# decision, and the decision does not read the name.
+$script:Snaps = @(New-Snap 'rpool/DATA/lib/os7-domain-homes' 'autosnap_2026-09-15_1300_hourly' ([datetime]'2026-09-15T13:00:00'))
+$snapdir = "$script:HomeDir/.zfs/snapshot/autosnap_2026-09-15_1300_hourly/mueller"
+New-Item -ItemType Directory -Force -Path $snapdir | Out-Null
+Set-Content -LiteralPath "$snapdir/Angebot.txt" -Value 'older' -NoNewline
+$c = Invoke-Versions { Get-OS7FileVersion -Path $file -IncludeCurrent }
+$out['withSnapThrew'] = $c.threw
+$out['withSnapCount'] = $c.count
+
+# --- D: a snapshot that does NOT hold the file is still not this refusal ----
+# The dataset keeps history; this path is simply not in it. That is a different
+# fact and the cmdlet already had a sentence for it.
+$missing = "$script:HomeDir/mueller/NichtDa.txt"
+Set-Content -LiteralPath $missing -Value 'brand new' -NoNewline
+$d = Invoke-Versions { Get-OS7FileVersion -Path $missing -IncludeCurrent }
+$out['newFileThrew'] = $d.threw
+$out['newFileCount'] = $d.count
+
+Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue
+$out | ConvertTo-Json -Depth 4
+"""
+    got = run(body, "the no-history cases run")
+    if got is None:
+        return
+
+    check(got["plainThrew"],
+          "a dataset with no snapshots REFUSES rather than returning nothing")
+
+    msg = got["plainMessage"] or ""
+    check("NO snapshots" in msg,
+          "and the refusal says the dataset has no snapshots at all")
+    check("never" in msg and "changed" in msg,
+          "it says out loud what the empty list would have meant — V6's whole "
+          "argument is that the two are confusable")
+    check("rpool/DATA/lib/os7-domain-homes" in msg,
+          "it names the dataset, because which one it is decides what to do next",
+          "" if "rpool/DATA/lib/os7-domain-homes" in msg else msg[:90])
+    check("Get-OS7BackupPolicy" in msg,
+          "and the verb that says WHY — a refusal with no way forward is #148's shape")
+    check("Set-OS7BackupPolicy" in msg,
+          "and the verb that fixes it when the answer is 'not in the policy'")
+    check("fifteen minutes" in msg,
+          "AND THE OTHER REASON, because a machine installed minutes ago has no "
+          "snapshots either and telling that operator to change the policy would "
+          "be wrong")
+
+    check(got["windowThrew"],
+          "-IncludeCurrent DOES NOT make it an answer — the live file is what is "
+          "there now, not what is kept")
+    check(got["windowCount"] == 0,
+          "so the window gets the sentence and not a one-row history",
+          str(got["windowCount"]))
+
+    check(not got["withSnapThrew"],
+          "ONE snapshot and it is an ordinary answer again — the guard is about "
+          "the dataset, not about the file")
+    check(got["withSnapCount"] == 2,
+          "both the version and the live file come back", str(got["withSnapCount"]))
+
+    check(not got["newFileThrew"],
+          "a file too new to be in any snapshot is NOT this refusal: that dataset "
+          "does keep history")
+    check(got["newFileCount"] == 1,
+          "it is just the live file, which is the truth about it",
+          str(got["newFileCount"]))
+
+    # THE POLICY FILE IS NOT CONSULTED, and this has to be a source rule because
+    # it cannot be seen from outside. /etc/os7/backup.json is 0600 root:root
+    # (measured on v20), so the unprivileged owner who reads this message cannot
+    # read the file that would say which of the two reasons applies. A diagnostic
+    # that asked it would be right only for the reader who needs it least — the
+    # rule that a diagnostic must not depend on what it diagnoses, arriving
+    # through a permission bit.
+    source = read(RESTORE)
+    parts = source.split("function Get-OS7FileVersion", 1)
+    check(len(parts) == 2, "Get-OS7FileVersion is in OS7.BackupRestore.ps1")
+    if len(parts) == 2:
+        rest = parts[1].split(chr(10) + "function ", 1)[0]
+        code = chr(10).join(line for line in rest.splitlines()
+                            if not line.lstrip().startswith("#"))
+        # ASKED ABOUT A CALL, NOT ABOUT THE NAME APPEARING. The names are in the
+        # message on purpose — that is the way forward a refusal owes (#148) —
+        # so a rule that looked for the string would forbid the sentence it
+        # requires. A call begins a statement; a mention sits inside a quoted
+        # string. The first version of this check keyed on backticks and would
+        # have gone green on a real call the day somebody removed them.
+        called = [line for line in code.splitlines()
+                  if ("Get-OS7BackupPolicy" in line or "Set-OS7BackupPolicy" in line)
+                  and not (line.lstrip().startswith("'")
+                           or line.lstrip().startswith('"'))]
+        check(not called,
+              "and it CALLS neither backup cmdlet — it names them in a sentence and "
+              "reads nothing, because backup.json is 0600 and this message is for "
+              "the reader who cannot open it",
+              called[0].strip()[:70] if called else "")
+
+
 def automatic():
     print()
     print("  10. And the part that makes it AUTOMATIC, which is a file and not a rule")
@@ -1416,6 +1621,95 @@ def automatic():
     check("powershell.config.json" in hook50,
           "a build-time hook parses it, and then starts a real pwsh through it")
 
+MIGRATIONS_DIR = os.path.join(REPO, "build", "packages", "os7-release",
+                              "migrations.d", "firstboot")
+MIGRATION = os.path.join(MIGRATIONS_DIR, "71-domain-homes-in-backup-policy")
+
+
+def migration():
+    print()
+    print("  12. And the machines already installed, which the default list cannot reach")
+
+    # Set-OS7BackupPolicy with no -Dataset keeps what is CONFIGURED and falls
+    # back to the defaults only when nothing is. That is correct — an update
+    # must not silently rewrite an administrator's dataset list — and it means
+    # a machine installed before today keeps its two-entry policy for ever.
+    # A migration is the only road to it, and this is the one that takes it.
+    text = read(MIGRATION)
+    code = read(MIGRATION, code_only=True)
+
+    check(bool(text), "the migration is in the tree")
+    if not text:
+        return
+
+    check("rpool/DATA/lib/os7-domain-homes" in code,
+          "it names the dataset it is about")
+    check("Set-OS7BackupPolicy" in code,
+          "and writes through the cmdlet — /etc/os7/backup.json is the source of "
+          "truth and /etc/sanoid/sanoid.conf is RENDERED from it, so a hand-edit "
+          "would be invisible to one and lost by the other")
+    # NAMING THE FILE IS NOT EDITING IT — the refusal when pwsh is missing says
+    # which file is the source of truth, on purpose. What must not be here is a
+    # WRITE: a redirection onto it, an in-place sed, a jq. The first version of
+    # this check looked for the string and went red on the sentence, which is
+    # the shape check-gui-tokens.py blanks comments for.
+    check("jq" not in code and "sed -i" not in code
+          and "> ${CONFIG}" not in code and ">${CONFIG}" not in code
+          and "tee ${CONFIG}" not in code,
+          "and edits the JSON with no tool of its own — no jq, no sed -i, no "
+          "redirection onto it")
+
+    # IT ADDS. A migration that passed only the new dataset would delete
+    # whatever an administrator had configured, on a machine that is being
+    # updated and is not being watched.
+    check("$current" in code and "+ @(" in code,
+          "IT ADDS TO THE EXISTING LIST rather than replacing it — this runs "
+          "unattended at a first boot, and an administrator's own sources are "
+          "not this migration's to drop")
+    check("-Retention" not in code,
+          "and passes no retention, so the one already in force carries across")
+
+    # Idempotence is the contract (the migrations README), and the state it
+    # asks for is the state it intends to create.
+    check("in_policy" in code,
+          "it asks whether the dataset is already in the policy — the state it "
+          "intends to create, not a marker of its own")
+
+    # THE EXIT CODE IS NOT THE PROOF. This repository's most expensive shape is
+    # a program reporting success while the thing it was meant to change did
+    # not change.
+    after = code.split("Set-OS7BackupPolicy", 1)[1]
+    check("in_policy" in after,
+          "AND IT READS THE POLICY BACK AFTERWARDS, because Set-OS7BackupPolicy "
+          "exiting 0 is not the same fact as the dataset being in the policy")
+
+    # A section naming a dataset that is not there is worse than no section:
+    # sanoid treats "no snapshots" as infinitely stale, tries, fails, prints
+    # CRITICAL ERROR to stderr — and exits 0.
+    check("zfs list" in code and "70-domain-home-dataset" in code,
+          "it refuses to add a section for a dataset that does not exist, and "
+          "names the migration that creates one")
+
+    # 70 creates the dataset, 71 puts it in the policy. The README's ordering
+    # rule is NUMERIC, and these two are the first pair here that depends on it.
+    check(os.path.exists(os.path.join(MIGRATIONS_DIR, "70-domain-home-dataset")),
+          "and 70-domain-home-dataset, which it depends on, is beside it")
+
+    # THE PACKAGE'S REQUIRED-PATH LIST IS DERIVED FROM THE SAME GLOB THAT
+    # COPIES THEM. It named 50-tpm2-reseal alone while three migrations were in
+    # the tree, so a migration that failed to reach the package would have
+    # shipped a release silently missing it — check-module-parts.py's shape, in
+    # a directory it does not cover.
+    packages = read(PACKAGES)
+    check("mig_must" in packages,
+          "build-os7-packages.sh derives the required-path list from the "
+          "migrations it copies")
+    check('"./usr/lib/os7/migrations/${OS7_VERSION}/firstboot/50-tpm2-reseal"'
+          not in packages,
+          "and no longer names one migration by hand beside a `cp *` — a list "
+          "written out beside a glob is a list that drifts on the next addition")
+
+
 def main():
     print("OS/7 storage pressure — the decisions, with no ZFS")
     print()
@@ -1434,6 +1728,8 @@ def main():
     confirmation()
     asides()
     automatic()
+    nohistory()
+    migration()
 
     print()
     if FAILS:

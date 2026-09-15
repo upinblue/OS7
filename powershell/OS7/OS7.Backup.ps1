@@ -84,10 +84,37 @@ $script:OS7BackupLock = '/run/os7-backup.lock'
 # `zfs destroy -r`, which takes every snapshot with them.
 $script:OS7BackupForbidden = @('rpool/ROOT', 'bpool/BOOT', 'bpool')
 
-# What the default policy covers. Both are OUTSIDE the boot environment by the
-# D10 rule — a path belongs in the BE only if rolling it back makes the system
-# more correct — which is the same test as "is this the user's data".
-$script:OS7BackupDefaultSources = @('rpool/USERDATA', 'rpool/DATA/srv')
+# What the default policy covers. All three are OUTSIDE the boot environment by
+# the D10 rule — a path belongs in the BE only if rolling it back makes the
+# system more correct — which is the same test as "is this the user's data".
+#
+# THE THIRD IS DOMAIN USERS' HOMES, and it was missing until 2026-09-15
+# (VERSIONS-PLAN VL7). A local account's home is a dataset under
+# rpool/USERDATA and is covered by the first entry; a DOMAIN account's is a
+# directory under /var/lib/os7/domain-homes, which is rpool/DATA/lib/
+# os7-domain-homes and was covered by nothing. So on a domain-joined machine
+# there were no snapshots of anybody's work, no backups of it, and no versions
+# — for precisely the people a domain-joined machine exists for.
+#
+# ONE DATASET FOR ALL OF THEM, not one per account. That is deliberate and it
+# is the whole of what makes this a policy line rather than a feature: sssd's
+# pam_mkhomedir creates a DIRECTORY at first login and nothing creates a
+# dataset, so a per-account layout would need a mechanism in front of PAM that
+# runs as root — for a machine that will have a handful of domain accounts.
+# What it costs is that retention and `usedbysnapshots` are shared across them
+# (VERSIONS-PLAN VL10).
+#
+# MEASURED BEFORE IT WAS WRITTEN, on v20: with snapshots on this dataset the
+# whole Versions feature works through it unchanged — the window draws the
+# cascade, the preview reads, the timeline sorts — and an unprivileged owner
+# reaches .zfs/snapshot and their own file in it. A second account is refused
+# by the permissions the files carried when the snapshot was taken (a home at
+# 0700 answers "Permission denied"), which is the same protection the live
+# files have and not a weaker one.
+$script:OS7BackupDefaultSources = @(
+	'rpool/USERDATA',
+	'rpool/DATA/srv',
+	'rpool/DATA/lib/os7-domain-homes')
 
 # ---------------------------------------------------------------------------
 # Safety (ZFS-POWERSHELL-PLAN Z8)
@@ -205,6 +232,42 @@ function New-OS7BackupRetention {
 		weekly     = 4
 		monthly    = 3
 		yearly     = 0
+	}
+}
+
+function New-OS7BackupSourceShape {
+	<#
+	.SYNOPSIS
+		Internal. Whether a dataset is snapshotted itself or only its children.
+
+	.DESCRIPTION
+		ONE LINE, PULLED OUT OF Set-OS7BackupPolicy SO THAT Test-OS7Backup CAN
+		ASK IT. It was inline, which made it a decision nothing could check
+		without writing a real policy through sanoid — and the answer differs
+		per dataset in a way that decides whether anything is snapshotted at
+		all.
+
+		rpool/USERDATA and rpool/DATA are CONTAINERS: canmount=off,
+		mountpoint=none, and the data is in their children, one dataset per
+		account. Snapshotting the container itself keeps a snapshot of nothing
+		on a schedule, so those are children-only.
+
+		rpool/DATA/lib/os7-domain-homes is NOT a container even though it holds
+		many users' homes, and that is the whole difference VL7 turns on: sssd's
+		pam_mkhomedir creates a DIRECTORY at first login and nothing creates a
+		dataset, so it has no children to snapshot. Children-only there would
+		render a section that snapshots nothing, quietly, for ever.
+
+		NAMED BY SHAPE AND NOT BY A LIST OF NAMES would be better still, and it
+		cannot be done here: "does this dataset have children that are datasets"
+		is a question about ZFS, and this runs where there may be none.
+	#>
+	param([Parameter(Mandatory)][string]$Dataset)
+
+	[pscustomobject]@{
+		Dataset      = $Dataset
+		Recursive    = $true
+		ChildrenOnly = ($Dataset -eq 'rpool/USERDATA' -or $Dataset -eq 'rpool/DATA')
 	}
 }
 
@@ -621,16 +684,16 @@ function Set-OS7BackupPolicy {
 
 	$sources = foreach ($d in $wanted) {
 		Assert-OS7DatasetSafe -Name $d -Action 'snapshot' -Force:$Force
+		# New-OS7BackupSourceShape and not an expression here: whether a dataset
+		# is snapshotted itself or only through its children decides whether
+		# anything is snapshotted at all, and inline it was a decision no check
+		# could reach without running sanoid. Test-OS7Backup asks it directly.
+		$shape = New-OS7BackupSourceShape -Dataset $d
 		[pscustomobject]@{
 			PSTypeName   = 'OS7.Backup.Source'
 			Dataset      = $d
-			# USERDATA is a container with canmount=off and mountpoint=none: the
-			# accounts live below it. Snapshotting the container itself keeps a
-			# snapshot of nothing on a schedule, so the default for a container
-			# is children-only. Named by shape rather than by name, so a second
-			# container gets the same treatment.
-			Recursive    = $true
-			ChildrenOnly = ($d -eq 'rpool/USERDATA' -or $d -eq 'rpool/DATA')
+			Recursive    = $shape.Recursive
+			ChildrenOnly = $shape.ChildrenOnly
 			Retention    = $keep
 		}
 	}

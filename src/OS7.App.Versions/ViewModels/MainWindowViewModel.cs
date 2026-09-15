@@ -289,6 +289,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 			_message = value;
 			Raise();
 			Raise(nameof(SubHeader));
+			Raise(nameof(Explanation));
 		}
 	}
 
@@ -350,9 +351,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 		_ => FileName,
 	};
 
+	/// <remarks>
+	/// IT USED TO BE THE MESSAGE, and the message is also what the empty pane
+	/// shows — so a refusal was drawn TWICE, once under the heading and once in
+	/// the middle of the window. Read off a machine on 2026-09-15 with a long
+	/// one; it was survivable with a short one, which is why it shipped.
+	/// The heading says what went wrong, this says which file it is about, and
+	/// <see cref="Explanation"/> is where the sentence goes — each thing once.
+	/// </remarks>
 	public string SubHeader => Phase switch
 	{
-		VersionsPhase.Failed or VersionsPhase.NoHistory => Message,
+		VersionsPhase.Failed or VersionsPhase.NoHistory => Path,
 		VersionsPhase.Loading => Path,
 
 		// The one line that says what the history actually covers. An operator
@@ -361,6 +370,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 			? Path
 			: $"{Entries.Count} versions, back to "
 				+ $"{Oldest.Version.Created.ToLocalTime():yyyy-MM-dd}",
+	};
+
+	/// <summary>
+	/// What the empty pane says, and the only place a refusal is drawn.
+	/// </summary>
+	/// <remarks>
+	/// V6: when there is nothing, say WHICH kind of nothing — and say it once.
+	/// This is the cmdlet's own sentence, unaltered; the application adds no
+	/// paraphrase, because the sentence carries the way forward.
+	/// </remarks>
+	public string Explanation => Phase switch
+	{
+		VersionsPhase.Failed or VersionsPhase.NoHistory => Message,
+		VersionsPhase.Loading => string.Empty,
+		_ => string.Empty,
 	};
 
 	public VersionEntry? Oldest => Entries.Count == 0 ? null : Entries[^1];
@@ -426,7 +450,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 			nameof(Phase), nameof(Selected), nameof(Cascade), nameof(SelectedIndex),
 			nameof(CanGoBack), nameof(CanGoForward), nameof(CanOpen),
 			nameof(CanRestore), nameof(RestorePrompt),
-			nameof(Header), nameof(SubHeader), nameof(HasEntries), nameof(Oldest),
+			nameof(Header), nameof(SubHeader), nameof(Explanation),
+			nameof(HasEntries), nameof(Oldest),
 		})
 		{
 			Raise(name);

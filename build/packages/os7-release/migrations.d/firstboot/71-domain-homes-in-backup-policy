@@ -1,0 +1,114 @@
+#!/bin/sh
+# VL7 — put the domain-home dataset into the backup policy, on machines that
+# already have one.
+#
+# THE DEFECT: /var/lib/os7/domain-homes got a dataset of its own on 2026-09-07
+# (A9, the migration beside this one), and nothing put that dataset into the
+# snapshot policy. The policy covers rpool/USERDATA and rpool/DATA/srv, so a
+# LOCAL account's home — a dataset under USERDATA — is snapshotted and a DOMAIN
+# account's home is not. Measured on an install from OS7-1.0.0.233-amd64.iso:
+# zero snapshots, and therefore no backups, no retention and no previous
+# versions of anybody's work, on precisely the machines a domain exists for.
+#
+# WHY A MIGRATION AND NOT JUST THE DEFAULT LIST: Set-OS7BackupPolicy called
+# with no -Dataset keeps what is already configured and falls back to the
+# defaults only when nothing is. That is correct — an administrator's dataset
+# list must not be silently rewritten by an update — and it means a machine
+# installed before today keeps its two-entry policy for ever unless something
+# says otherwise. This is that something, once, for the entry OS/7 itself
+# forgot.
+#
+# IT ADDS, IT NEVER REPLACES. Whatever else is in the policy stays, and so does
+# the retention: Set-OS7BackupPolicy without -Retention carries the existing
+# one across.
+#
+# IDEMPOTENT BY ASKING FOR THE STATE IT INTENDS TO CREATE — is this dataset in
+# the policy — and never for a marker of its own.
+#
+# THE EXIT CODE OF THE THING THAT WRITES IS NOT THE PROOF. The policy is read
+# back afterwards and the dataset required to be in it, because this repository
+# has paid repeatedly for "the program said it worked".
+set -u
+
+TAG="os7/71-domain-homes-in-backup-policy"
+DATASET="rpool/DATA/lib/os7-domain-homes"
+CONFIG="/etc/os7/backup.json"
+
+say() { echo "${TAG}: $*"; }
+
+# ---- is this a machine this applies to at all? -----------------------------
+if ! command -v zfs >/dev/null 2>&1; then
+    say "zfs is not on PATH, nothing to do"
+    exit 0
+fi
+if ! zpool list rpool >/dev/null 2>&1; then
+    say "no rpool on this machine, nothing to do"
+    exit 0
+fi
+if ! command -v pwsh >/dev/null 2>&1; then
+    say "pwsh is not on PATH; the policy is written by Set-OS7BackupPolicy and cannot be"
+    say "edited safely by hand — /etc/os7/backup.json is the source of truth and"
+    say "/etc/sanoid/sanoid.conf is rendered from it"
+    exit 1
+fi
+
+# A machine with NO policy file needs nothing: Get-OS7BackupPolicy answers with
+# the defaults, and the domain-home dataset is one of them since 2026-09-15. So
+# the first Enable-OS7Backup on such a machine already covers it.
+if [ ! -f "${CONFIG}" ]; then
+    say "no ${CONFIG} on this machine; the default policy already names ${DATASET}"
+    exit 0
+fi
+
+# The dataset has to exist before it can be snapshotted. A section naming a
+# dataset that is not there is worse than no section: sanoid treats "no
+# snapshots" as infinitely stale, tries, fails, prints CRITICAL ERROR — and
+# exits 0. Migration 70 is what creates it; if that has not run or did not
+# succeed, this is not the script to paper over it.
+if ! zfs list -H -o name "${DATASET}" >/dev/null 2>&1; then
+    say "${DATASET} does not exist; 70-domain-home-dataset is what creates it."
+    say "Not adding a policy section for a dataset that is not there."
+    exit 0
+fi
+
+# ---- already done? ---------------------------------------------------------
+in_policy() {
+    pwsh -NoProfile -NonInteractive -Command "
+        \$ErrorActionPreference = 'Stop'
+        Import-Module OS7 -ErrorAction Stop
+        \$p = Get-OS7BackupPolicy -ConfigOnly
+        if (@(\$p.Sources | Where-Object { \$_.Dataset -eq '${DATASET}' }).Count -gt 0) {
+            exit 0
+        }
+        exit 1
+    " >/dev/null 2>&1
+}
+
+if in_policy; then
+    say "${DATASET} is already in the policy"
+    exit 0
+fi
+
+# ---- add it ----------------------------------------------------------------
+say "adding ${DATASET} to the backup policy"
+if ! pwsh -NoProfile -NonInteractive -Command "
+        \$ErrorActionPreference = 'Stop'
+        Import-Module OS7 -ErrorAction Stop
+        \$current = @((Get-OS7BackupPolicy -ConfigOnly).Sources.Dataset)
+        # The existing list plus this one, in that order, so an administrator's
+        # own additions keep their place and nothing is dropped.
+        \$wanted = @(\$current) + @('${DATASET}')
+        Set-OS7BackupPolicy -Dataset \$wanted -Confirm:\$false | Out-Null
+    "; then
+    say "Set-OS7BackupPolicy failed; the policy is unchanged"
+    exit 1
+fi
+
+# ---- ASK THE RESULT --------------------------------------------------------
+if ! in_policy; then
+    say "Set-OS7BackupPolicy reported success and ${DATASET} is still not in the policy"
+    exit 1
+fi
+
+say "done: ${DATASET} is in the backup policy; domain users' homes are snapshotted"
+exit 0

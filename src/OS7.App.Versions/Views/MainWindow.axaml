@@ -106,7 +106,7 @@
                       Theme="{DynamicResource os7_sunken_pane}"
                       Padding="{DynamicResource os7_pane_padding}"
                       IsVisible="{Binding !HasEntries}">
-        <TextBlock Text="{Binding SubHeader}" TextWrapping="Wrap"
+        <TextBlock Text="{Binding Explanation}" TextWrapping="Wrap"
                    VerticalAlignment="Center" />
       </ui:BevelBorder>
 

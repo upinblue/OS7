@@ -1,6 +1,7 @@
 using OS7.App.Versions.Model;
 using OS7.App.Versions.Services;
 using OS7.App.Versions.ViewModels;
+using OS7.Shell;
 
 namespace OS7.App.Versions;
 
@@ -35,6 +36,7 @@ public static class SelfTest
 		Captions();
 		Rows();
 		Window();
+		Stderr();
 		Script();
 		Preview();
 
@@ -212,9 +214,114 @@ public static class SelfTest
 			Message = "'/proc/cpuinfo' is not inside a mounted ZFS filesystem.",
 		};
 		Check("a refusal is shown in the machine's own words, not paraphrased",
-			failed.SubHeader == "'/proc/cpuinfo' is not inside a mounted ZFS filesystem.");
+			failed.Explanation == "'/proc/cpuinfo' is not inside a mounted ZFS filesystem.");
 		Check("and the header says listing failed rather than 'up to date'",
 			failed.Header == "Previous versions could not be listed.");
+
+		// DRAWN ONCE. The heading says what went wrong, the line under it says
+		// which file, and the pane carries the sentence. Until 2026-09-15 the
+		// line under the heading was the sentence TOO, so a refusal appeared
+		// twice in one window — survivable with a short message and absurd with
+		// a long one, which is how it shipped.
+		Check("and the sentence is NOT also under the heading — a refusal drawn "
+			+ "twice is one the reader has to compare against itself",
+			failed.SubHeader != failed.Explanation);
+		Check("what is under the heading is the file it is about",
+			failed.SubHeader == "/proc/cpuinfo");
+
+		var nothing = new MainWindowViewModel("/var/tmp/x.txt", Array.Empty<VersionEntry>())
+		{
+			Phase = VersionsPhase.NoHistory,
+			Message = "rpool/DATA/tmp has NO snapshots at all.",
+		};
+		Check("a dataset that keeps nothing is not a FAILURE — nothing failed",
+			nothing.Header == "No previous versions are kept for this file.");
+		Check("and it explains which kind of nothing, once (V6)",
+			nothing.Explanation == "rpool/DATA/tmp has NO snapshots at all."
+				&& nothing.SubHeader == "/var/tmp/x.txt");
+
+		var listing = new MainWindowViewModel("/home/os7admin/a.txt", Array.Empty<VersionEntry>())
+		{
+			Phase = VersionsPhase.Listing,
+		};
+		Check("and a window with a history explains nothing — the pane is not drawn",
+			listing.Explanation.Length == 0);
+	}
+
+	// ---------------------------------------------------------------- stderr
+
+	/// <summary>
+	/// What reaches the window when a cmdlet refuses.
+	/// </summary>
+	/// <remarks>
+	/// EVERY STRING HERE WAS READ OFF A MACHINE on 2026-09-15 (v20, installed
+	/// from OS7-1.0.0.233-amd64.iso), not composed. The window drew all of it
+	/// — a source excerpt, a row of tildes, the sentence in fragments — around
+	/// the one line that told the operator what to do.
+	/// </remarks>
+	private static void Stderr()
+	{
+		Console.Error.WriteLine();
+		Console.Error.WriteLine("  A refusal reaches the window as a sentence, not as a stack trace");
+
+		Check("the prefix asks for NormalView — ConciseView wraps the message "
+			+ "into fragments under a source excerpt",
+			PowerShellRunner.PlainTextPrefix.Contains("$ErrorView = 'NormalView'",
+				StringComparison.Ordinal));
+		Check("and still asks for PlainText, which is what stops the ANSI",
+			PowerShellRunner.PlainTextPrefix.Contains("PlainText", StringComparison.Ordinal));
+
+		// NormalView, as measured: the message first and whole, then
+		// PowerShell's account of its own source.
+		var normal = string.Join("\n", new[]
+		{
+			"OS7-STEP ZFS layer: /usr/local/share/powershell/Modules/Zfs/Zfs.psd1",
+			"rpool/DATA/tmp has NO snapshots at all, so nothing on this machine holds an earlier version of '/var/tmp/probe/bericht.txt'.",
+			"At /usr/local/share/powershell/Modules/OS7/OS7.BackupRestore.ps1:478 char:4",
+			"+             throw [System.InvalidOperationException]::new(",
+			"+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+			"+ CategoryInfo          : OperationStopped: (:) [], InvalidOperationException",
+			"+ FullyQualifiedErrorId : rpool/DATA/tmp has NO snapshots at all, so nothing",
+		});
+
+		var message = new ShellResult(1, string.Empty, PowerShellRunner.Clean(normal)).Message;
+
+		Check("the sentence survives whole",
+			message.StartsWith("rpool/DATA/tmp has NO snapshots at all", StringComparison.Ordinal));
+		Check("PowerShell's account of its own source does not — an operator is "
+			+ "not debugging the module",
+			!message.Contains("OS7.BackupRestore.ps1:478", StringComparison.Ordinal)
+				&& !message.Contains("CategoryInfo", StringComparison.Ordinal)
+				&& !message.Contains("~~~~", StringComparison.Ordinal));
+		Check("and neither does the progress line, which is not an error and can "
+			+ "name a step that did not happen",
+			!message.Contains("OS7-STEP", StringComparison.Ordinal));
+
+		// A REFUSAL MAY BE SEVERAL LINES ON PURPOSE. V19's carries the tool's
+		// own words under OS/7's, and nothing here may take "the first line".
+		var multi = string.Join("\n", new[]
+		{
+			"The file you came here about has NOT been written and nothing is lost.",
+			"zfs snapshot rpool/USERDATA/a@os7-before-restore-20260915-073919",
+			"exited 1",
+			"cannot create snapshots : permission denied",
+			"At /usr/local/share/powershell/Modules/OS7/OS7.BackupRestore.ps1:700 char:4",
+			"+ CategoryInfo          : OperationStopped",
+		});
+
+		var kept = new ShellResult(1, string.Empty, PowerShellRunner.Clean(multi)).Message;
+
+		Check("a refusal that is four lines on purpose keeps all four",
+			kept.Split(Environment.NewLine).Length == 4
+				&& kept.Contains("permission denied", StringComparison.Ordinal)
+				&& kept.StartsWith("The file you came here about", StringComparison.Ordinal));
+
+		// A message that is ONLY decoration must not come out empty: an empty
+		// error box is the one thing worse than a noisy one.
+		var bare = new ShellResult(9, string.Empty,
+			"At /x.ps1:1 char:1" + Environment.NewLine + "+ CategoryInfo : x").Message;
+		Check("and stderr that is nothing but the trailer still says something",
+			bare.Contains("exited 9", StringComparison.Ordinal));
 	}
 
 	// --------------------------------------------------------------- script

@@ -8811,3 +8811,98 @@ What is now held without a machine (`check-gui-logic.py`): the extension calls n
 `require_version`, is a `MenuProvider`, and starts the window with an argument
 LIST. What still needs a desktop is whether GNOME actually loads it, and the
 honest answer is that nothing short of clicking finds that.
+
+---
+
+## #163 — a switch that guarantees a non-empty answer makes the "it was empty" branch unreachable
+
+`Get-OS7FileVersion` has a sentence for a path with no history, and
+VERSIONS-PLAN V6 is the argument for it: *an empty list means "nothing changed"
+and this means "nothing is being kept"*. The Versions window has the matching
+branch, with a comment saying what it is for.
+
+Neither ever ran. The window asks
+
+```powershell
+Get-OS7FileVersion -Path $p -DistinctOnly -IncludeCurrent -IncludeAbsent
+```
+
+and **`-IncludeCurrent` puts the live file in the list**. A file somebody
+right-clicked exists, so the count is one, never zero, and the window took its
+ordinary listing path and drew
+
+```
+notes.txt
+1 versions, back to 2026-09-15
+```
+
+about a file on a dataset that keeps nothing at all. Not silence — a **claim
+about the past**, on `/var/lib/os7/domain-homes`, which is where every domain
+user's home is.
+
+The cmdlet's side had the same hole from the other end: its three refusals were
+all guarded by `if ($out.Count -eq 0 -and $snaps.Count -gt 0)`, so a dataset
+with **no snapshots** — every ZFS dataset outside the backup policy, which is
+`/var/log`, `/var/tmp` and the domain homes — fell out of every branch and
+returned an empty list.
+
+*The general form:* **a parameter that guarantees at least one result deletes
+the empty case from every caller downstream of it.** `-IncludeCurrent`,
+`-IncludeAbsent`, a `-Default`, a `SELECT ... UNION SELECT 'none'` — each turns
+"there is nothing" into "there is one thing", and any code that distinguished
+those two by counting stops being able to. The test is not whether the branch is
+written; it is whether an input exists that can still reach it.
+
+It is BUILD-NOTES #148's family and VERSIONS-PLAN §7b's shape for the second
+time in two days: a refusal that is written, correct, well-phrased, and
+**unreachable**. §7b's was `Get-OS7PathDataset` resolving `/proc/cpuinfo` to the
+boot environment. Both were invisible from the code and obvious in one
+screenshot.
+
+The fix is to refuse BEFORE anything is counted — the dataset having no
+snapshots is a fact about the dataset, not about the result set — and
+`check-storage-logic.py` §11 asks it with the window's exact call, so a switch
+that hides the case again goes red. With the guard removed on a copy, nine
+assertions fail and `windowCount` comes back as **1**: the number off the
+screen.
+
+---
+
+## #164 — `sudo -S -p '' <script>` over ssh elevates the FIRST command and reports the rest as root
+
+`os7lab.py exec --sudo --shell` built its remote command as
+
+```
+sudo -S -p '' id -u; zfs destroy rpool/DATA/lib/os7-domain-homes@probe-2
+```
+
+which the guest's bash parses as **two commands**: `sudo id -u`, and `zfs
+destroy` as the login account. The output was
+
+```
+0
+cannot destroy snapshots: permission denied
+```
+
+and it was believed, twice, as a fact about ZFS refusing to destroy an
+automounted snapshot even for root. It is a fact about quoting. Half an hour
+went into the wrong subsystem.
+
+**What makes it expensive is that the first line is true.** `id -u` really did
+print 0, under sudo, on that machine — so the evidence that the elevation worked
+is produced by the one command that was elevated. A check of the form "am I
+root?" placed at the start of an elevated chain is exactly the check this
+defeats.
+
+Fixed by sending the whole script through base64 into
+`sudo -S -p '' bash -c "$(echo <b64> | base64 -d)"` — base64 because it contains
+nothing a shell reacts to, which is the same argument `-EncodedCommand` already
+made on the pwsh side of the same function, three lines above. The pwsh path was
+never affected: the entire script is one `-EncodedCommand` argument, so `sudo
+pwsh …` is one process.
+
+*The general form:* **`sudo` takes a COMMAND, and a shell takes a script.**
+Anything that prepends a privilege word to a string it did not parse is
+elevating the first word of it. The same shape reaches `nice`, `timeout`,
+`nohup`, `env VAR=x`, `strace` and `time`, and each of them is wrong in the same
+quiet way — the first thing works, so the wrapper looks fine.

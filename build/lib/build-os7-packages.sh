@@ -578,15 +578,31 @@ build_os7_release() {
 	# right for the one migration that exists (UL1 asks "does the seal open
 	# against THIS boot" and is a no-op when it does), and is why idempotence
 	# is the contract's requirement rather than a courtesy.
+	#
+	# THE REQUIRED-PATH LIST IS BUILT FROM THE SAME GLOB, and that is the point
+	# of this loop rather than a tidiness. It named 50-tpm2-reseal alone while
+	# three migrations were in the tree, so a migration that failed to reach the
+	# package would have shipped a release silently missing it — the shape
+	# check-module-parts.py exists for, in a directory it does not cover. A list
+	# written out by hand beside a `cp *` is a list that drifts on the next
+	# addition; one derived from the copy cannot.
 	local mig_src="${SRC}/os7-release/migrations.d"
+	local -a mig_must=()
 	if [[ -d "${mig_src}" ]]; then
-		local ctx
+		local ctx m
 		for ctx in chroot firstboot; do
 			[[ -d "${mig_src}/${ctx}" ]] || continue
 			install -d "${stage}/usr/lib/os7/migrations/${OS7_VERSION}/${ctx}"
 			cp "${mig_src}/${ctx}/"* \
 				"${stage}/usr/lib/os7/migrations/${OS7_VERSION}/${ctx}/"
+			# 0644, not 0755: os7-migrate-firstboot and Update-OS7 both run a
+			# migration as `sh <file>`, so the execute bit decides nothing and
+			# claiming otherwise would be a second contract.
 			chmod 0644 "${stage}/usr/lib/os7/migrations/${OS7_VERSION}/${ctx}/"*
+			# Sorted, so two builds of the same tree name them in one order.
+			for m in $(printf '%s\n' "${mig_src}/${ctx}/"* | LC_ALL=C sort); do
+				mig_must+=("./usr/lib/os7/migrations/${OS7_VERSION}/${ctx}/$(basename "${m}")")
+			done
 		done
 	fi
 
@@ -611,12 +627,12 @@ build_os7_release() {
 
 	pkg_finish   os7-release "${stage}" all \
 		"${extra_must[@]+${extra_must[@]}}" \
+		"${mig_must[@]+${mig_must[@]}}" \
 		./usr/lib/os7/release.conf \
 		./usr/lib/os7/build.conf \
 		./usr/lib/os7/release.json \
 		./usr/lib/os7/os-release-identity.py \
 		./usr/lib/os7/migrations/README \
-		"./usr/lib/os7/migrations/${OS7_VERSION}/firstboot/50-tpm2-reseal" \
 		./usr/lib/systemd/system/os7-migrations-firstboot.service \
 		./usr/lib/systemd/system/multi-user.target.wants/os7-migrations-firstboot.service \
 		./usr/libexec/os7-migrate-firstboot \
