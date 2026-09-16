@@ -509,6 +509,15 @@ def main():
 
 
 REFERENCE = os.path.join(REPO, "docs", "POWERSHELL-REFERENCE.md")
+# The same number, written in prose in the two documents a session reads first.
+# Neither had anything holding it: HANDOFF.md said 147 exported OS/7 functions
+# while the module reported 170 — twenty days stale — and CLAUDE.md's "N of the
+# M functions" drifted by six within a day of being corrected by hand.
+# OS7_HANDOFF and OS7_MAP redirect these at a copy, which is how the two prose
+# rules are proven to FIRE rather than only to stay quiet — the same argument as
+# OS7_MODULE_ROOT above and check-storage-logic.py's OS7_RESTORE_MODULE.
+HANDOFF = os.environ.get("OS7_HANDOFF") or os.path.join(REPO, "docs", "HANDOFF.md")
+MAP = os.environ.get("OS7_MAP") or os.path.join(REPO, "CLAUDE.md")
 MODULES = ("Zfs", "Net", "Time", "Systemd", "Directory", "Hardware", "OS7")
 
 # OS7_MODULE_ROOT points the manifest rule at another copy of powershell/,
@@ -726,6 +735,26 @@ def check_reference_counts():
         check(bool(row) and int(row.group(1)) == counts[mod],
               f"and its {mod} row says {counts[mod]}",
               f"it says {row.group(1) if row else '<no row>'}")
+
+    # THE PROSE, in the two files a session opens first. A generated file going
+    # stale is one failure mode; a sentence in a hand-written one is the same
+    # failure with nobody watching, and both of these had it.
+    product = counts["OS7"]
+
+    hand = read(HANDOFF)
+    m = re.search(r"(\d+) exported OS/7 functions as of ([\d-]+)", hand)
+    check(bool(m) and int(m.group(1)) == product,
+          f"HANDOFF.md's feature table says {product} exported OS/7 functions",
+          f"it says {m.group(1) if m else '<no count found>'}")
+
+    # CLAUDE.md carries BOTH numbers in one sentence — the product layer and the
+    # total — and the total is the one that moves when a generic module grows,
+    # which is exactly the change nobody thinks to write down here.
+    text_map = read(MAP)
+    m = re.search(r"\*\*(\d+) of the (\d+)\s*\n?functions\*\*", text_map)
+    check(bool(m) and int(m.group(1)) == product and int(m.group(2)) == total,
+          f"CLAUDE.md says {product} of the {total} functions",
+          f"it says {m.group(1) + ' of ' + m.group(2) if m else '<no count found>'}")
 
 
 if __name__ == "__main__":
