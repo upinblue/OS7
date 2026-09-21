@@ -9016,3 +9016,88 @@ is what made the failure read as a repository defect rather than a harness one.
 what another file already declares will drift, and the drift shows up as the
 declaring file's fault.** The tell is that the check's message blamed
 `os7-server`, which was correct about itself.
+
+## #167 — netplan stopped exiting 0 for a failure, and the reader that trusted the exit code stopped being able to say "nothing is configured"
+
+**Found 2026-09-21 by the release gate**, as the single failure of
+`check-image.py amd64` on `OS7-1.0.0.244-amd64.iso` — the first medium this
+product built against the `20260921T000000Z` archive snapshot:
+
+```
+FAIL  the Net module's netplan renderer behaves as designed
+      Net self-test: 82 passed, 1 failed
+FAILED: the configured side ran to the end
+      netplan get --root-dir /tmp/os7-netplan-bare-16 network.renderer
+      exited 1: Command failed: Unexpected YAML structure found
+```
+
+**The measurement, taken one container per snapshot and with the two streams
+kept apart:**
+
+```
+netplan get --root-dir <a root with no netplan document> network.renderer
+
+                 rc   stdout   stderr
+1.2-1ubuntu5      0   empty    Command failed: Unexpected YAML structure found
+1.2-1ubuntu5.1    1   empty    the same 48 bytes
+(a real document: rc=0, stdout `networkd`, on both)
+```
+
+So **netplan 1.2-1ubuntu5 printed a failure and exited 0** — the shape this
+repository has a standing rule about — and 1ubuntu5.1 corrected it. `netplan.io`
+was one of the fifty packages the snapshot bump moved, and one of the four the
+pin's own table singles out as things this repository has checks about.
+
+**What broke is not what it looked like.** `Get-NetplanValue` throws on any
+non-zero exit, so `Get-NetplanConfiguration` stopped answering at all for a root
+with no netplan document — and that is a legitimate state, not an error: L23's
+"no network" and "nobody has configured one" are different answers and the whole
+`RendererIsDefault` field exists to keep them apart. On a machine with a real
+document nothing changed, which is why only the self-test's empty case saw it.
+
+**Three things went wrong in the FIXING, and each is the more useful lesson.**
+
+**One — I claimed a defect that does not exist.** The first version of the fix's
+comment said that on 1ubuntu5 the error MESSAGE came back as the value, so every
+1.0.0.203 machine had reported a `Renderer` of "Command failed: …". That was
+inferred from a measurement taken with `2>&1`, which collapses the streams. The
+message is on **stderr** and stdout is empty on both versions, so
+`Get-NetplanScalarValue`'s `$lines.Count -eq 0` path already answered `$null` —
+correctly, and entirely because of which stream netplan chose. Read off the
+shipped product rather than argued about: `git archive v1.0.0.203-preview` into
+a container with 1ubuntu5 answers `Renderer = []`, `RendererIsDefault = True`,
+`Interfaces = 0`.
+
+**Two — a harness reported success for a downgrade that never happened.** The
+first attempt to check the fix against both versions ran `apt-get install
+--allow-downgrades netplan.io=<old>` and then PRINTED the version. apt declined
+the downgrade, both runs were 1ubuntu5.1, and the run came back green for a fix
+that covered one of the two cases. The harness now REQUIRES `dpkg-query` to
+report the version it asked for and dies otherwise — and the two versions are
+measured in two containers, because apt would not perform that downgrade in a
+tree that already held the newer `libnetplan1`.
+
+**Three — the principled placement was the wrong one, and a harness said so.**
+The guard was first written in front of `Invoke-NetCommand`: one rule, no
+dependence on an exit code. It is unnecessary there, because the rc=0 path was
+already right; and it reads the FILESYSTEM before netplan is asked, which
+bypasses this module's own test double. `check-network-logic.py` fakes
+`Invoke-NetCommand` and answers `netplan get` out of a case table with no files
+anywhere, so the front-placed version short-circuited every case to `null` and
+took **seven** of its decisions down with it. A rule that cannot be exercised by
+the harness that checks the layer is not a better rule.
+
+**The fix as it stands:** in the failure branch, ask the FILESYSTEM whether any
+document exists under that root — never match netplan's wording, which is a
+third version of this bug waiting for the next release to reword it — and if
+none does, return netplan's own absent-key answer. `Get-NetplanDocumentPath` is
+one definition of "the documents netplan would merge", shared with
+`Get-NetplanConfiguration`, because two lists of three directories is #66 in
+miniature. Verified at **86 checks, 0 failed** against each version installed
+fresh in its own container, with dpkg required to agree about which one.
+
+*The general form:* **a subsystem fixing its own exit code is a breaking change
+for anything that read it.** The reader here was not even wrong to read it — it
+was wrong to have no other way of telling "there is nothing to read" from "I
+could not read it", which is the same three-outcome shape
+`Get-OS7TimeSynchronization` and `Get-OS7SecureBoot` were already built around.

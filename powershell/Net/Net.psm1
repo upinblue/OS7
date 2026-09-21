@@ -645,6 +645,31 @@ function Get-NetRadio {
 # answers in were measured rather than assumed.
 # ---------------------------------------------------------------------------
 
+function Get-NetplanDocumentPath {
+	<#
+	.SYNOPSIS
+		Internal. The documents netplan would merge under this root, in its own
+		precedence order.
+
+	.DESCRIPTION
+		ONE DEFINITION, because there are two callers and they must agree.
+		Get-NetplanConfiguration names these files as provenance; Get-NetplanValue
+		asks whether any exist at all in order to tell "nothing is configured"
+		apart from "netplan could not be asked". Two separate lists of three
+		directories is BUILD-NOTES #66 in miniature, and the failure it makes is
+		a reader that reports no configuration for a root it never looked in.
+	#>
+	param([string]$RootDir)
+
+	foreach ($dir in @('run/netplan', 'etc/netplan', 'lib/netplan')) {
+		$path = if ($RootDir) { Join-Path $RootDir $dir } else { "/$dir" }
+		if (Test-Path -LiteralPath $path) {
+			Get-ChildItem -LiteralPath $path -Filter '*.yaml' -File -ErrorAction SilentlyContinue |
+				Sort-Object Name
+		}
+	}
+}
+
 function Get-NetplanValue {
 	<#
 	.SYNOPSIS
@@ -664,6 +689,55 @@ function Get-NetplanValue {
 
 	$r = Invoke-NetCommand -Command 'netplan' -Arguments $argv
 	if ($r.ExitCode -ne 0) {
+		# A ROOT WITH NO NETPLAN DOCUMENT IS AN ANSWER AND NOT A FAILURE.
+		#
+		# Measured 2026-09-21, one container per snapshot so that no downgrade
+		# could quietly not happen, and with the two streams kept APART — which
+		# the first measurement did not do, and collapsing them is what made the
+		# first version of this comment describe a defect that does not exist:
+		#
+		#     netplan get --root-dir <no document> network.renderer
+		#
+		#                      rc   stdout   stderr
+		#     1.2-1ubuntu5      0   empty    Command failed: Unexpected YAML structure found
+		#     1.2-1ubuntu5.1    1   empty    the same 48 bytes
+		#     (a real document: rc=0, stdout `networkd`, on both)
+		#
+		# So the old netplan printed a failure and exited 0 — the trap this
+		# repository has a standing rule about — and 1ubuntu5.1 corrected it to
+		# 1. THE MESSAGE NEVER REACHED A VALUE: it is on stderr in both and
+		# stdout is empty in both, so Get-NetplanScalarValue's `$lines.Count -eq
+		# 0` path already answered $null for a bare root on 1ubuntu5, and did so
+		# correctly — entirely because of which stream netplan chose. What
+		# 1ubuntu5.1 changed is that the exit code now reaches the throw below,
+		# and Get-NetplanConfiguration stopped being able to say "nothing is
+		# configured" at all. That is how it was found: the single failure in
+		# check-image.py on the first medium built against the 20260921 snapshot
+		# (docs/SESSION-PREVIEW-245.md).
+		#
+		# SO THE GUARD BELONGS HERE, IN THE FAILURE BRANCH, AND IT WAS TRIED
+		# BEFORE THE CALL FIRST. Moving it in front of Invoke-NetCommand looked
+		# more principled — one rule, no dependence on an exit code — and it is
+		# wrong twice. It is unnecessary, because the rc=0 path was already
+		# right; and it reads the FILESYSTEM before netplan is asked, which
+		# bypasses this module's own test double. check-network-logic.py fakes
+		# Invoke-NetCommand and answers `netplan get` out of a case table with no
+		# files anywhere: the front-placed version short-circuited every one of
+		# those cases to `null` and took seven of its decisions down with it.
+		# A rule that cannot be exercised by the harness that checks the layer
+		# is not a better rule.
+		#
+		# THE FILESYSTEM DECIDES WHICH FAILURE THIS IS, NOT netplan's WORDING.
+		# Matching the message would be a third version of this bug, waiting for
+		# the next release to reword it. If no document exists under this root
+		# there was nothing to read, and netplan's own convention for a key with
+		# no value is the literal `null` — so that is what is returned, and
+		# every caller that already handles an absent key keeps working
+		# unchanged. If documents DO exist and netplan still failed, that is a
+		# real failure and still throws.
+		if (@(Get-NetplanDocumentPath -RootDir $RootDir).Count -eq 0) {
+			return @('null')
+		}
 		throw [System.InvalidOperationException]::new(
 			"netplan $($argv -join ' ') exited $($r.ExitCode): $($r.StdErr.Trim())")
 	}
@@ -791,10 +865,21 @@ function Get-NetplanConfiguration {
 		into all three.
 
 		`RendererIsDefault` is the field to read before believing `Renderer`.
-		With an empty /etc/netplan, `netplan get network.renderer` answers
-		`NetworkManager` — measured — which is netplan's own default and not a
-		decision anybody made. On a headless OS/7 machine, where NetworkManager
-		is not installed at all, believing it would be actively wrong.
+		It is computed from the DOCUMENTS — did any of them set a renderer —
+		and never from netplan's answer, which is what keeps it true across
+		netplan's own changes of mind about the empty case.
+
+		This paragraph used to say that an empty /etc/netplan makes
+		`netplan get network.renderer` answer `NetworkManager`, netplan's own
+		default. That was measured once and is not what happens on either
+		version this product has shipped: a root with no document puts
+		`Command failed: Unexpected YAML structure found` on stderr, leaves
+		stdout empty, and differs only in its exit code (0 on 1.2-1ubuntu5, 1
+		on 1.2-1ubuntu5.1 — see Get-NetplanValue). So `Renderer` is `$null` for
+		such a root, `RendererIsDefault` is `$true`, and the distinction the
+		field exists for — L23's "no network" against "nobody has configured
+		one" — is carried by the documents rather than by a string netplan
+		chooses.
 
 	.PARAMETER RootDir
 		Read the configuration from under this directory instead of `/`. netplan
@@ -816,22 +901,16 @@ function Get-NetplanConfiguration {
 	# /run, /etc and /lib and the merged view cannot say which document set a
 	# key — so the documents are named here, in netplan's own precedence order,
 	# and an operator surprised by the merged answer has somewhere to look.
-	$files = foreach ($dir in @('run/netplan', 'etc/netplan', 'lib/netplan')) {
-		$path = if ($RootDir) { Join-Path $RootDir $dir } else { "/$dir" }
-		if (Test-Path -LiteralPath $path) {
-			Get-ChildItem -LiteralPath $path -Filter '*.yaml' -File -ErrorAction SilentlyContinue |
-				Sort-Object Name | ForEach-Object {
-					[pscustomobject]@{
-						Path = $_.FullName
-						# The symbolic string PowerShell reports on Linux
-						# (`-rw-------`), passed through rather than converted:
-						# it is absent on a host with no Unix modes, and L25
-						# means an operator wants to SEE it — a netplan file
-						# holding a Wi-Fi passphrase must not be world-readable.
-						Mode  = (Get-NetJsonField $_ 'UnixMode')
-						Bytes = [int]$_.Length
-					}
-				}
+	$files = foreach ($doc in Get-NetplanDocumentPath -RootDir $RootDir) {
+		[pscustomobject]@{
+			Path = $doc.FullName
+			# The symbolic string PowerShell reports on Linux (`-rw-------`),
+			# passed through rather than converted: it is absent on a host with
+			# no Unix modes, and L25 means an operator wants to SEE it — a
+			# netplan file holding a Wi-Fi passphrase must not be
+			# world-readable.
+			Mode  = (Get-NetJsonField $doc 'UnixMode')
+			Bytes = [int]$doc.Length
 		}
 	}
 	$files = @($files)
@@ -1838,15 +1917,33 @@ network:
 			Check (-not $serialised.Contains('hunter2hunter2')) `
 				'Get-NetplanConfiguration: the passphrase is NOT in what it returns'
 
-			# The empty case. netplan answers `NetworkManager` for a machine
-			# with no configuration at all — its own default, and on a headless
-			# OS/7 machine a renderer that is not installed. L23's "no network"
-			# and "nobody has configured one" must not read the same.
+			# THE EMPTY CASE, AND IT IS THE ONE THAT CAUGHT A NETPLAN CHANGE.
+			# L23's "no network" and "nobody has configured one" must not read
+			# the same, so this asks a root with no document at all.
+			#
+			# This comment used to say netplan answers `NetworkManager` here —
+			# its own default. It does not, on either version this product has
+			# shipped: a root with no document puts `Command failed: Unexpected
+			# YAML structure found` on STDERR and leaves stdout empty, and the
+			# only difference between the two is the exit code — 0 on
+			# 1.2-1ubuntu5, 1 on 1.2-1ubuntu5.1 (measured 2026-09-21, one
+			# container per snapshot). This check is how that arrived: the
+			# single failure in check-image.py on the first medium built on the
+			# new snapshot, reporting a module that could no longer say
+			# "nothing is configured" at all.
+			#
+			# So the assertions are about what the DOCUMENTS say, which is what
+			# survives netplan rewording its own errors: no documents named, no
+			# interfaces, the renderer unknown rather than invented, and the
+			# default flag set.
 			$bare = Join-Path ([System.IO.Path]::GetTempPath()) "os7-netplan-bare-$PID"
 			try {
 				New-Item -ItemType Directory -Force -Path (Join-Path $bare 'etc/netplan') | Out-Null
 				$empty = Get-NetplanConfiguration -RootDir $bare
+				Check (@($empty.Files).Count -eq 0) 'Get-NetplanConfiguration: no documents are named'
 				Check ($empty.Interfaces.Count -eq 0) 'Get-NetplanConfiguration: no documents, no interfaces'
+				Check ($null -eq $empty.Renderer) `
+					'Get-NetplanConfiguration: the renderer is unknown, not invented'
 				Check ($empty.RendererIsDefault -eq $true) `
 					"Get-NetplanConfiguration: netplan's fallback renderer is flagged as a default"
 			}
