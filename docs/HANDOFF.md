@@ -97,37 +97,72 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
-**1.0.0.203 IS PUBLISHED (2026-09-09), and it is the second preview.** Both
-media from `42156cf`, clean tree, `reproducible: true`; the signed apt
-repository on the Storage Box now holds **both** releases with 1.0.0.203's index
-entry recording that it supersedes 1.0.0.175; os7.org offers the new images and
-the versioned manual; the GitHub pre-release carries the changelog and the
-descriptors. What that run measured, and the five defects it found, is
+**1.0.0.245 IS BUILT AND GATED (2026-09-21) AND IS NOT PUBLISHED.** Both media
+from `93fd496`, clean tree, `reproducible: true`; the whole of
+[RELEASE-PROCESS.md](RELEASE-PROCESS.md) §2 green on them, including all four
+machine rows; the repository cut over the FETCHED published tree, so its index
+holds six entries — 1.0.0.175, .203 and .245 × two architectures — with .245
+recording that it supersedes .203. **What is not done is steps 6 to 10**: the
+release key's secret half is not on this host (§6 as designed), so the tree's
+three signatures are the development key's and replacing them is the operator's.
+[SESSION-PREVIEW-245.md](SESSION-PREVIEW-245.md) is that run, and the files to
+sign are §9.3 of it.
+
+**Four defects and not one in the product.** #166 (a fixture's package list
+typed out by hand, red for a week), #145 (closed at last, with a read-back
+rather than a printout), #165 (`git status` calling a clean tree dirty, which
+would have made a release claim `reproducible: false` over nothing), and #167 —
+netplan correcting its own exit code underneath a reader that trusted it, found
+by `check-image.py` on the first medium built against the new snapshot. Three
+consecutive releases have now been paid for by the instruments.
+
+**1.0.0.203 was published on 2026-09-09** and is the second preview. Both media
+from `42156cf`; os7.org offers those images and the versioned manual; the GitHub
+pre-release carries the changelog and the descriptors. What that run measured,
+and the five defects it found, is
 [SESSION-PREVIEW-203.md](SESSION-PREVIEW-203.md).
 
-**Three things it leaves owed, in the order they cost:**
+**Two things are still owed, in the order they cost:**
 
-1. **UL6 has never been satisfied and now has a release that says so.** No
-   `archive/<version>/<arch>/*.deb` exists for 1.0.0.175 or 1.0.0.203, and no
-   tool builds one — §4's layout is proposed, not built. So the reproducibility
-   claim rests on `snapshot.ubuntu.com`, for which Canonical publishes no
-   retention guarantee. Defensible for a preview; not for a `stable`.
+1. **UL6 has never been satisfied and now has three releases that say so.** No
+   `archive/<version>/<arch>/*.deb` exists for 1.0.0.175, 1.0.0.203 or
+   1.0.0.245, and no tool builds one — §4's layout is proposed, not built. So
+   the reproducibility claim rests on `snapshot.ubuntu.com`, for which Canonical
+   publishes no retention guarantee. Defensible for a preview; not for a
+   `stable`.
 2. **#144: two amd64 builds from one pin do not hold the same package set.**
    Edge, the Intune portal, the identity broker and VS Code come unpinned from
    the live `packages.microsoft.com`; only pwsh is pinned by version and hash.
    Measured by accident — two media an hour apart differed by 7 MB because
    `code` moved upstream. Pinning the four turns every Edge release into a
    release event (§3.4 says that is the intended shape) and is the honest fix.
-3. **#145 is a one-line fix and it is not made**: `OS7_CHANNEL` belongs in
-   `build-os7-packages.sh`'s env-preservation list beside the other three.
 
-**And the release process itself now owes a rule it learned the hard way.**
-Both of the rebuilds this release cost were defects in measuring instruments
-(#143, #141), and both were found *after* the media were built. The gate list in
-[RELEASE-PROCESS.md](RELEASE-PROCESS.md) §2 is what it is for; what it does not
-say is that the tooling changed in the same commit as the pin should be
-exercised BEFORE the media are cut. It cost two amd64 builds and one arm64 build
-to learn that.
+~~**#145 is a one-line fix and it is not made.**~~ **CLOSED 2026-09-21.**
+`OS7_CHANNEL` is in `build-os7-packages.sh`'s env-preservation list, and the
+second half is a READ-BACK rather than the printout this file asked for:
+`build-os7-repo.sh` opens the `os7-release` .deb it just built, reads the
+channel out of its `release.json`, and refuses if that differs from the index it
+is about to write.
+
+**And one thing this file asked for and 1.0.0.245 finally did.** The paragraph
+below has said since 2026-09-09 that tooling changed in the same commit as the
+pin should be exercised BEFORE the media are cut. This run did that, and it is
+why #166, #145 and #165 cost no media at all; #167 could only be found on an
+artefact and cost exactly one pair.
+
+**A new one in its place: pwsh 7.6.6 exists** (published 2026-09-08, one day
+before 1.0.0.203 shipped 7.6.5) and is deliberately not taken, because
+`check-compat-windows.py`'s 214 checks are recorded from a real Windows pwsh
+**7.6.5** — "the pinned version, so a difference is a platform one". The bump is
+two hashes AND a re-recording of those fixtures, and it is a session of its own.
+
+**And the trust anchor of every published medium carries a key whose user ID
+says NOT FOR RELEASE**, measured out of `OS7-1.0.0.203-amd64.iso` on 2026-09-21.
+Three documents say nothing SIGNED by that key may be published and none of them
+said it is SHIPPED. `check-image.py` now names every key in the anchor on every
+run and requires a non-`development` medium to trust at least one key that is
+not a development key. Whether a release medium should carry the development key
+at all is open.
 
 
 **SECURE BOOT IS FINISHED ON amd64 AND OWES arm64 EXACTLY ONE THING: A BOOT
