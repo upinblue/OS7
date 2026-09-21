@@ -94,6 +94,14 @@ emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/l
 emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
+# WHICH KEYS, NOT HOW MANY BYTES. The line above has been the only thing this
+# harness said about the anchor since it was written, and a medium whose anchor
+# held nothing but a development key passed it. What a machine will ACCEPT is
+# decided by the keys in this file, and nothing was reading them.
+# gpg lives in os7-build, which is where this probe runs; the colon format is
+# parsed in Python rather than by awk here, because the pairing of fpr to uid
+# is the whole content and a shell quoting mistake would lose it silently.
+emit os7.keyring.keys  bash -c 'gpg --batch --show-keys --with-colons /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || true'
 # THE CREDENTIAL FOR THAT SOURCE (RELEASE-PROCESS §4.2), and its MODE.
 # The `machine` line is emitted and the password never is: this file is read
 # into a report that gets pasted into commits and sessions.
@@ -1111,6 +1119,52 @@ def main() -> None:
           " ".join(img.get("os7.sources", "").split())[-60:])
     check(int(img.get("os7.keyring") or 0) > 100,
           "the trust anchor ships", f"{img.get('os7.keyring')} bytes")
+
+    # -- WHICH KEYS THE ANCHOR HOLDS -----------------------------------------
+    #
+    # Measured out of OS7-1.0.0.203-amd64.iso on 2026-09-21, which is why this
+    # section exists: a PUBLISHED medium's anchor held two keys, and one of them
+    # was
+    #
+    #     OS/7 DEVELOPMENT signing key - NOT FOR RELEASE <os7-dev@localhost>
+    #
+    # so every machine installed from that medium trusts a passphrase-less key
+    # sitting in out/os7-gnupg on one build host. Three documents say "nothing
+    # signed by that key may be published" and none of them says the key is
+    # SHIPPED - which are different claims, and only the second decides what a
+    # machine will accept. Until this block the only assertion about the anchor
+    # was that it is larger than 100 bytes.
+    #
+    # THE RULE IS NOT A FINGERPRINT. A key id would have to be written down
+    # somewhere, and the pin is the only place a value may live (release plan
+    # 3.1) - so the rule is read off the UIDs instead: a medium that calls
+    # itself anything but `development` must trust at least one key that is not
+    # a development key, or it cannot verify the repository it will be pointed
+    # at. What else is in there is PRINTED on every run, every time, so the
+    # decision to keep or drop the development key is made against a reading
+    # rather than against a memory.
+    anchor = []
+    fpr = None
+    for line in img.get("os7.keyring.keys", "").splitlines():
+        f = line.split(":")
+        if f[0] == "fpr" and len(f) > 9:
+            fpr = f[9]
+        elif f[0] == "uid" and len(f) > 9 and fpr:
+            anchor.append((fpr, f[9]))
+            fpr = None
+    check(bool(anchor), "the anchor's keys can be read", f"{len(anchor)} key(s)")
+    for f_, uid in anchor:
+        dev = "NOT FOR RELEASE" in uid.upper()
+        print(f"      {'note' if dev else 'ok  '}  anchor key {f_[-16:]} — {uid}"
+              + ("   [DEVELOPMENT KEY, and this medium ships it]" if dev else ""))
+    channel = (rel.get("channel") or "").strip().lower()
+    if channel and channel != "development":
+        check(any("NOT FOR RELEASE" not in uid.upper() for _, uid in anchor),
+              f"a `{channel}` medium trusts at least one non-development key",
+              "; ".join(uid for _, uid in anchor) or "(the anchor is empty)")
+    else:
+        print(f"      note  channel is `{channel or 'unset'}` — the "
+              "non-development-key rule does not apply to it")
 
     # -- the credential, and only when the shipped source needs one -----------
     #
