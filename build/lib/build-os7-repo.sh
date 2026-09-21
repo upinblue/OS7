@@ -242,6 +242,30 @@ DEBS=( "${STAGE}"/*.deb )
 shopt -u nullglob
 (( ${#DEBS[@]} > 0 )) || { echo "!!! no packages were built" >&2; exit 1; }
 
+# THE TWO CHANNELS, ASKED OF THE PACKAGE RATHER THAN ASSUMED (#145). This
+# script writes an index called ${OS7_CHANNEL} and the packages carry a channel
+# of their own in /usr/lib/os7/release.json; until 2026-09-21 those could
+# silently differ, because build-os7-packages.sh did not honour an overridden
+# OS7_CHANNEL and this one does. They cannot differ now — and "cannot" is worth
+# exactly as much as the reading that confirms it, which is the standing rule
+# here. A package declaring `preview` listed in an index called `development`
+# is permitted by RELEASE-PROCESS §1.2 and required by it to be deliberate;
+# what this refuses is the case where nobody chose.
+for deb in "${DEBS[@]}"; do
+	[[ "$(dpkg-deb -f "${deb}" Package)" == "os7-release" ]] || continue
+	pkg_channel="$(dpkg-deb --fsys-tarfile "${deb}" \
+		| tar -xO --wildcards '*usr/lib/os7/release.json' 2>/dev/null \
+		| python3 -c 'import json,sys; print(json.load(sys.stdin).get("channel",""))' 2>/dev/null)"
+	[[ -n "${pkg_channel}" ]] || {
+		echo "!!! could not read the channel out of ${deb}" >&2; exit 1; }
+	if [[ "${pkg_channel}" != "${OS7_CHANNEL}" ]]; then
+		echo "!!! the index would be '${OS7_CHANNEL}' and os7-release declares '${pkg_channel}'" >&2
+		echo "    One build, two maturities. See BUILD-NOTES #145." >&2
+		exit 1
+	fi
+	echo "    channel: index and os7-release both say '${OS7_CHANNEL}'"
+done
+
 # pool/main/o/<source>/ — the layout every Debian archive uses, and the one
 # apt-ftparchive's Filename: field will record relative to the repository root.
 BUILT_NAMES=()

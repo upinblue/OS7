@@ -54,12 +54,26 @@ fi
 # source the moment os7-release replaced the harness's sources file, and the
 # symptom appeared two steps later as "Unable to locate package os7-setup".
 #
-# The three repository-facing values are the ones a caller legitimately
-# overrides — a build for a test, a mirror, or an offline bundle — so they are
-# captured here and restored after.
+# The repository-facing values are the ones a caller legitimately overrides —
+# a build for a test, a mirror, or an offline bundle — so they are captured
+# here and restored after.
+#
+# OS7_CHANNEL IS THE FOURTH AND IT WAS NOT ON THE LIST (BUILD-NOTES #145).
+# Measured 2026-09-09 from two lines of one harness run, one after the other:
+#
+#     >>> OS/7 repository os7-1.0 — 1.0.0.204 (development) / amd64
+#     >>> OS/7 packages 1.0.0.204 (preview) for amd64
+#
+# One `docker run`, one `-e OS7_CHANNEL=development`, two different answers —
+# build-os7-repo.sh honours the environment for the INDEX it writes and this
+# file did not, for the packages' own release.json. What it produced was a
+# package declaring `preview` listed in an index called `development`, which
+# RELEASE-PROCESS §1.2 permits and just as explicitly requires to be a
+# deliberate, stated act. Here it was a default, and nothing said so.
 _env_repo_uri="${OS7_REPO_URI:-}"
 _env_repo_enabled="${OS7_REPO_ENABLED:-}"
 _env_suite="${OS7_SUITE:-}"
+_env_channel="${OS7_CHANNEL:-}"
 
 # shellcheck disable=SC1090
 source "${RELEASE_CONF}"
@@ -67,6 +81,7 @@ source "${RELEASE_CONF}"
 [[ -n "${_env_repo_uri}"     ]] && OS7_REPO_URI="${_env_repo_uri}"
 [[ -n "${_env_repo_enabled}" ]] && OS7_REPO_ENABLED="${_env_repo_enabled}"
 [[ -n "${_env_suite}"        ]] && OS7_SUITE="${_env_suite}"
+[[ -n "${_env_channel}"      ]] && OS7_CHANNEL="${_env_channel}"
 # shellcheck source=version-rule.sh
 . "${HERE}/version-rule.sh"
 

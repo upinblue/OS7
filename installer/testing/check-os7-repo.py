@@ -37,6 +37,7 @@ WHAT IT DOES NOT COVER, said plainly:
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -277,6 +278,11 @@ rm -f /var/lib/os7/migrations/pending
 # ---------------------------------------------------------------------------
 apt-get install -y -qq --reinstall base-files > /tmp/basefiles.log 2>&1
 say basefiles.rc "$?"
+# The log, because this step FETCHES — and a check that reports only an exit
+# code cannot tell a broken divert from a 503 at the archive. It went red once
+# on 2026-09-21 and green on the run before and after it, with nothing recorded
+# to say which of the two it had been.
+say basefiles.log "$(tail -4 /tmp/basefiles.log)"
 say osrel.after "$(. /etc/os-release 2>/dev/null; \
    printf 'NAME=%s ID=%s PRETTY_NAME=%s IMAGE_VERSION=%s' \
    "${NAME-}" "${ID-}" "${PRETTY_NAME-}" "${IMAGE_VERSION-}")"
@@ -500,6 +506,57 @@ def source_facts():
     return None
 
 
+def metapackage_closure(root=None):
+    """Every OS/7 package `os7-server` needs, read out of the control.in files.
+
+    THE PARSER IS check-module-parts.py's, not a second one. That file already
+    reads every metapackage's `Depends` out of `control.in` — it has to, because
+    #156 made it hold hook 0022's list against them — and a `Depends:` line
+    wraps onto continuation lines, which is exactly the detail a second parser
+    gets subtly wrong. It guards its `main()` behind `if __name__`, so importing
+    it starts nothing; this is the shape check-automation-kerberos.py already
+    uses for check-ad.py, and for the same reason.
+
+    THIS WAS A HAND-WRITTEN LIST AND IT DRIFTED. The stable/hotfix fixture
+    below builds a SUBSET of the packages — `OS7_REPO_PACKAGES` — because the
+    full set costs the NativeAOT compile, and the subset was eight names typed
+    out on 2026-08-28. On 2026-09-14 `os7-automation` became a Depends of
+    `os7-server`; the list did not move, and from that day `apt install
+    os7-server=<stable>` in the hotfix phase could not resolve. What it printed
+    was apt's resolver dump — "Depends os7-automation ... but none of the
+    choices are installable: [no choices]" — with the package sitting in the
+    tree the OTHER run had built, which is BUILD-NOTES #156 in a second place.
+
+    So the list is derived now. It reads what the metapackage actually declares
+    and closes over it, and the next dependency added to a control.in is in the
+    fixture the moment it is written.
+
+    `os7-desktop` is deliberately NOT here. It is a metapackage this fixture
+    installs nothing of, and its own members — the theme and the two Avalonia
+    applications — are compiles the subset exists to avoid. Building it into
+    the fixture made it an uninstallable package in a repository, which proves
+    nothing and is what made the failure above read as a repository defect."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "check-module-parts.py")
+    spec = importlib.util.spec_from_file_location("check_module_parts", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    depends = mod.metapackage_depends()
+    if "os7-server" not in depends:
+        raise SystemExit("!!! check-module-parts.py knows no os7-server metapackage")
+
+    want, seen = ["os7-server"], set()
+    while want:
+        pkg = want.pop()
+        if pkg in seen:
+            continue
+        seen.add(pkg)
+        # A package with no entry of its own is a leaf: os7-console and the rest
+        # carry real files and depend on nothing in the OS/7 half.
+        want.extend(depends.get(pkg, ()))
+    return sorted(seen)
+
+
 def hook_0050_carries_no_copy():
     """The PowerShell hand-off drop-in has ONE source since 2026-08-28: the
     os7-powershell package. Hook 0050 used to carry a second copy as a heredoc
@@ -625,15 +682,18 @@ def main():
     # standing in for the next two builds, which is what a hotfix is. os7-setup
     # is left out of both (OS7_REPO_PACKAGES) because it is the NativeAOT
     # compile — the expensive half of this harness — and it is deliberately
-    # not a member of os7-base, so nothing below resolves against it.
+    # not a member of os7-base, so nothing below resolves against it. That is
+    # now a PROPERTY of the derivation rather than a decision retyped here:
+    # metapackage_closure() returns what os7-server declares, and os7-setup is
+    # not in it precisely because it is not a member.
     v_stable = f"1.0.0.{int(build_no) + 1}"
     v_hotfix = f"1.0.0.{int(build_no) + 2}"
     with open(os.path.join(repo_dir, "check-versions.conf"), "w", newline="\n") as fh:
         fh.write(f'OS7_CHECK_DEV="{version}"\n'
                  f'OS7_CHECK_STABLE="{v_stable}"\n'
                  f'OS7_CHECK_HOTFIX="{v_hotfix}"\n')
-    subset = ("os7-release os7-console os7-module os7-powershell os7-backup "
-              "os7-base os7-server os7-desktop")
+    subset = " ".join(metapackage_closure(REPO))
+    print(f"      the fixture's package set, derived from os7-server: {subset}")
 
     # The overlay package: `less` out of the pinned snapshot — it is a Depends
     # of os7-powershell, so the probe machine HAS it, and full-upgrade taking
@@ -857,8 +917,12 @@ def main():
     check(f.get("install.rc") == "0", "apt install os7-server succeeds",
           f.get("install.log", "").replace("\n", " ")[-160:])
     installed = f.get("installed", "")
-    for pkg in ("os7-release", "os7-console", "os7-powershell", "os7-module",
-                "os7-backup", "os7-base", "os7-server"):
+    # Derived from os7-server's own Depends, for the reason metapackage_closure()
+    # gives: this list was typed out too, and it was missing os7-automation on
+    # the same day the fixture's build list was — so the one package that made
+    # `apt install os7-server` fail in the hotfix phase was also the one package
+    # nobody asserted had arrived in the phase where it worked.
+    for pkg in metapackage_closure(REPO):
         check(f"{pkg}={version}" in installed, f"{pkg} is installed at {version}")
     check("os7-release" in f.get("sources.owner", ""),
           "the apt source is os7-release's own file, not the harness's",
@@ -895,7 +959,8 @@ def main():
 
     # -- UL10 ---------------------------------------------------------------
     print("\n  UL10 — a base-files upgrade can no longer revert the branding")
-    check(f.get("basefiles.rc") == "0", "base-files reinstalls cleanly over the divert")
+    check(f.get("basefiles.rc") == "0", "base-files reinstalls cleanly over the divert",
+          f.get("basefiles.log", "").replace("\n", " ")[-160:])
     after = f.get("osrel.after", "")
     check("PRETTY_NAME=OS/7" in after and f"IMAGE_VERSION={version}" in after,
           "the branding survived it", after[:70])

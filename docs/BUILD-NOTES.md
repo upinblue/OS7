@@ -8906,3 +8906,113 @@ Anything that prepends a privilege word to a string it did not parse is
 elevating the first word of it. The same shape reaches `nice`, `timeout`,
 `nohup`, `env VAR=x`, `strace` and `time`, and each of them is wrong in the same
 quiet way — the first thing works, so the wrapper looks fine.
+
+## #165 — `git status` called a tree dirty in which nothing differed, and the release process reads that field
+
+**Measured 2026-09-21**, preparing the third preview. `git status --porcelain`
+listed six files as modified:
+
+```
+ M powershell/Zfs/Zfs.psd1
+ M powershell/Zfs/Zfs.psm1
+ M src/OS7.App.SoftwareUpdate/OS7.App.SoftwareUpdate.csproj
+ M src/OS7.App.Versions/OS7.App.Versions.csproj
+ M src/OS7.Ui/Theme/Controls.axaml
+ M src/OS7.Ui/Theme/Tokens.axaml
+```
+
+**Every one of them was byte-identical to HEAD**, proved three ways on the same
+tree rather than inferred:
+
+```
+git hash-object <file>   == git ls-files -s <file> (the index blob)
+                         == git rev-parse HEAD:<file>
+git diff                 -> prints nothing, exit 0
+git update-index --really-refresh  ->  "<file>: needs update", and it stays
+```
+
+So `git diff` and `git status` disagreed about one tree, and `--refresh` could
+not settle it. `git status` decides from the stat recorded in the index;
+`git diff` reads the bytes. The stat was one git would not reconcile and would
+not re-record, and `git checkout --` on identical bytes is what cleared it.
+
+**Why this is not a curiosity.** `scripts/os7-source-facts.sh` asked
+`git status --porcelain` for `OS7_GIT_DIRTY`, `build.sh` turns that field into
+`"reproducible": false` in the manifest and says so on stdout, and
+RELEASE-PROCESS.md §1.3 says a dirty tree is not a release. A release would
+therefore have been refused — or, worse, cut while disclaiming its own
+provenance — over a tree in which nothing differed. The field claims something
+about CONTENT and was answered by a stat comparison.
+
+**Fixed by asking the question the manifest is making a claim about**, in two
+parts because tracked content is not the whole of it:
+
+```sh
+git diff --quiet HEAD                        # the bytes of every tracked file
+git ls-files --others --exclude-standard     # and anything untracked
+```
+
+The second condition is not decoration. An untracked file under
+`build/config/hooks` or `config/includes.chroot` is copied into the image by
+live-build, so it changes the product while `git diff` says nothing at all —
+which is #13's neighbourhood, reached from the other side.
+
+**Proved in a scratch clone, five cases, before and after:** a clean tree is
+`false`; a file whose mtime moved and whose bytes did not is `false`; a tracked
+file one byte longer is `true`; an uncommitted hook under
+`build/config/hooks` is `true`; and removing it returns `false`.
+
+**What is NOT established is the mechanism.** The touch case above does not
+reproduce the original: in a fresh clone git resolves a bare `touch` by content
+on its own and `git status` stays empty. What could not be manufactured is the
+index state in which git keeps its opinion. That is worth saying rather than
+papering over — the fix does not depend on knowing why, because it stops asking
+the question that had the wrong answer.
+
+*The general form:* **a field that claims "these bytes are the source of this
+artefact" must be answered by reading bytes.** `git status` is a report about a
+working tree's convenience, not an assertion about content, and this repository
+had a release gate resting on it.
+
+## #166 — a fixture's package list was written out by hand, and a Depends added three weeks later walked past it
+
+**Measured 2026-09-21.** `check-os7-repo.py` failed four assertions in its
+hotfix phase with apt's resolver dump:
+
+```
+os7-server:amd64=1.0.0.243 Depends os7-automation (= 1.0.0.243)
+but none of the choices are installable: [no choices]
+```
+
+The package was in the tree. The DEV-channel half of the very same run had
+built `os7-automation_1.0.0.242_all.deb` and installed `os7-server` from it
+successfully, twenty lines earlier.
+
+**The cause is a list.** The stable/hotfix repositories are built from a SUBSET
+(`OS7_REPO_PACKAGES`), because the full set costs the NativeAOT compile that is
+the expensive half of this harness — and the subset was eight names typed into
+the source on 2026-08-28. On 2026-09-14 `os7-automation` became a `Depends` of
+`os7-server`. The list did not move. From that day the check was red, and it
+was red for a week because nobody ran it: it is a four-minute check, not one of
+the seconds-long ones.
+
+**The assertion half had the same defect, and it is the more interesting one.**
+The report's list of packages required to be installed was also typed out, and
+also lacked `os7-automation`. So the one package whose absence broke the hotfix
+phase was also the one package that, in the phase where it WORKED, nothing
+claimed had arrived. Two hand-written lists, one omission, and the check could
+neither prove the good case nor explain the bad one.
+
+**Fixed by deriving both from the control files.** `metapackage_closure()`
+reads `os7-server`'s `Depends` out of `build/packages/*/control.in` and closes
+over it; the fixture builds that set and the report asserts that set. The next
+dependency added to a `control.in` is in both the moment it is written.
+`os7-desktop` left the fixture in the same change: nothing installs it there,
+its own members are the compiles the subset exists to avoid, and keeping it
+made it an uninstallable metapackage in a repository — which proves nothing and
+is what made the failure read as a repository defect rather than a harness one.
+
+*The general form:* it is #66 again, and #141's shape — **a list that restates
+what another file already declares will drift, and the drift shows up as the
+declaring file's fault.** The tell is that the check's message blamed
+`os7-server`, which was correct about itself.

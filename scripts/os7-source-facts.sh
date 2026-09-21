@@ -73,10 +73,32 @@ fi
 
 COMMIT="$("${GIT[@]}" rev-parse --short=12 HEAD 2>/dev/null || true)"
 COUNT="$("${GIT[@]}" rev-list --count HEAD 2>/dev/null || true)"
-if [[ -n "$("${GIT[@]}" status --porcelain 2>/dev/null)" ]]; then
+# DIRTY IS DECIDED BY CONTENT, NOT BY A STAT COMPARISON.
+#
+# This read `git status --porcelain` until 2026-09-21, and on that day it said
+# six files were modified whose bytes were identical to HEAD. Proved three ways
+# on the same tree: `git hash-object <file>` equalled the index entry's blob
+# AND `git rev-parse HEAD:<file>` for every one of them, `git diff` printed
+# nothing, and `git update-index --really-refresh` refused to clear them
+# ("needs update") — a stat git could not reconcile and would not re-record.
+# `git checkout --` on identical bytes fixed it.
+#
+# The consequence was not cosmetic. build.sh turns this field into
+# `"reproducible": false` in the manifest, and RELEASE-PROCESS §1.3 says a dirty
+# tree is not a release — so a release could have been refused, or cut with a
+# manifest disclaiming its own provenance, over a tree in which nothing
+# differed. `git status` trusts the recorded stat; `git diff` reads the bytes.
+# This asks the question the manifest is actually making a claim about.
+#
+# TWO CONDITIONS, because tracked content is not the whole of it: an UNTRACKED
+# file under build/config/hooks or includes.chroot is copied into the image by
+# live-build, so it changes the product while `git diff` says nothing. Both are
+# asked, and the field is true if either is.
+DIRTY=false
+if ! "${GIT[@]}" diff --quiet HEAD 2>/dev/null; then
 	DIRTY=true
-else
-	DIRTY=false
+elif [[ -n "$("${GIT[@]}" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+	DIRTY=true
 fi
 
 # Check the answers before handing them on. build/build.sh interpolates BUILD
