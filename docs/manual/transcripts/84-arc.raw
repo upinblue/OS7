@@ -5,12 +5,12 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 
 [32;1mInstalled     : [0mFalse
 [32;1mVersion       : [0m
-[32;1mStagedPackage : [0m{azcmagent_1.67.03504.1320_amd64.deb}
+[32;1mStagedPackage : [0m{azcmagent_1.68.03532.1399_amd64.deb}
 [32;1mStagedIn      : [0m/var/cache/os7/packages
 [32;1mRaw           : [0m
 [32;1mReason        : [0m
 [32;1mConnected     : [0m
-[32;1mDetail        : [0mazcmagent is not installed; azcmagent_1.67.03504.1320_amd64.deb
+[32;1mDetail        : [0mazcmagent is not installed; azcmagent_1.68.03532.1399_amd64.deb
                  is staged in /var/cache/os7/packages for the installer to plac
                 e, which is deliberate — its postinst needs a running systemd
 

@@ -591,7 +591,126 @@ is not published.
 
 ---
 
-## 10. What this run does NOT say
+## 10. The manual's pictures, and the gap they uncovered
+
+`shoot-manual.py` on a bench copied from §8.1's machine: **48 transcripts and 48
+pictures**, every character off the serial line at the console's own 80x24. The
+transcripts it replaced were **1.0.0.175's** — the manual's console half was
+three weeks stale and nothing said so.
+
+Two substantive changes in the new set, both expected and one worth having:
+
+```
+- rpool                                              /
++ rpool/DATA/lib/os7-domain-homes                    /var/lib/os7/domain-homes
+```
+
+A9's dataset and VL7's policy appear in the manual's own picture for the first
+time. The rest is a different install's dataset-name hashes, sizes, dates, and
+systemd unit ordering in a captured boot log.
+
+**Before the pictures could be taken, the bench had to be made into a machine
+worth photographing, and that is §11.**
+
+### 10.1 `make-release-dir.py` refused, correctly
+
+```
+!!! 26 of 74 PNGs in docs/manual/images are older than the medium they
+    would describe (2026-09-21T13:18:52Z)
+    A picture of this build cannot predate it.
+```
+
+It names them: 18 `setup-*`, 7 `desktop-*` and `console-version.png`. So the
+staleness is wider than the console set — the installer screens and the desktop
+pictures in the manual are from 2026-08-29, and **no tool puts them there**:
+only the manual's own chapters reference those filenames, so they were placed by
+hand in an earlier session. Today's `run-phase3.py walk` did produce 17 fresh
+Setup screens in `.vm/phase3/shots/`, under different names
+(`40-welcome.png` against `setup-01-welcome.png`), so a refresh is a mapping
+somebody has to establish rather than a copy.
+
+Assembled with `--screenshots out/release-shots-245`, holding only this build's
+48. The rule is satisfied rather than bypassed, and the release directory claims
+nothing about pictures it did not check.
+
+### 10.2 And the manual documents NEITHER new application
+
+`Software Update` and the previous-versions window appear nowhere in
+`docs/manual/en/*.md`. The product ships two GUI applications the administrator
+manual does not describe. Owner's decision (2026-09-21): the release notes
+announce them and the chapters are their own session, because holding the media
+would leave this release's fixes — #167 among them — unpublished while prose is
+written.
+
+---
+
+## 11. What the gate found in the product, and it is not a regression
+
+`Remove-OS7BootEnvironment` **cannot destroy the environment a machine rolled
+back from.** Read off the §8.1 machine, both halves:
+
+```
+bpool/BOOT/os7_1.0.0.245_…   origin = bpool/BOOT/os7_1.0.0.246_…@os7_1.0.0.246_…
+rpool/ROOT/os7_1.0.0.245_…   origin = rpool/ROOT/os7_1.0.0.246_…@os7_1.0.0.246_…
+```
+
+`Update-OS7` promotes the new environment while assembling it — correct, it has
+to be independent — so after `Restore-OS7` the RUNNING environment is a ZFS
+clone of the one it rolled back from. Destroying that one is refused, and the
+refusal arrives as a raw ZFS message under a `ParentContainsErrorRecordException`
+rather than as a sentence:
+
+```
+'bpool/BOOT/os7_1.0.0.246_…': filesystem has dependent clones use
+'-R' to destroy the following datasets: bpool/BOOT/os7_1.0.0.245_…
+```
+
+The cmdlet has a careful sentence for each of the four refusals it anticipated —
+running, mounted, next-to-boot — and its own docstring says "without this the
+pool fills, which is how boot-environment systems fail in practice". The one
+case that genuinely fills the pool is the one it cannot remove.
+
+**The way through is measured, not guessed.** On the same machine:
+
+```
+Convert-ZfsClone -Name bpool/BOOT/os7_1.0.0.245_… → Origin empty
+Convert-ZfsClone -Name rpool/ROOT/os7_1.0.0.245_… → Origin empty
+Remove-OS7BootEnvironment -Name os7_1.0.0.246_…   → destroyed, exit 0
+```
+
+`Convert-ZfsClone` (`zfs promote`) is in `powershell/Zfs/Zfs.psm1` and is
+documented for exactly this: "The clone DEPENDS on its snapshot … is what breaks
+that dependency." The ZFS layer has the verb; the product layer does not use it.
+**The topology is mixed** — top-level 245 ← 246, the children under
+`rpool/ROOT/os7_1.0.0.246_…/var*` are 246 ← 245 — so a fix that promotes only
+the top-level pair may not cover every case, and that is to be measured.
+
+**NOT a regression:** `Convert-ZfsClone` was already in 1.0.0.203
+(`git merge-base --is-ancestor`), so 1.0.0.175 and 1.0.0.203 behave the same.
+Install, boot, update and rollback are all gated and green; what this affects is
+cleanup after a rollback, and the message an operator gets for it.
+
+### 11.1 And it weakens one of the S5 gate's own assertions
+
+`run-s5.py`'s `phase_timer()` says in its comment:
+
+> The environment the update phase staged and the rollback left behind is
+> removed first, **so the timer's own staging is what is measured rather than
+> found.**
+
+The code runs that removal and never checks it. In this run it FAILED, for the
+reason above (`.vm/s5/timer-1.serial.log`, at "dependent clones"), and the two
+assertions after it — *"3/4 with a channel: exit 2 — staged, reboot pending"*
+and *"a boot environment for 1.0.0.246 exists — the release is there"* — could
+have been satisfied by the leftover rather than by the timer's work. The phase
+reported PASS. The comment names the precondition and the code does not enforce
+it; the count it would need is already collected and thrown away.
+
+Both are one follow-up and neither blocks this release.
+
+---
+
+## 12. What this run does NOT say
 
 * **Nothing is published.** Steps 6 to 10 are not done: the release key's secret
   half is not on this host, which is §6 as designed, so signing and publishing

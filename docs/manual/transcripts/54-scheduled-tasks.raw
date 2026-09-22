@@ -4,28 +4,29 @@ PS /home/os7admin> [?1h[6nG[6n[24;81H[24;80HGe[6n[24;82H[24;80HGet[6n[
 [?1l
 [32;1mName                          [0m[32;1m NextRun            [0m[32;1m LastRun[0m
 [32;1m----                          [0m [32;1m-------            [0m [32;1m-------[0m
-anacron.timer                  09/09/2026 19:50:56 09/03/2026 10:05:57
-apt-daily-upgrade.timer        09/09/2026 20:16:52 09/03/2026 10:05:57
-apt-daily.timer                09/10/2026 06:48:37 09/03/2026 10:05:57
+anacron.timer                  09/21/2026 21:34:33 09/21/2026 20:59:15
+apt-daily-upgrade.timer        09/22/2026 06:36:05 09/21/2026 17:33:06
+apt-daily.timer                09/22/2026 08:06:14 09/21/2026 17:33:06
 chrony-dnssrv@.timer                               
-dpkg-db-backup.timer           09/10/2026 00:00:00 09/09/2026 19:47:52
-e2scrub_all.timer              09/13/2026 03:10:33 09/09/2026 19:47:59
-fstrim.timer                   09/09/2026 21:17:55 09/03/2026 10:05:57
-fwupd-refresh.timer            09/09/2026 20:36:42 09/03/2026 10:05:57
-logrotate.timer                09/09/2026 19:53:41 09/03/2026 10:05:57
-man-db.timer                   09/09/2026 22:42:34 09/03/2026 10:05:57
-motd-news.timer                09/09/2026 23:25:21 09/03/2026 10:05:57
-os7-backup-replicate.timer     09/09/2026 20:05:12 09/09/2026 19:48:24
-os7-update-check.timer         09/09/2026 20:01:30 09/03/2026 10:05:57
-sanoid.timer                   09/09/2026 20:00:00 09/09/2026 19:47:52
+dpkg-db-backup.timer           09/22/2026 00:00:00 09/21/2026 17:33:06
+e2scrub_all.timer              09/27/2026 03:10:21 09/21/2026 17:33:06
+fstrim.timer                   09/28/2026 01:09:41 09/21/2026 17:33:06
+fwupd-refresh.timer            09/21/2026 21:06:04 09/21/2026 17:33:06
+logrotate.timer                09/22/2026 00:12:02 09/21/2026 17:33:06
+man-db.timer                   09/22/2026 07:53:55 09/21/2026 17:33:06
+motd-news.timer                09/22/2026 03:15:32 09/21/2026 17:33:06
+os7-backup-replicate.timer     09/21/2026 21:14:12 09/21/2026 20:58:35
+os7-storage-relief.timer       09/21/2026 21:06:49 
+os7-update-check.timer         09/22/2026 00:39:08 09/21/2026 17:33:06
+sanoid.timer                   09/21/2026 21:15:00 09/21/2026 21:00:01
 snapd.snap-repair.timer                            
-sysstat-collect.timer          09/09/2026 19:50:00 
-sysstat-rotate.timer           09/10/2026 00:00:00 
-sysstat-summary.timer          09/10/2026 00:07:00 
-systemd-tmpfiles-clean.timer   09/09/2026 20:02:42 
+sysstat-collect.timer          09/21/2026 21:10:00 
+sysstat-rotate.timer           09/22/2026 00:00:00 
+sysstat-summary.timer          09/22/2026 00:07:00 
+systemd-tmpfiles-clean.timer   09/21/2026 21:17:03 
 ua-timer.timer                                     
-update-notifier-download.timer 09/09/2026 19:52:49 
-update-notifier-motd.timer     09/14/2026 06:24:32 09/03/2026 10:06:05
+update-notifier-download.timer 09/21/2026 21:07:08 
+update-notifier-motd.timer     09/27/2026 11:17:50 09/21/2026 17:33:14
 zfs-scrub-monthly@.timer                           
 zfs-scrub-weekly@.timer                            
 zfs-trim-monthly@.timer                            

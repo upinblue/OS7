@@ -1,3 +1,8 @@
+[  OK  ] Created slice system-getty.slice - Slice /system/getty.
+[  OK  ] Started getty@tty1.service - Getty on tty1.
+[  OK  ] Reached target getty.target - Login Prompts.
+[  OK  ] Started snapd.service - Snap Daemon.
+         Starting systemd-timedated.service - Time & Date Service...
 [  OK  ] Started systemd-timedated.service - Time & Date Service.
 [  OK  ] Finished snapd.seeded.service - Wait until snapd is fully seeded.
 [  OK  ] Finished systemd-networkd-wait-onl…ce - Wait for Network to be Online.
@@ -7,18 +12,13 @@
 [  OK  ] Reached target timers.target - Timer Units.
 [  OK  ] Started cups-browsed.service - Mak…te CUPS printers available locally.
 [  OK  ] Reached target multi-user.target - Multi-User System.
-         Starting authd.service - authd daemon service...
-[  OK  ] Finished sanoid.service - Snapshot ZFS filesystems.
-         Starting sanoid-prune.service - Prune ZFS snapshots...
-[  OK  ] Started authd.service - authd daemon service.
-[  OK  ] Finished sanoid-prune.service - Prune ZFS snapshots.
 
 OS/7 1.0.0 (preview) os7-s5 ttyS0
 
 os7-s5 login: os7admin
 Password:
 OS/7 1.0.0 (preview)
-kernel 7.0.0-30-generic (x86_64), boot environment os7_1.0.0.175_202609030759
+kernel 7.0.0-31-generic (x86_64), boot environment os7_1.0.0.245_202609211528
 
 
 PS /home/os7admin>

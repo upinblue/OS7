@@ -2,17 +2,20 @@ Configured                : True
 Enabled                   : True
 ScheduleFileInstalled     : True
 Sources                   : {@{Dataset=rpool/USERDATA; Exists=True; Datasets=2;
-                             Snapshots=8; Newest=09/09/2026 19:47:53; AgeMinute
-                            s=3; Oldest=}, @{Dataset=rpool/DATA/srv; Exists=Tru
-                            e; Datasets=1; Snapshots=4; Newest=09/09/2026 19:47
-                            :53; AgeMinutes=3; Oldest=}}
+                             Snapshots=12; Newest=09/21/2026 21:00:01; AgeMinut
+                            es=5; Oldest=}, @{Dataset=rpool/DATA/srv; Exists=Tr
+                            ue; Datasets=1; Snapshots=6; Newest=09/21/2026 21:0
+                            0:01; AgeMinutes=5; Oldest=}, @{Dataset=rpool/DATA/
+                            lib/os7-domain-homes; Exists=True; Datasets=1; Snap
+                            shots=6; Newest=09/21/2026 21:00:01; AgeMinutes=5;
+                            Oldest=}}
 Targets                   :
 Uncovered                 : {}
-NewestLocalSnapshot       : 09/09/2026 19:47:53
-MinutesSinceLocalSnapshot : 3
+NewestLocalSnapshot       : 09/21/2026 21:00:01
+MinutesSinceLocalSnapshot : 5
 NewestReplication         :
 HoursSinceReplication     :
-CheckedAt                 : 09/09/2026 19:50:30
+CheckedAt                 : 09/21/2026 21:04:54
 
 
 PS /home/os7admin>

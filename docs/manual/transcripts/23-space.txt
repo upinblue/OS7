@@ -1,10 +1,10 @@
 Name                 : rpool
-Available            : 17119895552
-Used                 : 4724862976
+Available            : 16959488000
+Used                 : 4884656128
 UsedBySnapshots      : 0
 UsedByDataset        : 98304
 UsedByRefReservation : 0
-UsedByChildren       : 4724764672
+UsedByChildren       : 4884557824
 
 
 PS /home/os7admin>

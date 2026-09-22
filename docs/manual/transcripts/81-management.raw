@@ -24,17 +24,17 @@ OS7-STEP run: dpkg-query -W -f=${Status} ${Version} azcmagent
              Detail=installed and wired; intune-daemon.service is inactive}
 [32;1mArc       : [0m@{Installed=False; Version=; StagedPackage=System.Object[]; StagedI
             n=/var/cache/os7/packages; Raw=; Reason=; Connected=; Detail=azcmag
-            ent is not installed; azcmagent_1.67.03504.1320_amd64.deb is staged
+            ent is not installed; azcmagent_1.68.03532.1399_amd64.deb is staged
              in /var/cache/os7/packages for the installer to place, which is de
             liberate — its postinst needs a running systemd}
 [32;1mReachable : [0mFalse
 [32;1mEndpoints : [0m{@{Name=Entra; Host=login.microsoftonline.com; Port=443; Reachable=
-            True; Detail=connected in 59 ms; Verified=}, @{Name=Graph; Host=gra
-            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 32 
+            True; Detail=connected in 36 ms; Verified=}, @{Name=Graph; Host=gra
+            ph.microsoft.com; Port=443; Reachable=True; Detail=connected in 23 
             ms; Verified=}, @{Name=Intune; Host=manage.microsoft.com; Port=443;
              Reachable=False; Detail=One or more errors occurred. (Name or serv
             ice not known); Verified=}, @{Name=Arc; Host=management.azure.com; 
-            Port=443; Reachable=True; Detail=connected in 41 ms; Verified=}}
+            Port=443; Reachable=True; Detail=connected in 268 ms; Verified=}}
 [32;1mSummary   : [0mauthd is installed and PAM is wired to it, but /etc/authd/brokers.d
              is empty — there is no Entra broker for it to talk to, so a sign-i
             n will fail as though the password were wrong. See C8a: authd-msent
