@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Type a passphrase for the encrypted disk.
+
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+██████ _                                                                    ████
+     └──────────────────────────────────────────────────────────────────────┘
+
+     You will be asked for this passphrase every time the computer starts,
+     unless Setup can seal it to the TPM.
+
+     There is no way to recover the data if you forget it.
+
+
+
+
+
+
+
+
+
+
+ ENTER=Confirm   ESC=Cancel

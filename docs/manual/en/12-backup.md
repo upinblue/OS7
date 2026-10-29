@@ -236,3 +236,72 @@ how one is added, §12.2) or the machine was installed minutes ago and has not
 taken its first snapshot yet. Only `rpool/USERDATA`, `rpool/DATA/srv` and
 `rpool/DATA/lib/os7-domain-homes` are snapshotted by default; `/var/log`,
 `/var/tmp` and removable media are not.
+
+## 12.8 Versions, the window
+
+On a desktop machine the same history is available from the file manager. Right
+click a file in **Files** and choose **Versions**:
+
+![The context menu in Files. The entry is offered for any local file.](images/app-versions-menu.png)
+
+It comes from the `os7-app-versions` package and exists on amd64 installations
+with a desktop only. There is no Start-menu entry, deliberately: the application
+is a question about *one file* and takes a path, so a menu entry could only open
+a window that says "name a file". The other way in is *Open With*, which keeps
+the road open on a file manager OS/7 has not met yet.
+
+![The versions of a file, newest at the front.](images/app-versions.png)
+
+The heading is the file's name and the line under it says what the history
+covers — *"6 versions, back to 2026-09-22"* — because the question when deciding
+whether to keep looking is the range and not the count. Each card carries its
+time, its size and which retention bucket keeps it: *kept as: hourly*, *daily*,
+*weekly*, *monthly*, and *live* for the file as it stands now. Those are
+sanoid's own buckets, read off the snapshot's name rather than worked out here.
+A text file is previewed in the card; anything else says so and points at
+**Open**.
+
+Three buttons act on the selected version, and the difference between them is
+the point:
+
+| Button | What it does |
+|---|---|
+| **Open** | opens that version read-only. Changes nothing |
+| **Copy to…** | writes that version somewhere else under a name you choose. Changes nothing |
+| **Restore…** | replaces the live file with that version. Asks first |
+
+*Restore…* names the file and the version's timestamp in the question before it
+is answered, and says that what is there now is kept first:
+
+![The restore asks, and names what it is about to replace.](images/app-versions-restore.png)
+
+**The window decides nothing that 12.7 has not already decided.** It calls
+`Get-OS7FileVersion` for what to show and `Restore-OS7File` to put a version
+back; the restore is that cmdlet's, not a second implementation of it. (*Copy
+to…* writes the file itself, which is why it is in a different row of the table
+above: copying a version to a name you choose touches nothing the machine keeps
+and needs no rule.) So the safety rule above is the one that applies here too:
+run by the file's owner, the file being replaced is **renamed** to
+`<file>.os7-before-restore-<date>-<time>` and stays in the same directory. It
+is visible, it costs no disk space, and
+nothing removes it on its own:
+
+```powershell
+# in an elevated session — the default list of datasets comes from
+# /etc/os7/backup.json, which only root reads
+Get-OS7RestoreAside | Format-Table Path, Length, PutAside, Held
+
+# or name the dataset, and no elevation is needed
+Get-OS7RestoreAside -Dataset rpool/USERDATA/jsmith_0f855748
+```
+
+`Held` is asked of ZFS per file rather than assumed from its age: it says
+whether a snapshot still holds that content, which is the only thing that makes
+deleting the file beside it safe. A file put aside minutes ago is `False` — the
+next snapshot is what changes that.
+
+**For a file whose dataset keeps nothing, the heading reads *Previous versions
+could not be listed.*** Nothing has failed. The sentence in the middle of the
+window is the cmdlet's own — the one quoted above, naming the dataset and what
+to do — and it is the sentence that matters. `/var/log`, `/var/tmp` and anything
+outside the backup policy are in that state.

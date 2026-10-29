@@ -161,6 +161,34 @@ pre-release carries the changelog and the descriptors. What that run measured,
 and the five defects it found, is
 [SESSION-PREVIEW-203.md](SESSION-PREVIEW-203.md).
 
+**THE MANUAL DESCRIBES BOTH GUI APPLICATIONS SINCE 2026-09-22, and its Setup
+and desktop pictures come from a machine again** — 6.5 (Software Update), 12.8
+(Versions), 13.2 (the pair), in both languages;
+`run-phase3.py walk` + `place-manual-shots.py setup` and `shoot-desktop.py` +
+`place-manual-shots.py desktop` are the road from a machine to those pictures,
+and the old one led to a gitignored directory.
+[SESSION-MANUAL-APPS-AND-SHOTS.md](SESSION-MANUAL-APPS-AND-SHOTS.md) is the run.
+**It found three defects on the machine while every instrument here was green**,
+none of them in scope. The first is fixed since; two are open:
+
+* ~~**Ubuntu's `update-manager` is in the Start menu beside OS/7's Software
+  Update**~~ — **fixed 2026-10-29** by the quality-of-life work (Q1 in
+  [SESSION-QOL-SURVEY.md](SESSION-QOL-SURVEY.md)), which found the same thing
+  independently: the launcher is hidden and `/usr/bin/update-manager` is
+  diverted to a shim that starts OS/7's Software Update. §4.1.
+* **`Get-OS7RestoreAside` says in its own docstring that it is unprivileged and
+  throws a raw .NET exception as an ordinary user**: its default dataset list
+  comes from `/etc/os7/backup.json`, which is `600 root:root`. With `-Dataset`
+  named it works as the user. #148/#149's shape in a cmdlet neither reached.
+  §4.2.
+* **The shell panel is `#131313` where the theme declares `#d4d0c8`** — the
+  stylesheet loads (the journal says so), `Get-OS7Theme` reports Classic, every
+  other themed surface is right, and the panel's own background is not. #85's
+  shape; the cause is NOT established. §4.3. **A likely one, not measured:**
+  #168 — on 1.0.0.245 the first desktop login was `gnome-shell --mode=ubuntu`,
+  whose panel is Yaru's black, and the bench the pictures were taken on was
+  1.0.0.245. Checking it is one login on a medium that carries #168's fix.
+
 **Two things are still owed, in the order they cost:**
 
 1. **UL6 has never been satisfied and now has three releases that say so.** No

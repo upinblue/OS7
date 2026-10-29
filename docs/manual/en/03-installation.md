@@ -88,18 +88,20 @@ it.
 
 ### 8 — Install mode (amd64 only)
 
-![The choice between desktop and headless.](images/setup-08-mode-desktop.png)
+![The two modes, with Desktop selected.](images/setup-08-mode-desktop.png)
 
-**GUI** installs the classic OS/7 desktop with Microsoft Edge and the Intune
-portal. **Headless** installs a server with no graphics stack.
+**Desktop** installs the classic OS/7 desktop with Microsoft Edge and the
+Intune portal. **Headless** installs a server with no graphics stack. The
+screen arrives on Headless, so Desktop is a deliberate choice rather than the
+default.
 
-![The same choice with the headless entry selected.](images/setup-08-mode-headless.png)
+![The same screen with Headless selected, which is where it arrives.](images/setup-08-mode-headless.png)
 
 On arm64 this screen does not appear, because there is only headless.
 
 ### 9 — Network
 
-![Adapter and method. Setup applies the settings and tests them before writing them to the installed system.](images/setup-09-network.png)
+![Adapter and method, after F4: the address the adapter was actually given.](images/setup-09-network.png)
 
 Setup shows the adapters that actually exist, with kind, driver and link state.
 Three methods: DHCP, a static address, or no network configuration at all.
@@ -114,7 +116,7 @@ gateway, name servers and search domains; a wireless adapter leads to screen
 
 ### 10 and 11 — Copying and configuring
 
-![The progress display while the disk is written.](images/setup-10-execute-1.png)
+![The progress display while the disk is written, at the step that creates the account.](images/setup-10-execute-1.png)
 
 From here Setup works: partition, create LUKS, create the pools, lay down the
 datasets, unpack the filesystem, configure the system, install the bootloader,

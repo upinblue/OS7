@@ -247,3 +247,75 @@ wurde vor wenigen Minuten installiert und hat ihren ersten Snapshot noch nicht
 genommen. Standardmäßig werden nur `rpool/USERDATA`, `rpool/DATA/srv` und
 `rpool/DATA/lib/os7-domain-homes` gesichert; `/var/log`, `/var/tmp` und
 Wechselmedien nicht.
+
+## 12.8 Vorgängerversionen, das Fenster
+
+Auf einer Desktop-Maschine gibt es dieselbe Historie im Dateimanager. Ein
+Rechtsklick auf eine Datei in **Dateien**, dann **Versions**:
+
+![Das Kontextmenü in Dateien. Der Eintrag wird für jede lokale Datei angeboten.](images/app-versions-menu.png)
+
+Es kommt aus dem Paket `os7-app-versions` und existiert nur auf
+amd64-Installationen mit Desktop. Einen Eintrag im Startmenü gibt es
+absichtlich nicht: die Anwendung ist eine Frage nach *einer Datei* und braucht
+einen Pfad — ein Menüeintrag könnte nur ein Fenster öffnen, das „nennen Sie eine
+Datei" sagt. Der zweite Weg hinein ist *Öffnen mit*, und der hält die Tür auch
+für einen Dateimanager offen, den OS/7 noch nicht kennt.
+
+![Die Versionen einer Datei, die neueste vorn.](images/app-versions.png)
+
+Die Überschrift ist der Name der Datei, und die Zeile darunter sagt, was die
+Historie abdeckt — *„6 versions, back to 2026-09-22"* —, denn wer entscheidet,
+ob er weitersuchen muss, braucht den Zeitraum und nicht die Anzahl. Jede Karte
+trägt ihren Zeitpunkt, ihre Größe und die Aufbewahrungsstufe, die sie hält:
+*kept as: hourly*, *daily*, *weekly*, *monthly* — und *live* für die Datei, wie
+sie jetzt ist. Das sind sanoids eigene Stufen, aus dem Namen des Snapshots
+gelesen und nicht hier ausgerechnet. Eine Textdatei wird in der Karte
+angezeigt; bei allem anderen steht es da, mit dem Verweis auf **Open**.
+
+Drei Schaltflächen wirken auf die ausgewählte Version, und der Unterschied
+zwischen ihnen ist der Punkt:
+
+| Schaltfläche | Was sie tut |
+|---|---|
+| **Open** | öffnet diese Version nur zum Lesen. Ändert nichts |
+| **Copy to…** | schreibt diese Version woandershin, unter einem Namen Ihrer Wahl. Ändert nichts |
+| **Restore…** | ersetzt die aktuelle Datei durch diese Version. Fragt vorher |
+
+*Restore…* nennt die Datei und den Zeitpunkt der Version in der Frage, bevor sie
+beantwortet wird, und sagt, dass das Vorhandene zuerst aufbewahrt wird:
+
+![Die Rückfrage nennt, was ersetzt werden soll.](images/app-versions-restore.png)
+
+**Das Fenster entscheidet nichts, was 12.7 nicht schon entschieden hat.** Es
+ruft `Get-OS7FileVersion` für das, was es zeigt, und `Restore-OS7File`, um eine
+Version zurückzuholen; das Zurückholen ist das des Cmdlets und keine zweite
+Umsetzung davon. (*Copy to…* schreibt die Datei selbst — deshalb steht es in
+einer anderen Zeile der Tabelle oben: eine Version unter einem selbstgewählten
+Namen zu kopieren rührt an nichts, was die Maschine aufbewahrt, und braucht
+keine Regel.) Also gilt hier dieselbe Sicherungsregel wie oben: vom
+Eigentümer der Datei ausgeführt wird die ersetzte Datei in
+`<Datei>.os7-before-restore-<Datum>-<Zeit>` **umbenannt** und bleibt im selben
+Verzeichnis. Sie ist sichtbar, sie kostet keinen Plattenplatz, und niemand
+entfernt sie von selbst:
+
+```powershell
+# in einer erhöhten Sitzung — die Liste der Datasets kommt aus
+# /etc/os7/backup.json, und die liest nur root
+Get-OS7RestoreAside | Format-Table Path, Length, PutAside, Held
+
+# oder das Dataset benennen, dann braucht es keine erhöhten Rechte
+Get-OS7RestoreAside -Dataset rpool/USERDATA/mmustermann_0f855748
+```
+
+`Held` wird ZFS für jede Datei einzeln gefragt und nicht aus ihrem Alter
+geschlossen: es sagt, ob ein Snapshot diesen Inhalt noch hält — und nur das
+macht das Löschen der Datei daneben unbedenklich. Eine vor Minuten beiseite
+gelegte Datei steht auf `False` — das ändert erst der nächste Snapshot.
+
+**Bei einer Datei, für deren Dataset nichts aufbewahrt wird, lautet die
+Überschrift *Previous versions could not be listed.*** Fehlgeschlagen ist
+nichts. Der Satz in der Mitte des Fensters ist der des Cmdlets — der oben
+zitierte, der das Dataset nennt und sagt, was zu tun ist —, und dieser Satz ist
+der, auf den es ankommt. `/var/log`, `/var/tmp` und alles außerhalb der
+Sicherungsrichtlinie sind in diesem Zustand.

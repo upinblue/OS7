@@ -175,7 +175,7 @@ inventory you cannot trust.
 Three of these schedules are the product's own: `sanoid.timer` takes the
 backup snapshots (chapter 12), `os7-backup-replicate.timer` copies them to the
 backup target, and `os7-update-check.timer` is the unattended update check
-(chapter 6.7). They are managed like any other task — but they belong to the
+(chapter 6.8). They are managed like any other task — but they belong to the
 product, which matters for `Unregister-` below.
 
 One task in full:

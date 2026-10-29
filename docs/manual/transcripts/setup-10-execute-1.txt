@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+
+
+
+           Setup is configuring the system.
+
+
+           ┌──────────────────────────────────────────────────┐
+           │██████████████████████████████████                │
+           └──────────────────────────────────────────────────┘
+                                   69%
+
+           Creating the administrator account…
+
+
+           Do not turn off the computer.
+
+
+
+
+
+
+ Please wait...

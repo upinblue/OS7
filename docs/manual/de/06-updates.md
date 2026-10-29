@@ -108,7 +108,65 @@ Oder in einem Rutsch:
 Update-OS7 -Reboot -Keep 2
 ```
 
-## 6.5 Nach dem Neustart
+## 6.5 Software Update, das Fenster
+
+Auf einer Desktop-Maschine gibt es dasselbe Update als Fenster: **Apps →
+System Tools → Software Update**. Es kommt aus dem Paket `os7-app-softwareupdate` und
+existiert nur auf amd64-Installationen mit Desktop — auf arm64 gibt es keinen,
+und eine Headless-Installation entfernt ihn.
+
+![Software Update mit den Releases, die der Kanal anbietet.](images/app-software-update.png)
+
+Die Liste zeigt die Releases des eingestellten Kanals, das neueste oben. Für das
+ausgewählte nennt die Fläche darunter den vollständigen Release-Zeitpunkt, die
+apt-Suite, den Ubuntu-Archivstand, gegen den es gebaut wurde, den Schlüssel, mit
+dem es signiert ist, und wie viele Erstmigrationen es mitbringt — dieselben
+Angaben, die `Get-OS7Release` ausgibt.
+
+Die Überschrift ist einer von vier Sätzen:
+
+| Überschrift | Was sie bedeutet |
+|---|---|
+| *Your software is up to date.* | im Kanal liegt nichts Neueres |
+| *New software is available for your computer.* | mindestens ein Release lässt sich hier installieren |
+| *New software exists, but none of it can be installed on this computer.* | es gibt neuere Releases, und jedes davon ist ausgeschlossen; jede Zeile sagt, warum |
+| *This machine could not be asked about updates.* | der Kanal war nicht lesbar, die Zeile darunter nennt den Grund |
+
+Der dritte Satz ist absichtlich ein anderer als der erste. „Es gibt nichts
+Neueres" und „es gibt Neueres, das diese Maschine nicht annimmt" schicken einen
+Administrator an zwei verschiedene Stellen.
+
+Ein Release, das hier nicht installierbar ist, bekommt trotzdem eine Zeile — mit
+abgeschaltetem Kontrollkästchen und dem Grund in der Fläche: es ist für eine
+andere Architektur gebaut, es ist nicht neuer als das laufende Release, es ist
+ein Hotfix für ein Release, das diese Maschine nicht hat (dann erst auf jenes
+aktualisieren), oder es überschreitet eine Hauptversion — und das ist eine
+Installation und kein Update.
+
+**Das Fenster entscheidet nichts davon.** Ob ein Release anwendbar ist, wird bei
+`Get-OS7Release` GELESEN und nie nachgerechnet; Fenster und Cmdlet können sich
+über dasselbe Release also nicht widersprechen. Die Hauptschaltfläche zählt,
+was sie tun wird — mit einem angehakten Release steht dort *Install 1 Item* —
+und startet `os7-update@<version>.service`; polkit fragt zuerst nach einem
+Administratorkennwort und nennt dabei, wofür, und systemd führt dann
+`Update-OS7` als root aus. Die Anwendung selbst hat diese Rechte nie. Alles aus
+6.4 gilt, denn unter dem Fenster liegt derselbe Code — einschließlich des
+Neustarts, den das Fenster nennt, bevor es etwas beginnt.
+
+**Ein Release, das nicht für die Produktion signiert ist, wird hier abgelehnt**,
+und die Zeile sagt es mit dem Schlüssel, der es signiert hat. Nur das Cmdlet
+nimmt ein solches Release an:
+
+```powershell
+sudo pwsh -c 'Update-OS7 -Version 1.0.0.246 -AllowDevelopment'
+```
+
+Genau diesen Satz gibt die Zeile selbst aus, mit eingesetzter Version. Solange
+ein Release nicht unter dem Produktionsschlüssel veröffentlicht ist, zeigt eine
+Maschine, der es angeboten wird, es in der Liste an und installiert es von dort
+nicht.
+
+## 6.6 Nach dem Neustart
 
 Beim ersten Start der neuen Umgebung laufen die **Erstmigrationen** des
 Releases. Das sind die Schritte, die sich nur auf einer laufenden Maschine
@@ -129,7 +187,7 @@ Passt etwas nicht, geht es mit einem Befehl zurück:
 Restore-OS7
 ```
 
-## 6.6 Die Entscheidungen prüfen, ohne zu aktualisieren
+## 6.7 Die Entscheidungen prüfen, ohne zu aktualisieren
 
 `Test-OS7Update` prüft die Logik des Update-Weges auf dieser Maschine — ohne
 Paketquelle, ohne ZFS-Änderungen und ohne Neustart:
@@ -139,7 +197,7 @@ Paketquelle, ohne ZFS-Änderungen und ohne Neustart:
 Das ist der Befehl für die Frage „ist mit dieser Maschine grundsätzlich alles
 in Ordnung", bevor man ein Update anstößt.
 
-## 6.7 Unbeaufsichtigt prüfen
+## 6.8 Unbeaufsichtigt prüfen
 
 OS/7 bringt einen Zeitgeber mit, der regelmäßig nachsieht, ob der Kanal etwas
 Neues hat:
@@ -175,7 +233,7 @@ Enable-OS7ScheduledTask  os7-update-check.timer
 Disable-OS7ScheduledTask os7-update-check.timer
 ```
 
-## 6.8 Was ein Update mitnimmt und was nicht
+## 6.9 Was ein Update mitnimmt und was nicht
 
 Die Aufteilung aus Kapitel 3 entscheidet, und sie lohnt die Wiederholung, weil
 sie das ganze Verfahren erklärt:

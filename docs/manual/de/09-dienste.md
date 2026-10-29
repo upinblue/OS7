@@ -181,7 +181,7 @@ Inventar, das sie verliert, wäre ein Inventar, dem man nicht trauen kann.
 Drei dieser Zeitpläne gehören dem Produkt selbst: `sanoid.timer` nimmt die
 Sicherungs-Snapshots (Kapitel 12), `os7-backup-replicate.timer` kopiert sie
 auf das Sicherungsziel, und `os7-update-check.timer` ist die unbeaufsichtigte
-Update-Prüfung (Kapitel 6.7). Sie werden verwaltet wie jede andere Aufgabe —
+Update-Prüfung (Kapitel 6.8). Sie werden verwaltet wie jede andere Aufgabe —
 gehören aber dem Produkt, und das zählt bei `Unregister-` weiter unten.
 
 Eine Aufgabe im Ganzen:

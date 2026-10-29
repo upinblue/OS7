@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Choose how this computer will be used.
+
+     Use the UP and DOWN ARROW keys to select, then press ENTER.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+██████ Desktop  - GNOME, and eligible for Microsoft Intune enrolment        ████
+     │ Headless - no desktop; managed through Azure Arc                     │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Desktop installs GNOME from this medium. It is the only mode
+     Microsoft Intune can enrol, because supported Linux enrolment
+     requires a GNOME session.
+
+     Headless removes the desktop. Nothing is downloaded either way -
+     both modes come from the medium Setup booted from.
+
+
+
+
+
+
+ ENTER=Continue   ESC=Back   F3=Quit

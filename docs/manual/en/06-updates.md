@@ -104,7 +104,61 @@ Or in one go:
 Update-OS7 -Reboot -Keep 2
 ```
 
-## 6.5 After the restart
+## 6.5 Software Update, the window
+
+On a desktop machine the same update is available as a window: **Apps →
+System Tools → Software Update**. It comes from the `os7-app-softwareupdate` package
+and exists on amd64 GUI installations only — there is no desktop on arm64, and a
+headless install removes the desktop.
+
+![Software Update, with the releases the channel offers.](images/app-software-update.png)
+
+The list is the releases the configured channel holds, newest first. For the
+selected one the pane below names the full release time, the apt suite, the
+Ubuntu archive snapshot it was built against, the key it was signed with and how
+many first-boot migrations it carries — the same facts `Get-OS7Release` prints.
+
+The heading is one of four sentences:
+
+| Heading | What it means |
+|---|---|
+| *Your software is up to date.* | nothing newer is on the channel |
+| *New software is available for your computer.* | at least one release can be installed here |
+| *New software exists, but none of it can be installed on this computer.* | there are newer releases and every one of them is ruled out; each row says why |
+| *This machine could not be asked about updates.* | the channel could not be read, and the line below carries the reason |
+
+The third is a separate sentence from the first deliberately. "Nothing newer
+exists" and "something newer exists that this machine will not take" send an
+administrator to two different places.
+
+A release that cannot be installed here still gets a row, with its checkbox
+disabled and the reason in the pane: it was built for another architecture, it
+is not newer than the running release, it is a hotfix for a release this machine
+does not have — update to that one first — or it crosses a major version, which
+is an installation and not an update.
+
+**The window decides none of that.** Whether a release is applicable is read off
+`Get-OS7Release` and never recomputed, so the window and the cmdlet cannot
+disagree about the same release. The primary button counts what it will do —
+it reads *Install 1 Item* with one release ticked — and starts
+`os7-update@<version>.service`; polkit asks for an administrator password first,
+naming what it is for, and systemd then runs `Update-OS7` as root. The
+application never holds those rights itself. Everything in 6.4 applies, because
+below the window it is the same code — including the restart, which the window
+states before it starts anything.
+
+**A release that is not signed for production is refused here**, and the row
+says so with the key that signed it. The cmdlet is the only way to take one:
+
+```powershell
+sudo pwsh -c 'Update-OS7 -Version 1.0.0.246 -AllowDevelopment'
+```
+
+That is the sentence the row itself prints, with the version filled in. Until a
+release is published under the production key, a machine offered one will show
+it in the list and refuse to install it from there.
+
+## 6.6 After the restart
 
 On the first boot of the new environment the release's **first-boot
 migrations** run. Those are the steps that can only be done on a running
@@ -124,7 +178,7 @@ If something is wrong, one command goes back:
 Restore-OS7
 ```
 
-## 6.6 Checking the decisions without updating
+## 6.7 Checking the decisions without updating
 
 `Test-OS7Update` checks the update path's logic on this machine — with no
 repository, no ZFS changes and no restart:
@@ -134,7 +188,7 @@ repository, no ZFS changes and no restart:
 This is the command for "is this machine fundamentally in order" before you
 start an update.
 
-## 6.7 Checking unattended
+## 6.8 Checking unattended
 
 OS/7 ships a timer that looks periodically for something new on the channel.
 
@@ -168,7 +222,7 @@ Enable-OS7ScheduledTask  os7-update-check.timer
 Disable-OS7ScheduledTask os7-update-check.timer
 ```
 
-## 6.8 What an update takes with it, and what it does not
+## 6.9 What an update takes with it, and what it does not
 
 The layout from chapter 3 decides, and it is worth repeating because it
 explains the whole procedure:
