@@ -248,6 +248,13 @@
 		# organisation's relay, which corrects the plan's assumption that this
 		# needed a package.
 		'Send-OS7Notification', 'Get-OS7NotificationSink', 'Set-OS7NotificationSink',
+		# Containers (docs/CONTAINERS-PLAN.md CT6, CT8). The default view is
+		# what needs attention, not what is there — P10's shape — and a stop's
+		# exit code is not a failure. Reading is root's: the engine's socket
+		# shows every container's environment. Over powershell/Docker, never
+		# the docker CLI (P2-docker).
+		'Get-OS7Container', 'Get-OS7ContainerLog',
+		'Start-OS7Container', 'Stop-OS7Container', 'Restart-OS7Container', 'Remove-OS7Container',
 		# The ONLY cmdlet in this product that transmits anything about the
 		# machine to a third party. Nothing calls it, ConfirmImpact is High, and
 		# the tool it needs is deliberately not on an OS/7 image.

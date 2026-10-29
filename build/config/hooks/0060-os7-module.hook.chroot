@@ -1,13 +1,14 @@
 #!/bin/bash
 # OS/7 — verify the PowerShell modules landed and are loadable.
 #
-# SEVEN modules since 2026-09-10: Zfs (the generic ZFS layer,
+# EIGHT modules since 2026-10-29: Zfs (the generic ZFS layer,
 # docs/ZFS-POWERSHELL-PLAN.md), Net (the generic network layer,
 # docs/POWERSHELL-SURFACE-PLAN.md P2), Time (the generic clock layer, same
 # plan), Systemd (units and the journal, same plan), Directory (LDAP, X.500 and
 # the Active Directory schema, same plan), Hardware (devices, kernel modules and
-# DKMS, same plan, P10) and OS7 (the product layer on top of all six).
-# All seven are placed
+# DKMS, same plan, P10), Docker (the container engine's API,
+# docs/CONTAINERS-PLAN.md CT4) and OS7 (the product layer on top of all seven).
+# All eight are placed
 # by build.sh, which copies powershell/<name>/ into the staged
 # includes.chroot. That keeps ONE source of truth per module in the repo - the
 # June-2026 tree carried a second baked-in copy that could drift.
@@ -187,6 +188,15 @@ check_module Hardware Get-HardwareDevice Get-HardwareIdName \
 	Get-DkmsModule ConvertFrom-DkmsStatus Invoke-DkmsBuild \
 	Get-UbuntuDriver ConvertFrom-UbuntuDriversDevices Install-UbuntuDriver \
 	Get-HwProbe Install-HwProbe Send-HwProbe Wait-UdevSettle Test-HardwareModule
+# Docker is the SEVENTH generic layer. Every export is named, because the OS7
+# module's container cmdlets import it by path and an image without one of
+# these would answer an operator with "is not recognized" from inside a verb
+# that does exist. The ENGINE is not on any image yet (CONTAINERS-PLAN step 5);
+# the module talks to a socket and needs nothing installed to import.
+check_module Docker Get-DockerEngine Get-DockerContainer Start-DockerContainer \
+	Stop-DockerContainer Restart-DockerContainer Remove-DockerContainer \
+	Get-DockerContainerLog Get-DockerImage Get-DockerVolume Get-DockerNetwork \
+	Get-DockerDiskUsage Test-DockerModule
 # The boot-environment cmdlets are named here rather than left to the stub that
 # used to stand in for them: they are what Restore-OS7 AND Update-OS7 are built
 # out of (docs/SESSION-BOOT-ENVIRONMENTS.md), they are staged from the same one
@@ -250,7 +260,9 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Send-OS7Notification Get-OS7NotificationSink Set-OS7NotificationSink \
 	Get-OS7Device Get-OS7Driver Get-OS7DeviceStatus \
 	Install-OS7Driver Repair-OS7Driver Get-OS7DriverRegression \
-	Send-OS7HardwareProbe
+	Send-OS7HardwareProbe \
+	Get-OS7Container Get-OS7ContainerLog Start-OS7Container Stop-OS7Container \
+	Restart-OS7Container Remove-OS7Container
 
 # A file that is PRESENT AND EMPTY still imports and still exports nothing, so
 # the export check above cannot see it. `cp -a` onto a full filesystem produces
@@ -272,7 +284,7 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 for part in OS7.Backup.ps1 OS7.BackupTarget.ps1 OS7.BackupRestore.ps1 \
 	OS7.BackupSelfTest.ps1 OS7.Home.ps1 OS7.Network.ps1 OS7.Time.ps1 OS7.SecureBoot.ps1 OS7.Remoting.ps1 OS7.Service.ps1 OS7.ScheduledTask.ps1 OS7.RemoteDesktop.ps1 OS7.AccountLockout.ps1 OS7.Management.ps1 \
 	OS7.Directory.ps1 OS7.DirectoryObject.ps1 OS7.Domain.ps1 \
-	OS7.Automation.ps1 \
+	OS7.Automation.ps1 OS7.Container.ps1 \
 	OS7.Compat.Windows.ps1 OS7.Device.ps1 \
 	OS7.Storage.ps1 \
 	OS7.Update.ps1 \
@@ -312,6 +324,19 @@ if [ "${nh}" -lt 5 ]; then
 	exit 1
 fi
 echo "OS/7 hook 0060:   Hardware: ${nh} recorded fixtures shipped for the self-test"
+
+# Docker's fixtures are recorded engine responses, ONE FILE PER ENGINE, and the
+# number matters more than for the others: Test-DockerModule holds the module's
+# API range equal to the oldest and newest recording, and fails with fewer than
+# two. An image short of one would ship a self-test that cannot pass.
+DKFIX="${MODULES_ROOT}/Docker/tests/fixtures"
+nd=$(find "${DKFIX}" -name 'engine-*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${nd}" -lt 2 ]; then
+	echo "OS/7 hook 0060: only ${nd} engine recordings under ${DKFIX}; expected at least 2" >&2
+	echo "OS/7 hook 0060: see powershell/Docker/tests/fixtures/README" >&2
+	exit 1
+fi
+echo "OS/7 hook 0060:   Docker: ${nd} recorded engines shipped for the self-test"
 
 NETFIX="${MODULES_ROOT}/Net/tests/fixtures"
 nn=$(find "${NETFIX}" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')

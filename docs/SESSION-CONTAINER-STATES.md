@@ -119,9 +119,28 @@ real engine as root and as a user (M-CT11, M-CT12). A fake server would be a sec
 the engine's HTTP behaviour in a second language, which is the kind of second copy §3 exists to
 avoid. The seam runs the cmdlets whole; only the socket is replaced.
 
+## Wired in, the same day
+
+Once the other session had committed, `powershell/OS7-pending/` was emptied into the module and
+deleted:
+
+- `OS7.Container.ps1` is in `powershell/OS7/` and named in all four lists — `OS7.psm1` (after
+  `OS7.Automation.ps1`), hook 0060, the `os7-module` .deb's required paths and `OS7.psd1`, whose
+  six new exports hook 0060 now requires by name.
+- **The Docker module ships with it**, which the plan had left for step 5. The container cmdlets
+  import it, and a product cmdlet whose generic layer is missing answers an operator with "module
+  not found". It is in `build.sh`'s fixture loop, the package loop and its required paths, hook
+  0060 (every export, and at least two engine recordings), `check-image.py` (`Test-DockerModule`
+  on the finished medium — so an ISO built before this fails that line by name, which is how the
+  Hardware module arrived too), `check-module-parts.py` and `run-surface.py`. The handbook's
+  generator was left alone on purpose: the manual describes what an operator can do, and with no
+  engine on any image nobody can manage a container yet.
+- The counts, asked of the modules: **OS7 176, Docker 12, 313 in eight modules**.
+  `check-module-parts.py` went red on exactly six lines before the documents moved, and GREEN (39)
+  after.
+
 ## Not done
 
-- **Wiring into the OS7 module** — `powershell/OS7-pending/README`.
 - **The writable-layer guard** on remove (`/changes`).
 - **No machine has run these cmdlets.** They have run against a fake built from a recording,
   and the Docker layer under them has run on a machine. The first real run is step 4's, on the

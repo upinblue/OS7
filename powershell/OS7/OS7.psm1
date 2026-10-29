@@ -2933,6 +2933,12 @@ function Restore-OS7 {
 # everything it does not depend on" survives the next file being added and
 # "somewhere in the middle" does not.
 #
+# OS7.Container.ps1 sits right after it, and could sit almost anywhere: it calls
+# Assert-OS7Elevated and Write-OS7Step (this file) and Import-OS7DockerLayer,
+# which it defines itself, and nothing here calls it. So the rule again — after
+# everything it depends on, before Compat.Windows, and still before
+# OS7.Update.ps1, which stays last. docs/CONTAINERS-PLAN.md CT6 and CT8.
+#
 # OS7.Compat.Windows.ps1 is SECOND TO LAST, and the position is the same rule
 # once more: it is the only file here that calls across nearly all the others —
 # Get-OS7Service and its verbs, Set-OS7TimeZone, Get-OS7Domain, Get-OS7Version
@@ -2941,7 +2947,7 @@ function Restore-OS7 {
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1',
-		'OS7.Automation.ps1',
+		'OS7.Automation.ps1', 'OS7.Container.ps1',
 		'OS7.Compat.Windows.ps1', 'OS7.Storage.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -3131,6 +3137,10 @@ Export-ModuleMember -Function Get-OS7Version,
 	# AU11. One result per sink and never one answer: "sent" over three sinks
 	# of which one worked is how an alerting system quietly stops alerting.
 	Send-OS7Notification, Get-OS7NotificationSink, Set-OS7NotificationSink,
+	# Containers (docs/CONTAINERS-PLAN.md). What needs attention by default,
+	# and a published port in words. Reading is root's, because the socket is.
+	Get-OS7Container, Get-OS7ContainerLog,
+	Start-OS7Container, Stop-OS7Container, Restart-OS7Container, Remove-OS7Container,
 	# The only cmdlet in this product that sends anything to a third party.
 	# Nothing calls it.
 	Send-OS7HardwareProbe

@@ -391,20 +391,24 @@ and still decides, in the product layer, which endpoint to hit.
    ([SESSION-DOCKER-MODULE.md](SESSION-DOCKER-MODULE.md)). Recorded against 29.1.3 on the bench
    and 29.7.2 on Docker Desktop. `Test-DockerModule` passes 58 checks here and 61 live on the
    bench, and P2-docker is the eighth layering rule, at 0. Each check was proven to fire on a
-   copy. **Not shipped yet:** it joins the module lists in step 5.
+   copy. **Shipped since step 3's wiring**, in the `os7-module` .deb: the container cmdlets
+   import it. Hook 0060 names every export and counts the engine recordings; `check-image.py`
+   runs `Test-DockerModule` on the finished medium.
 3. ~~**`OS7.Container.ps1`**~~ — **done 2026-10-29**
    ([SESSION-CONTAINER-STATES.md](SESSION-CONTAINER-STATES.md)). `check-container-logic.py`
    passes 86 checks over 19 situations, and `--prove` turns all seven planted defects red. The
    fake engine is the Docker module's own seam rather than a socket server: the socket was
    measured live in step 2, and a second imitation of the engine in Python is the copy §3 avoids.
-   **Not wired into the OS7 module** — `powershell/OS7-pending/README`, by the owner's choice
-   while another session had the module's lists open. No machine has run these cmdlets yet; step
-   4 is the first.
+   **Wired into the OS7 module the same day**, once the other session's files were committed:
+   `powershell/OS7/OS7.Container.ps1`, in all four lists, and the Docker module ships beside it in
+   the `os7-module` .deb, because a product cmdlet whose layer is missing answers "module not
+   found". No machine has run these cmdlets yet; step 4 is the first.
 4. **`Install-OS7ContainerHost`**: CT3's two datasets **before** the package (with
    `New-OS7ServiceDataset` no longer writing `state/` into a foreign root), CT7's `daemon.json`
    with the bridge ranges and their collision check, then the package. Measured from the bench's
    `installed` snapshot, along with O-M2, O-M3 and O-M6.
-5. **Delivery of the engine**: C8's universe question for `docker.io`, and package or role (O-CT2).
+5. **Delivery of the engine**: C8's universe question for `docker.io`, and package or role
+   (O-CT2). Only the engine: the PowerShell layers ship already.
 6. **The helper and its polkit rule**, with O-M4.
 7. **The window**: `src/OS7.App.Containers` on `OS7.Ui` and `OS7.Shell`, `--self-test`, and G12's
    three checks extended to it.
@@ -442,8 +446,8 @@ Phase 2 (CT10) comes after all eight.
 
 ## 8. What this changes elsewhere — not edited in this session
 
-Other sessions are working in the same tree, so these are left for when the plan is accepted. Each
-is a line or a row:
+Other sessions were working in the same tree, so these waited until their files were free. **Done
+on 2026-10-29**, except where a line says otherwise:
 
 - [CLAUDE.md](../CLAUDE.md)'s authority table: a row pointing here.
 - [GUI-APPS-PLAN.md](GUI-APPS-PLAN.md) §6: Containers in the family table.
@@ -452,11 +456,13 @@ is a line or a row:
   owed, and so is CLAUDE.md's *"holds all seven"*, which is now eight.
 - CLAUDE.md's command list: `Test-DockerModule`, `capture-docker-fixtures.py` and
   `check-container-logic.py`.
-- **Wiring `OS7.Container.ps1` into the OS7 module**: a `git mv` from `powershell/OS7-pending/`,
-  its name in `OS7.psm1`, hook 0060, `build-os7-packages.sh` and `OS7.psd1`, and the function
-  counts in CLAUDE.md, HANDOFF.md and POWERSHELL-REFERENCE.md. `check-module-parts.py` says
-  when it is complete.
+- **Wiring `OS7.Container.ps1` into the OS7 module** — done: its name in `OS7.psm1`, hook 0060,
+  `build-os7-packages.sh` and `OS7.psd1`, the Docker module in `build.sh`, the package, hook 0060,
+  `check-image.py`, `check-module-parts.py` and `run-surface.py`, and the counts — **176 of 313
+  functions in eight modules**, which `check-module-parts.py` holds.
 - [CURATION-AND-DELIVERY-PLAN.md](CURATION-AND-DELIVERY-PLAN.md) C8: the universe list.
+  **Still owed**, and on purpose: it records a decision C8 has taken, and CT1 — which engine — is
+  still *Proposed*. It belongs to step 5.
 - [BUILD-NOTES.md](BUILD-NOTES.md): two traps from O-M1. First, `docker.io`'s postinst creates
   `<pool>/var/lib/docker` on any ZFS root and leaves containerd's root in the boot environment.
   Second, the engine's default bridge cuts off an SSH peer in `172.17.0.0/16`.

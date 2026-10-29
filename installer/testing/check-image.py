@@ -423,6 +423,13 @@ emit directory.selftest bash -c 'tail -30 /tmp/directory.txt'
 chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Hardware/Hardware.psd1 -Force; Test-HardwareModule' >/tmp/hardware.txt 2>&1 && rc=0 || rc=$?
 echo "EXIT=$rc" >> /tmp/hardware.txt
 emit hardware.selftest bash -c 'tail -30 /tmp/hardware.txt'
+# The Docker module, asked to check itself against the engine recordings it
+# ships with. No engine is on the image and none is needed: the self-test
+# replays recorded answers through the module's own seam, and the thing it
+# guards is the API range being equal to those recordings (CONTAINERS-PLAN §3).
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Docker/Docker.psd1 -Force; Test-DockerModule' >/tmp/docker.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/docker.txt
+emit docker.selftest bash -c 'tail -30 /tmp/docker.txt'
 
 # The three facts about backups that are properties of the IMAGE rather than of
 # any program: the two binaries are there, the defaults file OS/7 reads its
@@ -1683,6 +1690,29 @@ def main() -> None:
         check("EXIT=0" in ht,
               "the Hardware module parses the sysfs and dkms output it ships with",
               hdetail)
+
+    # -- the Docker module, asked to check itself ---------------------------
+    #
+    # The same three outcomes as Hardware. An image built before 2026-10-29
+    # has no Docker directory and fails here by name, which is how the Hardware
+    # module arrived too.
+    kt = img.get("docker.selftest", "")
+    kran = "Docker self-test" in kt
+    kabsent = ("no valid module file" in kt) or ("was not loaded" in kt)
+    if kabsent:
+        check(False, "the Docker module is on the image",
+              "not at /usr/local/share/powershell/Modules/Docker -- an ISO built "
+              "before the container layer, or build.sh did not stage it")
+    elif not kran:
+        print("      note  the Docker self-test produced no verdict in this chroot "
+              "(BUILD-NOTES #38). Run it on a booted machine.")
+    else:
+        ksummary = next((l.strip() for l in kt.splitlines()
+                         if "passed," in l and "failed" in l), "")
+        check("EXIT=0" in kt,
+              "the Docker module replays the engine recordings it ships with, "
+              "and its API range equals them",
+              ksummary)
 
     # -- the backup layer ---------------------------------------------------
     #

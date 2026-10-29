@@ -335,7 +335,12 @@ stage_ps_fixtures() {
 # — and the name had to go in BOTH lists again, which is the second time that
 # paragraph above has been the only thing standing between a module and an
 # image that silently lacks its fixtures.
-for _mod in Zfs Net Time Systemd Directory Hardware OS7; do
+#
+# DOCKER JOINED BOTH LISTS IN ONE COMMIT (2026-10-29), which is the paragraph
+# above taken at its word. Its fixtures are recorded engine responses, and the
+# OS7 module's container cmdlets import it — so a product layer that shipped
+# without it would answer every Get-OS7Container with "module not found".
+for _mod in Zfs Net Time Systemd Directory Hardware Docker OS7; do
 	if [[ ! -d "${HERE}/../powershell/${_mod}" ]]; then
 		echo "!!! ${_mod} module source missing: ${HERE}/../powershell/${_mod}" >&2
 		exit 1

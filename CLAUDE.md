@@ -65,6 +65,7 @@ here either — this file points, they rule.
 | What the OS owes an automation workload — and what it deliberately leaves to a product above, decisions AU1–AU14 | [docs/AUTOMATION-PLAN.md](docs/AUTOMATION-PLAN.md) — **PHASE 1 IS BUILT AND HAS RUN ON A MACHINE (2026-09-14)**: secrets, the job journal, the job contract, the service dataset, locks, per-job Kerberos caches and notification, in `powershell/OS7/OS7.Automation.ps1` and `build/packages/os7-automation/` ([SESSION-AUTOMATION-PRIMITIVES.md](docs/SESSION-AUTOMATION-PRIMITIVES.md)). Its governing rule is AU1: **the OS provides primitives, a product above provides policy**, because the alternative is the engine twice in two languages with nobody at the seam (#66) — and it is decidable by grep, held at 0 by `check-automation-logic.py`. `Start-OS7Job` **widens** the templated-unit + polkit + journal pattern the Software Update window proved (O-G6) rather than replacing it. **FOUR OF ITS DECISIONS WERE WRONG AND ARE CORRECTED IN PLACE**, each with the measurement that did it: `--tpm2-pcrs=` defaults to EMPTY so `host+tpm2` does NOT inherit #69/#100 (AUL2 shrinks); systemd's host key lives at `/var/lib/systemd/credential.secret`, which is INSIDE the boot environment, so **`tpm2` alone is the sealing target** and `host+tpm2` would have put the KEY back where AU6 keeps the SECRET out of; AU11 needs **no MTA**; and the journal's schema IS a contract. **AND A MACHINE FOUND THREE DEFECTS WHILE EVERY CHECK HERE WAS GREEN** — a directory the cmdlet's own error message promised and did not create, a property read that throws under strict mode because the journal has two writers, and `RuntimeMaxSec=`, which systemd IGNORES for `Type=oneshot` so that every job ran with no timeout (#155). **AND PHASE 1'S MEASUREMENTS ARE DONE SINCE 2026-09-15** — M-AU3 (the fence, eleven questions asked of the FILESYSTEM after the first probe reported the opposite by asking whether a command threw), M-AU5 (AUL4 is three walls, and the third made `-Identity` unusable: the journal is root-owned, so the STARTER now writes the Result when the job cannot), M-AU7 (a real KDC in a container, no password typed: the ticket lands in the named cache and the default one STAYS EMPTY), M-AU8 (the store is outside `rpool/ROOT` and a new boot environment does not swallow it), a delivered notification, `-Unconfined` (10 of 11, and the eleventh is the TPM it deliberately keeps), and polkit's headless half. **A zero-byte keytab found two more defects**: both refusals blamed the realm for a file on this machine, while `Get-DirectoryKeytabPrincipal` had always said existence proves nothing. What is still owed: **ticket expiry and renewal**, a `Restore-OS7` rollback over a secret, polkit's dialog (needs a seat) and arm64 |
 | The identity and access management application on top of OS/7: what it is, the layer cut against the OS, decisions IG1–IG14 | [docs/IAM-PLAN.md](docs/IAM-PLAN.md), with [docs/IAM-SCOPE.md](docs/IAM-SCOPE.md) as its capability scope — **all *Proposed*, nothing built.** It is **not an OS feature and must not become one**: AU1 is the line, and routing roles, attestation and separation of duties through the cmdlet surface would end with two hundred cmdlets of business logic in `powershell/OS7/`. Two decisions do most of the work — **IG5**, every derived fact carries its derivation (without it, individual-versus-role reporting and attestation of any kind are unimplementable *late*), and **IG6**, the plan is an artifact, which turns the reconciler, attestation and separation of duties into producers and validators of plans rather than three more engines. **The AD cmdlets are deliberately NOT its foundation** — a .NET application has `S.DS.P` natively, so what transfers is [AD-PLAN.md](docs/AD-PLAN.md)'s measured knowledge and not its code, and OS/7's AD surface should stop growing toward being a provisioning engine |
 | Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is what a machine taught it** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable (M-V22). The answer is Time Machine's own: Apple takes no pre-restore snapshot either, it moves the existing file aside, so OS/7 keeps what it is about to overwrite by the strongest means available where it stands — a snapshot with privilege, a rename without ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md)). **AND SINCE 2026-09-15 DOMAIN USERS HAVE VERSIONS AT ALL** (VL7, closed): `rpool/DATA/lib/os7-domain-homes` — where every domain account's home is — was in no backup policy, so a domain-joined machine snapshotted nobody's work. One line of defaults and a firstboot migration for machines already installed. Measuring it found the bigger one beside it: a dataset with NO snapshots returned an empty list in silence, and the window turned that into a claim — *"1 versions, back to today"* — because it asks with `-IncludeCurrent`, so V6's own sentence was unreachable for every file that EXISTS (#163). Then clicking found the refusal arriving as PowerShell's ConciseView stack trace, drawn twice ([SESSION-VERSIONS-DOMAIN-HOMES.md](docs/SESSION-VERSIONS-DOMAIN-HOMES.md)) |
+| Containers on OS/7: which engine, where its data lives, how PowerShell reaches it, who may see it, and the window an administrator controls them from, decisions CT1–CT12 | [docs/CONTAINERS-PLAN.md](docs/CONTAINERS-PLAN.md) — **all *Proposed*; steps 1–3 of its eight are done, and the window is step 7.** Its §3 answers the owner's requirement — *easy to keep up to date* — first: every fact in one place and a check on every seam, so the engine version lives in the pin, the API's shape in `powershell/Docker/` (whose range IS its recordings of real engines), the judgements in `OS7.Container.ps1`, and the window renders the cmdlet's object. **Measured on a machine:** the archive's `docker.io` works on OS/7's ZFS root and makes no dataset per layer; a plain `apt install docker.io` puts the image store INSIDE the boot environment and its own dataset where no OS/7 cmdlet sees it, so the store's two datasets come first; and the engine's default bridge `172.17.0.0/16` cut a bench off from its SSH peer, so OS/7 owns and checks the ranges. The generic layer speaks the Engine API and never the CLI, because the CLI exits 0 for a start that started nothing ([SESSION-CONTAINERS-ZFS.md](docs/SESSION-CONTAINERS-ZFS.md), [SESSION-DOCKER-MODULE.md](docs/SESSION-DOCKER-MODULE.md), [SESSION-CONTAINER-STATES.md](docs/SESSION-CONTAINER-STATES.md)). **No image carries the engine yet** |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -586,20 +587,59 @@ make repo-amd64                           # OS/7's own SIGNED package repository
 ./installer/testing/run-zfs.py capture    # real ZFS output -> test fixtures
 ./installer/testing/run-zfs.py test       # Test-ZfsModule -Live, on a booted VM
 ./installer/testing/check-layering.py     # Z1, P2, P2-time, P2-systemd,
-                                          #   P2-directory, P2-hardware: does
+                                          #   P2-directory, P2-hardware,
+                                          #   P2-automation, P2-docker: does
                                           #   OS7 still reach ZFS, the network,
-                                          #   the clock, systemd, the directory
-                                          #   or the hardware directly. SIX
-                                          #   rules, measured at
-                                          #   0 / 0 / 0 / 2 / 1 / 0 against
-                                          #   baselines that may fall and may
-                                          #   not rise; each non-zero site is
-                                          #   NAMED. This entry said FOUR and
+                                          #   the clock, systemd, the directory,
+                                          #   the hardware, systemd's credential
+                                          #   tooling or the container engine
+                                          #   directly. EIGHT rules, measured
+                                          #   at 0 / 0 / 0 / 2 / 1 / 0 / 0 / 0
+                                          #   against baselines that may fall
+                                          #   and may not rise; each non-zero
+                                          #   site is NAMED. P2-docker matches
+                                          #   -UnixSocket and docker.sock too,
+                                          #   because the way round a module
+                                          #   that speaks HTTP is a parameter,
+                                          #   not a binary. OS7_LAYER3 points
+                                          #   the scan at a copy, so a rule can
+                                          #   be proven to fire. This entry said
+                                          #   SIX until 2026-10-29, two rules
+                                          #   behind the file; it said FOUR and
                                           #   listed four until 2026-09-09,
                                           #   while the prose forty lines
                                           #   further down said five - the file
                                           #   disagreeing with itself about a
                                           #   number the check prints
+./installer/testing/check-container-logic.py
+                                          #   CONTAINERS-PLAN CT6 and CT8: which
+                                          #   containers need attention, and who
+                                          #   can reach a published port. 19
+                                          #   situations, each the RECORDED
+                                          #   inspect object of a real container
+                                          #   with its state rewritten, against a
+                                          #   fake engine at the Docker module's
+                                          #   own seam. The cases that must read
+                                          #   as FINE are the point: a stop
+                                          #   leaves 143 or 137, and an attention
+                                          #   view that called those failures
+                                          #   would cry wolf. 86 checks; --prove
+                                          #   plants seven defects and requires
+                                          #   each RED. It found the Compose
+                                          #   project never being read - the
+                                          #   label's key has dots in it.
+                                          #   Seconds, needs pwsh
+./installer/testing/capture-docker-fixtures.py desktop | bench <name>
+                                          #   record a REAL engine into
+                                          #   powershell/Docker/tests/fixtures,
+                                          #   which Test-DockerModule replays
+                                          #   and holds its API range EQUAL to:
+                                          #   record a new engine without
+                                          #   widening the range, or widen it
+                                          #   without recording, and it fails.
+                                          #   Refuses a recording that names
+                                          #   this host's user or a Windows
+                                          #   path, because the files are public
 ./installer/testing/check-management-logic.py # Entra/Intune/Arc DECISIONS against
                                           #   a real image with systemd as PID 1.
                                           #   24 checks against os7img:175,
@@ -747,15 +787,16 @@ kernel into another environment's menu entry, which is §4.3's half-activated
 pair reached by a road nothing checks.
 [docs/SESSION-UPDATE-TRAIN.md](docs/SESSION-UPDATE-TRAIN.md).
 
-**Seven PowerShell modules since 2026-09-10, and the direction between them
+**Eight PowerShell modules since 2026-10-29, and the direction between them
 matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
-`powershell/Systemd/`, `powershell/Directory/` and `powershell/Hardware/` are
-the generic layers — none knows anything about OS/7, and all six would run on
-any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is **170 of the 295
-functions** — measured 2026-09-15 by asking the modules, which is the only way
-this line has ever been right for long, and it had drifted by six again within a
-day. (It said 164 of 288 that morning, and 140 of 243 the morning before;
+`powershell/Systemd/`, `powershell/Directory/`, `powershell/Hardware/` and
+`powershell/Docker/` are the generic layers — none knows anything about OS/7,
+and all seven would run on any Ubuntu host.
+`powershell/OS7/` is the product layer on top, and it is **176 of the 313
+functions** — measured 2026-10-29 by asking the modules, when the container
+layer put six here and twelve in `powershell/Docker/`. Asking is the only way
+this line has ever been right for long: on 2026-09-15 it read 170 of 295, and
+it had drifted by six again within a day. (It said 164 of 288 that morning, and 140 of 243 the morning before;
 `check-module-parts.py` holds POWERSHELL-REFERENCE.md's per-module rows against
 `Get-Command` and was GREEN throughout, because nothing holds this sentence —
 which is the argument for reading the reference file and not this one.) It said "126 of 229" that morning, and
@@ -793,8 +834,10 @@ Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units, **P2-directory**
 about the directory, **P2-hardware** about devices and DKMS, and — since
 2026-09-14 — **P2-automation** about `systemd-creds`, `systemd-run` and
-`systemd-analyze`; `check-layering.py` holds **all seven** at baselines that may
-fall and may not rise. P2-automation is a rule of its own rather than more
+`systemd-analyze`, and — since 2026-10-29 — **P2-docker** about the container
+engine, whose way round is not a program but `-UnixSocket` on a product cmdlet;
+`check-layering.py` holds **all eight** at baselines that may fall and may not
+rise. P2-automation is a rule of its own rather than more
 tokens on P2-systemd because that one stands at 2 and can therefore never assert
 that a subsystem is at ZERO — only that it has not got worse. The full inventory, generated by asking the modules rather
 than written from memory, is [docs/POWERSHELL-REFERENCE.md](docs/POWERSHELL-REFERENCE.md).
@@ -1269,9 +1312,9 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             the os7-module .deb (hook 0022) and NOT by staging;
                             build.sh stages the tests/ fixtures alone
   OS7.Backup*.ps1           backup: policy, targets, restore, self-test. Four of
-                            the TWENTY-TWO files DOT-SOURCED by OS7.psm1, so a
+                            the TWENTY-THREE files DOT-SOURCED by OS7.psm1, so a
                             copy that took the .psm1 alone is a real failure
-                            mode - hook 0060 names all twenty-two, and so does
+                            mode - hook 0060 names all twenty-three, and so does
                             the .deb content check since the 2026-08-28 merge.
                             THIS NUMBER HAS BEEN WRONG SEVEN TIMES: it said
                             "four ... all five" while the file said FOURTEEN
@@ -1288,6 +1331,8 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             the four asserted places without either touching
                             this line. The correct number was twenty-two and
                             BOTH sessions' first correction of it said twenty.
+                            OS7.Container.ps1 made it TWENTY-THREE on
+                            2026-10-29, and this line moved in the same commit.
                             check-module-parts.py caught every asserted list;
                             this sentence is the one thing it cannot hold, which
                             is the argument for reading it as a map and asking
@@ -1300,6 +1345,14 @@ powershell/OS7/             the OS7 module - ONE source. It reaches an image as
                             four right. The number in this sentence still has
                             nothing checking it, which is why the check exists
                             and this table should be read as the map it is
+powershell/Docker/          the GENERIC container layer (CONTAINERS-PLAN CT4):
+                            the Engine API over its unix socket, NEVER the
+                            docker CLI - which exits 0 for a start that started
+                            nothing, where the API answers 304. The version is
+                            negotiated, and the range it will speak is held
+                            EQUAL to its recordings of real engines in
+                            tests/fixtures. One function reaches the engine,
+                            Invoke-DockerApi, and it is not exported
 powershell/Hardware/        the GENERIC hardware layer (P2). PCI and USB from
                             SYSFS - not lspci, which drops its Module: lines and
                             exits 0 when libkmod fails. DKMS, modprobe,
@@ -1379,9 +1432,15 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
                             (build/packages/os7-automation), where it is
                             signed, readable and rolled back with the release;
                             only the per-run drop-in is written at run time
+  OS7.Container.ps1         containers as an operator asks about them
+                            (docs/CONTAINERS-PLAN.md CT6, CT8): what needs
+                            attention by default, a published port in words,
+                            and a read refused in #148's words, because the
+                            engine's socket is root's. No call to `docker` and
+                            no request to the socket - P2-docker
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. LAST of the
-                            TWENTY-TWO dot-sourced files, and last because it
+                            TWENTY-THREE dot-sourced files, and last because it
                             calls every helper above it and PowerShell defines
                             functions as the script runs - which is the one
                             thing about the list that is ORDER and not a set,

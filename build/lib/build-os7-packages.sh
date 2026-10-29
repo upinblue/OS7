@@ -806,8 +806,9 @@ build_os7_module() {
 	local name
 
 	# The generic layers first and OS7 last, in the order hook 0060 checks them
-	# and for the same reason: OS7 sits on top of all five.
-	for name in Zfs Net Time Systemd Directory Hardware OS7; do
+	# and for the same reason: OS7 sits on top of all of them. The same list as
+	# build.sh's fixture loop, and Docker went into both in one commit.
+	for name in Zfs Net Time Systemd Directory Hardware Docker OS7; do
 		local src="${REPO}/powershell/${name}" dst="${root}/${name}"
 		[[ -d "${src}" ]] || { echo "!!! os7-module: ${src} is missing" >&2; exit 1; }
 		mkdir -p "${dst}"
@@ -876,6 +877,7 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/OS7/OS7.DirectoryObject.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Domain.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Automation.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Container.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Compat.Windows.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Device.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Storage.ps1 \
@@ -891,7 +893,9 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/Directory/Directory.psd1 \
 		./usr/local/share/powershell/Modules/Directory/Directory.psm1 \
 		./usr/local/share/powershell/Modules/Hardware/Hardware.psd1 \
-		./usr/local/share/powershell/Modules/Hardware/Hardware.psm1
+		./usr/local/share/powershell/Modules/Hardware/Hardware.psm1 \
+		./usr/local/share/powershell/Modules/Docker/Docker.psd1 \
+		./usr/local/share/powershell/Modules/Docker/Docker.psm1
 }
 
 # ---------------------------------------------------------------------------

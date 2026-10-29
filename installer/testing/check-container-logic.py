@@ -28,10 +28,12 @@ NetworkSettings rewritten — so the shape is the engine's and only the
 situation is constructed. The fake answers /version, the list, inspect and
 the four lifecycle verbs, and keeps state across them.
 
-WHERE THE CODE UNDER TEST LIVES. powershell/OS7-pending/OS7.Container.ps1
-until it is wired into the module (that directory's README says why), then
-powershell/OS7/. OS7_CONTAINER_MODULE overrides both, which is how --prove
-points it at a planted copy.
+WHERE THE CODE UNDER TEST LIVES. powershell/OS7/OS7.Container.ps1, which the
+OS7 module already dot-sources. The harness dot-sources it AGAIN into the
+module's scope, after the import, so that OS7_CONTAINER_MODULE can point at a
+planted copy and that copy's functions are the ones the cmdlets resolve — which
+is how --prove works. (It lived in powershell/OS7-pending/ for one afternoon,
+while another session had the module's lists open.)
 """
 
 import copy
@@ -53,11 +55,10 @@ def code_under_test():
     env = os.environ.get("OS7_CONTAINER_MODULE")
     if env:
         return env
-    for d in ("OS7", "OS7-pending"):
-        p = os.path.join(REPO, "powershell", d, "OS7.Container.ps1")
-        if os.path.exists(p):
-            return p
-    sys.exit("no OS7.Container.ps1 in powershell/OS7 or powershell/OS7-pending")
+    p = os.path.join(REPO, "powershell", "OS7", "OS7.Container.ps1")
+    if not os.path.exists(p):
+        sys.exit(f"no {p}")
+    return p
 
 
 FAILS = []

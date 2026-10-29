@@ -5,9 +5,10 @@
 # powershell/Hardware: it knows the Docker Engine API and nothing about OS/7.
 # docs/CONTAINERS-PLAN.md CT4 is the decision it implements.
 #
-# NOT YET SHIPPED. It is not in build.sh's staging loop, the os7-module .deb,
-# check-module-parts.py's MODULES or run-surface.py's — CONTAINERS-PLAN §6
-# step 5 is where it joins them, together with the engine it talks to.
+# SHIPPED IN THE os7-module .deb since 2026-10-29, because the OS7 module's
+# container cmdlets import it. The ENGINE it talks to is not on any image yet
+# (CONTAINERS-PLAN §6 step 5): until then every request says there is no
+# Docker engine socket, which is true.
 #
 # ModuleVersion is stamped by build.sh from build/config/os7-release.conf. The
 # 0.0.0 here is the "nobody stamped this" value, deliberately implausible.

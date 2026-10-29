@@ -23,10 +23,13 @@
 #   * CT5 — reading containers is root's, and the refusal says so in #148's
 #     words rather than in the Docker layer's.
 #
-# NOT WIRED INTO THE MODULE YET: powershell/OS7-pending/README says why and
-# what wiring it in takes.
+# The DECISIONS are checked with no engine by
+# installer/testing/check-container-logic.py (19 situations, seven planted
+# defects). The cmdlets have NOT run on a machine yet: no OS/7 image carries an
+# engine until CONTAINERS-PLAN step 5, and on one without it every read says
+# there is no Docker engine socket.
 #
-# Dot-sourced into the OS7 module's scope.
+# Dot-sourced by OS7.psm1.
 # =============================================================================
 
 # The exit codes a SIGNAL leaves behind: 128 + SIGINT, SIGKILL, SIGTERM. `docker

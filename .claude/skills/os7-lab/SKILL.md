@@ -166,6 +166,13 @@ arm64 side is **unrun**.
   not, and PCRs 0–7 measure the platform. A TPM result from this bench is not
   a TPM result about the product; `run-s5.py boot` is where that is measured.
   Use `up --no-gui` when the question is about sealing.
+- **A container engine in the guest cuts the bench's SSH off** (BUILD-NOTES
+  #179). QEMU runs inside Docker Desktop, so slirp hands the guest SSH peers
+  from `172.17.0.x`, and `docker.io`'s default bridge is `172.17.0.0/16`. The
+  moment `docker0` comes up, SSH stops completing and only `console` answers.
+  Write `/etc/docker/daemon.json` with `bip` and `default-address-pools`
+  outside 172.16/12 BEFORE installing the package; deleting `docker0` is the
+  way back in.
 - **The host console must not decide what the guest may say**, and it tries
   twice. stdout is reconfigured to UTF-8 (a `systemctl status` once died on
   systemd's own `○`), and `subprocess` is given `encoding="utf-8",

@@ -9578,3 +9578,60 @@ failure rate of two in twenty-two it cannot prove the race is gone, and this
 entry does not claim so. The rule to carry: **an extension that drives the
 Shell's own state machine does it from a settled state, never from inside an
 animation it did not start.**
+
+## #178 — `apt install docker.io` decides where Docker's state goes on a ZFS root, and puts half of it in the boot environment
+
+Measured 2026-10-29 on an installed 1.0.0.245 Headless (bench `ctr`),
+`docker.io 29.1.3-0ubuntu4.1` from the pinned archive, nothing done first
+([SESSION-CONTAINERS-ZFS.md](SESSION-CONTAINERS-ZFS.md)).
+
+**Ubuntu's postinst creates a dataset by itself.** When `zfs` is executable,
+the module loads, and `findmnt -n -o SOURCE /var/lib/docker` is empty or
+contains `/ROOT/`, it runs `zfs create -o canmount=off <pool>/var`, the same
+for `<pool>/var/lib`, and `zfs create <pool>/var/lib/docker` — the scar tissue
+of the zsys era, when the legacy `zfs` graph driver made one dataset per layer
+inside the boot environment. On OS/7 that dataset is outside `ROOT` (good) and
+outside `rpool/DATA` (not), and **`Get-OS7ServiceDataset`, the backup policy
+and `Get-OS7BackupCoverage` all fail to see it**: Docker's volumes are on it,
+in no snapshot schedule, with nothing to say so.
+
+**And the other half is not moved at all.** With the containerd image store —
+the default on Docker 29 — the images AND every container's writable layer
+live under `/var/lib/containerd`, which stayed in `rpool/ROOT/<be>`: an update
+clones it, a rollback reverts it, and Docker's records on the other dataset do
+neither.
+
+**What works:** create both datasets FIRST (`New-OS7ServiceDataset -Name
+docker`, `-Name containerd`). The postinst then sees a ZFS mount not under
+`/ROOT/` and steps aside — `rpool/var` is never created and nothing of the
+store is under the running environment (measured, same bench). The order is
+the decision. The rule to carry: **a package that knows about ZFS roots knows
+about Ubuntu's layout, not OS/7's; ask where its state landed before believing
+the install.**
+
+## #179 — Docker's default bridge took `172.17.0.0/16`, and the machine stopped answering the SSH session it was installed from
+
+Measured 2026-10-29, same bench. `docker.io` installed cleanly — `dockerd` was
+up 106 s into the boot — and **no SSH connection to the machine ever completed
+again**. The serial console still answered, which is how it was found:
+
+1. QEMU's slirp table (`info usernet`) showed forwarded connections arriving
+   from `172.17.0.4`. On this host QEMU runs inside a Docker Desktop container,
+   and slirp passes a non-loopback peer's real address through to the guest.
+2. In the guest, `ip route get 172.17.0.4` answered `dev docker0`: the engine
+   had taken `172.17.0.0/16` for its bridge.
+3. Deleting that ROUTE did not help — SYNs reached `prerouting`, survived
+   conntrack, and never reached `input`; where they were dropped was not
+   isolated. Deleting `docker0` itself brought SSH back on the next attempt.
+4. Control: with `bip` and `default-address-pools` set to `10.213.0.0/24` and
+   `10.214.0.0/16` in `/etc/docker/daemon.json` BEFORE the package, SSH
+   survived the install, the pulls and the runs, twice.
+
+**The trigger is this bench; the fact is the engine's.** Any machine reached
+from `172.16.0.0/12` — a common range for company networks and VPNs — stops
+answering that peer the moment the engine starts, with no message anywhere,
+and the person cut off is the administrator at the far end of the session.
+CONTAINERS-PLAN CT7 now has OS/7 write the ranges before the package and
+refuse a collision with the machine's own addresses, its routes, and the peer
+doing the install. **For the bench: never install an engine in a guest without
+setting the ranges first** — the os7-lab skill says so.

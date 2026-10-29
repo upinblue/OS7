@@ -357,6 +357,7 @@ The order is a proposal; only the first is being built.
 | **Device Manager** | `Get-OS7Device`, `Repair-OS7Driver` | P10 already designed it as a Windows administrator expects it: what is wrong, not what is there. |
 | **Backup** | `Get-OS7BackupStatus`, `Get-OS7BackupCoverage`, the policy verbs | Status at a glance is the whole job; B-5's gate is unrun, so this waits. |
 | **Network** | `Get-/Set-OS7NetworkAdapter`, `Test-OS7Network` | Needs `Set-`'s rollback behaviour (`RollbackFailed`) represented honestly, which is a design problem worth having once. |
+| **Containers** | `Get-OS7Container`, `Get-OS7ContainerLog`, `Start-/Stop-/Restart-/Remove-OS7Container` | Asked for by the owner on 2026-10-29, and the first application whose surface was built FOR it. [CONTAINERS-PLAN.md](CONTAINERS-PLAN.md) has the whole design: an MMC-style snap-in (CT9), a details pane that renders the cmdlet's object so a new property costs no C# (CT11), and G6 bent for a measured reason — the engine's socket shows every container's environment, so even reading is root's (CT5). The cmdlets are built; the window is its step 7. |
 | **Scheduled Tasks** | the `*-OS7ScheduledTask` family | P9 is already shaped like the Windows tool. |
 
 Identity and domain join are deliberately absent from v1: the installer's screen 9D has never drawn

@@ -518,7 +518,7 @@ REFERENCE = os.path.join(REPO, "docs", "POWERSHELL-REFERENCE.md")
 # OS7_MODULE_ROOT above and check-storage-logic.py's OS7_RESTORE_MODULE.
 HANDOFF = os.environ.get("OS7_HANDOFF") or os.path.join(REPO, "docs", "HANDOFF.md")
 MAP = os.environ.get("OS7_MAP") or os.path.join(REPO, "CLAUDE.md")
-MODULES = ("Zfs", "Net", "Time", "Systemd", "Directory", "Hardware", "OS7")
+MODULES = ("Zfs", "Net", "Time", "Systemd", "Directory", "Hardware", "Docker", "OS7")
 
 # OS7_MODULE_ROOT points the manifest rule at another copy of powershell/,
 # which is how it is proven to FIRE rather than only to stay quiet: copy the

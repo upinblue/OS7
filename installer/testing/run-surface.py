@@ -67,7 +67,7 @@ from os7lab import Bench, run_remote, ssh_alive                      # noqa: E40
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MATRIX = os.path.join(REPO, "docs", "SURFACE-MATRIX.md")
 
-MODULES = ("OS7", "Zfs", "Net", "Time", "Systemd", "Directory", "Hardware")
+MODULES = ("OS7", "Zfs", "Net", "Time", "Systemd", "Directory", "Hardware", "Docker")
 
 # Stage 1 is defined by VERB, not by a list of names, so a function added to
 # the product joins the survey without anyone remembering to add it.
