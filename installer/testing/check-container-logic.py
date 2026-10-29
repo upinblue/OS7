@@ -193,6 +193,12 @@ def build_world():
 HARNESS = r"""
 param([string]$WorldFile, [string]$CodeFile, [string]$DockerPsd, [string]$Os7Psd)
 $ErrorActionPreference = 'Stop'
+# BUILD-NOTES #146, on the pwsh side this time: with stdout redirected, pwsh on
+# Windows writes in the console's code page, so the arrow in "8080 → 80/tcp"
+# arrived as \x1a - a control character json.loads refuses - and the check died
+# before asserting anything on the Windows host. Decoding as UTF-8 in Python is
+# only half of it; the writer has to write UTF-8 too.
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Import-Module $DockerPsd -Force
 Import-Module $Os7Psd -Force
 $os7 = Get-Module OS7
@@ -488,6 +494,13 @@ def prove(code):
 
 
 def main():
+    # And #146 on the Python side: the expected strings carry the same arrow, and
+    # printing them to a redirected stdout on Windows (cp1252) is a traceback.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     code = code_under_test()
     print(f"container decisions: {os.path.relpath(code, REPO)}, against a fake engine "
           f"built from {os.path.relpath(FIXTURE, REPO)}\n")
