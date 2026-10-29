@@ -4,11 +4,12 @@ The layering rules: powershell/OS7 reaches a subsystem only through its module.
 
     ./check-layering.py            report, and fail if any rule got worse
 
-SEVEN RULES SINCE 2026-08-27, and they are the same rule seven times. This
+EIGHT RULES SINCE 2026-10-29, and they are the same rule eight times. This
 line read TWO while the list below held four, FIVE while it held five and
 gained a sixth, and SIX while P2-automation went in: every one of P2-time,
 P2-systemd, P2-directory, P2-hardware and P2-automation arrived under it and
-only some of them touched it. Count the RULES list, not this sentence.
+only some of them touched it. P2-docker touched it. Count the RULES list, not
+this sentence.
 
 Z1 (docs/ZFS-POWERSHELL-PLAN.md) says Layer 3 (`powershell/OS7`) never invokes
 `zfs` or `zpool` itself — every ZFS operation goes through Layer 2
@@ -48,7 +49,11 @@ import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-LAYER3 = os.path.join(REPO, "powershell", "OS7")
+# OS7_LAYER3 points the scan at a COPY, which is how a rule is proven to fire
+# rather than only to stay quiet: copy powershell/OS7 aside, plant the defect
+# there, and require FAIL. Never in the working tree, which another session may
+# be editing while this runs. Same argument as check-ps-traps.py's OS7_SCAN_ROOT.
+LAYER3 = os.environ.get("OS7_LAYER3") or os.path.join(REPO, "powershell", "OS7")
 
 
 def direct(*commands):
@@ -87,13 +92,20 @@ def direct(*commands):
 
 
 class Rule:
-    def __init__(self, tag, question, layer2, baseline, commands, verdict):
+    def __init__(self, tag, question, layer2, baseline, commands, verdict, extra=None):
         self.tag = tag
         self.question = question
         self.layer2 = layer2
         self.baseline = baseline
         self.pattern = direct(*commands)
         self.verdict = verdict
+        # A subsystem reached WITHOUT a program. direct() finds invocations,
+        # and the Docker engine is reached over HTTP: the way round the module
+        # is a cmdlet with a parameter, not a binary.
+        self.extra = re.compile(extra) if extra else None
+
+    def hit(self, line):
+        return bool(self.pattern.search(line) or (self.extra and self.extra.search(line)))
 
 
 RULES = [
@@ -254,6 +266,32 @@ RULES = [
         "powershell/OS7 reaches systemd's credential and transient-unit "
         "tooling only through the Systemd module",
     ),
+    Rule(
+        "P2-docker", "does powershell/OS7 reach the container engine directly?",
+        "Docker",
+        # 0, AND 0 THE DAY IT WAS WRITTEN (2026-10-29), before powershell/OS7
+        # had a single line about containers - docs/CONTAINERS-PLAN.md CT4.
+        #
+        # THE PROGRAMS ARE THE SMALLER HALF. The Docker module never runs
+        # `docker`: the CLI exits 0 for a start that started nothing and a
+        # stop that stopped nothing, while the API answers 304 (M-CT4). So
+        # the CLI is listed to keep it out, and so are the engine's own
+        # binaries and the other clients of the same daemon.
+        #
+        # THE LARGER HALF IS `extra`. The engine is reached over HTTP on a unix
+        # socket, so the way round powershell/Docker is not a binary at all -
+        # it is `Invoke-RestMethod -UnixSocket` in a product cmdlet, which
+        # would talk to the engine at a version nobody negotiated and parse a
+        # shape nobody recorded. Both the parameter and the socket's name are
+        # matched. Invoke-DockerApi is deliberately NOT exported, for the
+        # reason P2-hardware gives above: routing through an exported invoker
+        # while deciding in Layer 3 what to send is the same violation.
+        0,
+        ("docker", "dockerd", "containerd", "ctr", "runc", "nerdctl", "podman",
+         "buildah"),
+        "powershell/OS7 reaches the container engine only through the Docker module",
+        extra=r"-UnixSocket\b|docker\.sock|containerd\.sock",
+    ),
 ]
 
 
@@ -269,7 +307,7 @@ def scan(rule):
                     # A line that is only a comment is documentation, not a call.
                     if line.lstrip().startswith("#"):
                         continue
-                    if rule.pattern.search(line):
+                    if rule.hit(line):
                         hits.append((os.path.relpath(path, REPO), n, line.strip()))
     return hits
 
