@@ -74,6 +74,28 @@ gnome-classic
 # order inside live-build.
 dconf-cli
 
+# --- The languages the desktop speaks (CURATION-AND-DELIVERY-PLAN C16) ---------
+# Owner's decision 2026-10-29: German, English, French, Dutch, Italian, Spanish.
+# Ubuntu ships GNOME's translations in language packs, not in the programs'
+# own packages, so without these a German install had German dates under an
+# English desktop (BUILD-NOTES #170 fixed the dates; this fixes the words).
+#
+# ALL SIX IN THE IMAGE, not the one Setup's screen 3 names: the installed
+# system is the image unsquashed, and installing only the chosen pack would need
+# the .debs on the medium beside it - the local-repository path live-build
+# offers is the one #71 rules out. Measured against the pinned snapshot on
+# 2026-10-29: 98 MiB installed for all six (de 21.7, fr 21.6, es 20.6, it 18.0,
+# nl 10.9, en 5.6 MiB), and an apt simulation installs exactly these 24 packages
+# and nothing else, with or without Recommends.
+#
+# The metapackage of each pair pulls its -base, which carries the catalogues.
+language-pack-de language-pack-gnome-de
+language-pack-en language-pack-gnome-en
+language-pack-fr language-pack-gnome-fr
+language-pack-nl language-pack-gnome-nl
+language-pack-it language-pack-gnome-it
+language-pack-es language-pack-gnome-es
+
 # The theme itself is NOT in this list. It is built from
 # build/packages/os7-desktop-theme/ by build/lib/build-desktop-theme.sh, because
 # it is OS/7's own component with OS/7's version on it, not an archive package.

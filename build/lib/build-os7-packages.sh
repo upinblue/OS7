@@ -580,6 +580,19 @@ build_os7_release() {
 	# Comes in from tree/; the mode is asserted here like every tree file.
 	chmod 0644 "${stage}/usr/lib/systemd/system/systemd-journal-flush.service.d/os7.conf"
 
+	# ONE WAY UPDATES ARRIVE (SESSION-QOL-SURVEY Q4/Q15): the apt.conf.d part
+	# that switches unattended-upgrades off and clears the Ubuntu Pro ESM hook.
+	# A conffile (./conffiles), from tree/.
+	chmod 0644 "${stage}/etc/apt/apt.conf.d/99os7-one-update-path"
+	# sss_cache, quiet until sssd is configured (Q17): a wrapper at the name
+	# preinst diverts sssd-tools' binary away from. Executable, so said here -
+	# pkg_finish turns anything the bind mount made 0777 into 0644 (#117).
+	chmod 0755 "${stage}/usr/sbin/sss_cache"
+	if ! head -c 2 "${stage}/usr/sbin/sss_cache" | grep -q '#!'; then
+		echo "!!! os7-release: usr/sbin/sss_cache has no shebang - it is executed by shadow's tools" >&2
+		exit 1
+	fi
+
 	# THE MIGRATIONS THE RELEASE BEING CUT INTRODUCES, staged under ITS version.
 	#
 	# The contract keys a migration by the release that introduced it
@@ -658,7 +671,9 @@ build_os7_release() {
 		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
 		./usr/libexec/os7-update-check \
 		./usr/share/keyrings/os7-archive-keyring.gpg \
-		./etc/apt/sources.list.d/os7.sources
+		./etc/apt/sources.list.d/os7.sources \
+		./etc/apt/apt.conf.d/99os7-one-update-path \
+		./usr/sbin/sss_cache
 
 	# ASK THE BUILT PACKAGE WHAT MODE THE CREDENTIAL HAS, because the chmod
 	# above is not evidence. The staging tree sits on a bind mount, and a
@@ -1097,11 +1112,28 @@ build_os7_powershell() {
 	install -Dm644 "${SRC}/os7-powershell/powershell.config.json" \
 		"${dest}/powershell.config.json"
 
+	# $PSHOME/profile.ps1 - the AllUsersAllHosts profile, which is the only
+	# place a `sudo` FUNCTION can come from early enough to win over
+	# /usr/bin/sudo: PowerShell searches PATH before it autoloads a module
+	# (measured, POWERSHELL-SURFACE-PLAN P13). Microsoft's tarball has none.
+	install -Dm644 "${SRC}/os7-powershell/profile.ps1" "${dest}/profile.ps1"
+
 	# The interactive-shell hand-off, from its one source. Every guard in it
 	# exists to avoid breaking something specific — see the file's own header
 	# and BUILD-NOTES #86 for the half that had never fired.
 	install -Dm644 "${SRC}/os7-powershell/95-os7-powershell.sh" \
 		"${stage}/etc/profile.d/95-os7-powershell.sh"
+	# The same environment for what the desktop session starts (Q12): the
+	# profile.d file reaches login shells and nothing systemd's user manager
+	# launches.
+	install -Dm644 "${SRC}/os7-powershell/60-os7-powershell.conf" \
+		"${stage}/usr/lib/environment.d/60-os7-powershell.conf"
+	# And for what systemd starts as a SERVICE, which inherits from neither
+	# (C17): six of OS/7's own units run pwsh. The PAM half - ssh commands,
+	# sudo, cron - is /etc/environment, which no package owns, so postinst
+	# writes it.
+	install -Dm644 "${SRC}/os7-powershell/60-os7-powershell-manager.conf" \
+		"${stage}/usr/lib/systemd/system.conf.d/60-os7-powershell.conf"
 
 	# ICU, resolved rather than hardcoded: the soname version changes between
 	# Ubuntu releases and a stale pin fails as an unhelpful "package not found".
@@ -1127,8 +1159,11 @@ build_os7_powershell() {
 	pkg_finish  os7-powershell "${stage}" "${OS7_ARCH}" \
 		./opt/microsoft/powershell/7/pwsh \
 		./opt/microsoft/powershell/7/powershell.config.json \
+		./opt/microsoft/powershell/7/profile.ps1 \
 		./usr/bin/pwsh \
-		./etc/profile.d/95-os7-powershell.sh
+		./etc/profile.d/95-os7-powershell.sh \
+		./usr/lib/environment.d/60-os7-powershell.conf \
+		./usr/lib/systemd/system.conf.d/60-os7-powershell.conf
 }
 
 # ---------------------------------------------------------------------------
@@ -1202,6 +1237,11 @@ build_os7_app_softwareupdate() {
 	( cd "${dst}" && ./os7-software-update --self-test >/dev/null ) || {
 		echo "!!! os7-software-update --self-test FAILED" >&2; exit 1; }
 
+	# The shim at update-manager's name (SESSION-QOL-SURVEY Q1): executed by
+	# Settings and update-notifier, so executable - pkg_finish would otherwise
+	# turn the bind mount's 0777 into 0644 (#117).
+	chmod 0755 "${stage}/usr/bin/update-manager"
+
 	pkg_copyright os7-app-softwareupdate "${stage}"
 	pkg_control  os7-app-softwareupdate "${stage}" "${OS7_ARCH}"
 	pkg_finish   os7-app-softwareupdate "${stage}" "${OS7_ARCH}" \
@@ -1211,7 +1251,8 @@ build_os7_app_softwareupdate() {
 		./usr/libexec/os7-update-run.ps1 \
 		./usr/lib/systemd/system/os7-update@.service \
 		./usr/share/polkit-1/rules.d/49-os7-update.rules \
-		./usr/share/applications/os7-software-update.desktop
+		./usr/share/applications/os7-software-update.desktop \
+		./usr/bin/update-manager
 }
 
 

@@ -97,6 +97,43 @@ to an initramfs prompt. BUILD-NOTES #15.
 
 ## 2. Do this next
 
+**A FRESH 1.0.0.245 DESKTOP LOGS IN TO UBUNTU'S SESSION (found 2026-10-29), and
+three more things a person sees were Ubuntu's or broken.** Walking a machine
+installed from the gated medium found #168 (GDM never read the session key #85
+set — the first login is `gnome-shell --mode=ubuntu`), #169 (Settings > About
+draws the Ubuntu logo from a hard-coded path), #170 (the installer never ran
+`locale-gen`, so no installed machine has its locale) and #171 (#84 was never
+fixed; every GTK 4 window drops letters because Wine's Tahoma carries embedded
+bitmap strikes at the UI size). All four are fixed in the tree, with two
+firstboot migrations for machines already installed. The same walk produced a
+numbered list of improvements for the next version
+([SESSION-QOL-SURVEY.md](SESSION-QOL-SURVEY.md) §3), and its **block A is done**
+(§6): one updater instead of two, an administrator's Apps menu, `/etc/legal`,
+Canonical's apt advertising and update timers off, unattended-upgrades off,
+PowerShell's own update check off, a quiet `sss_cache`, and the Windows
+shortcuts. Doing it found #172 (`Set-OS7Theme` threw on every machine) and #173
+(the theme's terminal default was written to a path GSettings never reads).
+What is left is in §3's recommended order — the boot menu, help on the machine,
+`sudo Update-OS7`, the restart notice. The decisions that list asked for are
+made (§7): Edge updates itself while VS Code, Intune and the broker are pinned
+(C15, closes #144 once built), six EU language packs (C16), PowerShell
+telemetry off (C17), `sudo` takes PowerShell commands (P13), an OS/7 Shell
+extension so the session opens on the desktop, and Tahoma from outlines
+(DECISIONS, GUI mode). **All of them are built except C15**, whose mechanism —
+how Edge updates itself on a machine whose `/opt` belongs to apt — is still to
+be measured (§8). Building the extension found #174: on GNOME 50 the known
+"no overview at start-up" trick is ACTIVE, error-free and does nothing.
+**A fresh install of all that (§9) found #176: the language packs translated
+apt's `Get:` into `Holen:`, and `Set-OS7UpdateChannel` — the manual's way to
+updates — would have refused every source on every machine installed in
+German.** Fixed (apt is asked in C) and proven red/green; the same cause had
+stopped the harnesses' serial login, now one pattern for both languages. It
+also closed three roads C17 had left open (ssh commands, sudo, services),
+and found #177: the OS/7 Shell extension, closing the overview from inside its
+start-up animation, left a desktop that took no input in 2 of 22 logins. The
+fix closes it once it has opened (9 of 9 since); the race is rare enough that
+nine cannot prove it gone.
+
 **1.0.0.245 IS BUILT AND GATED (2026-09-21) AND IS NOT PUBLISHED.** Both media
 from `93fd496`, clean tree, `reproducible: true`; the whole of
 [RELEASE-PROCESS.md](RELEASE-PROCESS.md) §2 green on them, including all four

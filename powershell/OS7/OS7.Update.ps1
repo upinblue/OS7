@@ -962,6 +962,13 @@ function Test-OS7AptSourceFetched {
 		and it suppresses the very lines that carry the answer — which is how a
 		source apt had rejected could be reported as accepted.
 
+		AND IN C, because those words are translated (BUILD-NOTES #176). Since
+		C16 put the language packs on the image, apt on a machine installed in
+		German prints `Holen:` for Get, `OK:` for Hit and `Fehl:` for Err — and
+		this function answered `unfetched` for a source apt had just fetched,
+		measured on 1.0.0.247 against the real archive. LC_ALL and not LANG:
+		LC_ALL outranks LC_MESSAGES and LANG, and C.UTF-8 outranks LANGUAGE.
+
 		Verdicts: fetched · unauthorized · tls · notfound · errored · unfetched.
 	#>
 	param(
@@ -972,13 +979,14 @@ function Test-OS7AptSourceFetched {
 	# Reset, then read guarded (BUILD-NOTES #121): apt-get is a command that
 	# might be found and not startable, and an unguarded read would hand this
 	# function an earlier command's 0 and call an update that never ran a
-	# success.
+	# success. Through `env` for the locale, so env answers 127 when apt-get is
+	# not there and 126 when it cannot be executed; apt itself exits 0 or 100.
 	$global:LASTEXITCODE = $null
-	$out = & apt-get @AptArguments 2>&1
+	$out = & env LC_ALL=C.UTF-8 apt-get @AptArguments 2>&1
 	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
 	$text = ($out | ForEach-Object { [string]$_ }) -join "`n"
 
-	if ($null -eq $code) {
+	if ($null -eq $code -or $code -in 126, 127) {
 		return [pscustomobject]@{
 			Verdict = 'unfetched'; ExitCode = $null
 			Detail  = 'apt-get was found but could not be started'

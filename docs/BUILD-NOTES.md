@@ -9101,3 +9101,480 @@ for anything that read it.** The reader here was not even wrong to read it — i
 was wrong to have no other way of telling "there is nothing to read" from "I
 could not read it", which is the same three-outcome shape
 `Get-OS7TimeSynchronization` and `Get-OS7SecureBoot` were already built around.
+
+---
+
+## #168 — the session default was written into a key GDM never reads, and the fresh install's desktop was Ubuntu's
+
+**Found 2026-10-29** by logging in to a machine installed from
+`OS7-1.0.0.245-amd64.iso` with `os7lab.py install --mode Gui`, through GDM,
+the way a person does:
+
+```
+pgrep -a gnome-shell                                    /usr/bin/gnome-shell --mode=ubuntu
+/var/lib/AccountsService/users/os7admin                 Session=ubuntu
+gsettings get org.gnome.desktop.session session-name    'gnome-classic'
+```
+
+A black Yaru panel, Ubuntu's `ding` desktop icon and none of OS/7 Classic —
+#85's picture, on a medium where #85's fix and both of its checks were green.
+The `v20` bench's own screenshot from 1.0.0.233 (2026-09-15) shows the same
+desktop; nobody read it as a defect because the bench was there to photograph
+something else.
+
+**#85's mechanism was never true of GDM 50.** GDM takes a user's session from
+AccountsService. For a user AccountsService has no record of, it builds one from
+`/etc/accountsservice/user-templates/{administrator,standard}`, falling back to
+the copies in `/usr/share/`, which Ubuntu ships with `Session=` EMPTY — and an
+empty answer sends GDM to its compiled-in default, `ubuntu`. After the login GDM
+saves that as the user's choice. `gdm3` has no `DefaultSession=` key either
+(`strings /usr/sbin/gdm3` lists `XorgEnable`, `InitialSetupEnable`,
+`AutomaticLogin*`, `TimedLogin*`, `RemoteLoginEnable` and nothing else under
+`daemon/`). The dconf key is read by `gnome-session` only when it is started
+without `--session`, and every `.desktop` in `wayland-sessions/` passes one.
+
+**Measured both ways on the same machine.** With `Session=gnome-classic` in
+`/etc/accountsservice/user-templates/`, a new account read `Session =
+'gnome-classic'` over D-Bus before it had ever logged in, and its first login
+was `gnome-shell --mode=classic`. With the template's header comments in place
+too, a second new account read the same — GKeyFile skips them.
+
+**Fixed** in `os7-desktop-theme` (the two templates, required by
+`build-desktop-theme.sh`), held by hook 0090 and by `check-image.py`, whose two
+new assertions FAIL against `OS7-1.0.0.245-amd64.iso` and nothing else does
+(`2 problem(s) with the image`). An account that already has a record keeps it,
+so firstboot migration `72-classic-session-default` moves the records GDM's
+fallback wrote (`Session=ubuntu` or empty) once per machine and restarts
+`accounts-daemon` so its in-memory copy cannot write the old value back. It
+carries a marker, against the migration contract's advice, because a record
+GDM wrote and a record a person chose at the login screen's gear are the same
+line; without one every release's first boot would undo a deliberate choice.
+Run by hand on the bench: `os7admin: Session -> gnome-classic`, a second run
+`already ran`, and the next GDM login `--mode=classic`. **Not yet run by
+`os7-migrate-firstboot` after an `Update-OS7`.**
+
+*The general form is #85's own, one level further down:* the fix checked that
+the key it set was set, and that the session the key named existed. Neither
+asked the program that chooses the session what it would choose. Only a login
+does.
+
+---
+
+## #169 — Settings > About drew the Ubuntu logo from a path gnome-control-center hard-codes
+
+**Found 2026-10-29** on the same machine: *Settings → System → About* showed a
+large Ubuntu wordmark above `Operating System: OS/7 1.0.0 (preview)`, while
+`/etc/os-release` says `LOGO="os7"` and `os7.svg` is in the icon theme.
+
+```
+strings /usr/bin/gnome-control-center | grep logo-text
+  /usr/share/pixmaps/ubuntu-logo-text-dark.svg
+  /usr/share/pixmaps/ubuntu-logo-text.svg
+dpkg -S  ->  base-files: both
+```
+
+Ubuntu's build never reads `LOGO=` for that page. No setting points it
+elsewhere, so the file has to change. **Fixed** by a diversion owned by
+`os7-desktop-theme` (preinst adds, postrm removes), not a `--local` one in a
+build hook as plymouth's `bgrt-fallback.png` has: a package runs on every machine
+that installs or UPGRADES it, so `Update-OS7` carries this to machines installed
+before it. The file at the name is the product mark, `<svg>` before the comment
+because GdkPixbuf sniffs 256 bytes (#111). Held by hook 0090 (the diversion is
+the package's, the original is kept as `.distrib`, GdkPixbuf loads ours) and by
+`check-image.py`.
+
+**`--no-rename` and a copy, because base-files is Essential.** The first version
+used `--rename`, and dpkg warned on the first install that renaming a file away
+from an Essential package is dangerous — for the moment between the rename and
+the unpack the file is gone. Harmless for a logo, and a warning in the output of
+every install and every `Update-OS7`. Measured on the bench with the package
+built at the bench's own version, which is exactly the update path: from no
+diversion, install → two diversions owned by `os7-desktop-theme`, Ubuntu's files
+at `.distrib` (6018 and 6102 bytes), no warning; `dpkg -r` → no diversion,
+Ubuntu's files back at their names; install again → the same as the first time.
+`os7-desktop` stayed `install ok installed` throughout. The About page then drew
+the OS/7 mark.
+
+---
+
+## #170 — the installer named a locale and never generated it, for every language
+
+**Found 2026-10-29** on the same machine, installed with `de_DE.UTF-8`:
+
+```
+locale                         locale: Cannot set LC_CTYPE to default locale: No such file or directory
+locale -a                      C  C.utf8  POSIX
+/proc/<gnome-shell>/environ    LANG=C.UTF-8
+```
+
+`TargetIdentityStep` wrote `LANG=` into `/etc/default/locale` and stopped, under
+a docstring that said `locale-gen` in the chroot was most of the step's work.
+The image's `/usr/lib/locale` holds `C.utf8` only: the live medium generates its
+locale at boot into the RAM overlay, which `unsquashfs` never copies. So no
+installed machine has had the locale it names, English included — and GDM,
+finding it missing, started every desktop under `C.UTF-8`.
+
+**The fix was measured on the machine before it was written:** enable the line
+`/usr/share/i18n/SUPPORTED` carries (the list screen 3 reads) in
+`/etc/locale.gen`, run `locale-gen`, and ask `locale -a`. After it, `locale`
+printed no error, `date` answered `Do 29. Okt …`, and the greeter's clock turned
+German. It is enabled in `locale.gen` rather than made with `localedef` alone
+because the `locales` postinst reruns `locale-gen` on every upgrade and
+regenerates the archive from that file.
+
+**What this does NOT do: translate the desktop.** `/usr/share/locale/de` holds
+26 catalogues and none is GNOME's; Ubuntu ships those in
+`language-pack-gnome-de`, which no OS/7 image carries. After this fix a German
+machine has German dates, sorting and number formats under an English UI.
+Which language packs a medium carries is a product decision, recorded in
+`docs/SESSION-QOL-SURVEY.md`. Machines already installed get the locale from
+firstboot migration `73-generate-named-locale`, which asks glibc's list rather
+than keeping a marker; run by hand on the bench, **not yet by
+`os7-migrate-firstboot` after an `Update-OS7`.**
+
+---
+
+## #171 — #84 was not fixed: GTK 4 drops glyphs from Wine's Tahoma, and the cause is its embedded bitmaps
+
+**Measured 2026-10-29** on an install from `OS7-1.0.0.245-amd64.iso`. *Settings*
+renders `Mult tasking`, `Not fications`, `Onl ne Accounts`, `Wel being` and
+`Aɒɒearance` — letters missing or replaced, with `font-antialiasing='grayscale'`
+in force. The 1.0.0.116 manual's Files screenshot shows the same (`Stared`,
+`Netwo k`). One variable at a time, each with a freshly started
+`gnome-control-center`:
+
+| renderer | font | hinting | text |
+|---|---|---|---|
+| default | Tahoma 9 | full | broken |
+| default | Tahoma 9 | slight | broken |
+| `GSK_RENDERER=ngl` | Tahoma 9 | full | broken |
+| `GSK_RENDERER=cairo` | Tahoma 9 | full | **correct** |
+| default | Adwaita Sans 9 | full | **correct** |
+
+So it is not the antialiasing or the hinting setting, not the font on its own
+(cairo draws it correctly), and not GTK 4's GPU path on its own (it draws
+Adwaita Sans correctly). It is the pair — and opening the file says which part
+of the font. Wine's `tahoma.ttf` carries **no hinting instructions at all**
+(stripping them changed nothing: zero glyphs had any) and **embedded bitmap
+strikes at 8, 9, 10, 11, 12, 13, 15 and 16 ppem** (`EBDT`/`EBLC`, read with
+fontTools). Tahoma 9 at 96 dpi is 12 px, one of the strikes. FreeType hands the
+bitmap out in place of the outline, cairo draws it correctly, and GTK 4's GPU
+glyph path does not.
+
+| further, same machine | text |
+|---|---|
+| the same font with `EBDT`/`EBLC` removed, default renderer | **correct** (the process mapped that file) |
+| the UNCHANGED `tahoma.ttf`, fontconfig `embeddedbitmap=false` for Tahoma | **correct** |
+
+#84's account — a GPU atlas losing 1-bit coverage — was the right
+neighbourhood and the wrong variable: the 1-bit glyphs were the font's own
+bitmaps, which no antialiasing setting reaches, so grayscale repaired nothing.
+
+**Fixed** by `/etc/fonts/conf.d/64-os7-tahoma-outlines.conf` in
+`os7-desktop-theme`: for the family Tahoma alone, `embeddedbitmap` is false.
+The font file stays as the archive ships it. The cost is that fontconfig cannot
+tell toolkits apart, so GTK 3 and the Shell draw Tahoma from outlines too —
+softer than the pixel strikes, and readable everywhere. Held by hook 0090 and
+`check-image.py`, both of which ask fontconfig's resolved pattern at 12 px:
+`Tahoma True` on 1.0.0.245 (red), `Tahoma False` with the rule. Measured on
+virtio-gpu; a real GPU is unmeasured, and the rule is right on either.
+
+---
+
+## #172 — `Set-OS7Theme` threw on every machine: its parser turned a relocatable schema's path into a schema that does not exist
+
+**Found 2026-10-29** while adding a keyboard shortcut, which needs a
+relocatable schema, and asking first how the one already there was handled:
+
+```
+Set-OS7Theme -Name Classic          (os7admin, on an install from 1.0.0.247)
+  OS7-STEP run: gsettings reset org.gnome.terminal.legacy.profiles:.:b1dcc9dd-… login-shell
+  ParentContainsErrorRecordException: … No such schema "org.gnome.terminal.legacy.profiles"
+```
+
+`Set-OS7Theme` is the documented way to turn the Classic desktop off and on
+(manual, chapter 13) — "a look that cannot be turned off is indistinguishable
+from a bug when somebody opens a support case", says its own header. It reads
+the theme's keyfile through `Get-OS7ThemeKeys`, which turned every dconf group
+into a schema id by replacing slashes. #86 (2026-08-26) added gnome-terminal's
+profile, a relocatable schema whose group is
+`/org/gnome/terminal/legacy/profiles:/:<uuid>/`, and from that day the cmdlet
+threw at that key in both directions, after resetting about forty keys and
+before the rest.
+
+**Hook 0090 knew.** Its section 3b had been taught the relocatable case after
+the same group failed a build (1.0.0.114), with a table mapping the prefix to
+`org.gnome.Terminal.Legacy.Profile` — and the module, which reads the same
+file with its own parser, was never told. Two readers of one file, one
+corrected: #66's shape inside a single feature.
+
+**Fixed** with the same table in the module (`$script:OS7RelocatableSchemas`),
+returning `SCHEMA:/path/` — the form gsettings takes for a relocatable schema —
+and a separate `Path` for `dconf read`. And the two tables are no longer free to
+disagree: `check-image.py` runs `Get-OS7ThemeKeys` inside the shipped image and
+asks `gsettings list-keys` about every pair it returns — red on 1.0.0.245 with
+exactly this key. Measured on the bench: Stock and Classic both exit 0 over all
+61 keys.
+
+**The check was put in hook 0090 first, and two builds failed on it** — the
+first because `Import-Module OS7` by name finds nothing in live-build's chroot,
+the second because, imported by path, the module's own `Test-Path` did not
+resolve. Both are #14/#38, which hook 0060 and hook 0075 already explain at
+length: a hook may import a module and list its exports, never call a function
+that needs a bundled cmdlet. The check belongs where the artefact is read, and
+it is there now.
+
+---
+
+## #173 — a dconf group named after a schema's ID, not its PATH: stored, read back by dconf, and read by nobody
+
+**Found 2026-10-29**, by #172's fix: with `Set-OS7Theme` working, `Get-OS7Theme`
+reported one default as overridden on a machine nobody had touched —
+
+```
+dconf read /org/gnome/desktop/default-applications/terminal/exec   'gnome-terminal'
+gsettings get org.gnome.desktop.default-applications.terminal exec  'xdg-terminal-exec'
+gsettings list-schemas --print-paths | grep default-applications.terminal
+  org.gnome.desktop.default-applications.terminal /org/gnome/desktop/applications/terminal/
+```
+
+The schema's id says `default-applications`; its PATH says `applications`.
+`00-os7-classic` had the group under the id's spelling since #86, so the key
+compiled, stored, read back perfectly with dconf — and GSettings, which reads the
+path, answered its own default. Hook 0090's 3b passed it because it turned the
+group into an id and asked whether that id existed, and it does. **A check that
+derives the name it asks about from the thing under test is not independent of
+it** — #54 was meant to close exactly this, and closed it only for paths that
+spell their ids. 47 of the 160 fixed-path schemas on this image do not
+(counted on 1.0.0.247; `com.ubuntu.update-manager` lives at
+`/apps/update-manager/`).
+
+**Fixed** in three places. The group is `[org/gnome/desktop/applications/
+terminal]`. Hook 0090's 3b now resolves every group through `gsettings
+list-schemas --print-paths` — the table GSettings itself uses — and requires
+the key in a schema AT that path. And `Get-OS7ThemeKeys` resolves the same way,
+which found the second half at once: **a path can hold more than one schema**.
+`org.gnome.mutter` and `org.gnome.mutter.devkit` both live at
+`/org/gnome/mutter/` (the only shared path on this image); the first version
+picked one per path, picked devkit, and the same question asked on the bench
+reported four keys GSettings did not have before anything was built. A key
+now goes to the schema at its path that has it. On the bench afterwards:
+`gsettings get … terminal exec` is `'gnome-terminal'`, `Set-OS7Theme` is clean
+both ways, and `Get-OS7Theme` reports nothing overridden.
+
+---
+
+## #174 — GNOME 50 enables extensions AFTER start-up: the known "no overview at start-up" trick is ACTIVE, error-free, and does nothing
+
+**Found 2026-10-29** writing `os7-shell@os7` (DECISIONS, GUI mode: the session
+opens on the desktop). The first version did what extensions for earlier GNOME
+generations do — while `Main.layoutManager._startingUp`, tell the session mode
+it has no overview, and restore it at `startup-complete`. On a GNOME 50.1 bench:
+
+```
+gnome-extensions info os7-shell@os7    Enabled: Yes   State: ACTIVE
+journal                                no error, no warning
+the first screen after login           the Activities overview, as before
+```
+
+A diagnostic version logged its own `enable()`:
+
+```
+OS7DIAG enable startingUp=false overviewVisible=true animating=false hasOverview=true mode=classic
+```
+
+**User extensions are enabled once the start-up is over and the overview is
+already on screen**, so the guard returned at its first line, every time. The
+extension was loaded, enabled, reported healthy by every tool that can be asked,
+and had nothing left to intervene in. #162's shape from the other side: there
+the extension failed and looked absent; here it worked and looked effective.
+
+**Fixed** by doing what the measurement says is possible: on the FIRST
+`enable()` of a Shell process, if the overview is visible, hide it. A
+module-scope flag makes that once per session — the Shell disables extensions
+at the lock screen and enables them again on unlock, and a person who left the
+overview open before locking expects it back. Measured on the same bench after
+the change: the first screen after login is the desktop, the panel reads
+`Anwendungen` / `Orte`, Super still opens the overview.
+
+*The general form:* the only evidence that a behavioural change worked is the
+behaviour. `State: ACTIVE` says the code ran without throwing; it says nothing
+about whether what it was written to change was there to change.
+
+---
+
+## #175 — #83's exemption was wrong: `| grep -q` under pipefail races at ANY output size, if the writer writes more than once
+
+**Found 2026-10-29**, when a build stopped at hook 0090 with
+
+```
+OS/7 hook 0090: FAIL: no schema at /org/gnome/desktop/interface/ (org.gnome.desktop.interface) has a key 'accent-color'
+```
+
+while the same hook, forty lines later, read `greeter org.gnome.desktop.interface
+accent-color = blue`, and three earlier builds of the same check had passed.
+The line was `if gsettings list-keys "${s}" | grep -qx "${key}"` under
+`set -o pipefail`.
+
+#83 explained the mechanism for `ldconfig -p` and then exempted every other
+`| grep -q` in the build because their producers' output was "far below the
+buffer" — `gsettings list-keys` by name. **Measured on a 1.0.0.247 bench, 2000
+runs each:**
+
+```
+gsettings list-keys org.gnome.desktop.interface | grep -qx accent-color    4 false negatives
+keys="$(gsettings list-keys …)"; grep -qx accent-color <<<"$keys"          0
+accent-color is line 1 of 45; the whole output is 762 bytes
+```
+
+The buffer was never the variable. A writer that issues more than one
+`write()` — gsettings prints its keys one at a time — takes SIGPIPE on the
+first write after `grep -q` has found its line and gone, however small the
+output. The earlier the match, the more writes are left, which is why the first
+key of the schema is the one that failed, and why it is rare enough to pass
+three builds.
+
+**Fixed** in hook 0090's three sites by reading the answer whole and matching
+it afterwards, so nothing is left writing when grep leaves. The other
+`| grep -q` sites in the hooks were looked at and left: `dpkg -S` and
+`dpkg-divert --list` for one file and `systemctl show -p` print a single line,
+`head -c 2` writes once, and hook 0080's `ldd | grep -qi dotnet` can only err
+toward passing a binary that is fine. **The rule is the one to carry, not the
+list:** never `| grep -q` behind a producer whose exit status matters, unless
+it is known to write exactly once.
+
+## #176 — the language packs translated the words two programs were reading: apt's `Get:` and login's `Password:`
+
+**Found 2026-10-29**, on the first machine installed from a medium carrying
+C16's language packs (1.0.0.247). `os7lab.py login` waited ninety seconds for
+`Password:` and the serial console answered
+
+```
+Passwort: login: Zeit überschritten nach 60 Sekunden
+```
+
+**Ubuntu strips the translations out of every package in main** and ships them
+in `language-pack-*-base`. So until C16 an OS/7 machine installed in German
+had the German LOCALE (#170 generated it) and almost no German MESSAGES: apt,
+login, sudo, krb5, cryptsetup, systemd, util-linux and coreutils all printed
+English. With the packs installed, 430 catalogs arrived in
+`/usr/share/locale-langpack/de/LC_MESSAGES`, and every program that calls
+`setlocale()` started speaking German — including the ones something here
+parses.
+
+**The harnesses** were the first casualty, because every install plan in this
+directory says `de_DE.UTF-8`. `vmconsole.live_login`, `os7lab.py`'s two logins
+and `shoot-manual.py`'s sudo all expected the English word.
+`vmconsole.PASSWORD_PROMPT` is now the one pattern for both languages, and the
+spikes that call `live_login` get it without being edited.
+
+**The product's casualty was `Set-OS7UpdateChannel`** — the step the manual
+gives an operator to get updates. Its read-back asks `apt-get update` and keys
+on the progress word in front of the source (#121's lesson: apt exits 0 for a
+source it could not fetch). In German apt's catalog maps, by msgid:
+
+```
+Get:%lu %s  ->  Holen:%lu %s
+Hit:%lu %s  ->  OK:%lu %s
+Err:%lu %s  ->  Fehl:%lu %s
+Ign:%lu %s  ->  Ign:%lu %s
+```
+
+Measured on the same machine, the same source, a second apart:
+`Test-OS7AptSourceFetched` → `unfetched` in the session's locale, `fetched`
+under `LC_ALL=C.UTF-8`. So the verb would have thrown "apt reported nothing at
+all for this source" on every machine installed in German.
+
+**Fixed** by asking apt in C: `env LC_ALL=C.UTF-8 apt-get update`.
+`LC_ALL=C.UTF-8` beats `LANGUAGE=de` too (measured with krb5's catalog, which
+GNOME sessions make relevant). `check-update-logic.py`'s fake apt now answers
+in German when the locale says so, with the words above, and the channel
+section asks it twice more under `LANG=de_DE.UTF-8`.
+
+**And the sweep, so this is not the one site found by accident.** Two
+instruments. Every Get-/Test- verb on the machine, 114 of them, run twice in
+one pwsh — once as the session is, once with `LC_ALL=C.UTF-8` for the child
+processes — differed only in measurements (clock offsets, latencies, uptime):
+the reading surface parses JSON, CSV and properties, not prose. Then a grep for
+message text matched against tool output: Directory's `Message stream
+modified` IS translated (`Nachrichtendatenstrom geändert`) but reaches the
+cmdlet through adcli, which never calls `setlocale()` (`nm -D` finds no import)
+and so prints krb5's English; Hardware's `not found in directory` comes from
+kmod, which has no catalog; `install ok installed` is a dpkg STATUS value and is
+not translated (measured: `unknown ok not-installed` under German). The
+installer is not affected — the setup medium sets no locale.
+
+**The rule to carry: text a program PARSES is asked for in C; text it SHOWS
+stays in the operator's language.** A machine's language is a fact about its
+operator, and since C16 it reaches every program on it. A check that ran in
+English proves nothing about a German machine, and every check here ran in
+English until this entry, because the messages were not on the image.
+
+## #177 — os7-shell closed the overview from inside its start-up animation, and a fresh install's desktop took no input
+
+**Found 2026-10-29**, on the first graphical login of a machine installed from
+1.0.0.247. The session came up on the desktop as Q7 intended — German panel,
+no overview — and then did nothing: Ctrl+Alt+T, Super, a click on
+`Anwendungen`, Escape, none of it. No window list at the bottom. Nothing in the
+journal. `gnome-extensions info` said `os7-shell@os7` and the window list were
+both `ACTIVE`; D-Bus said `OverviewActive false`; the user's Shell held all six
+`/dev/input/event*` devices, so input was arriving and being swallowed.
+**Opening and closing the overview over D-Bus brought it back**: the next
+Ctrl+Alt+T opened a terminal and the window list appeared.
+
+**What the extension did:** on the first enable of a session it called
+`Main.overview.hide()` (#174 explains why it cannot prevent the overview and
+must close it). Logged from `enable()`, the overview's own `_shownState` at
+that moment was `SHOWING` in most logins and `SHOWN` in the rest: user
+extensions are enabled while the start-up animation is still running as often
+as after it. GNOME 50's `overview.js`, read out of `libshell-18.so` on the
+machine:
+
+```
+async runStartupAnimation() {
+    this._shown = true; this._visible = true; this._visibleTarget = true;
+    Main.layoutManager.showOverview();
+    this._changeShownState(OverviewShownState.SHOWING);
+    await this._overview.runStartupAnimation();
+    // Overview got hidden during startup animation
+    if (this._shownState !== OverviewShownState.SHOWING)
+        return;
+    ...
+```
+
+The start-up animation does not set `_animationInProgress`, so a `hide()` in it
+starts the closing animation — and with it the input-blocking cover pane —
+over an animation that is still running, and when the start-up animation ends
+it finds `HIDING` and returns. GNOME anticipates the case in a comment.
+
+**How often, and what is NOT known.** Twenty-two logins with the shipped
+extension on the same bench: **two dead** — the first graphical login after
+boot, and the first login of the first scripted round — and twenty that took
+input, among them three FIRST logins of a freshly restored install and
+seventeen log-out/log-in rounds. In nineteen of the twenty the extension
+logged its state at `enable()` and again ten seconds later: `SHOWING` twelve
+times, `SHOWN` seven, and every time ten seconds later `HIDDEN`, no animation
+running, cover pane down, no modal grab. One of the two dead logins had the first of those lines
+and it said `SHOWING`; neither had the second. **So the dead state was never
+caught with the probe in it, and the mechanism above is read from the source,
+not measured in the failure.** What is measured: a rare race, every observed
+instance preceded by a `hide()` from `SHOWING`, and a recovery that a full
+open-and-close of the overview performs.
+
+**Fixed** by not doing that: if the overview is `SHOWN`, close it; if it is
+`SHOWING`, wait for its `shown` signal and close it from an idle callback, out
+of the signal; if anything else closes it first (`hiding`), stand down; any
+other state, or no `_shownState` at all, leave it open — the #174 outcome,
+which costs a click and never the desktop. Closing from `SHOWN` is the path
+Escape takes. `_shownState` is private, so hook 0090 reads the installed
+Shell's `overview.js` and requires the five things the extension depends on.
+
+**Measured on the same bench, with the same probe plus a line at each
+`hide()`:** nine logins, three of them first logins of a restored install —
+all nine took input, all nine ended on the desktop, `enable()` found `SHOWING`
+seven times and `SHOWN` twice, and **every `hide()` came from `SHOWN`**. That
+proves the fix removes the one interleaving every dead login had; with a
+failure rate of two in twenty-two it cannot prove the race is gone, and this
+entry does not claim so. The rule to carry: **an extension that drives the
+Shell's own state machine does it from a settled state, never from inside an
+animation it did not start.**

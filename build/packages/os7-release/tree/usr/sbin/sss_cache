@@ -1,0 +1,29 @@
+#!/bin/sh
+# OS/7 - sss_cache, quiet while there is no sssd to flush. SESSION-QOL-SURVEY Q17.
+#
+# sssd ships on every OS/7 machine for the domain join (os7-base.list.chroot),
+# and stays unconfigured until a join writes /etc/sssd/sssd.conf. shadow's
+# tools - useradd, usermod, userdel, groupadd, chpasswd - call sss_cache after
+# every change to flush sssd's cache, and an unconfigured sssd answers each call
+# with errors. Measured on a fresh 1.0.0.245: one `useradd` printed six lines
+# of
+#     [sss_cache] [sss_tool_confdb_init] (0x0010): Can't access
+#     '/var/lib/sss/db/config.ldb', probably SSSD isn't configured
+#     Can't find configuration db, was SSSD configured and run?
+# and created the account correctly. An administrator reads that as a failure.
+#
+# So: no configuration database, nothing to flush, exit 0 and say nothing. The
+# moment sssd has been configured and run, this is sss_cache - every argument
+# handed through, every exit code passed back. sssd-tools' binary is at
+# sss_cache.distrib, diverted by os7-release's preinst.
+REAL=/usr/sbin/sss_cache.distrib
+
+if [ ! -e /var/lib/sss/db/config.ldb ]; then
+	exit 0
+fi
+# Without sssd-tools there was no sss_cache before this file existed, and
+# shadow's tools skip the flush when the program is absent. Do the same.
+if [ ! -x "${REAL}" ]; then
+	exit 0
+fi
+exec "${REAL}" "$@"

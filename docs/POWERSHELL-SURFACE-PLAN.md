@@ -598,6 +598,53 @@ this is a paragraph, and P2-time is the standing reminder of what those are
 worth: it was written in capitals in a file header while the code underneath
 called `chronyc makestep`.
 
+### P13 — `sudo` takes a PowerShell command. Decided 2026-10-29 (owner).
+
+An operator who reads #148's refusal — *"Update-OS7 must run as root"* — types
+`sudo Update-OS7`, and gets `sudo: 'Update-OS7': command not found`, because
+every verb on this surface is a PowerShell FUNCTION and sudo resolves
+executables. The refusal now names the `sudo pwsh -c '…'` form, which is correct
+and is a second thing to learn on a product whose promise is that a Windows
+administrator already knows how to drive it.
+
+**So the interactive session gets a `sudo` function.** Its contract:
+
+- If the first argument resolves to an APPLICATION, every argument goes to
+  `/usr/bin/sudo` untouched. Nothing a Linux administrator types changes
+  meaning.
+- If it resolves to a PowerShell command — a function, cmdlet or alias, OS/7's
+  or anybody's — the statement runs as `sudo pwsh -NoProfile -Command <the
+  statement as typed>`, in a child PowerShell that imports the same modules by
+  name. Its output comes back as text, as `sudo` gives any program's.
+- An elevated PowerShell says so where Windows does: the window title starts
+  with `Administrator:`.
+
+It shadows a system command, deliberately, and that is not new here: P1a
+already supplies `Restart-Computer` and `Stop-Computer` over the ones pwsh
+ships, because those powered machines off (#142). The same discipline applies
+— the function is held by a check of its own in the shape of
+`check-compat-windows.py`: what reaches `/usr/bin/sudo` for an executable is
+byte for byte what was typed, and a PowerShell command is elevated rather than
+reported missing. SESSION-QOL-SURVEY Q9.
+
+**Built 2026-10-29**, in `$PSHOME/profile.ps1` (`os7-powershell`), and the
+place is a measurement rather than a preference: a module that exports `sudo`
+does NOT win, because PowerShell searches PATH before it autoloads a module —
+`Get-Command sudo` answered Application `/usr/bin/sudo` with such a module on
+the path. The decision lives in `ConvertTo-OS7SudoCommand`, which starts no
+process; `installer/testing/check-sudo.py` asks it 13 cases under `de-DE` (a
+number rendered in the current culture is `1,5`, which an elevated PowerShell
+reads as an array) and proves itself against three planted defects. Two limits,
+both measured and both stated in the function's help: a function receives a
+typed `-Name` and a quoted `'-Name'` as the same string, so a VALUE beginning
+with a dash travels as a parameter name; and objects that are not text, numbers,
+booleans or lists of them are refused with the `sudo pwsh -c` form, because they
+cannot cross into another process. On a machine: `sudo Get-OS7Version` asked for
+the password and printed the version; `sudo ls -d /tmp` reached `/usr/bin/sudo`
+as `ls -d /tmp`; `"hello" | sudo tee …` delivered the line; `sudo pwsh` titled
+the window `Administrator: PowerShell`, and PowerShell put the title back on
+`exit`.
+
 ---
 
 ## 3. The surface

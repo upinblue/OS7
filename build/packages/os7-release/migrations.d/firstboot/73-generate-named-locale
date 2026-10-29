@@ -1,0 +1,69 @@
+#!/bin/sh
+# #170 — generate the locale /etc/default/locale has named since install.
+#
+# THE DEFECT: os7-setup wrote LANG=<the language from screen 3> and never ran
+# locale-gen, and the image carries no generated locale but C.utf8 (the live
+# medium makes its own at boot, in RAM, where unsquashfs never looks). Measured
+# on an install from OS7-1.0.0.245-amd64.iso with de_DE.UTF-8: `locale -a`
+# answered C, C.utf8 and POSIX, every program printed "Cannot set LC_CTYPE to
+# default locale", and GDM started the desktop under LANG=C.UTF-8. Setup does
+# it at install time from 1.0.0.247; this is the same for machines that predate
+# that.
+#
+# IDEMPOTENT BY ASKING FOR THE STATE: glibc lists the locale, or it does not.
+# The line enabled is the one /usr/share/i18n/SUPPORTED carries, in
+# /etc/locale.gen, because the `locales` package's own postinst regenerates the
+# archive from that file on every upgrade - a locale made with localedef alone
+# would be gone after the next one.
+set -u
+
+TAG="os7/73-generate-named-locale"
+say() { echo "${TAG}: $*"; }
+
+LANG_LINE="$(grep -m1 '^LANG=' /etc/default/locale 2>/dev/null || true)"
+WANT="${LANG_LINE#LANG=}"
+WANT="$(echo "${WANT}" | tr -d '"')"
+
+case "${WANT}" in
+	"" )
+		say "/etc/default/locale names no LANG - nothing to generate"
+		exit 0 ;;
+	C | POSIX | C.UTF-8 | C.utf8 )
+		say "${WANT} is built into glibc - nothing to generate"
+		exit 0 ;;
+esac
+
+# glibc prints the NORMALISED name: de_DE.UTF-8 is listed as de_DE.utf8.
+NORM="$(echo "${WANT}" | sed -E 's/\.[Uu][Tt][Ff]-?8/.utf8/')"
+if locale -a 2>/dev/null | grep -qx "${NORM}"; then
+	say "${WANT} is already generated - nothing to do"
+	exit 0
+fi
+
+LINE="$(grep -m1 "^${WANT} " /usr/share/i18n/SUPPORTED 2>/dev/null || true)"
+if [ -z "${LINE}" ]; then
+	# Not a failure of the update: a machine whose LANG names something glibc
+	# does not support has been running on the C fallback since it was
+	# installed, and refusing to finish an update over it would help nobody.
+	say "${WANT} is not in /usr/share/i18n/SUPPORTED - it cannot be generated; leaving it"
+	exit 0
+fi
+
+if grep -q "^# *${LINE}\$" /etc/locale.gen; then
+	sed -i "s|^# *${LINE}\$|${LINE}|" /etc/locale.gen
+elif ! grep -q "^${LINE}\$" /etc/locale.gen; then
+	echo "${LINE}" >> /etc/locale.gen
+fi
+
+if ! locale-gen; then
+	say "locale-gen failed for ${WANT}" >&2
+	exit 1
+fi
+
+# The exit code of locale-gen is not the proof; glibc's list is.
+if ! locale -a 2>/dev/null | grep -qx "${NORM}"; then
+	say "locale-gen ran and glibc still does not list ${NORM}" >&2
+	exit 1
+fi
+say "generated ${WANT} (locale -a lists ${NORM}); it applies from the next login"
+exit 0

@@ -1,0 +1,7 @@
+{
+  "uuid": "os7-shell@os7",
+  "name": "OS/7 Shell",
+  "description": "Opens an OS/7 session on the desktop rather than in the Activities overview. Nothing else. docs/DECISIONS.md, GUI mode; SESSION-QOL-SURVEY Q7.",
+  "shell-version": ["50"],
+  "url": "https://github.com/upinblue/os7"
+}

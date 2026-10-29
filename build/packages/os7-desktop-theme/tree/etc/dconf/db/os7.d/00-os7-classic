@@ -80,6 +80,12 @@ enable-hot-corners=false
 # So this is not a change of taste. 'none' asked GNOME 50 for a guarantee it
 # stopped making; the classic look is carried by the palette, the bevels and the
 # metrics, none of which this touches. docs/BUILD-NOTES.md #84.
+#
+# CORRECTED 2026-10-29, docs/BUILD-NOTES.md #171: grayscale did not fix it.
+# GTK 4 windows still dropped letters, and the cause was Wine's Tahoma
+# carrying EMBEDDED BITMAP STRIKES at the UI size, which no antialiasing
+# setting reaches. /etc/fonts/conf.d/64-os7-tahoma-outlines.conf, in this
+# package, is the fix. Grayscale stays: it is what the outlines are drawn with.
 font-antialiasing='grayscale'
 font-hinting='full'
 clock-format='24h'
@@ -117,6 +123,17 @@ show-battery-percentage=true
 # PRECEDENCE: once a user has picked a session, AccountsService remembers it and
 # that wins over this key. This decides the FIRST login, which on an imaged
 # machine is the one that matters.
+#
+# CORRECTED 2026-10-29, docs/BUILD-NOTES.md #168: IT DOES NOT. The paragraph
+# above is how #85 was fixed and it was never true of GDM 50. GDM takes the
+# session from AccountsService, and for a user with no record AccountsService
+# answers from /etc/accountsservice/user-templates/ - which this package now
+# ships, with Session=gnome-classic. Measured on OS7-1.0.0.245-amd64.iso: this
+# key read 'gnome-classic' and the installer's account still logged in to
+# `gnome-shell --mode=ubuntu`. Every session's .desktop file passes --session
+# to gnome-session explicitly, so the key decides nothing a login screen
+# starts. It stays because removing it would put Ubuntu's 'ubuntu' back for
+# anything that does read it, and hook 0090 still asks for it.
 session-name='gnome-classic'
 
 [org/gnome/desktop/wm/preferences]
@@ -160,7 +177,12 @@ color-shading-type='solid'
 #   places-menu   the Places menu beside it
 #   window-list   the taskbar along the bottom edge
 #   user-theme    what loads gnome-shell/gnome-shell.css from the theme
-enabled-extensions=['apps-menu@gnome-shell-extensions.gcampax.github.com', 'places-menu@gnome-shell-extensions.gcampax.github.com', 'window-list@gnome-shell-extensions.gcampax.github.com', 'launch-new-instance@gnome-shell-extensions.gcampax.github.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com']
+#
+# AND ONE OF OS/7's OWN, by owner's decision 2026-10-29 (docs/DECISIONS.md, GUI
+# mode): os7-shell@os7, which opens the session on the desktop instead of in the
+# Activities overview. It ships in this package; the rule above about
+# third-party extensions is why it is small enough to read in one screen.
+enabled-extensions=['apps-menu@gnome-shell-extensions.gcampax.github.com', 'places-menu@gnome-shell-extensions.gcampax.github.com', 'window-list@gnome-shell-extensions.gcampax.github.com', 'launch-new-instance@gnome-shell-extensions.gcampax.github.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'os7-shell@os7']
 # Ubuntu's dock is the one thing that would fight the window list for the same
 # screen edge. Listed explicitly as well as omitted above, because Ubuntu
 # enables it from its own session configuration, not only from this key.
@@ -214,9 +236,18 @@ center-new-windows=false
 # schema name and the naive check in that hook would silently pass it.
 login-shell=true
 
-[org/gnome/desktop/default-applications/terminal]
+[org/gnome/desktop/applications/terminal]
 # Which terminal opens when something asks for "a terminal" - Files' "Open in
 # Terminal", and anything else still reading this deprecated-but-present schema.
+#
+# THE GROUP IS THE SCHEMA'S PATH, NOT ITS ID, and until 2026-10-29 it was the id:
+# [org/gnome/desktop/default-applications/terminal]. The schema
+# org.gnome.desktop.default-applications.terminal lives at
+# /org/gnome/desktop/applications/terminal/ (`gsettings list-schemas
+# --print-paths`), so for two months this group compiled, stored, read back
+# with dconf - and GSettings answered 'xdg-terminal-exec', its own default.
+# Hook 0090 passed it because it turned the path into an id that happens to
+# exist. docs/BUILD-NOTES.md #173.
 #
 # It has to be said out loud because the image ships TWO terminals: OS/7's
 # package list names gnome-terminal, and ubuntu-desktop-minimal Recommends
@@ -241,3 +272,31 @@ show-image-thumbnails='local-only'
 [org/gnome/nautilus/list-view]
 use-tree-view=true
 default-zoom-level='small'
+
+# THE SHORTCUTS A WINDOWS ADMINISTRATOR'S HANDS ALREADY KNOW. SESSION-QOL-SURVEY
+# Q18. Measured on an install from OS7-1.0.0.247-amd64.iso before writing them:
+# home was [''], show-desktop [], panel-run-dialog ['<Alt>F2'], no custom
+# keybindings, and no default binding anywhere used <Super>e, <Super>r,
+# <Super>d or <Control><Shift>Escape - so none of these takes a key from GNOME.
+#
+#   Super+E            Explorer      -> Files, at the home folder
+#   Super+R            Run           -> GNOME's run dialog (Alt+F2 stays)
+#   Super+D            Show desktop  -> minimise everything / restore
+#   Ctrl+Shift+Esc     Task Manager  -> Resources
+[org/gnome/settings-daemon/plugins/media-keys]
+home=['<Super>e']
+custom-keybindings=['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/os7-task-manager/']
+
+[org/gnome/desktop/wm/keybindings]
+panel-run-dialog=['<Super>r', '<Alt>F2']
+show-desktop=['<Super>d']
+
+# A RELOCATABLE SCHEMA (org.gnome.settings-daemon.plugins.media-keys.custom-
+# keybinding) instantiated at this path, which is why the group is a path and
+# not a schema id. Get-OS7ThemeKeys and hook 0090 both carry it in their table
+# of relocatable prefixes; #172 is what happened while the terminal profile
+# above was the only such group and only the hook knew.
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/os7-task-manager]
+name='Task Manager'
+command='resources'
+binding='<Control><Shift>Escape'

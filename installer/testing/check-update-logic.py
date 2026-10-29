@@ -342,11 +342,24 @@ if verb == "update":
     except Exception:
         pass
     mode = os.environ.get("OS7_FAKE_APT_UPDATE", "fetched")
+    # AND IN THE MACHINE'S LANGUAGE, the way the real one does (BUILD-NOTES
+    # #176). apt's progress words go through gettext, and since C16 put the
+    # language packs on the image an OS/7 machine installed in German prints
+    # `Holen:` for Get, `OK:` for Hit and `Fehl:` for Err -- read off apt.mo
+    # on a 1.0.0.247 desktop by msgid ("Get:%lu %s" and its neighbours).
+    # Everything else here stays English: what a cmdlet must survive is the
+    # one word its regex keys on. gettext's own precedence, measured on the
+    # same machine: LC_ALL beats LC_MESSAGES beats LANG, and LC_ALL=C.UTF-8
+    # wins even over LANGUAGE=de.
+    loc = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES")
+           or os.environ.get("LANG") or "")
+    german = loc.startswith("de")
+    get_w, err_w = ("Holen", "Fehl") if german else ("Get", "Err")
     if uri and mode == "fetched":
-        print("Get:1 %s %s InRelease [2412 B]" % (uri, suite))
+        print("%s:1 %s %s InRelease [2412 B]" % (get_w, uri, suite))
         print("Reading package lists...")
     elif uri and mode == "401":
-        print("Err:1 %s %s InRelease" % (uri, suite))
+        print("%s:1 %s %s InRelease" % (err_w, uri, suite))
         print("  401  Unauthorized [IP: 65.108.1.1 443]")
         print("Reading package lists...")
         print("W: Failed to fetch %s/dists/%s/InRelease  401  Unauthorized"
@@ -354,7 +367,7 @@ if verb == "update":
         print("W: Some index files failed to download. They have been ignored, "
               "or old ones used instead.")
     elif uri and mode == "err":
-        print("Err:1 %s %s InRelease" % (uri, suite))
+        print("%s:1 %s %s InRelease" % (err_w, uri, suite))
         print("  404  Not Found [IP: 65.108.1.1 443]")
         print("W: Some index files failed to download.")
     sys.exit(0)
@@ -1159,9 +1172,13 @@ def main():
     channel_env["OS7_STATE"] = os.path.join(work, "state.json")
     channel_env["OS7_LAYOUT"] = os.path.join(work, "layout.json")
 
-    def set_channel(args, *, apt="fetched"):
+    def set_channel(args, *, apt="fetched", lang=None):
         env = dict(channel_env)
         env["OS7_FAKE_APT_UPDATE"] = apt
+        if lang:
+            env["LANG"] = lang
+            env.pop("LC_ALL", None)
+            env.pop("LC_MESSAGES", None)
         script = ("Import-Module /work/powershell/OS7/OS7.psd1 -Force; "
                   "$c = New-Object System.Management.Automation.PSCredential("
                   "  'u661569-sub2', (ConvertTo-SecureString '%s' -AsPlainText -Force)); "
@@ -1234,6 +1251,25 @@ def main():
     check(rc == 0 and obj.get("Enabled") is True,
           "the same call succeeds when apt fetches the source",
           (err.strip().splitlines() or [""])[-1][:100])
+
+    # AND ON A MACHINE THAT SPEAKS GERMAN (#176). The read-back keys on apt's
+    # progress word, and with C16's language packs that word is `Holen:` on
+    # every machine installed in German -- which is every machine this
+    # repository installs. Measured on 1.0.0.247 against the real archive:
+    # verdict `unfetched` in the session's locale, `fetched` under
+    # LC_ALL=C.UTF-8, for the same source a second apart. So the verb threw
+    # "apt reported nothing at all" at the step the manual gives an operator
+    # to get updates. Parsed text is asked for in C; shown text stays German.
+    rc, out, err, obj = set_channel("-Channel preview -Uri %s" % URI,
+                                    lang="de_DE.UTF-8")
+    check(rc == 0 and obj.get("Enabled") is True,
+          "and it succeeds on a machine whose apt answers `Holen:` (LANG=de_DE.UTF-8)",
+          (err.strip().splitlines() or [""])[-1][:130])
+    rc, out, err, obj = set_channel("-Channel preview -Uri %s" % URI, apt="silent",
+                                    lang="de_DE.UTF-8")
+    check(rc != 0 and "nothing at all" in err,
+          "while the same German machine still refuses a source apt said nothing about",
+          (err.strip().splitlines() or [""])[-1][:130])
 
     # -Disable does not run the fetch check and does not remove the secret.
     rc, out, err, obj = set_channel("-Disable", apt="401")

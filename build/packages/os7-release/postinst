@@ -56,6 +56,38 @@ brand() {
 	fi
 }
 
+# ONE WAY UPDATES ARRIVE (SESSION-QOL-SURVEY Q4). Four of Ubuntu's units do
+# update or advertising work beside Update-OS7, measured enabled on a fresh
+# 1.0.0.245: apt-news.service and esm-cache.service fetch the Ubuntu Pro
+# "news" that 20apt-esm-hook.conf prints under `apt upgrade` (that hook is
+# cleared by /etc/apt/apt.conf.d/99os7-one-update-path, in this package), and
+# update-notifier's two timers look for "a new version of Ubuntu" and re-fetch
+# vendor installers. Masked by a symlink to /dev/null, which is what
+# `systemctl mask` writes and which works in a chroot with no systemd running -
+# the image build and Update-OS7 both run this there.
+#
+# ONCE PER MACHINE, by a marker under /var/lib/os7 (inside the boot environment,
+# so a rollback past this release takes it with the masks it describes). An
+# administrator who unmasks one has decided to, and the next update must not
+# decide back. A unit an administrator has REPLACED with a file of their own
+# is left alone; only units that exist are masked at all.
+mask_ubuntu_channels() {
+	marker=/var/lib/os7/ubuntu-channels-masked
+	[ -e "${marker}" ] && return 0
+	masked=""
+	for u in apt-news.service esm-cache.service \
+	         update-notifier-motd.timer update-notifier-download.timer; do
+		[ -e "/usr/lib/systemd/system/${u}" ] || [ -e "/lib/systemd/system/${u}" ] || continue
+		if [ -e "/etc/systemd/system/${u}" ] && [ ! -L "/etc/systemd/system/${u}" ]; then
+			continue
+		fi
+		ln -sfn /dev/null "/etc/systemd/system/${u}"
+		masked="${masked} ${u}"
+	done
+	mkdir -p /var/lib/os7
+	echo "masked:${masked:- none present}" > "${marker}"
+}
+
 case "$1" in
 	configure)
 		# --package os7-release, so `dpkg-divert --list` says who took it and
@@ -64,6 +96,7 @@ case "$1" in
 			dpkg-divert --add --package os7-release --rename --divert "${DISTRIB}" "${REAL}"
 		fi
 		brand
+		mask_ubuntu_channels
 		;;
 	triggered)
 		# base-files was unpacked and wrote a fresh .distrib. Re-derive.

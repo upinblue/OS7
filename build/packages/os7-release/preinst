@@ -1,0 +1,22 @@
+#!/bin/sh
+# os7-release: move sssd-tools' sss_cache aside, so the wrapper this package
+# ships can take its name. SESSION-QOL-SURVEY Q17; the wrapper says why.
+#
+# preinst, because the diversion has to exist BEFORE dpkg unpacks this
+# package's /usr/sbin/sss_cache, or the unpack collides with sssd-tools'.
+# --rename: sssd-tools is not Essential, so dpkg-divert has nothing to warn
+# about, and the file is moved rather than copied. If sssd-tools is installed
+# later, dpkg puts its binary straight at the diverted name.
+set -e
+
+case "$1" in
+	install | upgrade)
+		if ! dpkg-divert --listpackage /usr/sbin/sss_cache 2>/dev/null | grep -qx os7-release; then
+			dpkg-divert --package os7-release --rename \
+				--divert /usr/sbin/sss_cache.distrib --add /usr/sbin/sss_cache >/dev/null
+		fi
+		;;
+	*) ;;
+esac
+
+exit 0

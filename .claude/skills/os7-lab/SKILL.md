@@ -139,6 +139,12 @@ arm64 side is **unrun**.
   never a second command carrying a literal newline (BUILD-NOTES #16).
 - **Settle before typing.** A shell still painting its prompt eats the first
   characters, and nothing reports it.
+- **The machine speaks the language it was installed in.** Since C16 put the
+  language packs on the image, `login` and `sudo` on a bench installed with
+  `de_DE.UTF-8` — every bench here — say `Passwort:`, apt says `Holen:` and
+  `OK:`, and dpkg answers in German. Match prompts with
+  `vmconsole.PASSWORD_PROMPT`, and ask anything you PARSE under
+  `LC_ALL=C.UTF-8` (BUILD-NOTES #176).
 - **A qcode is a KEY POSITION, not a character.** `type manual "a-b"` on a
   machine installed with `keyboard: de` put `aßb` on the screen: `minus` is
   where `ß` lives on a German keyboard. `type` takes `--layout` (default `de`,

@@ -41,7 +41,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vmconsole import Console, live_login          # noqa: E402
+from vmconsole import Console, live_login, PASSWORD_PROMPT   # noqa: E402
 from vmarch import SoftTpm                          # noqa: E402
 from vmscreen import Lab                            # noqa: E402
 
@@ -398,7 +398,7 @@ def shoot():
         # `sudo pwsh` and not `sudo -i`: it is what an operator on this machine
         # actually types, and the manual shows the same line.
         c.send("sudo pwsh -NoLogo")
-        j = c.expect([r"[Pp]assword:", PROMPT], 120, "sudo or a prompt")
+        j = c.expect([PASSWORD_PROMPT, PROMPT], 120, "sudo or a prompt")
         if j == 0:
             c.send(PASSWORD)
             c.expect(PROMPT, 180, "an elevated PowerShell prompt")

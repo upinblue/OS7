@@ -2399,24 +2399,106 @@ function Remove-OS7BootEnvironment {
 $script:OS7ThemeKeyfile = '/etc/dconf/db/os7.d/00-os7-classic'
 $script:OS7ThemeUserSetup = '/usr/libexec/os7-theme-user-setup'
 
+# RELOCATABLE SCHEMAS, by the dconf path prefix they are instantiated under.
+# BUILD-NOTES #172. For most of GNOME a dconf group spells its schema id with
+# slashes; for a relocatable schema it does not, and the naive transform turned
+# gnome-terminal's profile group into "org.gnome.terminal.legacy.profiles:.:<uuid>",
+# which is not a schema - so `Set-OS7Theme` threw at that key on every machine
+# from 2026-08-26 and reset nothing after it. gsettings takes SCHEMA:PATH for
+# these, and that is what Get-OS7ThemeKeys returns.
+#
+# The same table is in build/config/hooks-amd64/0090-desktop-theme-verify.hook.chroot
+# (relocatable_schema), and installer/testing/check-image.py asks THIS
+# function's answers of GSettings inside the shipped image, so the two cannot
+# disagree without failing the medium's check. (Not the hook: a live-build hook
+# cannot call a module function, BUILD-NOTES #38.)
+$script:OS7RelocatableSchemas = [ordered]@{
+	'org/gnome/terminal/legacy/profiles:/'                             = 'org.gnome.Terminal.Legacy.Profile'
+	'org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/' = 'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding'
+}
+
 function Get-OS7ThemeKeys {
 	<#
 	.SYNOPSIS
 		Internal. The (schema, key) pairs OS/7's desktop defaults cover.
+
+	.DESCRIPTION
+		Schema is what gsettings takes - `SCHEMA:/path/` for a relocatable one -
+		and Path is the key's full dconf path, which is what `dconf read` takes.
+		Two names for one key, because the two tools disagree about relocatable
+		schemas and a caller that derived one from the other was #172.
 	#>
 	param([string]$Keyfile = $script:OS7ThemeKeyfile)
 
 	if (-not (Test-Path -PathType Leaf $Keyfile)) { return @() }
 
-	$schema = $null
+	# WHICH SCHEMA LIVES AT A PATH IS GSETTINGS' ANSWER, NOT A SPELLING (#173).
+	# org.gnome.desktop.default-applications.terminal lives at
+	# /org/gnome/desktop/applications/terminal/, so the path cannot be turned into
+	# the id by replacing slashes. `--print-paths` is GSettings' own table; where
+	# gsettings cannot be asked (a test host, a server with no desktop) the
+	# spelling is the fallback, and it is right for every other group the theme
+	# sets.
+	#
+	# AND A PATH CAN HOLD MORE THAN ONE SCHEMA: org.gnome.mutter and
+	# org.gnome.mutter.devkit both live at /org/gnome/mutter/ (measured on
+	# 1.0.0.247). So a key goes to the schema at its path that HAS that key -
+	# picking one per path sent `gsettings reset org.gnome.mutter.devkit
+	# dynamic-workspaces` and Set-OS7Theme threw again.
+	$atPath = @{}
+	$listing = @()
+	$listed = $null
+	$canAsk = [bool](Get-Command -Name gsettings -CommandType Application -ErrorAction SilentlyContinue)
+	if ($canAsk) {
+		$global:LASTEXITCODE = $null
+		$listing = & gsettings list-schemas --print-paths 2>$null
+		$listed = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	}
+	if ($listed -eq 0) {
+		foreach ($row in @($listing)) {
+			$fields = "$row".Trim() -split '\s+'
+			if ($fields.Count -eq 2) {
+				if (-not $atPath.ContainsKey($fields[1])) { $atPath[$fields[1]] = @() }
+				$atPath[$fields[1]] += $fields[0]
+			}
+		}
+	}
+	$keysOf = @{}
+	$schemaFor = {
+		param($Among, $KeyName)
+		if (@($Among).Count -le 1) { return @($Among)[0] }
+		foreach ($c in $Among) {
+			if (-not $keysOf.ContainsKey($c)) {
+				$keysOf[$c] = @(& gsettings list-keys $c 2>$null)
+			}
+			if ($keysOf[$c] -contains $KeyName) { return $c }
+		}
+		return @($Among)[0]
+	}
+
+	$candidates = $null
+	$reloc = $null
+	$dir = $null
 	$pairs = foreach ($line in (Get-Content -LiteralPath $Keyfile)) {
 		$trimmed = $line.Trim()
 		if ($trimmed -match '^\[(.+)\]$') {
-			# dconf paths are org/gnome/...; GSettings schemas are org.gnome...
-			$schema = $Matches[1].Trim('/') -replace '/', '.'
+			$group = $Matches[1].Trim('/')
+			$dir = "/$group/"
+			$reloc = $null
+			foreach ($prefix in $script:OS7RelocatableSchemas.Keys) {
+				if ("$group/".StartsWith($prefix, [System.StringComparison]::Ordinal)) {
+					$reloc = "$($script:OS7RelocatableSchemas[$prefix]):$dir"
+					break
+				}
+			}
+			# dconf paths are org/gnome/...; GSettings schemas are org.gnome... -
+			# the spelling is only the fallback for when GSettings cannot be asked.
+			$candidates = if ($atPath.ContainsKey($dir)) { $atPath[$dir] } else { @($group -replace '/', '.') }
 		}
-		elseif ($schema -and $trimmed -match '^([A-Za-z0-9-]+)\s*=') {
-			[pscustomobject]@{ Schema = $schema; Key = $Matches[1] }
+		elseif ($candidates -and $trimmed -match '^([A-Za-z0-9-]+)\s*=') {
+			$name = $Matches[1]
+			$schema = if ($reloc) { $reloc } else { & $schemaFor $candidates $name }
+			[pscustomobject]@{ Schema = $schema; Key = $name; Path = "$dir$name" }
 		}
 	}
 	return @($pairs)
@@ -2470,7 +2552,7 @@ function Get-OS7Theme {
 		$system = $null
 		try {
 			$system = (& env "DCONF_PROFILE=/etc/dconf/profile/user" dconf read `
-				"/$($pair.Schema -replace '\.', '/')/$($pair.Key)" 2>$null)
+				$pair.Path 2>$null)
 		}
 		catch { }
 		if ($system -and $effective -and $effective -ne $system.Trim()) {

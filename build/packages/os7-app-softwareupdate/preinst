@@ -1,0 +1,33 @@
+#!/bin/sh
+# os7-app-softwareupdate: one updater on the desktop. SESSION-QOL-SURVEY Q1.
+#
+# Two diversions, both of update-manager's files, neither Essential:
+#
+#   /usr/bin/update-manager              -> .distrib, and this package's
+#                                           /usr/bin/update-manager (a shim that
+#                                           starts OS/7's Software Update) takes
+#                                           the name - which is what Settings >
+#                                           System > Software Updates runs
+#   /usr/share/applications/
+#     update-manager.desktop             -> .distrib, and nothing takes the name:
+#                                           the "Software Updater" entry leaves
+#                                           the Apps menu and the overview
+#
+# preinst, because the first diversion must exist before dpkg unpacks this
+# package's /usr/bin/update-manager. --rename moves update-manager's files; an
+# update-manager upgrade then writes to the diverted names.
+set -e
+
+case "$1" in
+	install | upgrade)
+		for f in /usr/bin/update-manager /usr/share/applications/update-manager.desktop; do
+			if ! dpkg-divert --listpackage "${f}" 2>/dev/null | grep -qx os7-app-softwareupdate; then
+				dpkg-divert --package os7-app-softwareupdate --rename \
+					--divert "${f}.distrib" --add "${f}" >/dev/null
+			fi
+		done
+		;;
+	*) ;;
+esac
+
+exit 0

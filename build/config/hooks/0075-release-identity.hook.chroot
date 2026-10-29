@@ -256,6 +256,30 @@ if grep -qE '[0-9]+\.[0-9]+' /etc/issue.net; then
 fi
 echo "OS/7 hook 0075:   /usr/lib/os7/product, /etc/issue and /etc/issue.net written"
 
+# /etc/legal - shown once per user at the first console or ssh login, under the
+# OS/7 MOTD header. base-files' text said "The programs included with the
+# Ubuntu system are free software" and "Ubuntu comes with ABSOLUTELY NO
+# WARRANTY" (measured on a fresh 1.0.0.245, SESSION-QOL-SURVEY Q3). The same
+# two statements, true of this product and honest about what it is built on.
+# A base-files conffile like /etc/issue, so an upgrade keeps this copy.
+cat > /etc/legal <<'LEGAL'
+
+OS/7 is built on Ubuntu. The programs included with it are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+OS/7 comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
+applicable law.
+
+LEGAL
+chmod 0644 /etc/legal
+if ! grep -q '^OS/7 is built on Ubuntu' /etc/legal || grep -q 'Ubuntu system' /etc/legal; then
+	echo "OS/7 hook 0075: /etc/legal was not replaced:" >&2
+	cat /etc/legal >&2
+	exit 1
+fi
+echo "OS/7 hook 0075:   /etc/legal names OS/7"
+
 # ---------------------------------------------------------------------------
 # 1c. The MOTD (docs/IDENTITY-PLAN.md §6.1, decision I9)
 #

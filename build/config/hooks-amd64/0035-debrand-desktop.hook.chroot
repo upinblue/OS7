@@ -178,6 +178,18 @@ Pin-Priority: -1
 Package: plymouth-theme-ubuntu-text
 Pin: release *
 Pin-Priority: -1
+
+# Two launchers in the Apps menu that belong to a GNOME developer's desktop and
+# not to an administrator's (SESSION-QOL-SURVEY Q2): Sysprof, a CPU profiler,
+# and Extensions, which can switch off the four extensions the OS/7 Classic
+# desktop is made of. Both are only Recommends - sysprof of
+# ubuntu-desktop-minimal, gnome-shell-extension-prefs of the Classic
+# extensions themselves - measured with apt-cache rdepends on 1.0.0.247, and a
+# purge simulation removed exactly the two. `gnome-extensions` on the command
+# line is gnome-shell's and stays.
+Package: sysprof gnome-shell-extension-prefs
+Pin: release *
+Pin-Priority: -1
 PREF
 chmod 0644 "${PIN}"
 ok "wrote ${PIN}"
@@ -199,6 +211,7 @@ PURGE=(
 	firefox
 	ptyxis
 	plymouth-theme-ubuntu-text
+	sysprof gnome-shell-extension-prefs
 )
 
 # Name only what is actually installed: `apt-get purge` errors on a package it

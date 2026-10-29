@@ -61,6 +61,17 @@ def terminal_reply(m):
     return None
 
 
+# The password prompt, in every language an install plan here names (#176).
+# `login` and `sudo` print it through gettext, and Ubuntu strips the
+# translations of main's packages into language-pack-*-base -- so it said
+# "Password:" on every machine until C16 put those packs on the image, and
+# then "Passwort:" on every machine this repository installs, because the
+# plans say de_DE.UTF-8. The bench waited 90 seconds for the English word and
+# login timed out underneath it. sudo's is "[sudo] Passwort für os7admin:".
+# A plan that names another of C16's languages adds its word HERE, once.
+PASSWORD_PROMPT = r"(?:[Pp]assword|[Pp]asswort)[^\r\n]*:"
+
+
 class Console:
     """Minimal expect over QEMU's serial stdio."""
 
@@ -207,7 +218,7 @@ def live_login(c, user="ubuntu", password=None):
     if i == 0:
         c.settle(quiet=1.5, timeout=30)
         c.send(user)
-        j = c.expect([r"Password:", r"PS [^\r\n]*>", r"\$ $", r"# $"], 90,
+        j = c.expect([PASSWORD_PROMPT, r"PS [^\r\n]*>", r"\$ $", r"# $"], 90,
                      "password or shell")
         if j == 0:
             c.send(password or "")

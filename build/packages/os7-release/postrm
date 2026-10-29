@@ -1,0 +1,33 @@
+#!/bin/sh
+# os7-release: give back what preinst and postinst took. Run after dpkg has
+# removed this package's own files, so the wrapper at /usr/sbin/sss_cache is
+# already gone and sssd-tools' binary can move back to its name.
+#
+#   - the sss_cache diversion (preinst, SESSION-QOL-SURVEY Q17)
+#   - the masks on Ubuntu's update and advertisement units (postinst, Q4) -
+#     only the ones that are still OUR /dev/null symlinks
+#
+# abort-install too: a preinst that diverted and an unpack that failed must not
+# leave the diversion behind. NOT abort-upgrade: the version being returned to
+# ships the same wrapper and expects the same diversion.
+set -e
+
+case "$1" in
+	remove | purge | abort-install | disappear)
+		if dpkg-divert --listpackage /usr/sbin/sss_cache 2>/dev/null | grep -qx os7-release; then
+			dpkg-divert --package os7-release --rename --remove /usr/sbin/sss_cache >/dev/null
+		fi
+		if [ -e /var/lib/os7/ubuntu-channels-masked ]; then
+			for u in apt-news.service esm-cache.service \
+			         update-notifier-motd.timer update-notifier-download.timer; do
+				if [ "$(readlink "/etc/systemd/system/${u}" 2>/dev/null)" = /dev/null ]; then
+					rm -f "/etc/systemd/system/${u}"
+				fi
+			done
+			rm -f /var/lib/os7/ubuntu-channels-masked
+		fi
+		;;
+	*) ;;
+esac
+
+exit 0

@@ -1,1 +1,2 @@
 /etc/apt/sources.list.d/os7.sources
+/etc/apt/apt.conf.d/99os7-one-update-path

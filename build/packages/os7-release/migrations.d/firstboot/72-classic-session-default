@@ -1,0 +1,87 @@
+#!/bin/sh
+# #168 — the accounts that already logged in to the Ubuntu session get the
+# OS/7 Classic desktop they were always meant to have, ONCE.
+#
+# THE DEFECT: GDM takes a user's session from AccountsService, and for a user
+# with no record AccountsService answered out of Ubuntu's template, whose
+# Session= is empty. GDM then fell back to its compiled-in "ubuntu" and, after
+# the login, SAVED that as the user's choice. The dconf key OS/7 set for #85
+# was never consulted. Measured on an install from OS7-1.0.0.245-amd64.iso:
+# /var/lib/AccountsService/users/os7admin read Session=ubuntu after the first
+# login, and the desktop was `gnome-shell --mode=ubuntu`.
+#
+# os7-desktop-theme now ships /etc/accountsservice/user-templates/ with
+# Session=gnome-classic, which fixes every account AccountsService meets for
+# the first time from then on. It cannot fix a record GDM has already written.
+# This does, for the records that say what GDM's fallback wrote: "ubuntu", or
+# nothing at all.
+#
+# A MARKER, AND WHY THIS ONE MIGRATION NEEDS ONE. The contract says to check
+# for the state a migration intends to create rather than for a marker of its
+# own. Here the state cannot tell the two cases apart: Session=ubuntu written
+# by GDM's fallback and Session=ubuntu chosen by a person at the login screen's
+# gear are the same line. Every migration in migrations.d runs at EVERY
+# release's first boot (build-os7-packages.sh says why), so without a marker a
+# person who picked Ubuntu on purpose would be moved back to Classic by every
+# update — a lock, where OS/7's desktop is a default. So it runs once per
+# machine. The marker lives under /var/lib/os7, inside the boot environment,
+# which means a rollback past this release takes it away and the next update
+# runs this again; that is the same thing that happens to the session records
+# themselves, which roll back with it.
+set -u
+
+TAG="os7/72-classic-session-default"
+USERS=/var/lib/AccountsService/users
+SESSION=/usr/share/wayland-sessions/gnome-classic.desktop
+MARKER=/var/lib/os7/session-default-migrated
+
+say() { echo "${TAG}: $*"; }
+
+# ---- is this a machine this applies to at all? -----------------------------
+if [ ! -e "${SESSION}" ]; then
+	say "no ${SESSION} - not a desktop machine, nothing to do"
+	exit 0
+fi
+if [ -e "${MARKER}" ]; then
+	say "already ran on this machine ($(head -n 1 "${MARKER}" 2>/dev/null)) - nothing to do"
+	exit 0
+fi
+if [ ! -d "${USERS}" ]; then
+	say "no ${USERS} - nobody has a record yet; the template decides their first login"
+	mkdir -p "$(dirname "${MARKER}")" && echo "no records $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${MARKER}"
+	exit 0
+fi
+
+# ---- move what GDM's fallback wrote -----------------------------------------
+changed=0
+for f in "${USERS}"/*; do
+	[ -f "${f}" ] || continue
+	if grep -Eq '^Session=(ubuntu)?$' "${f}"; then
+		if ! sed -Ei 's/^Session=(ubuntu)?$/Session=gnome-classic/' "${f}"; then
+			say "sed could not edit ${f}" >&2
+			exit 1
+		fi
+		say "$(basename "${f}"): Session -> gnome-classic"
+		changed=$((changed + 1))
+	fi
+done
+
+# The edit is a claim; ask the files.
+left="$(grep -El '^Session=(ubuntu)?$' "${USERS}"/* 2>/dev/null || true)"
+if [ -n "${left}" ]; then
+	say "these records still name the Ubuntu session after the edit:" >&2
+	echo "${left}" >&2
+	exit 1
+fi
+
+# accounts-daemon keeps the records in memory and writes them back when a
+# property changes, so a running one would put the old value back the next
+# time GDM saved anything. A restart makes it read the files again.
+if [ "${changed}" -gt 0 ] && command -v systemctl >/dev/null 2>&1; then
+	systemctl try-restart accounts-daemon.service 2>/dev/null || true
+fi
+
+mkdir -p "$(dirname "${MARKER}")"
+echo "moved ${changed} record(s) $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${MARKER}"
+say "done: ${changed} record(s) moved to gnome-classic"
+exit 0

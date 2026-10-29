@@ -480,6 +480,25 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   shortest lifetime a DC will issue
                                           #   is minutes, and a harness that
                                           #   slept for it is one nobody runs
+./installer/testing/check-sudo.py --self-test
+                                          #   P13: what `sudo <args>` means in a
+                                          #   PowerShell session ($PSHOME/
+                                          #   profile.ps1) - programs untouched,
+                                          #   PowerShell commands elevated, run
+                                          #   under de-DE because `1,5` is an
+                                          #   array. 13 cases, 3 planted defects,
+                                          #   seconds, needs only pwsh
+./installer/testing/check-desktop-migrations.py
+                                          #   firstboot migrations 72 and 73
+                                          #   (#168: the session GDM's fallback
+                                          #   wrote, moved ONCE; #170: the
+                                          #   locale nobody generated), run in
+                                          #   an os7img:* container because
+                                          #   run-s5.py is headless and 72 exits
+                                          #   there at its first line. Each
+                                          #   migration's own read-back is
+                                          #   proven to FIRE on a copy with the
+                                          #   doing removed. 24 checks, ~20 s
 ./installer/testing/check-vm-arch.py      # the harness port's own check: the
                                           #   arm64 command lines byte-identical
                                           #   to the pre-port construction, the

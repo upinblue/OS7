@@ -385,6 +385,7 @@ internal sealed class TargetIdentityStep : IStep
         // Screen 3 collected these and until now nothing did anything with them.
         _t.Write(x, "etc/default/locale", $"LANG={_plan.Language}\n");
         _t.Write(x, "etc/locale.conf", $"LANG={_plan.Language}\n");
+        GenerateLocale(x);
 
         // The console keymap the installed system comes up with — the same file
         // the image ships for its own console, with the layout replaced.
@@ -404,6 +405,71 @@ internal sealed class TargetIdentityStep : IStep
         x.TryExec("rm", "-f", _t.At("etc/localtime"));
         x.Exec("ln", "-sf", $"/usr/share/zoneinfo/{_plan.Timezone}", _t.At("etc/localtime"));
         _t.Write(x, "etc/timezone", _plan.Timezone + "\n");
+    }
+
+    /// <summary>
+    /// THE LOCALE HAS TO EXIST, NOT ONLY BE NAMED.
+    ///
+    /// Until 2026-10-29 this step wrote `LANG=` and stopped, and the docstring
+    /// on <see cref="Weight"/> said `locale-gen` was most of the work. Nothing
+    /// ran it. The image's /usr/lib/locale holds C.utf8 and nothing else — the
+    /// live medium generates its locale at boot into the RAM overlay, which
+    /// `unsquashfs` never sees — so every installed machine named a locale that
+    /// did not exist. Measured on an install from OS7-1.0.0.245-amd64.iso with
+    /// `de_DE.UTF-8`: `locale -a` answered C, C.utf8 and POSIX; every program
+    /// printed "Cannot set LC_CTYPE to default locale"; and GDM, finding the
+    /// locale missing, started the desktop under `LANG=C.UTF-8`. Every
+    /// language on screen 3 produced that machine, English included.
+    ///
+    /// The line enabled is the one SUPPORTED carries, because that is the list
+    /// screen 3 was built from (SystemLists.ReadLanguages) and the format
+    /// /etc/locale.gen expects. It is enabled in locale.gen rather than made
+    /// with `localedef` alone: the `locales` package's own postinst reruns
+    /// `locale-gen` on every upgrade and regenerates the archive FROM that file,
+    /// so a locale that is not in it is gone after the first update.
+    /// </summary>
+    private void GenerateLocale(Executor x)
+    {
+        string lang = _plan.Language;
+        if (lang is "C" or "POSIX" or "C.UTF-8" or "C.utf8")
+        {
+            Log.Info($"language {lang} is built into glibc; nothing to generate");
+            return;
+        }
+        // It is interpolated into a script, and an unattended plan is a file
+        // somebody wrote by hand. A locale name is letters, digits and _.@-.
+        if (!System.Text.RegularExpressions.Regex.IsMatch(lang, "^[A-Za-z0-9_.@-]+$"))
+            throw new StepException(
+                "Setup was given a language it cannot set up.",
+                "locale-gen",
+                $"'{lang}' is not a locale name. Pick one from the Regional "
+                + "Settings screen, or a line of /usr/share/i18n/SUPPORTED.");
+
+        _t.Chroot(x, $"locale {lang}", $"""
+            WANT='{lang}'
+            LINE=$(grep -m1 "^$WANT " /usr/share/i18n/SUPPORTED || true)
+            if [ -z "$LINE" ]; then
+                echo "!!! $WANT is not in /usr/share/i18n/SUPPORTED, so it cannot be generated" >&2
+                exit 1
+            fi
+            if grep -q "^# *$LINE\$" /etc/locale.gen; then
+                sed -i "s|^# *$LINE\$|$LINE|" /etc/locale.gen
+            elif ! grep -q "^$LINE\$" /etc/locale.gen; then
+                echo "$LINE" >> /etc/locale.gen
+            fi
+            locale-gen
+
+            # PROOF, from glibc rather than from locale-gen's exit code. `locale
+            # -a` prints the NORMALISED name (de_DE.utf8), so the comparison is
+            # on that form and case-insensitive in the codeset.
+            NORM=$(echo "$WANT" | sed -E 's/\.[Uu][Tt][Ff]-?8/.utf8/')
+            if ! locale -a | grep -qx "$NORM"; then
+                echo "!!! locale-gen ran and glibc still does not know $WANT:" >&2
+                locale -a >&2
+                exit 1
+            fi
+            echo "    locale $WANT generated (locale -a lists $NORM)"
+            """);
     }
 
     private static string Uuid(Executor x, string device)

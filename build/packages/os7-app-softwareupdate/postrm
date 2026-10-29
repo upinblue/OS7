@@ -1,0 +1,21 @@
+#!/bin/sh
+# os7-app-softwareupdate: give update-manager its program and its launcher
+# back. Runs after dpkg has removed this package's /usr/bin/update-manager, so
+# the name is free for --rename to move Ubuntu's file back to.
+#
+# abort-install too (a diversion with no file of ours behind it helps nobody);
+# NOT abort-upgrade, where the version returned to expects the same diversions.
+set -e
+
+case "$1" in
+	remove | purge | abort-install | disappear)
+		for f in /usr/bin/update-manager /usr/share/applications/update-manager.desktop; do
+			if dpkg-divert --listpackage "${f}" 2>/dev/null | grep -qx os7-app-softwareupdate; then
+				dpkg-divert --package os7-app-softwareupdate --rename --remove "${f}" >/dev/null
+			fi
+		done
+		;;
+	*) ;;
+esac
+
+exit 0

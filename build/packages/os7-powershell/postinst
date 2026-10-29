@@ -1,0 +1,56 @@
+#!/bin/sh
+# os7-powershell: PowerShell's two calls to Microsoft, off for every start of
+# it - not only the ones a login shell or the desktop session makes (C17).
+#
+# The profile.d file and the environment.d file reach login shells and what
+# the desktop session starts. Measured on a fresh 1.0.0.247 desktop, that left
+# out three roads, and each of them runs pwsh on every OS/7 machine:
+#
+#   - `ssh host command`: bash starts non-login, so profile.d never runs. The
+#     bench's own `exec` left ~/.cache/powershell/telemetry.uuid behind, which
+#     pwsh writes only when telemetry is on (measured both ways, same account).
+#   - `sudo`: env_reset drops both variables, so `sudo pwsh` - and the sudo
+#     FUNCTION in profile.ps1, which runs exactly that - started with them off.
+#   - services: six of OS/7's own units run pwsh (os7-update-check from a
+#     timer, os7-backup-replicate, os7-job@, ...), and a system service
+#     inherits nothing from either file.
+#
+# Services are /usr/lib/systemd/system.conf.d/60-os7-powershell.conf, a file
+# this package owns. Everything that opens a PAM session - ssh with or without
+# a command, sudo, su, cron, the console - reads /etc/environment through
+# pam_env, which on this release reads no drop-in directory (its strings name
+# three files and nothing else, measured). /etc/environment belongs to no
+# package (`dpkg -S` finds nobody), so the two lines are added here.
+#
+# ONCE, like the masks in os7-release (Q4): an administrator who removes a
+# line, or sets POWERSHELL_TELEMETRY_OPTOUT=0, has decided, and the next update
+# must not decide back. A line that already names the variable is left alone
+# whatever its value.
+set -e
+
+ENVFILE=/etc/environment
+MARKER=/var/lib/os7/powershell-environment-written
+
+write_environment() {
+	[ -e "${MARKER}" ] && return 0
+	[ -e "${ENVFILE}" ] || install -m 0644 /dev/null "${ENVFILE}"
+	written=""
+	for pair in POWERSHELL_UPDATECHECK=Off POWERSHELL_TELEMETRY_OPTOUT=1; do
+		if ! grep -q "^[[:space:]]*${pair%%=*}=" "${ENVFILE}"; then
+			printf '%s\n' "${pair}" >> "${ENVFILE}"
+			written="${written} ${pair}"
+		fi
+	done
+	mkdir -p /var/lib/os7
+	echo "written:${written:- none, both already named}" > "${MARKER}"
+}
+
+case "$1" in
+	configure)
+		write_environment
+		;;
+	abort-upgrade|abort-remove|abort-deconfigure)
+		;;
+esac
+
+exit 0

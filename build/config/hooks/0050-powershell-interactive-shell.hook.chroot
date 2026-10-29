@@ -128,6 +128,26 @@ case "${GOT}" in
 		;;
 esac
 
+# AND THE SESSION IT LANDS IN DOES NOT LOOK FOR ITS OWN UPDATES (SESSION-QOL-
+# SURVEY Q12). Asked of PowerShell through the same hand-off, because the
+# variable has to survive bash's login and pwsh's start to mean anything - a
+# line in the profile.d file that a later guard skipped would read fine and
+# do nothing.
+GOT_UC="$(printf '"OS7_UPDATECHECK=$env:POWERSHELL_UPDATECHECK OS7_TELEMETRY=$env:POWERSHELL_TELEMETRY_OPTOUT"\nexit\n' \
+	| "${CLEAN_ENV[@]}" bash --login -i 2>/dev/null || true)"
+case "${GOT_UC}" in
+	*"OS7_UPDATECHECK=Off OS7_TELEMETRY=1"*)
+		echo "OS/7 hook 0050:   ok: the handed-off PowerShell has POWERSHELL_UPDATECHECK=Off and POWERSHELL_TELEMETRY_OPTOUT=1"
+		;;
+	*)
+		echo "OS/7 hook 0050: FAIL: the hand-off does not carry POWERSHELL_UPDATECHECK=Off and" >&2
+		echo "OS/7 hook 0050:   POWERSHELL_TELEMETRY_OPTOUT=1, so PowerShell will call Microsoft" >&2
+		echo "OS/7 hook 0050:   for updates it must not take and send it usage data (C17)." >&2
+		echo "OS/7 hook 0050:   got: ${GOT_UC}" >&2
+		exit 1
+		;;
+esac
+
 # The opt-out is load-bearing: it is how an administrator gets plain bash
 # without editing system files, and a guard nobody checks is a guard nobody can
 # rely on.

@@ -1,0 +1,69 @@
+#!/bin/sh
+# =============================================================================
+# OS/7 Classic — pre-installation.
+#
+# ONE JOB: move base-files' two Ubuntu wordmarks aside so this package's files
+# can take their names. docs/BUILD-NOTES.md #169.
+#
+# gnome-control-center, as Ubuntu builds it, draws the Settings > System >
+# About logo from /usr/share/pixmaps/ubuntu-logo-text.svg (or -dark.svg) by
+# HARD-CODED path and never reads LOGO= from /etc/os-release. There is no
+# setting to point it elsewhere, so the file itself is what has to change, and
+# dpkg-divert is dpkg's own mechanism for one package replacing a file another
+# package owns: base-files' copy is renamed to *.distrib, a base-files upgrade
+# writes to that name from then on, and postrm reverses it.
+#
+# IN THE PACKAGE, NOT IN A BUILD HOOK, and that is the difference from the
+# plymouth mark in hook 0035. A hook runs when an image is built; a package
+# runs on every machine that installs or UPGRADES it, so Update-OS7 carries
+# this to machines that were installed before it existed.
+#
+# preinst, not postinst: the diversion has to be in place BEFORE dpkg unpacks
+# this package's files, or the unpack collides with base-files'.
+#
+# --no-rename AND A COPY, NOT --rename. base-files is Essential, and dpkg-divert
+# warns that renaming a file away from an Essential package is dangerous: for
+# the moment between the rename and this package's unpack the file is simply
+# gone. Measured on the first build of this script — the warning lands in the
+# output of every install and every Update-OS7 that carries it. A copy leaves
+# base-files' file where it is until ours replaces it, and keeps theirs at
+# .distrib, which is where a base-files upgrade writes from then on.
+# =============================================================================
+set -e
+
+#
+# A SECOND JOB, SESSION-QOL-SURVEY Q2: three launchers out of the Apps menu and
+# the overview, because they are a Linux distribution's and not an
+# administrator's desktop - Language Support (it installs language packs with
+# apt, into the running environment), TeXInfo, and Vim's terminal launcher.
+# All three packages are hard dependencies (gnome-control-center,
+# ubuntu-standard, vim) and none is Essential, so these are --rename diversions
+# with NOTHING put at the name: the program stays and works, the menu entry is
+# gone. The help: URI handler (yelp) is deliberately not among them - hiding its
+# launcher would take F1 with it; Q10 replaces what it shows instead.
+# HIDDEN_LAUNCHERS is the same list in postinst and postrm.
+HIDDEN_LAUNCHERS="gnome-language-selector info vim"
+
+case "$1" in
+	install | upgrade)
+		for f in /usr/share/pixmaps/ubuntu-logo-text.svg \
+		         /usr/share/pixmaps/ubuntu-logo-text-dark.svg
+		do
+			dpkg-divert --package os7-desktop-theme --no-rename \
+				--divert "${f}.distrib" --add "${f}" >/dev/null
+			if [ -e "${f}" ] && [ ! -e "${f}.distrib" ]; then
+				cp -a "${f}" "${f}.distrib"
+			fi
+		done
+		for d in ${HIDDEN_LAUNCHERS}; do
+			f="/usr/share/applications/${d}.desktop"
+			if ! dpkg-divert --listpackage "${f}" 2>/dev/null | grep -qx os7-desktop-theme; then
+				dpkg-divert --package os7-desktop-theme --rename \
+					--divert "${f}.distrib" --add "${f}" >/dev/null
+			fi
+		done
+		;;
+	*) ;;
+esac
+
+exit 0

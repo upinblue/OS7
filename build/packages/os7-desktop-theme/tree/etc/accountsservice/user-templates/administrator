@@ -1,0 +1,32 @@
+# OS/7 — what a NEW account's first desktop login is. docs/BUILD-NOTES.md #168.
+#
+# THIS FILE, NOT org.gnome.desktop.session session-name, IS WHAT GDM ASKS.
+# GDM takes the session for a user from AccountsService; when AccountsService
+# has no record for the user yet it builds one from this template, and an empty
+# Session= here (Ubuntu's own template, /usr/share/accountsservice/user-
+# templates/administrator) makes GDM fall back to its compiled-in default,
+# which on Ubuntu is "ubuntu". Measured on an install from
+# OS7-1.0.0.245-amd64.iso: the dconf key read 'gnome-classic', the installer's
+# account logged in to `gnome-shell --mode=ubuntu`, and the record GDM then
+# saved said Session=ubuntu. A probe account created after this file was put
+# in place got Session='gnome-classic' from AccountsService and a
+# `gnome-shell --mode=classic` desktop.
+#
+# The path in /etc overrides the one in /usr/share by AccountsService's own
+# rule, so nothing owned by another package is touched. It reaches every
+# account AccountsService first sees AFTER it is installed — the installer's,
+# a local one made later, and an Entra or domain account at its first login.
+# An account that already has a record keeps it; firstboot migration
+# 72-classic-session-default is what moves machines installed before this.
+#
+# A DEFAULT, NOT A LOCK. A user who picks another session at the login
+# screen's gear keeps it; AccountsService records the choice per user.
+#
+# "administrator" is the template for members of the sudo group, "standard"
+# the one for everybody else. The two files are the same on purpose.
+[Template]
+#EnvironmentFiles=/etc/os-release;
+
+[User]
+Session=gnome-classic
+Icon=${HOME}/.face

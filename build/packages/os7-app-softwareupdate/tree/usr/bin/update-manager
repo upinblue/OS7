@@ -1,0 +1,17 @@
+#!/bin/sh
+# OS/7 - "update-manager" is OS/7's Software Update. SESSION-QOL-SURVEY Q1.
+#
+# Ubuntu's Software Updater cannot be removed (ubuntu-release-upgrader-gtk,
+# update-notifier and ubuntu-desktop-minimal all Depend on it), and it was
+# reachable from two places on a fresh 1.0.0.245 desktop: its own menu entry,
+# directly under OS/7's "Software Update" with the same icon, and
+# Settings > System > Software Updates, which runs `update-manager` by name.
+# It then offered 523.6 MB "since Ubuntu 26.04 was released" - the Microsoft
+# packages - to install into the RUNNING boot environment, outside the update
+# train that makes an update undoable.
+#
+# os7-app-softwareupdate's preinst diverts Ubuntu's program to
+# update-manager.distrib and its launcher out of the menu; this takes the name,
+# so everything that asks for "the updater" gets the one that updates OS/7.
+# Arguments are Ubuntu's and mean nothing here; they are dropped.
+exec /usr/lib/os7/apps/software-update/os7-software-update

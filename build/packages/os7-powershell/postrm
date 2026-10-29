@@ -1,0 +1,20 @@
+#!/bin/sh
+# os7-powershell: give back what postinst wrote to /etc/environment - exactly
+# the lines it added, and only while its marker says it added them. A line an
+# administrator edited no longer matches and stays.
+set -e
+
+case "$1" in
+	remove | purge)
+		if [ -e /var/lib/os7/powershell-environment-written ]; then
+			if [ -e /etc/environment ]; then
+				sed -i -e '/^POWERSHELL_UPDATECHECK=Off$/d' \
+				       -e '/^POWERSHELL_TELEMETRY_OPTOUT=1$/d' /etc/environment
+			fi
+			rm -f /var/lib/os7/powershell-environment-written
+		fi
+		;;
+	*) ;;
+esac
+
+exit 0

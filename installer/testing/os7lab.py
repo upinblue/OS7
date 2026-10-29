@@ -76,6 +76,7 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vmconsole import QUERY_RX, terminal_reply, CHAR_DELAY, LINE_PAUSE   # noqa: E402
+from vmconsole import PASSWORD_PROMPT                                     # noqa: E402
 from vmarch import VmArch, SoftTpm, VM_IMAGE                             # noqa: E402
 from vmscreen import Qmp, read_ppm, write_png, FB_W, FB_H                # noqa: E402
 
@@ -816,7 +817,7 @@ def cmd_login(a):
             s.settle(quiet=1.5, timeout=30)
             mark = s.size()
             s.send(a.user)
-            j = s.expect([r"[Pp]assword:", PROMPT], 90, "a password prompt", since=mark)
+            j = s.expect([PASSWORD_PROMPT, PROMPT], 90, "a password prompt", since=mark)
             if j == 0:
                 s.send(a.password)
                 s.expect([PROMPT], 180, "the PowerShell prompt a login lands on",
@@ -944,7 +945,7 @@ def live_shell(s, timeout=900):
     s.settle(quiet=1.5, timeout=60)
     mark = s.size()
     s.send("ubuntu")
-    i = s.expect([r"Password:", PROMPT, r"\$ $", r"# $", r"bash-\d"], 120,
+    i = s.expect([PASSWORD_PROMPT, PROMPT, r"\$ $", r"# $", r"bash-\d"], 120,
                  "a password prompt or a shell", since=mark)
     if i == 0:
         s.send("")

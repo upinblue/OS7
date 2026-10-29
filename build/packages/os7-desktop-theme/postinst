@@ -154,4 +154,12 @@ else
 	fi
 fi
 
+# --- 5. The launchers preinst hid (SESSION-QOL-SURVEY Q2) -----------------
+# A dpkg-divert --rename activates no trigger, so the MIME cache still names
+# vim.desktop for text/plain until something rebuilds it. Rebuilt here; GIO
+# skips a cache entry whose file is gone, so a failure is cosmetic.
+if command -v update-desktop-database >/dev/null 2>&1; then
+	update-desktop-database -q /usr/share/applications || true
+fi
+
 exit 0

@@ -1,0 +1,26 @@
+// OS/7 - one way updates arrive. SESSION-QOL-SURVEY Q4 and Q15.
+//
+// An OS/7 machine is updated by Update-OS7, into a new boot environment it can
+// roll back from. Two of Ubuntu's own mechanisms were still switched on beside
+// it, measured on a fresh install from OS7-1.0.0.245-amd64.iso:
+//
+//   APT::Periodic::Unattended-Upgrade "1"   (20auto-upgrades, written by
+//       unattended-upgrades' postinst through debconf and owned by no
+//       package). Against Ubuntu sources that are a frozen snapshot it found
+//       nothing to do - and it is one more thing that installs packages into
+//       the RUNNING environment, which an auditor rightly asks about.
+//
+//   binary::apt::AptCli::Hooks::Upgrade     (20apt-esm-hook.conf, a conffile of
+//       ubuntu-pro-client). It prints Canonical's "Get more security updates
+//       through Ubuntu Pro" advertisement under every `apt upgrade`. The
+//       news it shows is fetched by apt-news.service and esm-cache.service,
+//       which os7-release's postinst masks.
+//
+// Later files win in apt.conf.d, and "99" sorts after both. `#clear` is apt's
+// own directive for emptying a list; that list held the ESM hook and nothing
+// else on 1.0.0.245. A conffile: an administrator who wants either back edits
+// THIS file, and dpkg keeps the edit across every update.
+
+APT::Periodic::Unattended-Upgrade "0";
+
+#clear binary::apt::AptCli::Hooks::Upgrade;

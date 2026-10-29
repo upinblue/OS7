@@ -72,6 +72,40 @@ if [ -n "${SHELL_VER}" ] && [ -f "${META}" ]; then
 	fi
 fi
 
+# OS/7's OWN extension (DECISIONS, GUI mode, 2026-10-29): the session opens on
+# the desktop. The one extension here that nobody but OS/7 moves to the next
+# GNOME generation, so the one whose declared shell-version is most likely to
+# go stale - and a stale one is skipped at login without a word.
+OS7_META="${EXT_DIR}/os7-shell@os7/metadata.json"
+if [ ! -f "${OS7_META}" ] || [ ! -f "${EXT_DIR}/os7-shell@os7/extension.js" ]; then
+	note "os7-shell@os7 is missing a file - the session will open in the overview"
+elif [ -n "${SHELL_VER}" ] && ! grep -q "\"${SHELL_VER}\"" "${OS7_META}"; then
+	note "os7-shell@os7 does not declare GNOME Shell ${SHELL_VER} - it will be skipped at login; add it to its metadata.json"
+else
+	ok "os7-shell@os7 declares GNOME Shell ${SHELL_VER:-?}"
+fi
+
+# And the Shell still has the private state it reads (#177): the overview's
+# _shownState, named 'SHOWING' and 'SHOWN', moving with 'shown' and 'hiding'.
+# The extension stands down when it finds none of that - the session then opens
+# in the overview, as #174 did - so a renamed field costs the feature, never the
+# desktop; this is what makes the cost visible at build time instead. Read out
+# of the installed Shell's own resources, not from what GNOME documents.
+SHELL_LIB="$(ls /usr/lib/gnome-shell/libshell-*.so 2>/dev/null | head -n1 || true)"
+OVERVIEW_JS="$(gresource extract "${SHELL_LIB:-/nonexistent}" /org/gnome/shell/ui/overview.js 2>/dev/null || true)"
+missing=""
+for needle in "this._shownState = state;" "SHOWING: 'SHOWING'," "SHOWN: 'SHOWN'," \
+              "signal: 'shown'," "signal: 'hiding',"; do
+	grep -qF -- "${needle}" <<<"${OVERVIEW_JS}" || missing="${missing} [${needle}]"
+done
+if [ -z "${OVERVIEW_JS}" ]; then
+	note "could not read overview.js out of ${SHELL_LIB:-libshell} - os7-shell's dependency is unchecked"
+elif [ -n "${missing}" ]; then
+	note "the Shell's overview.js no longer has what os7-shell@os7 reads:${missing} - the session will open in the overview"
+else
+	ok "the Shell's overview still has the state os7-shell@os7 waits on (${SHELL_LIB##*/})"
+fi
+
 # --- 2. The theme package ------------------------------------------------
 # NOTE ON ORDERING: the theme is installed by hook 0085, which runs before this
 # one because 0085 sorts before 0090. It no longer arrives through
@@ -129,7 +163,12 @@ if [ -s /etc/dconf/db/os7 ]; then
 	# the only thing that makes it happen is bash being started as a login
 	# shell. docs/BUILD-NOTES.md #86.
 	check_key "/org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/login-shell" "true"
-	check_key /org/gnome/desktop/default-applications/terminal/exec "'gnome-terminal'"
+	check_key /org/gnome/desktop/applications/terminal/exec "'gnome-terminal'"
+	# The Windows shortcuts (SESSION-QOL-SURVEY Q18), the custom one included -
+	# it lives under a relocatable schema's path and is read back the same way.
+	check_key /org/gnome/settings-daemon/plugins/media-keys/home "['<Super>e']"
+	check_key /org/gnome/desktop/wm/keybindings/show-desktop "['<Super>d']"
+	check_key /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/os7-task-manager/binding "'<Control><Shift>Escape'"
 else
 	note "/etc/dconf/db/os7 was not compiled"
 fi
@@ -146,6 +185,31 @@ for f in /usr/share/wayland-sessions/gnome-classic.desktop \
          /usr/share/gnome-shell/modes/classic.json
 do
 	[ -e "${f}" ] && ok "${f}" || note "the defaults select gnome-classic and ${f} is missing"
+done
+
+# --- 3a'. And GDM must actually be TOLD, which the dconf key does not do --------
+# docs/BUILD-NOTES.md #168. The session-name key above reads 'gnome-classic' in
+# every image since 1.0.0.114 and GDM never asked it: GDM takes a user's session
+# from AccountsService, AccountsService builds a user it has no record for from
+# /etc/accountsservice/user-templates/ (falling back to Ubuntu's, whose Session=
+# is empty), and an empty answer sends GDM to its compiled-in "ubuntu". So the
+# fresh install's first login was the Ubuntu session on every medium from at
+# least 1.0.0.233 to 1.0.0.245, while this hook was green.
+#
+# Asked of the files AccountsService reads, line by line - not of the package
+# that ships them - and the session they name is the one 3a just found.
+for t in administrator standard; do
+	tf="/etc/accountsservice/user-templates/${t}"
+	if [ ! -r "${tf}" ]; then
+		note "${tf} is missing - a new account's first login will be the Ubuntu session"
+		continue
+	fi
+	got="$(sed -n '/^\[User\]/,/^\[/{s/^Session=//p}' "${tf}" | head -n 1)"
+	if [ "${got}" = "gnome-classic" ]; then
+		ok "${tf}: Session=${got}"
+	else
+		note "${tf} says Session=${got:-<empty>}, not gnome-classic"
+	fi
 done
 
 # --- 3b. Every key we set is a key GNOME actually has -------------------
@@ -169,6 +233,9 @@ KEYFILE="/etc/dconf/db/os7.d/00-os7-classic"
 # both rather than being written twice.
 GREETER_KEYFILE="/usr/share/gdm/dconf/95-os7-login-screen"
 ALL_SCHEMAS="$(gsettings list-schemas 2>/dev/null || true)"
+# "<schema id> <path>" for every fixed-path schema - the table GSettings itself
+# resolves a dconf path through. #173 is why 3b reads this and not the ids.
+SCHEMA_PATHS="$(gsettings list-schemas --print-paths 2>/dev/null || true)"
 # The two lists are DISJOINT, which is the whole reason this second one exists:
 # `list-schemas` omits every relocatable schema. See the note at its use below.
 RELOC_SCHEMAS="$(gsettings list-relocatable-schemas 2>/dev/null || true)"
@@ -190,9 +257,14 @@ else
 	# instantiates. gsettings takes SCHEMA:PATH, so the authority is still
 	# GSettings and the question is still "does this key exist" - only the way
 	# of naming the schema changes.
+	# The same table is $script:OS7RelocatableSchemas in powershell/OS7/OS7.psm1,
+	# and check-image.py holds THAT one against GSettings in the artefact (#172;
+	# section 3c below says why not here).
 	relocatable_schema() {
 		case "$1" in
 			org/gnome/terminal/legacy/profiles:*) echo "org.gnome.Terminal.Legacy.Profile" ;;
+			org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/*)
+				echo "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding" ;;
 			*) echo "" ;;
 		esac
 	}
@@ -229,22 +301,50 @@ else
 						# about a schema that was installed and working - which
 						# failed a build (1.0.0.114) on a right answer, the exact
 						# thing the comment above says a check must not do.
-						if ! printf '%s\n' "${RELOC_SCHEMAS}" | grep -qx "${schema}"; then
+						# NO `| grep -q` ON gsettings, and #175 is why: gsettings
+						# writes its keys one at a time, so `grep -q` leaving after
+						# the first match makes the NEXT write a SIGPIPE, and under
+						# pipefail the pipeline reads as "no such key". Measured: 4
+						# false negatives in 2000 for accent-color, the first of 45
+						# keys - and it failed a build. The answer is read whole
+						# first and matched afterwards; nothing is left writing.
+						if ! grep -qx -- "${schema}" <<<"${RELOC_SCHEMAS}"; then
 							note "no such relocatable schema: ${schema} (for key ${key})"
 							continue
 						fi
-						if ! gsettings list-keys "${schema}:/${rawgroup}/" 2>/dev/null | grep -qx "${key}"; then
+						keys="$(gsettings list-keys "${schema}:/${rawgroup}/" 2>/dev/null || true)"
+						if ! grep -qx -- "${key}" <<<"${keys}"; then
 							note "${schema} at /${rawgroup}/ has no key '${key}'"
 						fi
 						continue
 					fi
 
-					if ! printf '%s\n' "${ALL_SCHEMAS}" | grep -qx "${group}"; then
-						note "no such schema: ${group} (for key ${key})"
+					# BY PATH, NOT BY NAME (#173). A dconf group is a path, and
+					# the question is which schema GSettings reads AT that path.
+					# Turning the path into an id and asking whether the id
+					# exists passed [org/gnome/desktop/default-applications/
+					# terminal] for two months: that id exists, and lives at
+					# /org/gnome/desktop/applications/terminal/.
+					# And a path can hold more than one schema (org.gnome.mutter
+					# and org.gnome.mutter.devkit share /org/gnome/mutter/), so
+					# the key has to be in ONE of them, not in the first.
+					schemas="$(printf '%s\n' "${SCHEMA_PATHS}" \
+						| awk -v p="/${rawgroup}/" '$2 == p { print $1 }')"
+					if [ -z "${schemas}" ]; then
+						note "no schema lives at /${rawgroup}/ (key ${key}) - dconf stores it and GSettings never reads it"
 						continue
 					fi
-					if ! gsettings list-keys "${group}" 2>/dev/null | grep -qx "${key}"; then
-						note "schema ${group} has no key '${key}'"
+					found=""
+					for s in ${schemas}; do
+						# Read whole, then matched - #175, as above.
+						keys="$(gsettings list-keys "${s}" 2>/dev/null || true)"
+						if grep -qx -- "${key}" <<<"${keys}"; then
+							found="${s}"
+							break
+						fi
+					done
+					if [ -z "${found}" ]; then
+						note "no schema at /${rawgroup}/ ($(echo ${schemas})) has a key '${key}'"
 					fi
 					;;
 			esac
@@ -252,6 +352,45 @@ else
 		ok "${kf##*/}: ${checked} defaults checked against GNOME's own schema list (${reloc} through a relocatable schema)"
 	done
 fi
+
+# --- 3c. Set-OS7Theme's own reading of this file is NOT checked here --------
+# docs/BUILD-NOTES.md #172: Set-OS7Theme reads the same keyfile as 3b through
+# its own parser, and that parser handed gsettings a schema that does not exist
+# - so the cmdlet threw on every machine while 3b was green. The check that
+# holds it asks Get-OS7ThemeKeys itself, and it lives in
+# installer/testing/check-image.py (desktop.themekeys), against the artefact.
+#
+# NOT HERE, and that was learned twice in one day. A live-build hook may import
+# a module by path and list what it exports; it may not CALL a function that
+# needs a bundled cmdlet (BUILD-NOTES #14 and #38 - Test-Path, Get-Content and
+# friends autoload by name out of $PSHOME/Modules, the lookup chroot mangles).
+# The first version imported by name and found no module; the second imported
+# by path and found no Test-Path. Both builds failed on this section alone.
+
+# --- 3d. One updater, and a menu an administrator recognises --------------
+# SESSION-QOL-SURVEY Q1 and Q2. Asked of dpkg's diversion table and of the
+# directory GIO reads, not of the maintainer scripts that are meant to have
+# done it.
+by="$(dpkg-divert --listpackage /usr/bin/update-manager 2>/dev/null || true)"
+if [ "${by}" = "os7-app-softwareupdate" ] && grep -q 'os7-software-update' /usr/bin/update-manager 2>/dev/null; then
+	ok "update-manager runs OS/7's Software Update (diverted by ${by})"
+else
+	note "/usr/bin/update-manager is not OS/7's shim (diverted by '${by:-nobody}') - Settings > Software Updates opens Ubuntu's updater"
+fi
+for d in update-manager gnome-language-selector info vim; do
+	if [ -e "/usr/share/applications/${d}.desktop" ]; then
+		note "${d}.desktop is still in the Apps menu"
+	else
+		ok "${d}.desktop is out of the menu (diverted by $(dpkg-divert --listpackage "/usr/share/applications/${d}.desktop" 2>/dev/null || echo nobody))"
+	fi
+done
+for p in sysprof gnome-shell-extension-prefs; do
+	if dpkg -s "${p}" >/dev/null 2>&1; then
+		note "${p} is installed - its launcher is in the Apps menu"
+	else
+		ok "${p} is not installed"
+	fi
+done
 
 # --- 4. The font ---------------------------------------------------------
 # fc-match answers with the face fontconfig WOULD actually use. Asking dpkg
@@ -263,6 +402,16 @@ if command -v fc-match >/dev/null 2>&1; then
 		ok "fc-match Tahoma -> Tahoma"
 	else
 		note "fc-match Tahoma -> '${MATCH}': the UI font would silently substitute"
+	fi
+	# AT THE UI SIZE, FROM OUTLINES (#171). Tahoma 9 at 96 dpi is 12 px, one of
+	# the embedded bitmap strikes in Wine's tahoma.ttf, and GTK 4's GPU path
+	# draws those with letters missing. Asked of fontconfig's resolved pattern at
+	# that size - the thing FreeType is handed - not of the rule file.
+	EB="$(fc-match -f '%{embeddedbitmap}' 'Tahoma:pixelsize=12' 2>/dev/null || true)"
+	if [ "${EB}" = "False" ]; then
+		ok "Tahoma at 12 px resolves with embeddedbitmap=False (outlines, #171)"
+	else
+		note "Tahoma at 12 px resolves with embeddedbitmap='${EB:-<unset>}' - GTK 4 windows will drop letters (#171)"
 	fi
 fi
 
@@ -484,7 +633,11 @@ fi
 # they fail differently: the byte offset catches the sniff, and the load catches
 # everything else - a `--` inside an XML comment, which is illegal and which
 # cost the SECOND attempt at this fix, would pass the offset check and fail here.
-for svg in "${WANT_LOGO}" /usr/share/pixmaps/upinblue-logo.svg; do
+# The two ubuntu-logo-text files are Settings > About's logo (#169): the same
+# loader decides whether they draw, so the same two questions are asked of them.
+for svg in "${WANT_LOGO}" /usr/share/pixmaps/upinblue-logo.svg \
+           /usr/share/pixmaps/ubuntu-logo-text.svg \
+           /usr/share/pixmaps/ubuntu-logo-text-dark.svg; do
 	name="$(basename "${svg}")"
 	if [ ! -s "${svg}" ]; then
 		note "${name} is missing or empty - the greeter would draw no logo at all"
@@ -528,6 +681,32 @@ if [ "${owner}" = "os7-desktop-theme" ]; then
 else
 	note "${WANT_LOGO} belongs to '${owner:-nobody}' - an unowned file is not replaced by an update"
 fi
+
+# --- Settings > About: the logo gnome-control-center HARD-CODES -------------
+# docs/BUILD-NOTES.md #169. Ubuntu's gnome-control-center reads
+# /usr/share/pixmaps/ubuntu-logo-text{,-dark}.svg by path and never LOGO=, so
+# on 1.0.0.245 the About page drew a large Ubuntu wordmark over "OS/7 1.0.0".
+# base-files owns both paths; os7-desktop-theme's preinst diverts them. Three
+# questions, because each fails differently: does dpkg record the diversion as
+# OURS (a --local one would not survive the package's own removal correctly),
+# is base-files' original kept aside, and is the file at the name OS/7's.
+for svg in /usr/share/pixmaps/ubuntu-logo-text.svg \
+           /usr/share/pixmaps/ubuntu-logo-text-dark.svg; do
+	name="$(basename "${svg}")"
+	by="$(dpkg-divert --listpackage "${svg}" 2>/dev/null || true)"
+	if [ "${by}" = "os7-desktop-theme" ]; then
+		ok "${name} is diverted by os7-desktop-theme"
+	else
+		note "${name} is diverted by '${by:-nobody}', not os7-desktop-theme - About shows Ubuntu's logo"
+	fi
+	[ -e "${svg}.distrib" ] && ok "${name}: base-files' original kept at ${name}.distrib" \
+		|| note "${name}.distrib is missing - the diversion did not --rename"
+	if grep -q '>OS/7</text>' "${svg}" 2>/dev/null; then
+		ok "${name} is the OS/7 mark"
+	else
+		note "${name} is not the OS/7 mark"
+	fi
+done
 
 # The face the wordmark names. fc-match answers with the family fontconfig WOULD
 # use; `dpkg -s fonts-dejavu-core` does not.

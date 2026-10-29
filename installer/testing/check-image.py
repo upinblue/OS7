@@ -121,6 +121,12 @@ emit journal.dropin    bash -c 'cat /mnt/sq/usr/lib/systemd/system/systemd-journ
 emit product           cat /mnt/sq/usr/lib/os7/product
 emit issue             cat /mnt/sq/etc/issue
 emit issue.net         cat /mnt/sq/etc/issue.net
+emit qol.legal         bash -c 'cat /mnt/sq/etc/legal 2>/dev/null'
+emit qol.pwshenv       bash -c 'grep -h "^POWERSHELL_UPDATECHECK=\|^POWERSHELL_TELEMETRY_OPTOUT=\|^export POWERSHELL_" /mnt/sq/etc/profile.d/95-os7-powershell.sh /mnt/sq/usr/lib/environment.d/60-os7-powershell.conf 2>/dev/null'
+emit qol.pwshroads     bash -c 'echo "manager $(chroot /mnt/root systemd-analyze cat-config systemd/system.conf 2>/dev/null | grep "^DefaultEnvironment=" | tr "\n" " ")"; echo "pam $(grep -c -x -e POWERSHELL_UPDATECHECK=Off -e POWERSHELL_TELEMETRY_OPTOUT=1 /mnt/sq/etc/environment 2>/dev/null) path $(grep -c "^PATH=" /mnt/sq/etc/environment 2>/dev/null)"; echo "marker $(cat /mnt/sq/var/lib/os7/powershell-environment-written 2>/dev/null || echo absent)"'
+emit qol.apt           bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin apt-config dump APT::Periodic::Unattended-Upgrade 2>/dev/null; echo "esmhooks $(chroot /mnt/root env -i PATH=/usr/bin:/bin apt-config dump binary::apt::AptCli::Hooks::Upgrade 2>/dev/null | grep -c esm)"'
+emit qol.masked        bash -c 'for u in apt-news.service esm-cache.service update-notifier-motd.timer update-notifier-download.timer; do if [ -e /mnt/sq/usr/lib/systemd/system/$u ]; then echo "$u $(readlink /mnt/sq/etc/systemd/system/$u 2>/dev/null || echo unmasked)"; fi; done'
+emit qol.ssscache      bash -c 'echo "by $(chroot /mnt/root dpkg-divert --listpackage /usr/sbin/sss_cache 2>/dev/null)"; out=$(chroot /mnt/root /usr/sbin/sss_cache -U 2>&1); echo "rc=$? lines=$(printf "%s" "$out" | grep -c .)"'
 emit motd.d            bash -c 'cd /mnt/sq/etc/update-motd.d 2>/dev/null && for f in *; do [ -f "$f" ] && printf "%s %s\n" "$f" "$(stat -c %A "$f")"; done || true'
 emit motd-news         bash -c 'cat /mnt/sq/etc/default/motd-news 2>/dev/null || true'
 # WHAT IS WORLD-WRITABLE IN THE SHIPPED IMAGE (BUILD-NOTES #117).
@@ -185,6 +191,13 @@ emit packages.curated  bash -c "grep -E '^(dotnet|aspnetcore|linux-(generic|imag
 emit desktop.dconf     bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin DCONF_PROFILE=/etc/dconf/profile/user dconf dump /org/gnome/ 2>/dev/null || true'
 emit desktop.sessions  bash -c 'ls /mnt/sq/usr/share/wayland-sessions/ 2>/dev/null || true'
 emit desktop.modes     bash -c 'ls /mnt/sq/usr/share/gnome-shell/modes/ 2>/dev/null || true'
+emit desktop.templates bash -c 'for t in administrator standard; do echo "== $t"; cat /mnt/sq/etc/accountsservice/user-templates/$t 2>/dev/null || echo MISSING; done'
+emit qol.os7shell      bash -c 'd=/mnt/sq/usr/share/gnome-shell/extensions/os7-shell@os7; for f in metadata.json extension.js; do [ -s $d/$f ] && echo "file $f" || echo "MISSING $f"; done; grep -o "\"shell-version\"[^]]*" $d/metadata.json 2>/dev/null; echo "running $(chroot /mnt/root gnome-shell --version 2>/dev/null)"'
+emit qol.langpacks     bash -c 'for l in de en fr nl it es; do for p in language-pack-$l-base language-pack-gnome-$l-base; do if chroot /mnt/root dpkg -s $p >/dev/null 2>&1; then echo "have $p"; else echo "LACK $p"; fi; done; done'
+emit qol.updater       bash -c 'echo "by $(chroot /mnt/root dpkg-divert --listpackage /usr/bin/update-manager 2>/dev/null)"; echo "shim $(grep -c os7-software-update /mnt/sq/usr/bin/update-manager 2>/dev/null)"'
+emit qol.menu          bash -c 'for d in update-manager gnome-language-selector info vim; do f=/usr/share/applications/$d.desktop; if [ -e /mnt/sq$f ]; then echo "SHOWN $d"; else echo "hidden $d"; fi; done; for p in sysprof gnome-shell-extension-prefs; do if chroot /mnt/root dpkg -s $p >/dev/null 2>&1; then echo "INSTALLED $p"; else echo "absent $p"; fi; done'
+emit desktop.tahomabmp bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin fc-match -f "%{family} %{embeddedbitmap}" "Tahoma:pixelsize=12" 2>/dev/null; echo'
+emit desktop.aboutlogo bash -c 'for f in ubuntu-logo-text.svg ubuntu-logo-text-dark.svg; do p=/usr/share/pixmaps/$f; if grep -q ">OS/7</text>" /mnt/sq$p 2>/dev/null; then echo "mark os7 $f"; else echo "mark OTHER $f"; fi; echo "by $(chroot /mnt/root dpkg-divert --listpackage $p 2>/dev/null || true) $f"; done'
 emit desktop.debrand   bash -c 'for p in gnome-initial-setup ubuntu-report ubuntu-insights whoopsie apport apport-gtk ubuntu-docs firefox plymouth-theme-ubuntu-text; do if chroot /mnt/root dpkg -s "$p" >/dev/null 2>&1; then echo "PRESENT $p"; else echo "absent  $p"; fi; done'
 emit desktop.kept      bash -c 'for p in ubuntu-desktop-minimal gnome-shell gdm3 nautilus network-manager snapd microsoft-edge-stable intune-portal code; do if chroot /mnt/root dpkg -s "$p" >/dev/null 2>&1; then echo "present $p"; else echo "MISSING $p"; fi; done'
 emit desktop.pin       bash -c 'cat /mnt/sq/etc/apt/preferences.d/os7-desktop-exclusions.pref 2>/dev/null || true'
@@ -333,6 +346,14 @@ emit zfs.selftest      bash -c 'tail -30 /tmp/zfs.txt'
 chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; Test-OS7Backup' >/tmp/backup.txt 2>&1 && rc=0 || rc=$?
 echo "EXIT=$rc" >> /tmp/backup.txt
 emit backup.selftest   bash -c 'tail -30 /tmp/backup.txt'
+
+# SET-OS7THEME'S KEYS, ASKED OF GSETTINGS IN THE IMAGE (BUILD-NOTES #172). The
+# cmdlet reads the theme's keyfile with its own parser and hands gsettings what
+# it makes of each group; for a relocatable group it made a schema that does
+# not exist, and the cmdlet threw on every machine. Asked through the module's
+# own function, so it is the module's answer that is checked and not the file.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/OS7/OS7.psd1 -Force; $p = & (Get-Module OS7) { Get-OS7ThemeKeys }; "COUNT $(@($p).Count)"; foreach ($k in $p) { $global:LASTEXITCODE = $null; $l = & gsettings list-keys $k.Schema 2>$null; if ($LASTEXITCODE -ne 0 -or @($l) -notcontains $k.Key) { "BAD $($k.Schema) $($k.Key)" } }' >/tmp/themekeys.txt 2>&1 || true
+emit desktop.themekeys bash -c 'cat /tmp/themekeys.txt'
 
 # THE Net MODULE'S SELF-TEST, in the same chroot and read the same way
 # (docs/POWERSHELL-SURFACE-PLAN.md P2). Offline by construction: the netplan
@@ -1324,6 +1345,56 @@ def main() -> None:
           "/etc/issue.net names the product and NOTHING else — it is shown "
           "before authentication", net)
 
+    # -- one way updates arrive, and fewer Ubuntu sentences (SESSION-QOL-SURVEY
+    #    block A). Every one of these was RED on OS7-1.0.0.245; they hold
+    #    what Q3, Q4, Q12, Q15 and Q17 changed.
+    legal = img.get("qol.legal", "")
+    check("OS/7 is built on Ubuntu" in legal and "Ubuntu system" not in legal,
+          "/etc/legal speaks for OS/7 (Q3)",
+          next((l for l in legal.splitlines() if l.strip()), "<empty>"))
+
+    pe = img.get("qol.pwshenv", "").splitlines()
+    check(pe.count("POWERSHELL_UPDATECHECK=Off") == 2
+          and any(l.startswith("export ") and "POWERSHELL_UPDATECHECK" in l for l in pe),
+          "PowerShell does not look for its own updates — login shells and the "
+          "desktop session (Q12)", " | ".join(pe) or "<not set anywhere>")
+    check(pe.count("POWERSHELL_TELEMETRY_OPTOUT=1") == 2
+          and any(l.startswith("export ") and "POWERSHELL_TELEMETRY_OPTOUT" in l for l in pe),
+          "PowerShell sends Microsoft no usage telemetry — login shells and the "
+          "desktop session (C17)", " | ".join(pe) or "<not set anywhere>")
+    # The roads those two files do not reach, measured on 1.0.0.247: a
+    # service inherits from neither (six OS/7 units run pwsh), and `ssh host
+    # command` and `sudo` run no login shell. Asked of systemd's OWN reader of
+    # its configuration, not of the file, so a drop-in in a directory systemd
+    # does not read would fail here.
+    pr = img.get("qol.pwshroads", "")
+    mgr = next((l for l in pr.splitlines() if l.startswith("manager ")), "")
+    check("POWERSHELL_TELEMETRY_OPTOUT=1" in mgr and "POWERSHELL_UPDATECHECK=Off" in mgr,
+          "and from no SERVICE: systemd's merged system.conf sets both for every "
+          "unit (C17)", mgr or "<no answer>")
+    pam = next((l for l in pr.splitlines() if l.startswith("pam ")), "")
+    check(pam.startswith("pam 2 ") and pam.endswith(" path 1"),
+          "and from no ssh command, sudo or cron job: /etc/environment carries both, "
+          "beside the PATH it already had (C17)", pam or "<no answer>")
+
+    qa = img.get("qol.apt", "")
+    check('APT::Periodic::Unattended-Upgrade "0";' in qa,
+          "unattended-upgrades is off — Update-OS7 is the one way in (Q15)",
+          next((l for l in qa.splitlines() if "Unattended" in l), "<unset>"))
+    check("esmhooks 0" in qa,
+          "apt prints no Ubuntu Pro advertisement under an upgrade (Q4)",
+          next((l for l in qa.splitlines() if l.startswith("esmhooks")), "<no answer>"))
+    unmasked = [l.split()[0] for l in img.get("qol.masked", "").splitlines()
+                if len(l.split()) == 2 and l.split()[1] != "/dev/null"]
+    check(not unmasked,
+          "Ubuntu's news, ESM and release-upgrade units are masked (Q4)",
+          ("unmasked: " + ", ".join(unmasked)) if unmasked else "")
+
+    sc = img.get("qol.ssscache", "")
+    check("by os7-release" in sc and "rc=0 lines=0" in sc,
+          "sss_cache is silent while sssd is unconfigured — useradd prints "
+          "no sssd errors (Q17)", sc.replace("\n", "; "))
+
     # -- the MOTD (IDENTITY-PLAN §6.1, I9) -----------------------------------
     #
     # Read off the artefact because the hook cannot know what it will find:
@@ -1730,6 +1801,121 @@ def main() -> None:
         check("gnome-classic.desktop" in sessions,
               "and that session is actually on the image",
               sessions.replace("\n", " ") or "<none>")
+
+        # AND GDM IS TOLD, which the key above does not do (BUILD-NOTES #168).
+        # GDM asks AccountsService, AccountsService answers a user it has no
+        # record for out of these templates, and Ubuntu's leave Session= empty
+        # — so the installer's account landed in the Ubuntu session on every
+        # medium from 1.0.0.233 to 1.0.0.245 while both checks above passed.
+        templates, cur = {}, None
+        in_user = False
+        for line in img.get("desktop.templates", "").splitlines():
+            if line.startswith("== "):
+                cur, in_user = line[3:].strip(), False
+                templates[cur] = None
+            elif line.strip() == "MISSING" and cur:
+                templates[cur] = "<missing>"
+            elif line.strip().startswith("["):
+                in_user = line.strip() == "[User]"
+            elif in_user and line.startswith("Session=") and cur \
+                    and templates[cur] is None:
+                templates[cur] = line.split("=", 1)[1].strip()
+        for t in ("administrator", "standard"):
+            got = templates.get(t)
+            check(got == "gnome-classic",
+                  f"a new {t} account's first login is GNOME Classic",
+                  f"/etc/accountsservice/user-templates/{t}: Session="
+                  f"{got if got is not None else '<empty>'}")
+
+        # GTK 4 draws Wine's embedded Tahoma bitmaps with letters missing; the
+        # UI size, 12 px, is one of the strikes (BUILD-NOTES #171). Asked of
+        # fontconfig's resolved pattern at that size, in the image.
+        tb = img.get("desktop.tahomabmp", "").strip()
+        check(tb == "Tahoma False",
+              "Tahoma at the UI size is drawn from outlines (GTK 4 text, #171)",
+              tb or "<no answer from fc-match>")
+
+        # Settings > About draws these two paths, hard-coded in Ubuntu's
+        # gnome-control-center, and never LOGO= (BUILD-NOTES #169). The file
+        # must be OS/7's AND the diversion must be the package's, or an update
+        # of base-files puts the Ubuntu wordmark back.
+        about = img.get("desktop.aboutlogo", "").splitlines()
+        for f in ("ubuntu-logo-text.svg", "ubuntu-logo-text-dark.svg"):
+            mark = next((l.split()[1] for l in about
+                         if l.startswith("mark ") and l.endswith(" " + f)), "?")
+            by = next((l.split()[1] if len(l.split()) == 3 else "nobody"
+                       for l in about if l.startswith("by ") and l.endswith(" " + f)), "?")
+            check(mark == "os7" and by == "os7-desktop-theme",
+                  f"Settings > About shows the OS/7 mark ({f})",
+                  f"file is {'OS/7' if mark == 'os7' else 'NOT OS/7'}'s, diverted by {by}")
+
+        # The shortcuts a Windows administrator's hands know (SESSION-QOL-SURVEY
+        # Q18), read out of the compiled database like everything above — the
+        # task manager one through its relocatable schema's path.
+        keys = {
+            "Super+E opens Files": dkey("settings-daemon/plugins/media-keys", "home")
+            == "['<Super>e']",
+            "Super+R opens the run dialog": dkey("desktop/wm/keybindings", "panel-run-dialog")
+            == "['<Super>r', '<Alt>F2']",
+            "Super+D shows the desktop": dkey("desktop/wm/keybindings", "show-desktop")
+            == "['<Super>d']",
+            "Ctrl+Shift+Esc opens Resources": dkey(
+                "settings-daemon/plugins/media-keys/custom-keybindings/os7-task-manager",
+                "binding") == "'<Control><Shift>Escape'"
+            and dkey("settings-daemon/plugins/media-keys/custom-keybindings/os7-task-manager",
+                     "command") == "'resources'"
+            # and gsd only reads a custom binding the list names
+            and "/custom-keybindings/os7-task-manager/" in dkey(
+                "settings-daemon/plugins/media-keys", "custom-keybindings"),
+        }
+        missing = [k for k, v in keys.items() if not v]
+        check(not missing, "the Windows shortcuts are defaults (Super+E/R/D, Ctrl+Shift+Esc)",
+              ("missing: " + "; ".join(missing)) if missing else "")
+
+        # One updater, and a menu an administrator recognises (Q1, Q2).
+        up = img.get("qol.updater", "")
+        check("by os7-app-softwareupdate" in up and "shim 1" in up,
+              "`update-manager` opens OS/7's Software Update — Settings' "
+              "Software Updates row included (Q1)", up.replace("\n", "; "))
+        menu = img.get("qol.menu", "").splitlines()
+        stray = [l.split()[1] for l in menu if l.startswith(("SHOWN", "INSTALLED"))]
+        check(not stray and len(menu) == 6,
+              "no Software Updater, Language Support, TeXInfo, Vim, Sysprof or "
+              "Extensions launcher in the Apps menu (Q1, Q2)",
+              ("still there: " + ", ".join(stray)) if stray else "")
+
+        # The session opens on the desktop (DECISIONS, GUI mode, 2026-10-29):
+        # OS/7's own extension is on the image, declares the Shell the image
+        # runs - a stale shell-version is skipped at login in silence - and is
+        # in the defaults' enabled list.
+        sh = img.get("qol.os7shell", "")
+        shell_major = ""
+        for l in sh.splitlines():
+            if l.startswith("running "):
+                digits = "".join(c if c.isdigit() or c == "." else " " for c in l).split()
+                shell_major = digits[0].split(".")[0] if digits else ""
+        enabled = "'os7-shell@os7'" in dkey("shell", "enabled-extensions")
+        check("MISSING" not in sh and shell_major and f'"{shell_major}"' in sh and enabled,
+              "the session opens on the desktop — os7-shell@os7 shipped, declaring "
+              f"GNOME Shell {shell_major or '?'}, and enabled",
+              ("" if enabled else "not in enabled-extensions; ") + sh.replace("\n", "; "))
+
+        # The languages a desktop speaks (CURATION-AND-DELIVERY-PLAN C16).
+        lacking = [l.split()[1] for l in img.get("qol.langpacks", "").splitlines()
+                   if l.startswith("LACK")]
+        check(not lacking and img.get("qol.langpacks", "").count("have ") == 12,
+              "the desktop speaks German, English, French, Dutch, Italian and "
+              "Spanish (C16)", ("lacking: " + ", ".join(lacking)) if lacking else "")
+
+        # Set-OS7Theme can reset what the theme sets (BUILD-NOTES #172).
+        tk = img.get("desktop.themekeys", "")
+        tcount = next((int(l.split()[1]) for l in tk.splitlines()
+                       if l.startswith("COUNT ") and l.split()[1].isdigit()), 0)
+        tbad = [l[4:] for l in tk.splitlines() if l.startswith("BAD ")]
+        check(tcount > 0 and not tbad,
+              f"Set-OS7Theme's {tcount} keys are all keys GSettings has (#172)",
+              ("gsettings has no " + "; ".join(tbad[:3])) if tbad
+              else ("" if tcount else (tk.strip().splitlines() or ["<no answer>"])[-1]))
 
         aa = dkey("desktop/interface", "font-antialiasing")
         check(aa == "'grayscale'",

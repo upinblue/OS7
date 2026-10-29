@@ -154,6 +154,7 @@ install -m 0644 "${SRC}/README.md" "${STAGE}/usr/share/doc/os7-desktop-theme/REA
 # ---------------------------------------------------------------------------
 install -d "${STAGE}/DEBIAN"
 sed "s|@OS7_VERSION@|${OS7_VERSION}|g" "${SRC}/control.in" > "${STAGE}/DEBIAN/control"
+install -m 0755 "${SRC}/preinst"  "${STAGE}/DEBIAN/preinst"
 install -m 0755 "${SRC}/postinst" "${STAGE}/DEBIAN/postinst"
 install -m 0755 "${SRC}/postrm"   "${STAGE}/DEBIAN/postrm"
 
@@ -194,6 +195,25 @@ MUST=(
 	"./usr/share/gdm/dconf/95-os7-login-screen"
 	"./usr/share/pixmaps/os7-logo-login.svg"
 	"./usr/share/pixmaps/upinblue-logo.svg"
+	# THE SESSION A NEW ACCOUNT GETS. Without these two GDM picks "ubuntu" and
+	# every other file in this list is installed and never drawn - the dconf
+	# session-name key above was meant to prevent that and is not what GDM
+	# reads. docs/BUILD-NOTES.md #168.
+	"./etc/accountsservice/user-templates/administrator"
+	"./etc/accountsservice/user-templates/standard"
+	# Settings > About's logo, by the names gnome-control-center hard-codes;
+	# preinst diverts base-files' files away from them. docs/BUILD-NOTES.md #169.
+	"./usr/share/pixmaps/ubuntu-logo-text.svg"
+	"./usr/share/pixmaps/ubuntu-logo-text-dark.svg"
+	# Tahoma from outlines: without it every GTK 4 window drops letters, because
+	# GTK 4's GPU path draws Wine's embedded bitmap strikes wrongly.
+	# docs/BUILD-NOTES.md #171.
+	"./etc/fonts/conf.d/64-os7-tahoma-outlines.conf"
+	# The session opens on the desktop, not in the overview (DECISIONS, GUI
+	# mode, 2026-10-29). Both files, because a metadata.json without its
+	# extension.js is an extension the Shell lists and cannot load (#162).
+	"./usr/share/gnome-shell/extensions/os7-shell@os7/metadata.json"
+	"./usr/share/gnome-shell/extensions/os7-shell@os7/extension.js"
 )
 CONTENTS="$(dpkg-deb -c "${DEB}")"
 missing=0

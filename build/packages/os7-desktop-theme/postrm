@@ -24,4 +24,40 @@ case "$1" in
 	*) ;;
 esac
 
+# The two Ubuntu wordmarks preinst moved aside (docs/BUILD-NOTES.md #169) go
+# back where base-files put them. abort-install too: a preinst that diverted
+# and an unpack that then failed must not leave the diversion behind with no
+# file of ours at the name. NOT abort-upgrade: the version being returned to
+# may carry the same diversion and the same files, and the move below would put
+# base-files' copy back over one of them.
+case "$1" in
+	remove | purge | abort-install | disappear)
+		for f in /usr/share/pixmaps/ubuntu-logo-text.svg \
+		         /usr/share/pixmaps/ubuntu-logo-text-dark.svg
+		do
+			if dpkg-divert --list "${f}" | grep -q 'os7-desktop-theme'; then
+				# --no-rename and a move, the mirror of preinst's copy
+				# (base-files is Essential; see preinst).
+				dpkg-divert --package os7-desktop-theme --no-rename \
+					--remove "${f}" >/dev/null
+				if [ -e "${f}.distrib" ]; then
+					mv -f "${f}.distrib" "${f}"
+				fi
+			fi
+		done
+		# And the launchers preinst hid (SESSION-QOL-SURVEY Q2) come back.
+		# --rename is right here: nothing of ours is at those names.
+		for d in gnome-language-selector info vim; do
+			f="/usr/share/applications/${d}.desktop"
+			if dpkg-divert --listpackage "${f}" 2>/dev/null | grep -qx os7-desktop-theme; then
+				dpkg-divert --package os7-desktop-theme --rename --remove "${f}" >/dev/null
+			fi
+		done
+		if command -v update-desktop-database >/dev/null 2>&1; then
+			update-desktop-database -q /usr/share/applications || true
+		fi
+		;;
+	*) ;;
+esac
+
 exit 0

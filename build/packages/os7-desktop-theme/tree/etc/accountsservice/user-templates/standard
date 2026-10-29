@@ -1,0 +1,13 @@
+# OS/7 — what a NEW account's first desktop login is. docs/BUILD-NOTES.md #168.
+#
+# The same file as ./administrator, which carries the full account of why. In
+# short: GDM asks AccountsService which session a user gets, AccountsService
+# builds a user it has no record for from this template, and Ubuntu's template
+# leaves Session= empty — so GDM fell back to "ubuntu" and the OS/7 Classic
+# desktop was never what a freshly installed machine showed.
+[Template]
+#EnvironmentFiles=/etc/os-release;
+
+[User]
+Session=gnome-classic
+Icon=${HOME}/.face
