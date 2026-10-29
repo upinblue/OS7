@@ -558,7 +558,35 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   error. --stage write is the 117
                                           #   that change something and REFUSES
                                           #   to run on a bench with no snapshot
-./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, 3s
+./installer/testing/check-be-logic.py     # the BE cmdlets' decisions, no VM, ~11s
+                                          #   on Windows (container), 3s natively.
+                                          #   34 checks, and since 2026-09-22 the
+                                          #   CLONE DIRECTION is among them (#183):
+                                          #   a boot environment is a `zfs clone`,
+                                          #   `Update-OS7` promotes the one it
+                                          #   activates (UL9) and `Restore-OS7` now
+                                          #   promotes the one it rolls back TO, so
+                                          #   the environment a machine rolled back
+                                          #   FROM stops being the one thing on it
+                                          #   that cannot be destroyed. The fake zfs
+                                          #   grew `origin`, `promote` and `destroy`
+                                          #   for it, and the refusal ZFS raises is
+                                          #   the fake's SECOND load-bearing
+                                          #   behaviour — named in the header beside
+                                          #   #63's, because a mock that models the
+                                          #   bug it was written to catch is the
+                                          #   standing hazard.
+                                          #   --self-test plants three defects in a
+                                          #   COPY of the module (inside the
+                                          #   container, since /repo is read-only)
+                                          #   and requires each to be caught. It
+                                          #   found two on the day it was written,
+                                          #   both in that day's own work: an
+                                          #   assertion satisfied by a LATER cmdlet's
+                                          #   promote, and a fake whose promote moved
+                                          #   the origin string and not the snapshot
+                                          #   — which let the planted run destroy
+                                          #   what a machine refuses to destroy
 ./installer/testing/check-home-logic.py   # Get-/Move-OS7Home's decisions: a fake
                                           #   zfs whose datasets are real tmpfs
                                           #   mounts. No VM, no ZFS, ~4s. Runs

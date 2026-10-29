@@ -1262,11 +1262,47 @@ def phase_timer():
                ">> /etc/os7/update.conf", "allow development releases unattended")
         text = ps(c, "Import-Module OS7; Get-OS7BootEnvironment | Where-Object "
                      "{ -not $_.Running } | Remove-OS7BootEnvironment -Confirm:$false; "
-                     "@(Get-OS7BootEnvironment).Count",
+                     "Write-Output \"S5BE$(@(Get-OS7BootEnvironment).Count)\"",
                   "clear the staged leftovers", timeout=600)
+        # THE PRECONDITION, ASSERTED RATHER THAN COMMENTED — and the count was
+        # already being collected and thrown away, which is the whole of the
+        # defect. On 2026-09-21 this removal FAILED: the environment the
+        # rollback left behind was the ORIGIN of the running one, so `zfs
+        # destroy` refused it (BUILD-NOTES #183). The two assertions below were
+        # then satisfiable by the leftover instead of by the timer's own work —
+        # "a boot environment for 1.0.0.246 exists" is true of an environment
+        # nothing had just staged — and the run reported PASS.
+        #
+        # The comment above this block named the precondition. The code did not
+        # enforce it, and a precondition nothing enforces is a comment.
+        left = re.search(r"S5BE(\d+)", body_of(text, "S5BE"))
+        left = int(left.group(1)) if left else -1
+        if left != 1:
+            print(f"      FAIL  the leftovers were NOT cleared: "
+                  f"{left if left >= 0 else 'no count came back'} boot environment(s) "
+                  "where only the running one should be. Everything below would "
+                  "measure the leftover and not the timer, so the phase stops here.")
+            print(body_of(text, "Remove-OS7BootEnvironment").strip()[:600])
+            m.power_off()
+            return False
+        print("      ok         only the running environment is left — what the timer "
+              "stages next is its own")
         code, body = service_status(c, "the check with a reachable channel")
-        if code == "2":
-            print("      ok    3/4 with a channel: exit 2 — staged, reboot pending")
+        # THE EXIT CODE IS NOT ENOUGH, and that is the second half of #183.
+        # os7-update-check has TWO branches that exit 2 — one runs `Update-OS7
+        # -Stage` and logs "staging <version> from channel", the other finds an
+        # environment for that version already there, logs "already waits" and
+        # does NOTHING. On 2026-09-21 the leftover made it the second, and this
+        # assertion — which exists to measure the FIRST — was green on a run in
+        # which the timer had staged nothing at all. Reading the exit code and
+        # not the branch is what made a precondition failure invisible here.
+        if code == "2" and "staging " in body and "already waits" not in body:
+            print("      ok    3/4 with a channel: exit 2 — staged BY THIS RUN, reboot pending")
+        elif code == "2":
+            print("      FAIL  3/4 exit 2, but the check staged nothing — it found an "
+                  "environment already there. That is 4/4's branch, not this one:")
+            print(body.strip()[:500])
+            ok = False
         else:
             print(f"      FAIL  3/4 expected exit 2, got {code}:")
             print(body.strip()[:500])
