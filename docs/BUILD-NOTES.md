@@ -9792,3 +9792,137 @@ the first medium whose Setup writes `quiet splash` — 32 ok, 0 failed. Its
 `policy.serial.log` carries the prompt seventeen times, `os7_root*` to
 `os7_root*****************`, and the phase passed on "and the passphrase still
 unlocks it". The old expectation would have stopped at the first of them.
+
+---
+
+## #183 — a rollback INVERTS the clone direction, so the environment you most want gone is the one ZFS will not let go
+
+**Found 2026-09-21 on a machine** (bench `.vm/manual`, a copy of the 1.0.0.245
+S5 gate disk taken through `Update-OS7` → 1.0.0.246 → `Restore-OS7`), and
+**pre-existing**: `Convert-ZfsClone` has been in the module since 1.0.0.203 and
+nothing called it from here.
+
+```
+PS> Remove-OS7BootEnvironment -Name os7_1.0.0.246_202609211744 -Confirm:$false
+ParentContainsErrorRecordException: zfs destroy -r bpool/BOOT/os7_1.0.0.246_202609211744
+exited 1 cannot destroy 'bpool/BOOT/os7_1.0.0.246_202609211744': filesystem has
+dependent clones use '-R' to destroy the following datasets:
+bpool/BOOT/os7_1.0.0.245_202609211528
+```
+
+**Read that dataset name.** The thing ZFS offers to destroy with `-R` is the
+RUNNING machine's `/boot`.
+
+**Why it is the way round it is.** A boot environment is a `zfs clone` of a
+snapshot of the one before it, so the NEW one depends on the OLD one and the old
+one is the un-destroyable half. `Update-OS7` already knows this and promotes the
+environment it activates (UL9, and the comment there says "WITHOUT THAT NOTHING
+CAN EVER BE REMOVED"). What nothing did was promote on the way BACK:
+`Restore-OS7` activated and stopped. So after a rollback the direction is
+inverted and stays inverted —
+
+```
+bpool/BOOT/os7_1.0.0.245_…   origin = bpool/BOOT/os7_1.0.0.246_…@os7_1.0.0.246_…
+rpool/ROOT/os7_1.0.0.245_…   origin = rpool/ROOT/os7_1.0.0.246_…@os7_1.0.0.246_…
+```
+
+— and the environment an operator most wants gone after a bad update is the one
+thing on the machine that cannot be removed. `Remove-OS7BootEnvironment`'s own
+docstring says "without this the pool fills, which is how boot-environment
+systems fail in practice". This is that case.
+
+**THE TOPOLOGY IS MIXED, and an implementation that reads it as one direction
+gets it wrong.** On the same machine the top-level datasets were 245 ← 246 while
+the children under `rpool/ROOT/os7_1.0.0.246_…/var*` were 246 ← 245, because
+`zfs promote` is **per-dataset and not recursive**: UL9 promotes the two
+top-level halves and the children keep the origins they were cloned with.
+
+So the question to ask is not "is this a clone". It is **"is anything OUTSIDE
+this subtree a clone of something INSIDE it"** — a clone inside can always be
+destroyed, because it is the ORIGIN that is pinned, never the clone.
+`rpool/ROOT/os7_246/var` being a clone of `rpool/ROOT/os7_245/var@…` blocks
+nothing; `rpool/ROOT/os7_245` being a clone of `rpool/ROOT/os7_246@…` blocks
+everything.
+
+**The fix, in two places, because they answer two different questions.**
+`Restore-OS7` promotes both halves of what it rolls back to — UL9's step pointed
+the other way — so the state stops arising. That does nothing for a machine
+already in it, so `Remove-OS7BootEnvironment` promotes whatever depends on the
+environment it is about to destroy, names them in the confirmation and in the
+step log, and re-asks after each pass rather than trusting one reading (promote
+MOVES origins, #107). If they are still there after that, it refuses in a
+sentence that names `Convert-ZfsClone` — because `zfs destroy`'s own message
+names a method and a dataset and never the word promote, which is #148's shape.
+
+Both go through the Zfs layer (`Convert-ZfsClone`, `Get-ZfsDataset`); Z1 and
+`check-layering.py` stay at seven rules held.
+
+*The general form:* **the direction of a ZFS dependency is not a property of the
+data, it is a property of the last promote** — and there are two promoters here
+(the update train's, and a rollback's) writing the same pair of datasets from
+opposite ends. Anything that reads the relationship has to read it, not assume
+which update wrote it last. `Restore-OS7` already knew this for a different
+reason: it reads `org.os7:previous` FIRST precisely because promote rotates
+origins under it (#107).
+
+## #184 — a precondition in a comment is a comment, and an exit code shared by two branches cannot tell you which one ran
+
+**Found 2026-09-22 while fixing #183**, in `installer/testing/run-s5.py`'s
+`timer` phase — which had reported **PASS** on the 1.0.0.245 release gate the
+day before. Two independent halves, and the run needed both to be wrong.
+
+**The first half.** The phase said what it depended on:
+
+```python
+# The environment the update phase staged and the rollback left behind is
+# removed first, so the timer's own staging is what is measured rather than
+# found.
+text = ps(c, "… | Remove-OS7BootEnvironment -Confirm:$false; @(Get-OS7BootEnvironment).Count")
+```
+
+`text` was never read. The removal failed for #183, and — read off
+`.vm/s5/timer-1.serial.log` — the count was **never even printed**: the throw
+terminated the statement before `@(Get-OS7BootEnvironment).Count` ran, so the
+line the code collected did not contain a number at all.
+
+**The second half is the one that made it invisible.** The next assertion reads
+
+```python
+code, body = service_status(c, "the check with a reachable channel")
+if code == "2":
+    print("      ok    3/4 with a channel: exit 2 — staged, reboot pending")
+```
+
+and `os7-update-check` has **two** branches that exit 2:
+
+```
+staging 1.0.0.246 from channel 'development'      → runs Update-OS7 -Stage
+staged: 1.0.0.246 already waits in os7_…          → does NOTHING and exits 2
+```
+
+The 245 gate logged the second one, in the check's own words:
+
+```
+2026-09-21T15:50:07Z check: staged: 1.0.0.246 already waits in
+os7_1.0.0.246_202609211744; activation and a reboot are pending
+```
+
+So the phase's 3/4 measured nothing the timer did; its follow-up ("a boot
+environment for 1.0.0.246 exists — the release is there") read the release off
+the very environment the removal had failed to destroy; and its 4/4 ("a second
+run finds it already staged") was true before the first run. Of the phase's four
+assertions, **two were satisfied by the leftover and one was true beforehand.**
+
+**The fix is both halves.** The count is asserted and the phase STOPS when more
+than the running environment is left — with a `Write-Output "S5BE$(…)"` marker
+rather than a bare digit line, so that the absent case reads as absent instead
+of as a parse miss. And 3/4 now requires the log to say `staging` and not
+`already waits`, so the branch is measured and not only the number.
+
+*The general form, and it is two rules.* **A precondition that is not asserted
+is a comment** — the harness had the number in its hand and dropped it. And
+**an exit code that two branches share is a diagnostic, not a fact**: this
+repository's standing rule is that a program reporting success is not evidence
+that the thing changed, and "exit 2 means staged" is that rule with one more
+step — exit 2 meant *staged or already staged*, and the whole point of the
+assertion was to tell those apart.

@@ -1334,6 +1334,52 @@ function Test-OS7IsRunning {
 	return [bool]$BootEnvironment.Active
 }
 
+function Get-OS7CloneDependent {
+	<#
+	.SYNOPSIS
+		Internal. The datasets OUTSIDE this one that are clones of a snapshot
+		INSIDE it — the ones `zfs destroy -r` refuses for.
+
+	.DESCRIPTION
+		This is the one thing `zfs destroy` will not do and says so:
+
+		    cannot destroy 'bpool/BOOT/os7_1.0.0.246_202609211744':
+		    filesystem has dependent clones
+		    use '-R' to destroy the following datasets:
+		    bpool/BOOT/os7_1.0.0.245_202609211528
+
+		`-R` is never the answer here: the dataset ZFS names in that message is
+		the RUNNING machine's half. `zfs promote` is, and it is the step the
+		update train already takes at UL9 for this exact reason.
+
+		THE DIRECTION IS WHAT MATTERS AND IT IS EASY TO GET BACKWARDS. A dataset
+		inside the subtree that is itself a clone of something outside does NOT
+		block: a clone can always be destroyed, it is the ORIGIN that is pinned.
+		So this asks only one question, of every dataset in the pool: is the
+		dataset outside, and its origin inside. Both halves of a boot environment
+		are asked separately because a clone cannot cross pools and the pair
+		lives in two.
+
+		WHY IT ENUMERATES THE POOL rather than the two BOOT/ROOT parents: a clone
+		of a boot environment's snapshot is not obliged to live beside boot
+		environments. `New-ZfsClone` puts it wherever it was told, and a clone
+		made by hand under rpool/DATA pins its origin just as hard.
+	#>
+	param([Parameter(Mandatory)][string]$Root)
+
+	$pool = $Root.Split('/')[0]
+	$prefix = "$Root/"
+
+	foreach ($ds in @(Get-ZfsDataset -Name $pool -Recurse)) {
+		if ($ds.Name -eq $Root -or $ds.Name.StartsWith($prefix)) { continue }
+		if (-not $ds.Origin) { continue }
+		$originDataset = ("$($ds.Origin)" -split '@')[0]
+		if ($originDataset -eq $Root -or $originDataset.StartsWith($prefix)) {
+			$ds.Name
+		}
+	}
+}
+
 function Get-OS7MenuBootEnvironment {
 	<#
 	.SYNOPSIS
@@ -2397,6 +2443,22 @@ function Remove-OS7BootEnvironment {
 		either produces a machine that does not start — the second one silently,
 		because everything keeps working until the next boot.
 
+		IT PROMOTES WHATEVER DEPENDS ON THIS ONE FIRST, and without that a
+		machine that has ROLLED BACK cannot remove the environment it rolled back
+		from — the one an operator most wants gone. A boot environment is a
+		`zfs clone`, `Update-OS7` promotes the environment it activates (UL9), and
+		`Restore-OS7` promotes the one it rolls back to; but a machine rolled back
+		before that second rule existed is left with its running root a clone of
+		the environment above it, and `zfs destroy` refuses for as long as that
+		is so. Measured on a machine, 2026-09-21, BUILD-NOTES #183.
+
+		The promotion is the update train's own step, not a new idea:
+		`Convert-ZfsClone` gives the clone the shared history and leaves the
+		ORIGINAL as the dependent one. Nothing is destroyed by it, and the record
+		`Restore-OS7` reads is a PROPERTY, which promote cannot rotate (#107).
+		It is named in the confirmation and in the step log, because it changes
+		the clone topology of a dataset the operator did not name.
+
 	.PARAMETER Name
 		The boot environment to destroy.
 
@@ -2435,12 +2497,75 @@ function Remove-OS7BootEnvironment {
 				'or the next start has no menu to read.')
 		}
 
-		if (-not $PSCmdlet.ShouldProcess($Name, 'destroy both halves of this boot environment')) {
+		# THE HALVES, ONCE, in the order they are asked about and destroyed. The
+		# inner @() is load-bearing: a pipeline binds tighter than the comma, so
+		# `$a, $b | Where-Object …` filters $b alone and passes $a through
+		# whatever it is — which is how a $null half would have reached
+		# Get-OS7CloneDependent's [string] parameter as an empty name.
+		$halves = @(@($be.BootDataset, $be.RootDataset) | Where-Object { $_ })
+
+		# ASKED BEFORE THE CONFIRMATION, so the operator is told about the
+		# promotion in the question rather than after the answer. A removal that
+		# silently re-parents the running machine's root is the kind of side
+		# effect this repository writes down.
+		$dependents = @($halves | ForEach-Object { Get-OS7CloneDependent -Root $_ } |
+			Sort-Object -Unique)
+
+		$what = 'destroy both halves of this boot environment'
+		if ($dependents.Count) {
+			$what += ', after promoting ' + ($dependents -join ', ') +
+				' — which are clones of it and pin it where it stands'
+		}
+		if (-not $PSCmdlet.ShouldProcess($Name, $what)) {
 			return
 		}
 
-		foreach ($ds in @($be.BootDataset, $be.RootDataset)) {
-			if (-not $ds) { continue }
+		# A PASS AT A TIME, AND RE-ASKED, because promoting one clone MOVES
+		# origins: the snapshots up to the promoted one leave this environment,
+		# and sibling clones of them follow to the promoted dataset rather than
+		# staying behind (measured, BUILD-NOTES #107). So the set SHRINKS as the
+		# passes run and must be read again rather than trusted once.
+		#
+		# The bound is a bound, not an expectation — one pass is what a
+		# rolled-back machine needs. A loop that decides its own end from what
+		# ZFS reports is one that spins on a machine where promote is not doing
+		# what this code believes, and the whole point of the refusal below is
+		# that this cmdlet says so instead.
+		for ($pass = 0; $pass -lt 8; $pass++) {
+			$blocking = @($halves | ForEach-Object { Get-OS7CloneDependent -Root $_ } |
+				Sort-Object -Unique)
+			if (-not $blocking.Count) { break }
+			foreach ($clone in $blocking) {
+				Write-OS7Step ("promoting $clone, which is a clone of $Name and would " +
+					'otherwise make it undestroyable')
+				Convert-ZfsClone -Name $clone -Confirm:$false | Out-Null
+			}
+		}
+
+		# AND IF IT DID NOT WORK, A SENTENCE — not the .NET exception `zfs
+		# destroy` would raise two lines further down. That message names a
+		# method and a dataset and never the word promote, which is #148's shape
+		# in a second place.
+		$remaining = @($halves | ForEach-Object { Get-OS7CloneDependent -Root $_ } |
+			Sort-Object -Unique)
+		if ($remaining.Count) {
+			throw [System.InvalidOperationException]::new(
+				"'$Name' still has dependent clones after promoting them: " +
+				($remaining -join ', ') + '. ZFS will not destroy a dataset whose ' +
+				# SINGLE-quoted, and that is not style: in a double-quoted string
+				# PowerShell reads the backtick as an escape, so a markdown-looking
+				# `-R` renders as -R only because ` - and `<space> are unknown
+				# escapes that silently lose their backtick. Right output, wrong
+				# reason, and one edit away from being neither.
+				'snapshot has a live clone, and -R is NOT the answer — it would ' +
+				'destroy those datasets too, and one of them may be what this ' +
+				"machine is running. Promote them by hand and read the origin back:`n" +
+				"`n" +
+				"      Convert-ZfsClone -Name $($remaining[0]) -Confirm:`$false`n" +
+				"      (Get-ZfsDataset -Name $($remaining[0])).Origin   # expect nothing")
+		}
+
+		foreach ($ds in $halves) {
 			Remove-ZfsDataset -Name $ds -Recurse -Confirm:$false | Out-Null
 		}
 		Write-OS7Step "boot environment $Name destroyed"
@@ -2899,6 +3024,43 @@ function Restore-OS7 {
 	}
 
 	$be = Set-OS7BootEnvironment -Name $BootEnvironment -Confirm:$false
+
+	# AND THE ENVIRONMENT THIS MACHINE WILL RUN OWNS ITS OWN HISTORY, which is
+	# UL9's step pointed the other way. `Update-OS7` promotes the environment it
+	# activates and this did not, so after a rollback the running root was a
+	# `zfs clone` of the environment it had just rolled back FROM — and
+	# `zfs destroy` refuses a dataset whose snapshot has a live clone. The
+	# environment an operator most wants gone after a bad update was the one
+	# thing on the machine that could not be removed, and the cmdlet said so in
+	# a .NET exception about dependent clones. Measured 2026-09-21 on a machine
+	# that had updated 245 -> 246 and rolled back, BUILD-NOTES #183.
+	#
+	# BOTH HALVES, for §4.3's reason: the pair lives in two pools and promoting
+	# one of them leaves the other pinned — a half-promoted pair, which is a
+	# state nothing else in this module knows how to read.
+	#
+	# SAID AND NOT THROWN, like UL9's own promote. This runs AFTER the
+	# activation has succeeded: the machine already boots the environment the
+	# operator asked for, which is the whole job. Failing the rollback over a
+	# tidying step would take a working answer away from somebody whose machine
+	# has just stopped working.
+	# AND ONLY WHAT IS ACTUALLY A CLONE IS PROMOTED. `zfs promote` on a dataset
+	# with no origin is an ERROR — "not a cloned filesystem" — so promoting
+	# unconditionally would print a failure line on the ORDINARY rollback, the
+	# one to the environment the machine was installed with. A note that appears
+	# when nothing is wrong is a note an operator learns to read past, which is
+	# the thing that then hides the one that matters.
+	foreach ($half in @(@($be.RootDataset, $be.BootDataset) | Where-Object { $_ })) {
+		$origin = try { Get-OS7ZfsPropertyValue -Name $half -Property 'origin' } catch { $null }
+		if (-not $origin -or "$origin" -eq '-') { continue }
+		try { Convert-ZfsClone -Name $half -Confirm:$false | Out-Null }
+		catch {
+			Write-OS7Step ("could not promote $half`: $($_.Exception.Message) — the " +
+				'rollback stands; the environment above this one may not be removable ' +
+				'until it is promoted')
+		}
+	}
+
 	$running = $all | Where-Object { Test-OS7IsRunning $_ } | Select-Object -First 1
 	Write-OS7Step ("reboot to finish: this machine still runs " +
 		$(if ($running) { $running.Name } else { 'an environment it cannot name' }))
