@@ -1,13 +1,16 @@
 #!/bin/sh
-# os7-console: give /etc/default/console-setup back to console-setup.
+# os7-console: give /etc/default/console-setup back to console-setup, and the
+# default.plymouth link back to whatever else is registered for it.
 #
 # On remove only, not on upgrade — the same reason as os7-release's prerm: an
 # upgrade that undiverts and re-diverts leaves a window in which the console
-# reverts to the Debian default, for no reason.
+# reverts to the Debian default, for no reason. The same holds for the splash:
+# an upgrade that dropped the alternative would rebuild an initramfs without it.
 set -e
 
 REAL=/etc/default/console-setup
 DISTRIB=/etc/default/console-setup.distrib
+SPLASH=/usr/share/plymouth/themes/os7/os7.plymouth
 
 case "$1" in
 	remove|deconfigure)
@@ -17,6 +20,7 @@ case "$1" in
 			[ -L "${REAL}" ] && rm -f "${REAL}"
 			dpkg-divert --remove --package os7-console --rename --divert "${DISTRIB}" "${REAL}"
 		fi
+		update-alternatives --remove default.plymouth "${SPLASH}" || true
 		;;
 	upgrade|failed-upgrade)
 		;;

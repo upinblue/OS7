@@ -62,6 +62,7 @@ here either — this file points, they rule.
 | Active Directory: the admin session, the domain join, what is deliberately absent, decisions A1–An | [docs/AD-PLAN.md](docs/AD-PLAN.md) — **authoritative**. Both stages are now proven against a real **Windows Server 2025** DC on a machine ([SESSION-AD-REAL-DC.md](docs/SESSION-AD-REAL-DC.md), [SESSION-AD-JOIN.md](docs/SESSION-AD-JOIN.md)); what is still unexercised is the INSTALLER's road to the join (screen 9D) and arm64 |
 | Remote Desktop (RDP) to a machine from PowerShell: the mechanism, the two-stage authentication, where the credential and certificate live, decisions R1–R17 | [docs/REMOTE-DESKTOP-PLAN.md](docs/REMOTE-DESKTOP-PLAN.md) — **the decisions are still *Proposed*; v1 of the surface is BUILT and has run on a machine.** `Enable-`/`Test-`/`Disable-OS7RemoteDesktop` were exercised against the real daemon and a real RDP client on the GUI bench (§13a). The allow-list is built and measured safe in all four quadrants (§13b); a local account signs in over RDP to the OS/7 desktop (M-R50, after #128 withdrew a false defect); the account lockout is built too, in `common-auth` and therefore ACCOUNT-WIDE (`Set-OS7AccountLockout`, §13c). The session verbs are built over the Systemd module's `Get-/Stop-SystemdSession` (§13d); there is no `Disconnect-`, because logind has one verb and it ENDS the session |
 | OS/7's own GUI applications: the toolkit, what an app may contain, the design system, decisions G1–G12 | [docs/GUI-APPS-PLAN.md](docs/GUI-APPS-PLAN.md) — **the toolkit is Avalonia and that is decided (2026-09-14); everything from G3 on is a proposal and nothing is built.** The argument is not "we already write C#" — it is that `os7-classic.css` already documents that GTK 4 cannot wear this product's face. Measured before writing: 22.1 MiB framework-dependent against 100.8 MiB self-contained, **13.3 MiB of it identical in every app** (so `os7-ui` is arithmetic, not taste), no Wayland backend in Avalonia 12.1.2 → XWayland, and AT-SPI ships ([SESSION-AVALONIA-FOOTPRINT.md](docs/SESSION-AVALONIA-FOOTPRINT.md)). **An app implements no policy** — it is a front-end over cmdlets that already have a test (P12), which is #66's shape pointed at a new surface. **The first application, Software Update, HAS RUN ON A MACHINE (2026-09-14)**: the window draws with Mutter's themed title bar, lists real releases from a signed repository, and polkit prompts by name before systemd runs `Update-OS7` as root ([SESSION-SOFTWARE-UPDATE-APP.md](docs/SESSION-SOFTWARE-UPDATE-APP.md)). What it has NEVER done is a successful update — every release the bench reaches is development-signed — and no ISO has yet carried the package |
+| The mark: which file is the logo, what is derived from it and how, which ink on which ground, the boot splash to come, decisions BR1–BR8 | [docs/BRAND-PLAN.md](docs/BRAND-PLAN.md) — **Stage 1 is built (2026-10-29): there is ONE mark, `brand/os7-wordmark.svg`, the website's drawn wordmark moved here shape for shape, and `check-brand.py` holds every copy to it.** The image's three marks were `<text>` in DejaVu Sans Bold on blue until that day; since the same day the icon is a byte copy of the tile and the login lockup is GENERATED from the master (Stage 2, baseline 0, `check-image.py` compares both inside the ISO) — rendered through librsvg, NOT yet seen through the greeter on a machine, and no ISO built with it. **The boot splash (BR8) IS BUILT and has been seen on a 1.0.0.245 bench**: a Plymouth `script` theme in `os7-console` on both architectures, sprites rendered from the master by `build/lib/brand_raster.py` (pure Python, compared with librsvg: +0.1 % ink) and held pixel for pixel, `quiet splash` from Setup and migration 80 for existing machines. Building it found **#181** — OS/7's menu froze the kernel command line at a machine's first activation — and **#182**. On a serial console plymouthd forces `details`, so no theme draws where a harness looks ([SESSION-BRAND-FREEZE.md](docs/SESSION-BRAND-FREEZE.md) §7) |
 | What the OS owes an automation workload — and what it deliberately leaves to a product above, decisions AU1–AU14 | [docs/AUTOMATION-PLAN.md](docs/AUTOMATION-PLAN.md) — **PHASE 1 IS BUILT AND HAS RUN ON A MACHINE (2026-09-14)**: secrets, the job journal, the job contract, the service dataset, locks, per-job Kerberos caches and notification, in `powershell/OS7/OS7.Automation.ps1` and `build/packages/os7-automation/` ([SESSION-AUTOMATION-PRIMITIVES.md](docs/SESSION-AUTOMATION-PRIMITIVES.md)). Its governing rule is AU1: **the OS provides primitives, a product above provides policy**, because the alternative is the engine twice in two languages with nobody at the seam (#66) — and it is decidable by grep, held at 0 by `check-automation-logic.py`. `Start-OS7Job` **widens** the templated-unit + polkit + journal pattern the Software Update window proved (O-G6) rather than replacing it. **FOUR OF ITS DECISIONS WERE WRONG AND ARE CORRECTED IN PLACE**, each with the measurement that did it: `--tpm2-pcrs=` defaults to EMPTY so `host+tpm2` does NOT inherit #69/#100 (AUL2 shrinks); systemd's host key lives at `/var/lib/systemd/credential.secret`, which is INSIDE the boot environment, so **`tpm2` alone is the sealing target** and `host+tpm2` would have put the KEY back where AU6 keeps the SECRET out of; AU11 needs **no MTA**; and the journal's schema IS a contract. **AND A MACHINE FOUND THREE DEFECTS WHILE EVERY CHECK HERE WAS GREEN** — a directory the cmdlet's own error message promised and did not create, a property read that throws under strict mode because the journal has two writers, and `RuntimeMaxSec=`, which systemd IGNORES for `Type=oneshot` so that every job ran with no timeout (#155). **AND PHASE 1'S MEASUREMENTS ARE DONE SINCE 2026-09-15** — M-AU3 (the fence, eleven questions asked of the FILESYSTEM after the first probe reported the opposite by asking whether a command threw), M-AU5 (AUL4 is three walls, and the third made `-Identity` unusable: the journal is root-owned, so the STARTER now writes the Result when the job cannot), M-AU7 (a real KDC in a container, no password typed: the ticket lands in the named cache and the default one STAYS EMPTY), M-AU8 (the store is outside `rpool/ROOT` and a new boot environment does not swallow it), a delivered notification, `-Unconfined` (10 of 11, and the eleventh is the TPM it deliberately keeps), and polkit's headless half. **A zero-byte keytab found two more defects**: both refusals blamed the realm for a file on this machine, while `Get-DirectoryKeytabPrincipal` had always said existence proves nothing. What is still owed: **ticket expiry and renewal**, a `Restore-OS7` rollback over a secret, polkit's dialog (needs a seat) and arm64 |
 | The identity and access management application on top of OS/7: what it is, the layer cut against the OS, decisions IG1–IG14 | [docs/IAM-PLAN.md](docs/IAM-PLAN.md), with [docs/IAM-SCOPE.md](docs/IAM-SCOPE.md) as its capability scope — **all *Proposed*, nothing built.** It is **not an OS feature and must not become one**: AU1 is the line, and routing roles, attestation and separation of duties through the cmdlet surface would end with two hundred cmdlets of business logic in `powershell/OS7/`. Two decisions do most of the work — **IG5**, every derived fact carries its derivation (without it, individual-versus-role reporting and attestation of any kind are unimplementable *late*), and **IG6**, the plan is an artifact, which turns the reconciler, attestation and separation of duties into producers and validators of plans rather than three more engines. **The AD cmdlets are deliberately NOT its foundation** — a .NET application has `S.DS.P` natively, so what transfers is [AD-PLAN.md](docs/AD-PLAN.md)'s measured knowledge and not its code, and OS/7's AD surface should stop growing toward being a provisioning engine |
 | Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is what a machine taught it** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable (M-V22). The answer is Time Machine's own: Apple takes no pre-restore snapshot either, it moves the existing file aside, so OS/7 keeps what it is about to overwrite by the strongest means available where it stands — a snapshot with privilege, a rename without ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md)). **AND SINCE 2026-09-15 DOMAIN USERS HAVE VERSIONS AT ALL** (VL7, closed): `rpool/DATA/lib/os7-domain-homes` — where every domain account's home is — was in no backup policy, so a domain-joined machine snapshotted nobody's work. One line of defaults and a firstboot migration for machines already installed. Measuring it found the bigger one beside it: a dataset with NO snapshots returned an empty list in silence, and the window turned that into a claim — *"1 versions, back to today"* — because it asks with `-IncludeCurrent`, so V6's own sentence was unreachable for every file that EXISTS (#163). Then clicking found the refusal arriving as PowerShell's ConciseView stack trace, drawn twice ([SESSION-VERSIONS-DOMAIN-HOMES.md](docs/SESSION-VERSIONS-DOMAIN-HOMES.md)) |
@@ -380,6 +381,46 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   windowCount = 1, the number off
                                           #   the screen.
                                           #   176 checks, no ZFS, seconds
+./installer/testing/check-brand.py        # BR1: there is ONE mark. The four
+                                          #   shapes of brand/os7-wordmark.svg
+                                          #   are recorded in the check; the
+                                          #   derived files (white, tile) must
+                                          #   be build/lib/brand.py's output
+                                          #   byte for byte; nothing in brand/
+                                          #   is set in a font; every file has
+                                          #   <svg inside byte 256 (#111); the
+                                          #   two inks are the only colours;
+                                          #   and BR4's contrast numbers still
+                                          #   hold - including the one that
+                                          #   must FAIL (orange on the Setup
+                                          #   field, 2.45:1, which is why the
+                                          #   white variant exists). The
+                                          #   image's consumers - the icon
+                                          #   LOGO=os7 names and the login
+                                          #   lockup - must be brand.py's output
+                                          #   byte for byte; the BASELINE of
+                                          #   consumers that are not is 0 since
+                                          #   Stage 2 (it was 2 that morning)
+                                          #   and may not rise. AND THE BOOT
+                                          #   SPLASH (§9): seven sprites
+                                          #   re-rendered by brand_raster.py and
+                                          #   required to DECODE to the same
+                                          #   pixels (not bytes - zlib differs
+                                          #   by host), the script's five layout
+                                          #   numbers equal to brand.py's, and
+                                          #   every image it loads one the
+                                          #   generator makes. 44 checks, 46
+                                          #   with a website checkout beside the
+                                          #   repository (OS7_WEB_ROOT).
+                                          #   check-image.py asks the same two
+                                          #   questions of a built ISO, and hook
+                                          #   0090 fails a build whose greeter
+                                          #   mark contains <text>. --self-test is a
+                                          #   CONTROL first - a tree with every
+                                          #   consumer branded must pass at
+                                          #   baseline 0 - then nine planted
+                                          #   defects, one of them a sprite one
+                                          #   alpha step off. Pure python, seconds
 ./installer/testing/check-gui-tokens.py   # G9: OS/7's GUI apps have ONE palette.
                                           #   The 17 Windows 2000 constants live
                                           #   in the desktop theme's gtk.css AND
@@ -1240,6 +1281,16 @@ build/                      the ISO: live-build config, hooks, and build.sh
   lib/psf.py                the font subset table, the fixes, and the guard -
                             shared by both fonts, deliberately
   lib/palette.py            the palette, and D5's contrast check
+  lib/brand.py              the mark's generator: reads brand/os7-wordmark.svg,
+                            refuses anything that is not its four shapes,
+                            derives the white variant and the tile, and holds
+                            BR4's contrast numbers. Imports palette.py for the
+                            field colour rather than spelling it twice
+  lib/brand_raster.py       the boot splash's renderer: the master's shapes as
+                            polygons, filled with exact coverage, written and
+                            read as PNG. Pure python and only + - * / sqrt, so
+                            a sprite re-rendered on any host has the same
+                            PIXELS - which is what the checks compare
   config/os7-release.conf   THE PIN: version, archive snapshot, component hashes
   config/hooks/0075-*       turns the pin into os-release, release.json and the
                             package manifest - and checks what it wrote
@@ -1254,6 +1305,15 @@ installer/
   testing/                  the VM harness: vmconsole (serial), vmscreen
                             (framebuffer, QMP, reading the screen back through
                             the console font), run-phase1.py
+brand/                      THE MARK (docs/BRAND-PLAN.md). os7-wordmark.svg
+                            is the logo - the website's drawn wordmark, four
+                            shapes, no <text>, no font; the white variant and
+                            the tile beside it are GENERATED by
+                            build/lib/brand.py and never edited. The website
+                            copies from here (BR3), not the other way round.
+                            The icon LOGO=os7 names, the login lockup and the
+                            boot splash's sprites (os7-console) are its output
+                            since 2026-10-29
 src/                        OS/7's own GUI applications and the design system
                             they share (docs/GUI-APPS-PLAN.md). NOT
                             installer/src/, which is os7-setup's and is NativeAOT

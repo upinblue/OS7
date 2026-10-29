@@ -37,6 +37,7 @@ the mirrors were pinned is a diagnostic. The sources.list in the image is the
 fact.
 """
 
+import base64
 import json
 import os
 import re
@@ -47,6 +48,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import os7version
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# The mark's generator (docs/BRAND-PLAN.md BR6): what the image's icon and login
+# mark MUST be, byte for byte, is what it renders from brand/os7-wordmark.svg.
+sys.path.insert(0, os.path.join(REPO, "build", "lib"))
+import brand  # noqa: E402
 
 SNAPSHOT_HOST = "snapshot.ubuntu.com"
 
@@ -75,7 +80,15 @@ mount -t overlay overlay -o lowerdir=/mnt/sq,upperdir=/mnt/rw/up,workdir=/mnt/rw
 mount --bind /dev /mnt/root/dev
 mount -t proc proc /mnt/root/proc
 
-emit() { printf '<<<%s>>>\n' "$1"; shift; "$@" 2>&1 || true; }
+# The trailing `echo` is not cosmetic. A section's command may end WITHOUT a
+# newline - upinblue-logo.svg on the shipped image does, its last byte is the
+# `>` of `</svg>` - and then the next `<<<marker>>>` lands on the same line as
+# that `>`, parse_sections() does not recognise it, and the next section's
+# lines are appended to THIS one while its own key never exists. Measured
+# 2026-10-29: `cat` of that file made desktop.autostart vanish and the check
+# after it fail with "<nothing read>", about a file that was fine.
+# parse_sections() strips each section, so the extra line costs nothing.
+emit() { printf '<<<%s>>>\n' "$1"; shift; "$@" 2>&1 || true; echo; }
 
 emit release.json      cat /mnt/sq/usr/lib/os7/release.json
 # What the image MEASURED itself to contain (hook 0075). release.json above is
@@ -197,7 +210,7 @@ emit qol.langpacks     bash -c 'for l in de en fr nl it es; do for p in language
 emit qol.updater       bash -c 'echo "by $(chroot /mnt/root dpkg-divert --listpackage /usr/bin/update-manager 2>/dev/null)"; echo "shim $(grep -c os7-software-update /mnt/sq/usr/bin/update-manager 2>/dev/null)"'
 emit qol.menu          bash -c 'for d in update-manager gnome-language-selector info vim; do f=/usr/share/applications/$d.desktop; if [ -e /mnt/sq$f ]; then echo "SHOWN $d"; else echo "hidden $d"; fi; done; for p in sysprof gnome-shell-extension-prefs; do if chroot /mnt/root dpkg -s $p >/dev/null 2>&1; then echo "INSTALLED $p"; else echo "absent $p"; fi; done'
 emit desktop.tahomabmp bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin fc-match -f "%{family} %{embeddedbitmap}" "Tahoma:pixelsize=12" 2>/dev/null; echo'
-emit desktop.aboutlogo bash -c 'for f in ubuntu-logo-text.svg ubuntu-logo-text-dark.svg; do p=/usr/share/pixmaps/$f; if grep -q ">OS/7</text>" /mnt/sq$p 2>/dev/null; then echo "mark os7 $f"; else echo "mark OTHER $f"; fi; echo "by $(chroot /mnt/root dpkg-divert --listpackage $p 2>/dev/null || true) $f"; done'
+emit desktop.aboutlogo bash -c 'for f in ubuntu-logo-text.svg ubuntu-logo-text-dark.svg; do p=/usr/share/pixmaps/$f; if cmp -s /mnt/sq$p /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg; then echo "mark os7 $f"; else echo "mark OTHER $f"; fi; echo "by $(chroot /mnt/root dpkg-divert --listpackage $p 2>/dev/null || true) $f"; done'
 emit desktop.debrand   bash -c 'for p in gnome-initial-setup ubuntu-report ubuntu-insights whoopsie apport apport-gtk ubuntu-docs firefox plymouth-theme-ubuntu-text; do if chroot /mnt/root dpkg -s "$p" >/dev/null 2>&1; then echo "PRESENT $p"; else echo "absent  $p"; fi; done'
 emit desktop.kept      bash -c 'for p in ubuntu-desktop-minimal gnome-shell gdm3 nautilus network-manager snapd microsoft-edge-stable intune-portal code; do if chroot /mnt/root dpkg -s "$p" >/dev/null 2>&1; then echo "present $p"; else echo "MISSING $p"; fi; done'
 emit desktop.pin       bash -c 'cat /mnt/sq/etc/apt/preferences.d/os7-desktop-exclusions.pref 2>/dev/null || true'
@@ -254,6 +267,23 @@ GREETER
 emit desktop.greeter   bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin sh /tmp/os7-greeter-probe.sh 2>&1 || true'
 emit desktop.greeterdir bash -c 'ls /mnt/sq/usr/share/gdm/dconf/ 2>&1 || true'
 emit desktop.greeterlogo bash -c 'ls -l /mnt/sq/usr/share/pixmaps/os7-logo-login.svg /mnt/sq/usr/share/pixmaps/upinblue-logo.svg 2>&1 || true'
+# THE MARKS THEMSELVES, not their listing. BRAND-PLAN BR6: the icon is a byte
+# copy of brand/os7-tile.svg and the login mark is what build/lib/brand.py
+# renders from the master and the vendor file - so the files are brought home
+# and compared against what the repository says they must be. An image whose
+# build staged an older copy, or whose tree was edited behind the generator,
+# fails HERE and not on a login screen.
+emit desktop.iconsvg   cat /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg
+# THE BOOT SPLASH (BRAND-PLAN BR8), on BOTH architectures: which theme
+# default.plymouth names, who owns it, and the theme's files themselves, brought
+# home as base64 so the sprites can be decoded and compared with what
+# build/lib/brand.py renders from the master — pixels, not bytes, for the zlib
+# reason brand_raster.py gives.
+emit splash.alt        bash -c 'chroot /mnt/root update-alternatives --query default.plymouth 2>&1 | grep -E "^(Status|Value):" || true'
+emit splash.owner      bash -c 'chroot /mnt/root dpkg -S /usr/share/plymouth/themes/os7/os7.plymouth 2>/dev/null | cut -d: -f1'
+emit splash.files      bash -c 'cd /mnt/sq/usr/share/plymouth/themes/os7 2>/dev/null && for f in *; do printf "%s %s\n" "$f" "$(base64 -w0 "$f")"; done || true'
+emit desktop.loginsvg  cat /mnt/sq/usr/share/pixmaps/os7-logo-login.svg
+emit desktop.vendorsvg cat /mnt/sq/usr/share/pixmaps/upinblue-logo.svg
 # `grep -c` prints 0 AND exits 1 when nothing matches, so `$(grep -c … || echo 0)`
 # yields TWO lines and the parser on the other side gets a row with one field.
 # grep -q in an if, which answers the question that was actually asked.
@@ -1124,6 +1154,47 @@ def main() -> None:
         check(owners.get(path_, "").strip() == owner,
               f"dpkg -S: {path_} belongs to {owner}",
               owners.get(path_, "(not asked)").strip())
+
+    # THE BOOT SPLASH (BRAND-PLAN BR8), both architectures. Three questions, and
+    # the order is the order things go wrong in: the theme can be installed and
+    # not CHOSEN (default.plymouth is an alternative, and Ubuntu's bgrt is
+    # registered too), chosen and not OWNED (a file a hook copied rolls back
+    # with nothing), and owned and STALE (a sprite that is not the master's).
+    alt = img.get("splash.alt", "")
+    check("Value: /usr/share/plymouth/themes/os7/os7.plymouth" in alt
+          and "Status: auto" in alt,
+          "default.plymouth is the OS/7 theme, in auto mode",
+          " ".join(alt.split()) or "<update-alternatives said nothing>")
+    # `dpkg -S` prints NOTHING for a path no package owns, and the `cut` after
+    # it exits 0 — so an empty answer is "nobody owns it", not "not asked".
+    check(img.get("splash.owner", "").strip() == "os7-console",
+          "dpkg -S: the splash theme belongs to os7-console",
+          img.get("splash.owner", "").strip() or "no package owns that path")
+    shipped = {}
+    for line in img.get("splash.files", "").splitlines():
+        name, _, b64 = line.partition(" ")
+        if b64:
+            shipped[name] = base64.b64decode(b64)
+    theme_src = os.path.join(REPO, brand.SPLASH_REL)
+    for name in ("os7.plymouth", "os7.script"):
+        with open(os.path.join(theme_src, name), "rb") as fh:
+            want_bytes = fh.read()
+        check(shipped.get(name) == want_bytes,
+              f"the image's {name} is the repository's, byte for byte",
+              "" if shipped.get(name) == want_bytes
+              else f"{len(shipped.get(name, b''))} bytes read, {len(want_bytes)} expected")
+    master_svg = brand.read_text(brand.master_path())
+    for name, pixels in brand.splash_sprites(master_svg).items():
+        got = None
+        if name in shipped:
+            try:
+                got = brand.brand_raster.decode_png(shipped[name])
+            except Exception as error:  # zlib.error is not a ValueError
+                got = f"undecodable: {error}"
+        check(got == pixels, f"the image's {name} decodes to the master's pixels",
+              "" if got == pixels else ("absent" if got is None else
+                                        str(got) if isinstance(got, str) else
+                                        f"{got[0]}x{got[1]}, pixels differ"))
     if arch == "amd64":
         # V3: `os7-versions <path>` is the whole contract with the file manager,
         # and the extension is what makes it reachable by right-clicking. A
@@ -1868,7 +1939,10 @@ def main() -> None:
         # Settings > About draws these two paths, hard-coded in Ubuntu's
         # gnome-control-center, and never LOGO= (BUILD-NOTES #169). The file
         # must be OS/7's AND the diversion must be the package's, or an update
-        # of base-files puts the Ubuntu wordmark back.
+        # of base-files puts the Ubuntu wordmark back. "OS/7's" is the tile,
+        # byte for byte the icon LOGO=os7 names - both are build/lib/brand.py's
+        # output (BRAND-PLAN BR1) - so the probe compares the two files and
+        # reads no element of either.
         about = img.get("desktop.aboutlogo", "").splitlines()
         for f in ("ubuntu-logo-text.svg", "ubuntu-logo-text-dark.svg"):
             mark = next((l.split()[1] for l in about
@@ -1995,6 +2069,14 @@ def main() -> None:
             return False
 
         check(listed("os7.svg"), "the product mark exists for LOGO=os7")
+        # And IS the mark. `emit` frames the file and parse_sections() strips
+        # the frame, so the comparison is on stripped text; everything between
+        # the first and the last byte must still agree.
+        tile = brand.read_text(os.path.join(REPO, "brand", brand.TILE_NAME)).strip()
+        check(img.get("desktop.iconsvg", "").strip() == tile,
+              "and it is brand/os7-tile.svg, byte for byte (BRAND-PLAN BR5/BR6)",
+              "" if img.get("desktop.iconsvg", "").strip() == tile
+              else f"{len(img.get('desktop.iconsvg', ''))} bytes read, {len(tile)} expected")
         # `.distrib` is the name dpkg-divert --rename moved Ubuntu's file to, so
         # its existence is what proves the diversion took — the replacement file
         # being present proves only that something wrote it.
@@ -2068,6 +2150,34 @@ def main() -> None:
             check(got.startswith("OK"),
                   f"and GdkPixbuf — the loader gnome-shell uses — loads {human}",
                   got or "<python3-gi said nothing>")
+
+        # AND THAT WHAT IT LOADS IS THE MARK. BRAND-PLAN BR1/BR6: the login
+        # mark is what build/lib/brand.py renders over brand/os7-wordmark.svg
+        # and the vendor file shipped beside it. Rendered here from the
+        # IMAGE's vendor file and the REPOSITORY's master, so an image that
+        # staged an old lockup, or one edited in the tree behind the
+        # generator, is told apart from the real thing. Stripped text, as for
+        # the icon above.
+        login = img.get("desktop.loginsvg", "").strip()
+        vendor = img.get("desktop.vendorsvg", "")
+        wanted = None
+        if vendor.strip():
+            try:
+                wanted = brand.render_login_lockup(
+                    brand.read_text(brand.master_path()), vendor).strip()
+            except ValueError as error:
+                wanted = None
+                print(f"      note  the lockup could not be rendered: {error}")
+        check(wanted is not None and login == wanted,
+              "and the login mark is what brand.py renders from the master and the shipped vendor mark",
+              "" if wanted is not None and login == wanted
+              else f"{len(login)} bytes read, {len(wanted) if wanted else 0} expected")
+        # Comments first: the generated lockup's own prose says the previous
+        # file "was <text>", and hook 0090's first version failed an ISO build
+        # on exactly that sentence.
+        login_code = re.sub(r"<!--.*?-->", "", login, flags=re.S)
+        check(bool(login) and not re.search(r"<text\b", login_code),
+              "and it sets nothing in a font - drawn geometry only (BRAND-PLAN BR2)")
 
         auto = {}
         for line in img.get("desktop.autostart", "").splitlines():

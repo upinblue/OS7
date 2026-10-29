@@ -701,20 +701,38 @@ for svg in /usr/share/pixmaps/ubuntu-logo-text.svg \
 	fi
 	[ -e "${svg}.distrib" ] && ok "${name}: base-files' original kept at ${name}.distrib" \
 		|| note "${name}.distrib is missing - the diversion did not --rename"
-	if grep -q '>OS/7</text>' "${svg}" 2>/dev/null; then
-		ok "${name} is the OS/7 mark"
+	# The mark is the TILE, byte for byte the icon LOGO=os7 names: both are
+	# build/lib/brand.py's output (BRAND-PLAN BR1), so cmp is the whole question
+	# and no element of the file has to be read.
+	if cmp -s "${svg}" /usr/share/icons/hicolor/scalable/apps/os7.svg; then
+		ok "${name} is the OS/7 tile, byte for byte the app icon"
 	else
-		note "${name} is not the OS/7 mark"
+		note "${name} is not the OS/7 tile - About shows something other than the mark"
 	fi
 done
 
-# The face the wordmark names. fc-match answers with the family fontconfig WOULD
-# use; `dpkg -s fonts-dejavu-core` does not.
-DEJAVU="$(fc-match -f '%{family}' 'DejaVu Sans' 2>/dev/null || true)"
-if [ "${DEJAVU}" = "DejaVu Sans" ]; then
-	ok "fc-match 'DejaVu Sans' -> DejaVu Sans (the greeter wordmark's face)"
+# The wordmark names NO face. Until 2026-10-29 it was <text> in DejaVu Sans
+# Bold and this block asked fc-match whether that face would resolve. Since
+# docs/BRAND-PLAN.md BR2 the mark is drawn geometry, generated from
+# brand/os7-wordmark.svg by build/lib/brand.py, and a <text> element in this
+# file means somebody put the old mark back - or edited the generated file in
+# the tree instead of the master. Asked of the file, not of fontconfig.
+#
+# ASKED OF THE ELEMENTS, NOT OF THE PROSE. The first version of this block was
+# `grep -q '<text'`, and it failed the first ISO built with it: the generated
+# lockup's own comment says the previous file "was <text> in DejaVu Sans Bold".
+# Naming a thing is not doing it — check-gui-tokens.py learned the same from a
+# comment explaining a colour (#151). So comments go first, non-greedily, the
+# way an XML parser would drop them, and only then is the element looked for.
+if python3 - "${WANT_LOGO}" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+sys.exit(0 if re.search(r"<text\b", re.sub(r"<!--.*?-->", "", text, flags=re.S)) else 1)
+PY
+then
+	note "${WANT_LOGO} has a <text> element: the greeter mark is set in a font again (BRAND-PLAN BR2)"
 else
-	note "fc-match 'DejaVu Sans' -> '${DEJAVU}': the greeter wordmark would substitute"
+	ok "${WANT_LOGO} sets nothing in a font - drawn geometry only (BRAND-PLAN BR2)"
 fi
 
 # 6d. The greeter's stylesheet. Hook 0035 step 9 moves it off Yaru with

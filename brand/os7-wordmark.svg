@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 72" width="170" height="72"
+     role="img" aria-label="OS/7">
+  <title>OS/7</title>
+<!--
+  THE OS/7 WORDMARK. This file IS the mark (docs/BRAND-PLAN.md, BR1). Every
+  other rendering of it - the white variant beside this file, the tile, the
+  login-screen lockup, the boot splash, the website's header - is derived from
+  the four shapes below, and installer/testing/check-brand.py holds each of
+  them to this geometry. Change a coordinate here and the check names every
+  copy that no longer agrees.
+
+  DRAWN, NOT SET (BR2). Every shape here is geometry authored for this file: an
+  ellipse ring, a spine, a parallelogram and a polygon. There is no <text> in it
+  and no font behind it, for two reasons that both matter.
+
+  The first is that a wordmark made of live text is not one mark but three: the
+  same file renders as Segoe UI Light on Windows, Helvetica Neue Light on macOS
+  and DejaVu Sans on a Linux desktop. That was the defect in the placeholder
+  this replaced on the website - and it was, until 2026-10-29, the state of
+  every mark this image shipped: three <text> elements in DejaVu Sans Bold.
+
+  The second is licensing. Converting Segoe UI Light glyphs to outlines would
+  have matched the website's placeholder exactly and would have put Microsoft
+  font outlines on a public website and into a public repository, which that
+  font's licence does not allow. This repository already tracks CC0 for
+  Fixedsys, OFL for Cascadia and GPL-3.0+ for sanoid; it does not get to be
+  careless here.
+
+  ONE COLOUR, TWO GROUNDS (BR4). The mark is orange, #ff6912, on transparent -
+  up in blue's orange, the one DECISIONS.md names for logo, boot splash and
+  website. It is drawn for a DARK ground: 6.7:1 against the website's #0a0d12,
+  7.3:1 against black. Against the Setup field #0057ad it would be 2.5:1, which
+  is why os7-wordmark-white.svg exists beside this file: the same geometry in
+  white, for the login screen and anything else that stands on the field. Those
+  are the two inks. There is no third, and no copy of this mark is recoloured
+  by hand - build/lib/brand.py derives the white file and the check requires
+  the result byte for byte.
+
+  GEOMETRY, and why two of the four shapes are filled rather than stroked.
+  Cap height 48 (y 12..60), weight 6.4 measured across the stroke, so the
+  weight-to-height ratio is 0.133 - light, which is what the mark is. The O and
+  the S are stroked: their terminals are either absent or nearly vertical, and a
+  butt cap gives the right cut for free. The SLASH and the 7 are filled
+  polygons, because a butt cap is cut perpendicular to the stroke and both of
+  those terminals have to be cut HORIZONTALLY. On a stroke this steep the
+  difference is about twenty degrees - small enough to miss in the source and
+  obvious at 150px.
+
+  Their horizontal weight is therefore wider than 6.4: a 6.4 stroke crossed
+  horizontally measures 6.4 x length / rise. For the slash that is 6.91, for the
+  diagonal of the 7 it is 6.83. check-brand.py recomputes both from the
+  coordinates, so "the weight is one number" is asserted and not remembered.
+
+  The slash breaks the cap line at both ends (y 4..68) deliberately. It is the
+  one gesture in the mark that is not aligned to anything, and it is what makes
+  the whole read as OS/7 rather than as three letters and a punctuation mark.
+
+  WHY THIS COMMENT IS INSIDE THE <svg> ELEMENT AND NOT ABOVE IT (BR7). Because
+  a comment above it blanked a login screen on a real machine (2026-08-29,
+  docs/BUILD-NOTES.md #111). GdkPixbuf, which is what gnome-shell uses to load
+  the greeter logo, decides whether a file is an image by sniffing a fixed
+  prefix: `<svg` beginning at byte 256 loads, at byte 257 the loader answers
+  "Couldn't recognize the image file format", and the greeter comes up with no
+  login dialog at all. Every file in brand/ keeps `<svg` inside the first 256
+  bytes so that a byte-identical copy into any consumer is safe, and the check
+  holds that too.
+
+  PROVENANCE. Drawn for the website (upinblue/os7-web, site/brand/) and moved
+  here on 2026-10-29 with the four shapes byte for byte; only this prose moved
+  from above the <svg> tag to below it. The website is to copy this file from
+  here from now on (BR3), so that the public repository, the image and the site
+  cannot drift apart.
+-->
+
+  <!-- O and S: stroked -->
+  <g fill="none" stroke="#ff6912" stroke-width="6.4" stroke-linecap="butt">
+    <ellipse cx="21" cy="36" rx="14.8" ry="20.8"/>
+    <path d="M 78.4 21.5
+             C 78.4 17.2, 72.0 15.2, 64.0 15.2
+             C 55.6 15.2, 49.6 18.6, 49.6 24.2
+             C 49.6 29.8, 55.6 32.0, 64.0 33.8
+             C 72.4 35.6, 78.4 38.2, 78.4 44.4
+             C 78.4 50.6, 72.4 56.8, 64.0 56.8
+             C 55.6 56.8, 49.6 53.2, 49.6 48.6"/>
+  </g>
+
+  <!-- slash and 7: filled, so both terminals are cut horizontally -->
+  <g fill="#ff6912">
+    <path d="M 88.55 68 L 95.45 68 L 121.45 4 L 114.55 4 Z"/>
+    <path d="M 124.8 24
+             L 124.8 8.8
+             L 167.62 8.8
+             L 148.42 60
+             L 141.58 60
+             L 158.38 15.2
+             L 131.2 15.2
+             L 131.2 24 Z"/>
+  </g>
+</svg>

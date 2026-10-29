@@ -1,0 +1,146 @@
+#!/bin/sh
+# BR8 — the OS/7 boot splash, on machines installed before Setup asked for it.
+#
+# THE STATE: Setup wrote GRUB_CMDLINE_LINUX_DEFAULT="" until 2026-10-29. The
+# initramfs starts plymouthd only when the kernel command line carries
+# `splash` (its init-premount script reads /proc/cmdline for that word), so on
+# every machine installed before then no boot splash has ever been drawn —
+# not Ubuntu's, not the OS/7 mark os7-console now ships. Setup writes
+# "quiet splash" since that day; this is the same line for machines that
+# already exist. docs/BRAND-PLAN.md BR8.
+#
+# IT ONLY TOUCHES A LINE NOBODY ELSE OWNS. This migration re-runs at every
+# release's first boot (build-os7-packages.sh ships migrations.d under each
+# version), so "add splash if it is missing" would overrule, at every single
+# update, an administrator who took it out. It therefore changes the line only
+# when it is empty — what Setup wrote — or holds nothing but console=
+# arguments, which a serial-console server and this repository's own harnesses
+# add. Anything else is somebody's decision and is left alone, said out loud.
+# And `nosplash` is the word for "no", honoured whatever else the line says.
+# On a serial console plymouthd forces its `details` plugin anyway and asks
+# for the passphrase as "Please unlock disk <name>" (measured on a 1.0.0.245
+# machine), so a headless machine loses nothing by carrying the word.
+#
+# THE MENU IS THE HARD HALF (BUILD-NOTES #181). /etc/default/grub reaches the
+# 10_linux_zfs entries at the next update-grub, but the entries this machine
+# BOOTS are OS/7's own (09_os7-boot-environments, saved_entry=os7-be-*), and
+# until the same release those were built with the kernel arguments of the
+# previous OS/7 entry — frozen at the first activation. The module this
+# release ships takes them from the stock entry instead, so the menu is rebuilt
+# here through Set-OS7BootEnvironment for the RUNNING environment, the one
+# supported way to change what boots.
+#
+# IDEMPOTENT BY ASKING FOR THE STATE: the line carries splash AND every entry
+# the machine can boot carries it. Then nothing runs at all.
+#
+# THE EXIT CODE OF THE THING THAT WRITES IS NOT THE PROOF: grub.cfg is read back
+# afterwards and every os7-be-* entry required to carry the word.
+set -u
+
+TAG="os7/80-boot-splash"
+DEFAULTS=/etc/default/grub
+CFG=/boot/grub/grub.cfg
+
+say() { echo "${TAG}: $*"; }
+
+if [ ! -f "${DEFAULTS}" ] || [ ! -f "${CFG}" ]; then
+	say "no ${DEFAULTS} or ${CFG} - not a machine this GRUB menu boots, nothing to do"
+	exit 0
+fi
+
+# The value as GRUB's own shell reads it: the last assignment wins, and the
+# quotes are not part of it.
+current="$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT=//p' "${DEFAULTS}" | tail -1 \
+	| sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")"
+
+case " ${current} " in
+	*" nosplash "*)
+		say "GRUB_CMDLINE_LINUX_DEFAULT says nosplash - an administrator's decision, left alone"
+		exit 0
+		;;
+esac
+
+# How many of the entries the machine can boot lack the word. OS/7's own
+# entries when there are any (they are what saved_entry names), otherwise the
+# stock ones.
+unsplashed() {
+	awk -v want="$1" '
+		/^menuentry / { f = (index($0, want) > 0) }
+		f && /^[[:space:]]*linux[[:space:]]/ { n++; if ($0 !~ /[[:space:]]splash([[:space:]]|$)/) bad++ }
+		f && /^}/ { f = 0 }
+		END { if (n == 0) print "none"; else print bad + 0 }
+	' "${CFG}"
+}
+which="'os7-be-"
+[ "$(unsplashed "${which}")" = "none" ] && which="'gnulinux-rpool/"
+
+case " ${current} " in
+	*" splash "*)
+		if [ "$(unsplashed "${which}")" = "0" ]; then
+			say "the kernel line asks for the splash and every bootable entry carries it - nothing to do"
+			exit 0
+		fi
+		say "GRUB_CMDLINE_LINUX_DEFAULT carries splash and the menu does not yet"
+		;;
+	*)
+		for tok in ${current}; do
+			case "${tok}" in
+				console=*) ;;
+				*)
+					say "GRUB_CMDLINE_LINUX_DEFAULT=\"${current}\" was edited on this machine;"
+					say "not adding splash to a line somebody else owns."
+					say "Add 'splash' to it to get the OS/7 boot splash, or 'nosplash' to say no."
+					exit 0
+					;;
+			esac
+		done
+		# Re-joined from the words, so a line that held " console=…" (the
+		# harness writes a leading space) does not come out with two. Safe to
+		# split: every word was just required to be a console= argument.
+		# shellcheck disable=SC2086
+		set -- ${current}
+		new="quiet splash${*:+ $*}"
+		if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "${DEFAULTS}"; then
+			sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${new}\"|" "${DEFAULTS}"
+		else
+			printf 'GRUB_CMDLINE_LINUX_DEFAULT="%s"\n' "${new}" >> "${DEFAULTS}"
+		fi
+		say "GRUB_CMDLINE_LINUX_DEFAULT is now \"${new}\""
+		;;
+esac
+
+# ---- the menu --------------------------------------------------------------
+if ! update-grub >/dev/null 2>&1; then
+	say "update-grub failed; ${DEFAULTS} is changed and the menu is not"
+	exit 1
+fi
+
+if grep -q "'os7-be-" "${CFG}"; then
+	if ! command -v pwsh >/dev/null 2>&1; then
+		say "pwsh is not on PATH; OS/7's own menu is written by Set-OS7BootEnvironment"
+		exit 1
+	fi
+	say "rebuilding OS/7's menu for the running boot environment"
+	if ! pwsh -NoProfile -NonInteractive -Command '
+			$ErrorActionPreference = "Stop"
+			Import-Module OS7 -ErrorAction Stop
+			$running = @(Get-OS7BootEnvironment | Where-Object Running)
+			if ($running.Count -ne 1) {
+				throw "expected one running boot environment, found $($running.Count)"
+			}
+			Set-OS7BootEnvironment -Name $running[0].Name -Confirm:$false | Out-Null
+		'; then
+		say "Set-OS7BootEnvironment failed; the menu still boots without the splash"
+		exit 1
+	fi
+fi
+
+# ---- ASK THE RESULT --------------------------------------------------------
+left="$(unsplashed "${which}")"
+if [ "${left}" != "0" ]; then
+	say "the menu was rebuilt and ${left} bootable entr(y/ies) still lack 'splash'"
+	exit 1
+fi
+
+say "done: every bootable entry carries splash; the OS/7 mark shows from the next boot"
+exit 0

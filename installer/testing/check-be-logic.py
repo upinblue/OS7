@@ -235,6 +235,80 @@ def relaunch():
          "python3", "/repo/installer/testing/check-be-logic.py"]).returncode
 
 
+def menu_arguments(tmp, env, check):
+    """
+    BUILD-NOTES #181: the kernel arguments in OS/7's own menu entries come from
+    the STOCK generator's entry, not from the template — which from the second
+    activation on is OS/7's previous entry, so a GRUB_CMDLINE_LINUX_DEFAULT
+    change never reached the entries the machine boots. Measured on a 1.0.0.245
+    machine: `quiet splash` in all four 10_linux_zfs entries and in neither
+    os7-be-* one.
+
+    The menu below is the measured shape: a zsys-history FUNCTION whose entries
+    are templates with `${...}` in the id (and which must never be taken as the
+    stock entry), OS/7's own entry with the OLD arguments, and 10_linux_zfs's
+    top-level entry with the NEW ones. Then the same menu without the stock
+    entry, where the template's arguments must stand.
+    """
+    drive = os.path.join(tmp, "menu-args.ps1")
+    with open(drive, "w") as f:
+        f.write(f"""
+$ErrorActionPreference = 'Stop'
+Import-Module '{MODULE}' -Force
+$m = Get-Module OS7
+$placeholder = @'
+function gen_reverts {{
+	menuentry 'Revert system only' --class os_7 ${{menuentry_id_option}} 'gnulinux-${{root_dataset}}-${{kversion}}' {{
+		linux	"${{kernel}}" root=ZFS="${{root_dataset}}" ro boot=zfs PLACEHOLDER-ARGS
+		initrd	"${{initrd}}"
+	}}
+}}
+'@
+$os7 = @'
+menuentry 'OS/7 1.0.0.245 — os7_a' --class os_7 --class gnu-linux --class gnu --class os $menuentry_id_option 'os7-be-os7_a' {{
+	search --no-floppy --fs-uuid --set=root b27d79ae3ab198f8
+	linux	"/BOOT/os7_a@/vmlinuz-7.0.0-31-generic" root=ZFS="rpool/ROOT/os7_a" ro boot=zfs console=ttyS0,115200 crashkernel=OLD
+	initrd	"/BOOT/os7_a@/initrd.img-7.0.0-31-generic"
+}}
+'@
+$stock = @'
+menuentry 'OS/7 1.0.0 (preview)' --class os_7 --class gnu-linux --class gnu --class os ${{menuentry_id_option}} 'gnulinux-rpool/ROOT/os7_a-7.0.0-31-generic' {{
+	search --no-floppy --fs-uuid --set=root b27d79ae3ab198f8
+	linux	"/BOOT/os7_a@/vmlinuz-7.0.0-31-generic" root=ZFS="rpool/ROOT/os7_a" ro boot=zfs quiet splash console=ttyS0,115200 crashkernel=NEW lit=$x
+	initrd	"/BOOT/os7_a@/initrd.img-7.0.0-31-generic"
+}}
+'@
+$envs = @(
+	[pscustomobject]@{{ Name = 'os7_a'; RootDataset = 'rpool/ROOT/os7_a'; Release = '1.0.0.245'; Complete = $true; Kernel = 'vmlinuz-7.0.0-31-generic'; Initrd = 'initrd.img-7.0.0-31-generic' }},
+	[pscustomobject]@{{ Name = 'os7_b'; RootDataset = 'rpool/ROOT/os7_b'; Release = '1.0.0.246'; Complete = $true; Kernel = 'vmlinuz-7.0.0-32-generic'; Initrd = 'initrd.img-7.0.0-32-generic' }}
+)
+$with = & $m {{ param($c, $e) New-OS7MenuFragment -Config $c -Template 'rpool/ROOT/os7_a' -Environments $e }} ($placeholder + "`n" + $os7 + "`n" + $stock) $envs
+$without = & $m {{ param($c, $e) New-OS7MenuFragment -Config $c -Template 'rpool/ROOT/os7_a' -Environments $e }} ($placeholder + "`n" + $os7) $envs
+foreach ($l in ($with -split "`n")) {{ if ($l -match '^\\s*linux\\s') {{ 'WITH ' + $l.Trim() }} }}
+foreach ($l in ($without -split "`n")) {{ if ($l -match '^\\s*linux\\s') {{ 'WITHOUT ' + $l.Trim() }} }}
+""")
+    p = subprocess.run(["pwsh", "-NoProfile", "-File", drive], env=env,
+                       capture_output=True, text=True)
+    with_ = [l[5:] for l in p.stdout.splitlines() if l.startswith("WITH ")]
+    without = [l[8:] for l in p.stdout.splitlines() if l.startswith("WITHOUT ")]
+
+    print("\n### #181: the kernel arguments of OS/7's own entries\n")
+    check(len(with_) == 2 and all("quiet splash" in l and "crashkernel=NEW" in l for l in with_),
+          "OS/7's entries take the STOCK generator's arguments, not the template's",
+          " | ".join(with_) or (p.stderr.strip()[-300:] or "no output"))
+    b = next((l for l in with_ if 'root=ZFS="rpool/ROOT/os7_b"' in l), "")
+    check("/BOOT/os7_b@/vmlinuz-7.0.0-32-generic" in b,
+          "and each entry still boots its own dataset and kernel", b or "no os7_b entry")
+    check("PLACEHOLDER-ARGS" not in p.stdout,
+          "a zsys-history template entry is never taken for the stock one")
+    check(any("lit=$x" in l for l in with_),
+          "a `$` in an argument arrives literally, not as a regex group reference")
+    check(len(without) == 2 and all("crashkernel=OLD" in l and "splash" not in l
+                                    for l in without),
+          "with no stock entry in the menu the template's arguments stand",
+          " | ".join(without) or "no output")
+
+
 def main():
     # The fakes are POSIX programs and the grub.d script under test is
     # EXECUTED — a Windows host cannot start either, so there the check runs
@@ -445,6 +519,8 @@ try {{
     root_line = next((c for c in clones if c.endswith(" rpool/ROOT/os7_b")), "")
     check("-o mountpoint=/ " in root_line,
           "the boot environment's own mountpoint is set to / explicitly")
+
+    menu_arguments(tmp, env, check)
 
     if os.environ.get("BE_KEEP"):
         print(f"\n(kept: {tmp})")
