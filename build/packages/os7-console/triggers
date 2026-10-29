@@ -1,0 +1,7 @@
+# The boot splash lives in the initramfs: plymouth's initramfs hook copies the
+# theme default.plymouth names, its images and its plugin. So installing,
+# upgrading or removing this package must rebuild it, and initramfs-tools
+# provides the trigger for exactly that. noawait: nothing needs the initramfs
+# rebuilt before this package counts as configured, and initramfs-tools
+# collects every activation in one dpkg run into a single rebuild.
+activate-noawait update-initramfs

@@ -31,6 +31,7 @@ import xml.etree.ElementTree as ET
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import palette  # noqa: E402
+import brand_raster  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 BRAND_DIR = os.path.join(REPO, "brand")
@@ -100,6 +101,46 @@ LOCKUP_CAP_FOOT = 180        # where the cap line's foot lands: the old text's b
 LOCKUP_RULE = (220, 226, 440, 4, 0.55)             # x, y, width, height, opacity
 LOCKUP_VENDOR_TRANSFORM = "translate(286.75 262) scale(0.6)"
 LOCKUP_VENDOR_OPACITY = 0.85
+
+# ---------------------------------------------------------------------------
+# The boot splash (BRAND-PLAN BR8): the mark as Plymouth sprites, rendered by
+# brand_raster.py from the master's four shapes, into the theme directory the
+# os7-console package ships on BOTH architectures.
+#
+# Each shape is its own sprite on a canvas the size of the whole mark, so the
+# script places all four at one point and animates them one by one without
+# knowing where any shape sits inside the mark.
+#
+# SCALE 3 is the native size: 510x216 px, which the script scales DOWN to about
+# a quarter of the screen width (Plymouth's Image.Scale is bilinear; scaling up
+# would blur, scaling down does not). 2560 px wide is the first width at which
+# the mark would be drawn at more than native size, and it is then capped.
+#
+# The progress bar and the password field are the same frame: 20 blocks in the
+# Windows 2000 idiom while the machine boots, bullets in their place while it
+# asks for the disk passphrase. Its geometry is integer pixels at native size,
+# and the four numbers the script needs to lay blocks and bullets out are
+# required by check-brand.py to agree with the ones here.
+# ---------------------------------------------------------------------------
+SPLASH_REL = "build/packages/os7-console/tree/usr/share/plymouth/themes/os7"
+SPLASH_SCALE = 3
+BAR_FRAME = 3          # the frame's line, px
+BAR_PAD = 3            # between the frame and the blocks
+BLOCKS = 20
+BLOCK_W, BLOCK_H, BLOCK_GAP = 22, 18, 3
+BAR_W = 2 * (BAR_FRAME + BAR_PAD) + BLOCKS * BLOCK_W + (BLOCKS - 1) * BLOCK_GAP   # 509
+BAR_H = 2 * (BAR_FRAME + BAR_PAD) + BLOCK_H                                      # 30
+BULLET, BULLET_GAP = 12, 6
+BULLET_INSET = (BAR_H - BULLET) // 2                                             # 9
+
+# What os7.script must say, by name — check-brand.py reads the script for these.
+SPLASH_LAYOUT = {
+    "block_count": BLOCKS,
+    "block_inset": BAR_FRAME + BAR_PAD,
+    "block_pitch": BLOCK_W + BLOCK_GAP,
+    "bullet_inset": BULLET_INSET,
+    "bullet_pitch": BULLET + BULLET_GAP,
+}
 
 START_TAG = re.compile(r"<svg\b[^>]*>", re.S)
 SVG_NS = "{http://www.w3.org/2000/svg}"
@@ -386,6 +427,83 @@ DERIVED = [
 ]
 
 
+def _scaled(points, s):
+    return [(x * s, y * s) for x, y in points]
+
+
+def splash_sprites(master_text):
+    """
+    name -> (width, height, rows): every PNG the boot splash theme ships, from
+    the master's four shapes and the bar geometry above. Pure function of the
+    master; brand_raster.py does the pixels.
+    """
+    shapes = validate_master(master_text)
+    _, _, vw, vh = view_box(master_text)
+    s = SPLASH_SCALE
+    w, h = int(round(vw * s)), int(round(vh * s))
+    orange, ink = hex_to_rgb(ORANGE), hex_to_rgb(INK)
+
+    o = shapes["O"]
+    ring = brand_raster.ellipse_ring(float(o["cx"]) * s, float(o["cy"]) * s,
+                                     float(o["rx"]) * s, float(o["ry"]) * s,
+                                     float(o["stroke-width"]) * s)
+    spine = [_scaled(p, s) for p, _ in brand_raster.parse_path(shapes["S"]["d"])]
+    s_loops = [brand_raster.stroke_outline(p, float(shapes["S"]["stroke-width"]) * s)
+               for p in spine]
+    slash = [_scaled(p, s) for p, _ in brand_raster.parse_path(shapes["slash"]["d"])]
+    seven = [_scaled(p, s) for p, _ in brand_raster.parse_path(shapes["7"]["d"])]
+
+    def sprite(loops, width, height, colour):
+        cov = brand_raster.fill(loops, width, height)
+        return width, height, brand_raster.to_rgba(cov, width, height, colour)
+
+    f = BAR_FRAME
+    frame = [brand_raster.rect(0, 0, BAR_W, BAR_H),
+             brand_raster.rect(f, f, BAR_W - f, BAR_H - f)[::-1]]
+    return {
+        "o.png": sprite(ring, w, h, orange),
+        "s.png": sprite(s_loops, w, h, orange),
+        "slash.png": sprite(slash, w, h, orange),
+        "seven.png": sprite(seven, w, h, orange),
+        "frame.png": sprite(frame, BAR_W, BAR_H, ink),
+        "block.png": sprite([brand_raster.rect(0, 0, BLOCK_W, BLOCK_H)],
+                            BLOCK_W, BLOCK_H, orange),
+        "bullet.png": sprite([brand_raster.rect(0, 0, BULLET, BULLET)],
+                             BULLET, BULLET, ink),
+    }
+
+
+def sprite_matches(path, want):
+    """Does the PNG at `path` decode to exactly these pixels? (False when absent or unreadable.)"""
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "rb") as handle:
+            got = brand_raster.decode_png(handle.read())
+    except (ValueError, OSError, Exception):  # zlib.error is not a ValueError
+        return False
+    return got == want
+
+
+def write_sprites(repo_root, master_text):
+    """
+    Write each sprite whose PIXELS differ from what is on disk. A file whose
+    pixels already match is left alone, so running `write` on a host whose zlib
+    compresses differently does not rewrite eight binaries for nothing.
+    """
+    written = []
+    for name, want in splash_sprites(master_text).items():
+        path = os.path.join(repo_root, SPLASH_REL, name)
+        if sprite_matches(path, want):
+            continue
+        width, height, rows = want
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(brand_raster.encode_png(width, height, rows))
+        written.append(name)
+    return written
+
+
 def render_consumer(kind, master_text, vendor_text):
     if kind == "tile":
         return render_tile(master_text)
@@ -438,6 +556,9 @@ def write(brand_dir=BRAND_DIR, repo_root=REPO):
     for _, rel, kind in CONSUMERS:
         write_text(os.path.join(repo_root, rel), render_consumer(kind, master, vendor))
         print(f"    wrote {rel}")
+    written = write_sprites(repo_root, master)
+    print(f"    splash sprites in {SPLASH_REL}: "
+          + (", ".join(written) + " written" if written else "all already the master's pixels"))
 
 
 def verify(brand_dir=BRAND_DIR, repo_root=REPO):
@@ -469,6 +590,13 @@ def verify(brand_dir=BRAND_DIR, repo_root=REPO):
             stale.append(rel)
             continue
         compare(os.path.join(repo_root, rel), rel, render_consumer(kind, master, vendor))
+    for name, want in splash_sprites(master).items():
+        label = f"{SPLASH_REL}/{name}"
+        same = sprite_matches(os.path.join(repo_root, SPLASH_REL, name), want)
+        print(f"    {'ok  ' if same else 'FAIL'} {label}: "
+              f"{'decodes to' if same else 'does NOT decode to'} the master's pixels")
+        if not same:
+            stale.append(label)
     return stale
 
 

@@ -926,6 +926,15 @@ internal sealed class InitramfsStep : IStep
                     /tmp/initrd.list | head -20 >&2 || true
                 exit 1
             fi
+            # The boot splash (BRAND-PLAN BR8) lives in this image too: plymouth's
+            # initramfs hook copies the theme default.plymouth names. A NOTE, not
+            # a fault — a machine without its splash still unlocks and imports.
+            if grep -q 'plymouth/themes/os7/os7.script' /tmp/initrd.list \
+                    && grep -q 'plymouth/script.so' /tmp/initrd.list; then
+                echo "    ok       the OS/7 boot splash and the script plugin"
+            else
+                echo "    NOTE: the startup image carries no OS/7 boot splash (os7-console, default.plymouth)"
+            fi
             echo ">>> the startup image is complete"
             """;
 
@@ -1283,13 +1292,23 @@ internal sealed class BootloaderStep : IStep
         // It is set here rather than repaired at the first rollback on purpose:
         // the first rollback happens on a machine that has just stopped working,
         // and that is the wrong moment to be editing /etc/default/grub.
+        //
+        // `quiet splash` IS THE BOOT SPLASH (docs/BRAND-PLAN.md BR8). Without
+        // `splash` the initramfs never starts plymouthd at all — its
+        // init-premount script reads the command line for that word — so until
+        // 2026-10-29 the boot mark OS/7 shipped had never been shown on an
+        // installed machine. It goes in _DEFAULT, not in GRUB_CMDLINE_LINUX,
+        // because that is the half an operator edits and the half recovery
+        // entries leave out. On a serial console plymouthd forces its `details`
+        // plugin and the passphrase is asked there as "Please unlock disk …"
+        // (measured on a 1.0.0.245 bench), so a headless machine is no worse off.
         _t.Write(x, "etc/default/grub", $"""
             GRUB_DEFAULT=saved
             GRUB_TIMEOUT=5
             GRUB_TIMEOUT_STYLE=menu
             GRUB_DISTRIBUTOR="OS/7"
             GRUB_CMDLINE_LINUX="boot=zfs"
-            GRUB_CMDLINE_LINUX_DEFAULT=""
+            GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
             GRUB_DISABLE_OS_PROBER=true
             GRUB_DISABLE_RECOVERY=true
 
@@ -1357,6 +1376,15 @@ internal sealed class BootloaderStep : IStep
             # several arguments and complains about them instead of answering.
             ls /boot/efi/EFI/BOOT/BOOT*.EFI >/dev/null 2>&1 \
                 || FAULTS="$FAULTS no-removable-loader"
+
+            # The boot splash is not a reason to refuse a machine that boots,
+            # so this is a NOTE and never a FAULT — but it is asked of the menu
+            # GRUB will read, not of the file this step wrote (BRAND-PLAN BR8).
+            if grep -qE "^[[:space:]]*linux[[:space:]].* splash" /boot/grub/grub.cfg; then
+                echo "    ok       the menu boots with the OS/7 splash"
+            else
+                echo "    NOTE: no menu entry carries 'splash' - the machine will boot without the OS/7 splash"
+            fi
 
             echo ">>> the menu entries:"
             grep -E "^menuentry |root=ZFS|boot=zfs" /boot/grub/grub.cfg | head -12 | sed 's/^/    /'

@@ -35,6 +35,7 @@ compares them inside a built ISO (BR6). Neither is edited where it lies.
 |---|---|
 | `build/config/includes.chroot/usr/share/icons/hicolor/scalable/apps/os7.svg` | a byte copy of `os7-tile.svg`: the icon `LOGO=os7` names, and what hook 0035 rasterises into Plymouth's fallback until the boot splash has a theme of its own (BR8) |
 | `build/packages/os7-desktop-theme/tree/usr/share/pixmaps/os7-logo-login.svg` | the login screen's lockup: the wordmark in white at scale 2.7 with its cap line's foot on y=180, a rule, and the vendor mark's 215 paths from `upinblue-logo.svg` beside it, white at 85 %. Natural size 216×98, which is what the greeter draws |
+| `build/packages/os7-console/tree/usr/share/plymouth/themes/os7/*.png` | the boot splash's seven sprites (BR8): the four shapes, each on a 510×216 canvas so the script places them at one point, the progress frame, a block and a bullet. Rendered by `build/lib/brand_raster.py`, pure Python, and compared by their DECODED pixels — PNG bytes differ between zlib implementations, pixels must not. `os7.script` and `os7.plymouth` beside them are hand-written |
 
 ## The rules, in one paragraph each
 

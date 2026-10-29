@@ -4,7 +4,7 @@ Architecture: all
 Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
 Section: admin
 Priority: optional
-Depends: console-setup, kbd
+Depends: console-setup, kbd, plymouth
 Homepage: https://github.com/upinblue/os7
 Description: OS/7 console fonts and palette
  What the machine looks like before anything logs in: two console fonts, the
@@ -20,3 +20,10 @@ Description: OS/7 console fonts and palette
  It DIVERTS /etc/default/console-setup. That file belongs to the console-setup
  package, and a file OS/7 merely overwrites is one a later Ubuntu quietly
  overwrites back — with the wrong font and no sign that anything is wrong.
+ .
+ And the boot splash: a Plymouth script theme drawing the OS/7 mark shape by
+ shape over a segmented progress bar. Its sprites are generated from the one
+ mark in brand/ and nothing else; it uses only the script plugin, which is in
+ the plymouth package itself, so it is the same theme on both architectures.
+ It is registered as the default.plymouth alternative at a priority above
+ Ubuntu's bgrt, so an administrator's manual choice still wins.

@@ -9156,3 +9156,103 @@ rely on the payload to do so. Anything here that interleaves markers with the
 output of arbitrary commands — this probe, the serial-line markers in the
 `run-*.py` harnesses, the hooks' `ok`/`note` lines — carries the same
 obligation.
+
+## #173 — an OS/7 machine's kernel command line was frozen at its first activation, and update-grub said nothing
+
+**Found 2026-10-29** while giving installed machines the boot splash
+([BRAND-PLAN.md](BRAND-PLAN.md) BR8). On a machine installed from
+`OS7-1.0.0.245-amd64.iso`, `GRUB_CMDLINE_LINUX_DEFAULT` was set to
+`"quiet splash console=ttyS0,115200"` and `update-grub` was run:
+
+```
+== entries carrying splash:
+4
+	linux	"/BOOT/os7_1.0.0.245_…@/vmlinuz-7.0.0-31-generic" root=ZFS="rpool/ROOT/os7_1.0.0.245_…" ro boot=zfs console=ttyS0,115200 crashkernel=…
+	linux	"/BOOT/os7_1.0.1.0_…@/vmlinuz-7.0.0-31-generic" … ro boot=zfs console=ttyS0,115200 crashkernel=…
+```
+
+All four `10_linux_zfs` entries carried the new words. **Neither OS/7 entry
+did** — and `saved_entry=os7-be-os7_1.0.0.245_…`, so the OS/7 entry is the one
+the machine boots.
+
+**Why.** `09_os7-boot-environments` does not generate anything: it `cat`s a
+fragment `Set-OS7BootEnvironment` wrote, and `New-OS7MenuFragment` builds that
+fragment by substitution into a TEMPLATE — the first menu entry whose id names
+the running dataset. `09_` sorts before `10_`, so from the second activation on
+the first such entry is **OS/7's own previous one**, and its kernel arguments
+were copied into the next fragment, and that one's into the next. The command
+line was fixed at the first activation and carried forward for ever. An operator
+adding `nomodeset`, a serial console or `splash` edits the file Ubuntu documents,
+runs the command Ubuntu documents, sees `update-grub` report success, and boots
+the old line.
+
+**The fix keeps the template and changes one thing about it.** Everything that
+is hard to get right about an entry — the `search --fs-uuid`, the `insmod`s, the
+path forms — still comes from a known-good entry by substitution. The ARGUMENTS
+after `root=ZFS=<dataset>` now come from 10_linux_zfs's own top-level entry
+(`Get-OS7StockKernelArgument`), which update-grub renders from
+`/etc/default/grub` and `/etc/default/grub.d/` every time. Two shapes are
+excluded by name: an id still holding a `$` (10_linux_zfs emits a zsys-history
+FUNCTION whose entries are templates — `gnulinux-${root_dataset}-${kversion}`
+with `${kernel}` as their path), and a menu with no stock entry at all, which
+keeps the template's arguments as before.
+
+**Measured on the same machine afterwards**: the menu rebuilt by
+`Set-OS7BootEnvironment` carried `ro boot=zfs quiet splash console=ttyS0,115200
+crashkernel=…`, and removing `console=ttyS0,115200` from the defaults and
+rebuilding again removed it from the OS/7 entry too. `check-be-logic.py` holds
+it in its own section — the stock arguments arrive, each entry keeps its own
+dataset and kernel, a zsys template is never taken for the stock entry, a `$`
+in an argument arrives literally (a MatchEvaluator, not a replacement string),
+and with no stock entry the template's arguments stand. Against a copy of the
+module with the fix removed, the first of those comes back `crashkernel=OLD`.
+
+**Seen beside it, not caused by it**: on that machine the rebuild dropped two
+entries, for `os7_1.0.1.0_…` and `os7_1.0.0.246_…`. ZFS has no datasets by those
+names — only snapshots of `os7_1.0.0.245_…` carrying them — so the old fragment
+had been listing two environments that no longer existed. Rebuilding is what
+removed them; how they outlived their datasets is not answered here.
+
+**And `grub-reboot` does not work on this layout**: GRUB prints
+`error: sparse file not allowed` when it tries to clear `next_entry` from a
+grubenv on ZFS, so a one-time entry becomes the entry for every boot until
+`grub-editenv … unset next_entry` is run from Linux. Nothing in OS/7 uses
+`grub-reboot`; this is for whoever reaches for it next.
+
+## #174 — with `splash`, the passphrase prompt is redrawn at every keystroke, and a harness waiting for "unlock disk" after typing reads the echo as a rejection
+
+**Found 2026-10-29**, measuring what `quiet splash` does to the harnesses that
+drive the passphrase over a serial line (O-BR1 in [BRAND-PLAN.md](BRAND-PLAN.md)).
+Two facts, both read off a 1.0.0.245 machine booted with
+`quiet splash console=ttyS0,115200` and no TPM:
+
+1. **On a serial console plymouthd never draws a theme.** `plymouthd` carries
+   the string `serial consoles detected, managing them with details forced`, and
+   that is what happened: the serial line showed `Please unlock disk os7_root`
+   from the `details` plugin, the display stayed `Display output is not active`.
+   So no theme — Ubuntu's or OS/7's — can change what a harness sees on serial.
+   Without `splash` the initramfs never starts plymouthd at all and `askpass`
+   prints `Please unlock disk os7_root: ` itself, which is why nothing here had
+   met this before.
+2. **The prompt is redrawn per keystroke.** Typing a 17-character passphrase put
+   `Please unlock disk os7_root*`, `…**`, … `…*****************` on the line —
+   the prompt text seventeen more times. A wrong passphrase prints
+   `No key available with this passphrase.` and
+   `cryptsetup: ERROR: os7_root: cryptsetup failed, bad password or options?`
+   and then the bare prompt again.
+
+`run-secureboot.py policy` typed the passphrase and then waited for
+`[login:, "unlock disk", "No key available"]`, reading the second as "the
+machine asked again". Under `splash` that matches the redraw of the passphrase
+being typed — #16's shape, a marker the typing itself produces — and the phase
+would have reported the kept keyslot as broken. It now waits for
+`cryptsetup failed|bad password` instead, the words a rejection actually
+prints. Every other harness waits for a login after typing and was right already;
+`run-s5.py`'s `unlock disk` is matched only BEFORE typing, where it is still the
+prompt and still matches (measured).
+
+**Then on the gate**: `run-secureboot.py all` on `OS7-1.0.0.249-amd64.iso`,
+the first medium whose Setup writes `quiet splash` — 32 ok, 0 failed. Its
+`policy.serial.log` carries the prompt seventeen times, `os7_root*` to
+`os7_root*****************`, and the phase passed on "and the passphrase still
+unlocks it". The old expectation would have stopped at the first of them.

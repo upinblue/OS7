@@ -235,3 +235,184 @@ while this worktree sat on 97335e4 (#167) and two sibling worktrees each held a
   `<text>` refusal has not run in a build.
 * **The website** is unchanged: its three files are to become byte copies of
   `brand/` (BR3) and are not yet.
+
+---
+
+## 7. Stage 3, the same day: the boot splash
+
+Asked for after Stage 2 was committed: the OS/7 mark animated while the machine
+boots ([BRAND-PLAN.md](BRAND-PLAN.md) BR8). The session restarted between the
+two stages and came back into this worktree; the other session was working in
+the main checkout and its own worktrees throughout, building an ISO and running
+the `qol2` bench, and nothing of theirs was touched — the bench used here is a
+COPY of `.vm/manual` made into this worktree's `.vm/splash`.
+
+### 7a. O-BR1 first, because it is the one thing that can break a gate
+
+On the copied 1.0.0.245 bench, `quiet splash` was put ahead of the harness's
+`console=ttyS0,115200` and the machine booted with no TPM, so it had to ask.
+
+* **Without `splash` plymouthd is never started** — the initramfs's
+  `init-premount/plymouth` reads `/proc/cmdline` for that word — and `askpass`
+  prints `Please unlock disk os7_root: ` itself. That is every OS/7 boot until
+  today.
+* **With it, plymouthd forces `details` on a serial console.** The string is in
+  the shipped binary (`serial consoles detected, managing them with details
+  forced`) and the screen agreed: `Display output is not active` on the display,
+  the prompt on serial. So **no theme ever draws where a harness looks** — the
+  O-BR1 answer does not depend on which theme is installed.
+* **The prompt is redrawn per keystroke** (`…os7_root*`, `…**`, …), a wrong
+  passphrase prints `No key available with this passphrase.` and
+  `cryptsetup failed, bad password or options?`, the right one leads to a login.
+  `run-secureboot.py policy` waited for "unlock disk" AFTER typing and would
+  have read the redraw as a rejection: BUILD-NOTES **#174**, fixed in the
+  harness. Every other harness waits for a login after typing.
+
+### 7b. Then #173, found by trying to deliver the command line
+
+`update-grub` after editing `/etc/default/grub` put `quiet splash` into all four
+`10_linux_zfs` entries and into neither OS/7 entry — and `saved_entry` names an
+OS/7 entry. `New-OS7MenuFragment` built each fragment by substitution into the
+first entry for the running dataset, which from the second activation on is
+OS/7's own previous entry: the kernel command line had been copied forward from
+a machine's first activation for ever. BUILD-NOTES **#173**. The arguments now
+come from the stock generator's entry; `check-be-logic.py` holds it in a new
+section (all green, and the first assertion comes back `crashkernel=OLD`
+against a copy of the module without the fix).
+
+Two things seen beside it and NOT caused by it, recorded rather than fixed:
+
+* the bench's old fragment listed `os7_1.0.1.0_…` and `os7_1.0.0.246_…`, which
+  exist only as snapshots of `os7_1.0.0.245_…` — rebuilding dropped them;
+* `grub-reboot` cannot clear `next_entry` on ZFS (`error: sparse file not
+  allowed`), so a one-time entry sticks until `grub-editenv … unset next_entry`.
+
+### 7c. What was built
+
+| what | where |
+|---|---|
+| the renderer | `build/lib/brand_raster.py` — polygons from the master's shapes, nonzero fill, exact horizontal coverage × 8 sub-scanlines, PNG in and out; `+ − × ÷ sqrt` only |
+| the sprites | seven PNGs in `build/packages/os7-console/tree/usr/share/plymouth/themes/os7/`, written by `brand.py write` (only when the pixels differ), held by `brand.py verify` |
+| the theme | `os7.plymouth`, `os7.script` beside them — hand-written; five layout numbers held equal to `brand.py`'s `SPLASH_LAYOUT` |
+| the package | `os7-console`: `Depends: plymouth`, postinst/prerm for the alternative, `triggers` for the initramfs, `brand.py verify` and ten required paths in its build |
+| new installs | `SystemSteps.cs`: `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"`, and NOTE lines for the theme in the initramfs and the word in the menu |
+| existing machines | migration `80-boot-splash`, BR9's rule |
+| the menu | `Get-OS7StockKernelArgument` + `New-OS7MenuFragment` (#173) |
+| the checks | `check-brand.py` §9 (17 checks; 44 in all, 46 with the website), self-test now a control plus nine defects; `check-image.py` asks the medium for the alternative, the owner and every theme file; `check-be-logic.py` #173 section; `run-secureboot.py` #174 |
+
+### 7d. What was measured
+
+**The renderer against librsvg 2.61.3**, same size: ink 22 662 against 22 640 px,
+mean edge difference 0.58/255, three pixels apart by more than 64. The package
+build — which runs `brand.py verify` under Linux on PNGs written under Windows —
+passed.
+
+**The package, in `os7img:175`**: install selects OS/7 at 150 over bgrt at 110
+in auto mode and fires the initramfs trigger; a manual `bgrt` survives a
+reinstall with the postinst's note; removal hands `default.plymouth` back to
+bgrt.
+
+**The migration, on the bench**: run 1 rewrote `" console=ttyS0,115200"` to
+`quiet splash console=ttyS0,115200` (after a fix: the first version wrote two
+spaces), rebuilt the menu, and read every OS/7 entry back with `splash`; run 2:
+`nothing to do`.
+
+**The splash, on the bench without a serial console** — screenshots over QMP:
+the mark, the prompt in the theme's field, bullets as typed through the VM
+keyboard, the bar filling with `cryptsetup: os7_root: set up successfully`
+under it, tty1's login about 15 s after the passphrase. The intro at 18 frames
+a second by PNG screendumps into the bench container's own `/tmp` (onto the
+bind mount it managed 1.3/s): O 0.05 s, S 0.22, 7 0.38, the slash cutting in
+from 0.78, complete at 1.06. A slow-motion run (the frame counter at 0.1 per
+tick, on the bench only) is what showed the field arriving 0.8 s after the
+prompt; the script was fixed and the real-speed capture is of the fixed one.
+
+**GRUB, measured in passing**: every EFI boot waited 30 s in the menu.
+`00_header` sets `timeout=${GRUB_RECORDFAIL_TIMEOUT:-30}` on EFI whenever GRUB
+cannot write its environment, which on ZFS it cannot. BRAND-PLAN BRL8; a
+product decision, not taken.
+
+### 7e. The gate
+
+**The first ISO built from this tree failed — on Stage 2's own instrument.**
+Hook 0090, as committed in dc73cf3, asked `grep -q '<text'` of the login
+lockup, and the lockup's GENERATED comment says the previous file "was <text>
+in DejaVu Sans Bold". The build stopped at
+`FAIL: … contains <text>: the greeter mark is set in a font again`, about a
+file with no text element in it — GdkPixbuf had loaded it two lines earlier.
+`check-image.py`'s matching check had the same blind spot. Both now strip
+comments non-greedily and look for a `<text` ELEMENT; the probe was tried on
+the real lockup (no element, though the bytes contain `<text`) and on a copy
+with one planted (found). It is #151's lesson in a third place: naming a thing
+is not doing it. Everything before hook 0090 in that build had gone as planned
+— os7-console configured, `default.plymouth` set to the OS/7 theme in auto mode,
+the initramfs trigger processed, the installer's `--self-test` green.
+
+**The second build produced `OS7-1.0.0.249-amd64.iso`** (BUILD 249 from host
+git, dirty, handed in the way the Makefile's SOURCE_FACTS does — `wsl` is not
+reachable from this worktree's session, so the `docker run` the Makefile
+composes was issued directly, with a development key in this worktree's
+`out/os7-gnupg` and `OS7_REPO_NO_CREDENTIAL=1`).
+
+**`check-image.py amd64` on it**: every brand and splash check green — 
+`default.plymouth` is the OS/7 theme in auto mode, owned by os7-console,
+`os7.plymouth` and `os7.script` byte for byte the repository's, all seven
+sprites decoding to the master's pixels; and Stage 2's three: the icon is the
+tile byte for byte, the login mark is what `brand.py` renders from the master
+and the SHIPPED vendor file, and it has no `<text>` element. The same eleven
+splash checks were red on `OS7-1.0.0.245-amd64.iso`, as they must be. **Five
+checks are red on 249 and are the test build's, by construction**: a `preview`
+medium trusting only a development key, and no read credential in os7-release
+(four lines). A release medium has to pass them; this one was built not to.
+
+**`run-s5.py all` on it: install PASS, boot PASS, cycle PASS, update PASS,
+timer PASS — no FAIL line anywhere in the run** (`out/run-s5-249.log`).
+What each phase said about this stage's work:
+
+* **boot (O-BR3).** `/proc/cmdline` read
+  `… ro boot=zfs quiet splash console=ttyS0,115200 crashkernel=…` — Setup's
+  line, then the harness's console. The FIRST boot asked for the passphrase,
+  which is #69 on this harness and not the splash: run-s5 installs from a live
+  session started with `-kernel`, so the install-time seal is against a PCR 7
+  that never saw shim, and the harness re-enrols. That prompt was found on the
+  serial line under `splash` and answered — O-BR1, on a gate. The boot after
+  it reached a login with nothing typed: 7 of 7.
+* **cycle**: 9 of 9. Two activations through `Set-OS7BootEnvironment` — the
+  clone, then `Restore-OS7` back — each built OS/7's menu with #173's code, and
+  each time the machine booted the environment it was told to. The TPM unlocked
+  the third boot too.
+* **update**: 8 of 8, 1.0.0.249 → 1.0.0.250 from a served repository, and the
+  firstboot list at 1.0.0.250's first boot ran
+  `50-tpm2-reseal 60-fstab-esp-ordering 70-domain-home-dataset
+  71-domain-homes-in-backup-policy 80-boot-splash` to completion. Migration 80's
+  normal case on a machine Setup installed with `quiet splash` is "nothing to
+  do", and it exited 0 inside the unit that fails loudly when a migration fails.
+* **timer**: 4 of 4.
+
+What this gate CANNOT say: it never looks at a display — its machine has a
+serial console, so plymouthd runs `details` there — and it boots every time
+with `console=ttyS0`. That the theme draws is the bench's evidence (§7d), not
+the gate's.
+
+**`run-secureboot.py all` on the same medium: 32 ok, 0 failed**
+(`out/run-secureboot-249.log`) — the medium through its own signed loader, an
+install from it, the disk with Secure Boot on unlocked by the TPM with nothing
+typed (on the FIRST boot: booting the medium through shim makes the
+install-time seal match, #100), and the `policy` control. That last phase is
+the one #174 changed, and its serial log shows why it had to be changed:
+`Please unlock disk os7_root*` … `Please unlock disk os7_root*****************`,
+seventeen redraws of the prompt while the passphrase was typed, which is
+plymouthd's `details` plugin under `splash`. The harness now waited past them
+for a login, and got one: "the TPM refused to unseal under a changed policy",
+"and the passphrase still unlocks it". With the old expectation the first
+redraw would have been read as "the machine asked again".
+
+### 7f. What was NOT measured
+
+* **arm64**: no arm64 medium was built and no arm64 machine booted; the theme
+  uses only the `script` plugin, which the arm64 manifest's `plymouth` carries,
+  and that is an inference from the package list, not a boot.
+* **O-BR4**: a machine with an ACPI BGRT table.
+* **HiDPI and multi-head**: the bench has one 1280×800 virtio display.
+* **Shutdown and reboot** with the theme (the mark without the bar) were not
+  photographed.

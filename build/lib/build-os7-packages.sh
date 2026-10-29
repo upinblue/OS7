@@ -733,6 +733,25 @@ build_os7_console() {
 	install -Dm644 "${REPO}/build/config/includes.chroot/etc/default/console-setup" \
 		"${stage}/usr/share/os7/console-setup"
 
+	# THE BOOT SPLASH (docs/BRAND-PLAN.md BR8): a Plymouth script theme that
+	# arrives through tree/, on both architectures, because what the machine
+	# looks like before anything logs in is this package's whole subject. Its
+	# seven PNGs are GENERATED from brand/os7-wordmark.svg; brand.py verify
+	# re-renders them and requires the checked-in files to decode to the same
+	# pixels, so a stale sprite fails the package build here rather than a boot.
+	python3 "${REPO}/build/lib/brand.py" verify >/dev/null || {
+		python3 "${REPO}/build/lib/brand.py" verify >&2 || true
+		echo "!!! os7-console: the splash sprites are not the master's pixels -" >&2
+		echo "!!! run python3 build/lib/brand.py write and commit the result." >&2
+		exit 1
+	}
+	local splash=./usr/share/plymouth/themes/os7
+	local -a splash_must=("${splash}/os7.plymouth" "${splash}/os7.script")
+	local sprite
+	for sprite in o s slash seven frame block bullet; do
+		splash_must+=("${splash}/${sprite}.png")
+	done
+
 	pkg_copyright os7-console "${stage}"
 	pkg_control  os7-console "${stage}" all
 	pkg_finish   os7-console "${stage}" all \
@@ -741,7 +760,8 @@ build_os7_console() {
 		./usr/share/os7/palette-default.vtrgb \
 		./usr/share/os7/palette-contrast.vtrgb \
 		./usr/share/os7/console-setup \
-		./usr/share/doc/os7-console-font/LICENSE
+		./usr/share/doc/os7-console-font/LICENSE \
+		"${splash_must[@]}"
 }
 
 # ---------------------------------------------------------------------------

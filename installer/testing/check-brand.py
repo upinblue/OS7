@@ -305,7 +305,41 @@ def run():
 
     # ---------------------------------------------------------------- 9
     print()
-    print("  9. The website's copies, where a checkout is beside this one (BR3)")
+    print("  9. The boot splash: the master's pixels, and a script that agrees (BR8)")
+
+    theme = os.path.join(SCAN_ROOT, brand.SPLASH_REL)
+    sprites = brand.splash_sprites(master)
+    for name, want in sprites.items():
+        check(brand.sprite_matches(os.path.join(theme, name), want),
+              f"{name} decodes to what brand_raster.py renders from the master")
+
+    script_path = os.path.join(theme, "os7.script")
+    script = brand.read_text(script_path) if os.path.exists(script_path) else ""
+    check(bool(script), "os7.script exists", script_path)
+    code = re.sub(r"#[^\n]*", "", script)
+    for key, value in brand.SPLASH_LAYOUT.items():
+        m = re.search(rf"^\s*{key}\s*=\s*(\d+)\s*;", code, re.M)
+        got = int(m.group(1)) if m else None
+        check(got == value, f"os7.script's {key} is brand.py's {value}",
+              "" if got == value else f"the script says {got}")
+    loaded = set(re.findall(r'Image\(\s*"([^"]+)"\s*\)', code)) \
+        | set(re.findall(r'scaled\(\s*"([^"]+)"\s*\)', code))
+    check(loaded == set(sprites),
+          "the script loads exactly the sprites the generator makes",
+          "" if loaded == set(sprites) else
+          f"loads {sorted(loaded - set(sprites))} that do not exist, "
+          f"never loads {sorted(set(sprites) - loaded)}")
+
+    plymouth_path = os.path.join(theme, "os7.plymouth")
+    plymouth = brand.read_text(plymouth_path) if os.path.exists(plymouth_path) else ""
+    for line in ("ModuleName=script",
+                 "ImageDir=/usr/share/plymouth/themes/os7",
+                 "ScriptFile=/usr/share/plymouth/themes/os7/os7.script"):
+        check(line in plymouth.splitlines(), f"os7.plymouth says {line}")
+
+    # ---------------------------------------------------------------- 10
+    print()
+    print(" 10. The website's copies, where a checkout is beside this one (BR3)")
 
     web_mark = os.path.join(WEB_ROOT, "site", "brand", "os7-wordmark.svg")
     web_icon = os.path.join(WEB_ROOT, "site", "brand", "favicon.svg")
@@ -358,6 +392,13 @@ def self_test():
             for _, rel, kind in brand.CONSUMERS:
                 brand.write_text(os.path.join(scan, rel),
                                  brand.render_consumer(kind, master_text, vendor_text))
+            # The splash theme: its two hand-written files copied, its sprites
+            # rendered fresh into the scan root.
+            os.makedirs(os.path.join(scan, brand.SPLASH_REL), exist_ok=True)
+            for name in ("os7.script", "os7.plymouth"):
+                shutil.copy(os.path.join(REPO, brand.SPLASH_REL, name),
+                            os.path.join(scan, brand.SPLASH_REL, name))
+            brand.write_sprites(scan, master_text)
 
         def run_check(baseline=0):
             env = {**os.environ, "OS7_BRAND_ROOT": planted, "OS7_SCAN_ROOT": scan,
@@ -415,6 +456,29 @@ def self_test():
         fresh()
         edit(brand.CONSUMERS[0][1], 'rx="12"', 'rx="13"', root=scan)
         results.append(("an icon that is no longer byte-identical to the tile is caught",
+                        run_check() != 0))
+
+        # Defect 8: one pixel of one splash sprite changes. Written through the
+        # module's own encoder, so the file is a valid PNG and only the PIXELS
+        # say anything is wrong.
+        fresh()
+        sprite = os.path.join(scan, brand.SPLASH_REL, "seven.png")
+        with open(sprite, "rb") as handle:
+            width, height, rows = brand.brand_raster.decode_png(handle.read())
+        middle = bytearray(rows[height // 2])
+        middle[(width // 2) * 4 + 3] ^= 0x01
+        rows = rows[:height // 2] + [bytes(middle)] + rows[height // 2 + 1:]
+        with open(sprite, "wb") as handle:
+            handle.write(brand.brand_raster.encode_png(width, height, rows))
+        results.append(("a splash sprite one alpha step off the master is caught",
+                        run_check() != 0))
+
+        # Defect 9: the script's layout drifts from the generator's — a block
+        # pitch the frame PNG was not drawn for.
+        fresh()
+        edit(os.path.join(brand.SPLASH_REL, "os7.script"),
+             "block_pitch = 25;", "block_pitch = 26;", root=scan)
+        results.append(("a script layout number that disagrees with brand.py is caught",
                         run_check() != 0))
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -535,8 +535,20 @@ fi
 # brand/os7-wordmark.svg by build/lib/brand.py, and a <text> element in this
 # file means somebody put the old mark back - or edited the generated file in
 # the tree instead of the master. Asked of the file, not of fontconfig.
-if grep -q '<text' "${WANT_LOGO}" 2>/dev/null; then
-	note "${WANT_LOGO} contains <text>: the greeter mark is set in a font again (BRAND-PLAN BR2)"
+#
+# ASKED OF THE ELEMENTS, NOT OF THE PROSE. The first version of this block was
+# `grep -q '<text'`, and it failed the first ISO built with it: the generated
+# lockup's own comment says the previous file "was <text> in DejaVu Sans Bold".
+# Naming a thing is not doing it — check-gui-tokens.py learned the same from a
+# comment explaining a colour (#151). So comments go first, non-greedily, the
+# way an XML parser would drop them, and only then is the element looked for.
+if python3 - "${WANT_LOGO}" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+sys.exit(0 if re.search(r"<text\b", re.sub(r"<!--.*?-->", "", text, flags=re.S)) else 1)
+PY
+then
+	note "${WANT_LOGO} has a <text> element: the greeter mark is set in a font again (BRAND-PLAN BR2)"
 else
 	ok "${WANT_LOGO} sets nothing in a font - drawn geometry only (BRAND-PLAN BR2)"
 fi

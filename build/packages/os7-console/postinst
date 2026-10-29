@@ -16,6 +16,7 @@ set -e
 REAL=/etc/default/console-setup
 DISTRIB=/etc/default/console-setup.distrib
 OURS=/usr/share/os7/console-setup
+SPLASH=/usr/share/plymouth/themes/os7/os7.plymouth
 
 case "$1" in
 	configure)
@@ -34,6 +35,24 @@ case "$1" in
 		if [ ! -r "${REAL}" ]; then
 			echo "os7-console: ${REAL} does not resolve to a readable file." >&2
 			exit 1
+		fi
+
+		# THE BOOT SPLASH (docs/BRAND-PLAN.md BR8). An ALTERNATIVE, not a file
+		# written over default.plymouth: Ubuntu's bgrt registers at 110, OS/7's
+		# at 150, so auto mode picks ours, a manual choice an administrator made
+		# stays theirs, and removing this package hands the link back. The
+		# initramfs carries the theme, so the `update-initramfs` trigger in this
+		# package's triggers file rebuilds it — deferred, once, at the end of
+		# the dpkg run, which is where it belongs during an image build or an
+		# update that also brings a new kernel.
+		update-alternatives --install /usr/share/plymouth/themes/default.plymouth \
+			default.plymouth "${SPLASH}" 150
+		chosen="$(update-alternatives --query default.plymouth 2>/dev/null \
+			| sed -n 's/^Value: //p')"
+		if [ "${chosen}" != "${SPLASH}" ]; then
+			# Said, not failed: a manual selection is a decision, not a fault.
+			echo "os7-console: default.plymouth is ${chosen:-unset}, not the OS/7 theme" \
+				"- left as it is (update-alternatives --auto default.plymouth to change)" >&2
 		fi
 		;;
 	abort-upgrade|abort-remove|abort-deconfigure)

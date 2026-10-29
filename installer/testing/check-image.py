@@ -37,6 +37,7 @@ the mirrors were pinned is a diagnostic. The sources.list in the image is the
 fact.
 """
 
+import base64
 import json
 import os
 import re
@@ -260,6 +261,14 @@ emit desktop.greeterlogo bash -c 'ls -l /mnt/sq/usr/share/pixmaps/os7-logo-login
 # build staged an older copy, or whose tree was edited behind the generator,
 # fails HERE and not on a login screen.
 emit desktop.iconsvg   cat /mnt/sq/usr/share/icons/hicolor/scalable/apps/os7.svg
+# THE BOOT SPLASH (BRAND-PLAN BR8), on BOTH architectures: which theme
+# default.plymouth names, who owns it, and the theme's files themselves, brought
+# home as base64 so the sprites can be decoded and compared with what
+# build/lib/brand.py renders from the master — pixels, not bytes, for the zlib
+# reason brand_raster.py gives.
+emit splash.alt        bash -c 'chroot /mnt/root update-alternatives --query default.plymouth 2>&1 | grep -E "^(Status|Value):" || true'
+emit splash.owner      bash -c 'chroot /mnt/root dpkg -S /usr/share/plymouth/themes/os7/os7.plymouth 2>/dev/null | cut -d: -f1'
+emit splash.files      bash -c 'cd /mnt/sq/usr/share/plymouth/themes/os7 2>/dev/null && for f in *; do printf "%s %s\n" "$f" "$(base64 -w0 "$f")"; done || true'
 emit desktop.loginsvg  cat /mnt/sq/usr/share/pixmaps/os7-logo-login.svg
 emit desktop.vendorsvg cat /mnt/sq/usr/share/pixmaps/upinblue-logo.svg
 # `grep -c` prints 0 AND exits 1 when nothing matches, so `$(grep -c … || echo 0)`
@@ -1117,6 +1126,47 @@ def main() -> None:
         check(owners.get(path_, "").strip() == owner,
               f"dpkg -S: {path_} belongs to {owner}",
               owners.get(path_, "(not asked)").strip())
+
+    # THE BOOT SPLASH (BRAND-PLAN BR8), both architectures. Three questions, and
+    # the order is the order things go wrong in: the theme can be installed and
+    # not CHOSEN (default.plymouth is an alternative, and Ubuntu's bgrt is
+    # registered too), chosen and not OWNED (a file a hook copied rolls back
+    # with nothing), and owned and STALE (a sprite that is not the master's).
+    alt = img.get("splash.alt", "")
+    check("Value: /usr/share/plymouth/themes/os7/os7.plymouth" in alt
+          and "Status: auto" in alt,
+          "default.plymouth is the OS/7 theme, in auto mode",
+          " ".join(alt.split()) or "<update-alternatives said nothing>")
+    # `dpkg -S` prints NOTHING for a path no package owns, and the `cut` after
+    # it exits 0 — so an empty answer is "nobody owns it", not "not asked".
+    check(img.get("splash.owner", "").strip() == "os7-console",
+          "dpkg -S: the splash theme belongs to os7-console",
+          img.get("splash.owner", "").strip() or "no package owns that path")
+    shipped = {}
+    for line in img.get("splash.files", "").splitlines():
+        name, _, b64 = line.partition(" ")
+        if b64:
+            shipped[name] = base64.b64decode(b64)
+    theme_src = os.path.join(REPO, brand.SPLASH_REL)
+    for name in ("os7.plymouth", "os7.script"):
+        with open(os.path.join(theme_src, name), "rb") as fh:
+            want_bytes = fh.read()
+        check(shipped.get(name) == want_bytes,
+              f"the image's {name} is the repository's, byte for byte",
+              "" if shipped.get(name) == want_bytes
+              else f"{len(shipped.get(name, b''))} bytes read, {len(want_bytes)} expected")
+    master_svg = brand.read_text(brand.master_path())
+    for name, pixels in brand.splash_sprites(master_svg).items():
+        got = None
+        if name in shipped:
+            try:
+                got = brand.brand_raster.decode_png(shipped[name])
+            except Exception as error:  # zlib.error is not a ValueError
+                got = f"undecodable: {error}"
+        check(got == pixels, f"the image's {name} decodes to the master's pixels",
+              "" if got == pixels else ("absent" if got is None else
+                                        str(got) if isinstance(got, str) else
+                                        f"{got[0]}x{got[1]}, pixels differ"))
     if arch == "amd64":
         # V3: `os7-versions <path>` is the whole contract with the file manager,
         # and the extension is what makes it reachable by right-clicking. A
@@ -1903,7 +1953,11 @@ def main() -> None:
               "and the login mark is what brand.py renders from the master and the shipped vendor mark",
               "" if wanted is not None and login == wanted
               else f"{len(login)} bytes read, {len(wanted) if wanted else 0} expected")
-        check(bool(login) and "<text" not in login,
+        # Comments first: the generated lockup's own prose says the previous
+        # file "was <text>", and hook 0090's first version failed an ISO build
+        # on exactly that sentence.
+        login_code = re.sub(r"<!--.*?-->", "", login, flags=re.S)
+        check(bool(login) and not re.search(r"<text\b", login_code),
               "and it sets nothing in a font - drawn geometry only (BRAND-PLAN BR2)")
 
         auto = {}

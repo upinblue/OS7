@@ -691,7 +691,17 @@ def phase_policy():
             c.drop()
             c.answering = True
             c.send(s5.PASSPHRASE)
-            i = c.expect([r"\blogin:", r"unlock disk", r"No key available"], 600,
+            # NOT "unlock disk" — and that is BUILD-NOTES #174, #16's shape again.
+            # With `splash` on the kernel line (Setup writes it since BRAND-PLAN
+            # BR8) plymouthd owns the prompt and, on a serial console, redraws
+            # it at EVERY keystroke: "Please unlock disk os7_root*", "…**", and
+            # so on. Waiting for "unlock disk" after typing therefore matches the
+            # echo of the passphrase being typed and reports a rejection that
+            # never happened. What a rejection actually prints, measured on a
+            # 1.0.0.245 machine by typing a wrong one: "No key available with
+            # this passphrase." and "cryptsetup failed, bad password or options?"
+            i = c.expect([r"\blogin:", r"cryptsetup failed|bad password",
+                          r"No key available"], 600,
                          "a login after the passphrase")
             if not check(i == 0, "and the passphrase still unlocks it", "",
                          "the machine asked again — the kept keyslot did not open"):

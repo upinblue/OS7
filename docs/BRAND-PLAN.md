@@ -25,13 +25,27 @@ greeter mark contains `<text>`. Rendered through librsvg 2.61.3 in a plain
 the tile at 16, 64 and 128 px — and legible at every one; **not** yet through
 the greeter on a machine (O-BR5), and no ISO has been built with it.
 
-**What is NOT built:** the website's copies (BR3, the other repository), the
-tile in the GUI applications (BRL7), and the boot splash: it is still Ubuntu's
-`bgrt` theme with the icon — now the tile — diverted into its fallback, and no
-installed machine has ever shown it, because the installer puts neither `quiet`
-nor `splash` on the kernel command line (§2c, §5, Stage 3).
+**STAGE 3, THE BOOT SPLASH, IS BUILT AND HAS BEEN SEEN ON A MACHINE (2026-10-29,
+the same day).** `os7-console` ships a Plymouth `script` theme on both
+architectures; its seven sprites are rendered from the master by
+`build/lib/brand_raster.py` — pure Python, no renderer — and `check-brand.py`
+and `check-image.py` require each to decode to the master's pixels. Setup
+writes `quiet splash`; firstboot migration 80 gives it to machines already
+installed; and getting there found **BUILD-NOTES #173** — OS/7's own menu
+entries had frozen the kernel command line at a machine's first activation, so
+no `/etc/default/grub` change had ever reached the entry a machine boots. On a
+1.0.0.245 machine with the theme installed, the intro was captured at 18 frames
+a second (O, S, 7, the slash cutting in, done at 1.06 s), the passphrase was
+asked in the theme's field and answered through the VM keyboard, and the bar
+filled to the login (§5a). **What a GATE has said** is in §5a too — it is the
+difference between "seen on a bench" and "true of the product".
 
-Decisions are **BR1–BR8**, limitations **BRL1–BRL7**, owed measurements
+**What is NOT built:** the website's copies (BR3, the other repository), the
+tile in the GUI applications (BRL7), the arm64 boot (the Mac), the removal of
+Ubuntu's text splash on arm64 (BRL4), and any decision about GRUB's 30-second
+EFI menu wait, which is Ubuntu's and measured (BRL8).
+
+Decisions are **BR1–BR9**, limitations **BRL1–BRL8**, owed measurements
 **O-BR1–O-BR6** (§7).
 
 Related authority: [DECISIONS.md](DECISIONS.md) "Branding" (the orange, and
@@ -165,7 +179,8 @@ answer for the website; the arm64 manifest makes it the answer at boot as well.
 | **BR5** | **The tile is the mark at icon size.** The 7 alone, on an orange tile with a 12-unit corner, is what a browser tab, an icon grid and `LOGO=os7` in `/etc/os-release` show — because the wordmark is 2.4 times as wide as it is tall and a 16px rendering of it is six pixels of cap height. The tile's transform is the website favicon's, to the digit, so the two are one shape; the check recomputes that it centres the 7. | **Decided 2026-10-29**; the icon switch is Stage 2 |
 | **BR6** | **Derived files are generated and never edited.** `build/lib/brand.py write` produces `os7-wordmark-white.svg` and `os7-tile.svg` from the master; `verify` and the check require the checked-in files to be that output byte for byte. A consumer in the image is either a byte-identical copy of a brand file or a lockup generated from one; the check holds the icon to byte-identity and the login mark to carrying the four shapes with no `<text>`. | **Decided 2026-10-29** |
 | **BR7** | **`<svg` inside the first 256 bytes, in every brand file.** GdkPixbuf sniffs a fixed prefix to decide whether a file is an image; a 35-line comment above the tag blanked a real login screen (#111). The rule is applied to the whole of `brand/` and not only to the greeter's copy, so that a byte-identical copy into any consumer is safe without anyone remembering why. The prose lives inside the element. | **Decided 2026-10-29** |
-| **BR8** | **The boot splash is an OS/7 Plymouth theme drawn from these shapes, on both architectures.** A `script`-plugin theme whose sprites are rasterised from the master at build time, set as `default.plymouth`, with `quiet splash` on the installed machine's command line; Ubuntu's `bgrt` theme with the diverted fallback is interim. The animation: the four shapes appear in sequence, the slash last, over a segmented progress bar in the Windows 2000 idiom; Esc shows the details; the passphrase prompt is the theme's. §5 has the mechanism and the measurements it owes. | **Proposed** — nothing built |
+| **BR8** | **The boot splash is an OS/7 Plymouth theme drawn from these shapes, on both architectures.** A `script`-plugin theme in `os7-console`, whose seven sprites are rendered from the master by `brand_raster.py` and checked pixel for pixel; registered as the `default.plymouth` alternative at 150 against Ubuntu's `bgrt` at 110, so a manual choice stays the administrator's; `quiet splash` on the installed machine's command line. The animation: the four shapes appear in sequence, the slash last and moving along its own slope, over a segmented progress bar in the Windows 2000 idiom; the passphrase is asked in the bar's frame with bullets; Esc shows Plymouth's details. **Text is drawn only where text can be** — the prompt and cryptsetup's messages through `Image.Text`, which needs `plymouth-label` and so exists on amd64 alone; the mark is never text (BR2). **On a serial console no theme draws at all**: plymouthd forces `details` there (#174), which is Plymouth's design and accepted. | **Built 2026-10-29**; seen on an amd64 bench, the gate in §5a |
+| **BR9** | **A migration changes only a line nobody else owns.** Firstboot migrations re-run at every release's first boot (build-os7-packages.sh ships `migrations.d` under each version), so "add `splash` where it is missing" would overrule, at every update, an administrator who removed it. Migration 80 therefore edits `GRUB_CMDLINE_LINUX_DEFAULT` only when it is empty — what Setup wrote before 2026-10-29 — or holds nothing but `console=` arguments, which serial servers and this repository's harnesses add; anything else is left alone and the reason printed. `nosplash` is the word for no, honoured whatever else the line says. | **Decided 2026-10-29** |
 
 ---
 
@@ -177,7 +192,8 @@ is to show, and when. The check's §8 reads the first two rows on every run.
 | surface | file | today | target | stage |
 |---|---|---|---|---|
 | app icon, `LOGO=os7`, GNOME About | `build/config/includes.chroot/usr/share/icons/hicolor/scalable/apps/os7.svg` | **a byte copy of `brand/os7-tile.svg` since 2026-10-29** (was a blue tile with `<text>`) | as today; `check-image.py` compares it inside the ISO | 2, built |
-| boot splash fallback | `spinner/bgrt-fallback.png`, diverted by hook 0035 from the icon | follows the icon: the tile at 128 px | goes away with the theme (BR8) | 3 |
+| **boot splash** | `build/packages/os7-console/tree/usr/share/plymouth/themes/os7/` — `os7.plymouth`, `os7.script`, seven PNGs | **built 2026-10-29**: the mark animated over the progress bar; sprites generated, held pixel for pixel by `check-brand.py` §9 and inside the ISO by `check-image.py` | as today | 3, built |
+| boot splash fallback | `spinner/bgrt-fallback.png`, diverted by hook 0035 from the icon | follows the icon: the tile at 128 px; reached only if somebody selects `bgrt` by hand | kept — the diversion still keeps Ubuntu's logo off a machine where someone does | — |
 | login screen | `build/packages/os7-desktop-theme/tree/usr/share/pixmaps/os7-logo-login.svg` | **GENERATED since 2026-10-29** from the master and the vendor file: the wordmark in white at scale 2.7, cap foot on y=180, the rule, the vendor mark; natural size 216×98 as before, read out of `LoginDialog` (was `<text>` in white) | as today; hook 0090 refuses `<text>`, `check-image.py` re-renders it from the shipped vendor file and compares | 2, built |
 | website header, footer, tab | `upinblue/os7-web`, `site/brand/` | the master's origin; comment above the `<svg>` tag | byte copies of `brand/` (BR3) | 2, other repository |
 | GUI applications | none yet | — | the tile, with the orange entering `Tokens.axaml` as a token first (G9 forbids a colour anywhere else under `src/`) | 2 or later |
@@ -187,57 +203,99 @@ is to show, and when. The check's §8 reads the first two rows on every run.
 
 ---
 
-## 5. The boot splash (BR8) — mechanism, and what it owes
+## 5. The boot splash (BR8) — as built
 
-**Mechanism.** A theme directory `os7/` under `/usr/share/plymouth/themes/`
-with `os7.plymouth` (`ModuleName=script`) and `os7.script`, plus the sprites:
-four PNGs — O, S, slash, 7 — and the progress bar's block, rasterised from
-`brand/os7-wordmark.svg` at build time with `rsvg-convert`, which hook 0035
-already installs and removes for the current fallback. `update-alternatives`
-points `default.plymouth` at it; `update-initramfs` carries it into the
-initramfs, which `Update-OS7` rebuilds anyway. The ground is black (7.28:1);
-the ink is orange. No text, because arm64 has no label plugin (§2d) and
-because BR2.
+**The theme.** `/usr/share/plymouth/themes/os7/` in `os7-console`, on both
+architectures, because "what the machine looks like before anything logs in" is
+that package's whole subject and the desktop theme is amd64-only. It holds
+`os7.plymouth` (`ModuleName=script`), the hand-written `os7.script`, and seven
+PNGs GENERATED by `build/lib/brand.py write`: the four shapes, each on a canvas
+the size of the whole mark so the script places all four at one point; the
+progress frame; a block; a bullet. The native size is scale 3 — the mark
+510×216 px — and the script scales DOWN to about a quarter of the screen width
+and never above native, because Plymouth's `Image.Scale` is bilinear. Ground
+black (7.28:1), ink orange, the frame and bullets white (BR4).
 
-**The animation.** The script plugin animates by opacity, position and scale
-per frame. The four shapes appear in order — O, S, 7, then the slash cutting
-in — within about a second; below them a segmented progress bar fills from
-`Plymouth.SetBootProgressFunction`, in the Windows 2000 idiom of blocks rather
-than a spinner. `SetDisplayPasswordFunction` draws the passphrase prompt as a
-field under the mark; `SetMessageFunction` shows what systemd says; Esc toggles
-Plymouth's details, as it does in every theme.
+**The renderer is this repository's own** (`build/lib/brand_raster.py`).
+`rsvg-convert` is not in either build image, and a PNG it wrote could not be
+held to anything without the same renderer at the same version on every host.
+The mark is small enough not to need one: an ellipse ring (its true offset
+curves, not two ellipses), a stroked cubic spine with butt caps, two polygons,
+filled nonzero with exact horizontal coverage and eight sub-scanlines. It uses
+only `+ − × ÷` and `sqrt` — correctly rounded on every platform — and walks the
+ellipse by the rational parametrisation rather than `cos`/`sin`, which differ in
+the last place between C libraries. So the check compares DECODED PIXELS, which
+is stable across zlib implementations where the PNG bytes are not. Compared
+with librsvg 2.61.3 at the same size: ink area 22 662 against 22 640 px
+(+0.1 %), mean edge difference 0.58 of 255, three pixels apart by more than 64.
+The PNGs were written on Windows and the package build verified them under
+Linux — the determinism claim, exercised once.
 
-**What changes in the product:**
+**The animation** (50 frames a second, eased): O from frame 4, S from 10, 7 from
+16, each fading in over 12; the slash from 28 over 14, travelling 18 units down
+its own slope as it arrives; the frame from 40. Then the 20 blocks follow
+`Plymouth.SetBootProgressFunction`. On shutdown the mark is drawn and the bar is
+not. The passphrase is asked in the bar's frame with white bullets, the prompt
+above it in the system face where `Image.Text` exists; cryptsetup's messages
+appear under the bar the same way.
 
-* `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"` in `SystemSteps.cs` for new
-  installs, and a **firstboot migration** for machines already installed — the
-  C10 migration record, so it rolls back with the release.
-* A package carrying the theme, built on both architectures. Whether it is
-  `os7-desktop-theme` or its own package is open: the desktop theme is
-  amd64-only and the splash is not.
-* The arm64 image loses `plymouth-theme-ubuntu-text`, which the amd64 hook
-  already pins and purges.
+**What changed in the product:**
+
+* `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"` in `SystemSteps.cs`, with two
+  NOTE lines — not faults — that ask the installed initramfs for the theme and
+  the menu for the word.
+* `os7-console`: `Depends: plymouth`; the postinst registers the alternative at
+  150 and says so when an administrator's manual choice wins; the prerm removes
+  it; a `triggers` file activates `update-initramfs`; the package build runs
+  `brand.py verify` and refuses stale sprites; ten splash paths are required in
+  the built `.deb`.
+* Firstboot migration 80 (`os7-release/migrations.d/firstboot/80-boot-splash`)
+  for machines already installed, under BR9's rule, rebuilding OS/7's menu
+  through `Set-OS7BootEnvironment` and reading `grub.cfg` back.
+* `New-OS7MenuFragment` takes the kernel arguments from 10_linux_zfs's own
+  entry (#173) — without that, the migration's line would never have reached
+  the entry a machine boots.
+* `run-secureboot.py policy` waits for what a rejection prints, not for the
+  prompt it redraws (#174).
 * The medium's Install entry keeps `plymouth.enable=0`. Setup is the product's
-  text-mode face.
-* `check-image.py` learns the theme: `default.plymouth` resolves to it, the
-  sprites are PNGs of the expected sizes, and the diversion of
-  `bgrt-fallback.png` is retired rather than left behind.
+  text-mode face. The live session's entry already had `quiet splash` and now
+  shows the OS/7 mark.
 
-**What it must measure before "it works" (also §7):**
+### 5a. What was measured, 2026-10-29
 
-* **O-BR1, the passphrase prompt under a splash.** `run-s5.py` and
-  `run-secureboot.py policy` expect `Enter passphrase` / `passphrase for` on the
-  serial line and type there. With `splash`, Plymouth owns the prompt and
-  shows it on serial consoles through its text renderer. Whether the harnesses'
-  patterns still match is the one real risk to the gate, and it is a
-  measurement, not a guess.
-* **O-BR2, the splash seen.** Screenshots over QMP during boot — `os7lab.py
-  shot` or `vmscreen` — on amd64 here; `run-phase3.py boot` cannot watch an
-  installed amd64 machine (#132). arm64 boots only on the Mac.
-* **O-BR3, the TPM boot with a splash**: `run-s5.py boot` must still reach a
-  login prompt with nothing typed.
-* **O-BR4, hardware with a BGRT table**: that the theme shows OS/7's mark and
-  not the firmware's, which is the whole point of replacing `bgrt`.
+On a copy of the `manual` bench (a 1.0.0.245 headless install, one boot
+environment as a dataset) with the theme installed by hand, the new module
+swapped in, and its initramfs rebuilt. **A bench is for looking** (the
+os7-lab skill's own rule): what counts for the product is the gate below.
+
+| question | answer |
+|---|---|
+| O-BR1: with `quiet splash console=ttyS0`, no TPM — what is on the serial line? | `Please unlock disk os7_root`, from the `details` plugin plymouthd forces on serial; redrawn at every keystroke with one more `*`; the passphrase typed there unlocks and a login follows. A wrong one prints `No key available with this passphrase.` and `cryptsetup failed, bad password or options?` (#174) |
+| O-BR2: without a serial console — what is on the display? | the mark, the prompt and the field; bullets as typed through the VM keyboard; then the bar filling with `cryptsetup: os7_root: set up successfully` under it, then tty1's login, ~15 s after the passphrase. The intro captured at 18 frames a second: O at 0.05 s, S 0.22, 7 0.38, the slash cutting in from 0.78, done at 1.06 |
+| the migration, on that machine | first run: the line became `quiet splash console=ttyS0,115200`, the menu was rebuilt, every OS/7 entry carried `splash`; second run: `nothing to do` |
+| the package's maintainer scripts, in `os7img:175` | install: `auto`, OS/7 at 150 over bgrt at 110, the initramfs trigger fired; a manual choice survives a reinstall with a printed note; remove: `auto`, back to bgrt |
+
+**And one defect the bench found in the script itself**, in slow motion: the
+passphrase prompt was drawn at once and the field only with the intro's 40th
+frame, because the refresh function owned the frame's opacity. Fixed, and the
+real-speed capture above is the fixed script.
+
+**THE GATE, on `OS7-1.0.0.249-amd64.iso` built from this tree.**
+`check-image.py`: every brand and splash check green (five red ones are the
+test build's development key and absent credential, by construction).
+`run-s5.py all`: install, boot, cycle, update and timer all PASS, no FAIL line —
+the TPM boot reached a login with `quiet splash` on the line and nothing typed
+(O-BR3), the cycle activated twice through #173's menu code and booted what it
+was told, and migration 80 ran in 1.0.0.250's firstboot list and exited 0.
+`run-secureboot.py all`: 32 ok, 0 failed, its `policy` phase passing through
+seventeen per-keystroke redraws of the prompt that the old expectation would
+have read as a rejection (#174).
+Details in [SESSION-BRAND-FREEZE.md](SESSION-BRAND-FREEZE.md) §7e. The gate
+watches a serial line and never a display, so that the theme DRAWS is the
+bench's evidence, not the gate's.
+
+**Still owed:** **O-BR4**, hardware with an ACPI BGRT table (no VM has one);
+the arm64 boot (the Mac).
 
 **Why not the GRUB menu.** A `gfxterm` background would need `png`,
 `gfxterm` and `video` modules in the SIGNED GRUB image, which refuses to
@@ -272,17 +330,18 @@ the boot-environment chooser and its text face fits the idiom; it stays.
 |---|---|
 | **BRL1** | The website cannot be checked from this repository: it is private and a sibling checkout is optional. The check's §9 compares one when `OS7_WEB_ROOT` or `../os7-web` exists and says NOT CHECKED otherwise. Run from a worktree the default path resolves to nothing. |
 | **BRL2** | **Closed 2026-10-29.** The icon and the login mark are the generator's output byte for byte and the check's baseline is 0; the boot fallback follows the icon. What remains outside the image is the website's copies (BRL1) and the GUI applications (BRL7). |
-| **BRL3** | No installed machine boots with `splash`; the current boot mark has never been shown on one (by the code, §2c — not measured on a screen). |
-| **BRL4** | The arm64 image ships `plymouth-theme-ubuntu-text`, the Ubuntu wordmark's text splash; the debrand hook that removes it is amd64-only. Dormant without `splash`. |
+| **BRL3** | **Closed 2026-10-29.** New installs boot with `quiet splash`, migration 80 gives it to existing machines under BR9's rule, and #173 is what made that reach the entry they boot. A machine whose administrator edited the line keeps it and is told why. |
+| **BRL4** | The arm64 image ships `plymouth-theme-ubuntu-text`, the Ubuntu wordmark's text splash; the debrand hook that removes it is amd64-only. It is now reachable: `text.plymouth` is what plymouthd falls back to when the default theme cannot draw — no pixel display and no serial console. Not removed here. |
 | **BRL5** | Rendered through librsvg 2.61.3 in a container — the lockup at 1×, 2× and 4× on the field, the tile at 16, 64 and 128 px, the wordmark at 22 px and 3× on dark — which is the library GdkPixbuf's SVG loader uses, and legible at every size. NOT yet through the greeter's own natural-size path on a machine, and not on a framebuffer. O-BR5 stays owed. |
 | **BRL6** | The website's light theme shows the orange mark on white at 2.88:1, below the 3:1 floor for non-text contrast. BR4 says nothing about a white ground; the website decides whether the light theme darkens the mark or the ground. |
 | **BRL7** | The GUI applications have no brand token: `check-gui-tokens.py` forbids a colour literal anywhere under `src/` outside `Tokens.axaml`, so the orange must enter as a token before the tile can appear in an application. |
+| **BRL8** | **Every EFI boot of an installed machine waits 30 seconds in GRUB's menu**, whatever `GRUB_TIMEOUT` says. Ubuntu's `/etc/grub.d/00_header`, read in `os7img:175`: when GRUB cannot write its environment — `recordfail_broken=1`, which is ZFS — it emits `if [ $grub_platform = efi ]; then set timeout=${GRUB_RECORDFAIL_TIMEOUT:-30}`, so a failed boot can still be caught at the menu even though it could not be recorded. Measured on the bench: the menu said "executed automatically in 9s" 26 s after it first drew. `GRUB_RECORDFAIL_TIMEOUT` is the knob. Shortening it trades the recovery window for boot time, which is a product decision and is not taken here. |
 
 | # | Measurement owed | Harness |
 |---|---|---|
-| **O-BR1** | The passphrase prompt under a Plymouth splash on the serial line: do `run-s5.py` and `run-secureboot.py policy` still see and answer it | `run-s5.py boot` with a wrong-policy firmware, `run-secureboot.py policy`, once Stage 3 exists |
-| **O-BR2** | The splash drawn: a screenshot sequence of a boot on amd64, and one on arm64 (Mac) | `os7lab.py shot` over QMP; `vmscreen` |
-| **O-BR3** | The TPM boot with `splash`: nothing typed, a login prompt reached | `run-s5.py boot` |
+| **O-BR1** | ~~The passphrase prompt under a Plymouth splash on the serial line~~ **Done 2026-10-29**: measured on a bench (§5a) — the prompt is `details`', the patterns before typing still match, the one after typing in `run-secureboot.py policy` did not and is fixed (#174) — and then on the gate: `run-secureboot.py all` on 1.0.0.249, 32 ok, its policy log carrying seventeen redraws of the prompt and the passphrase still unlocking | `run-secureboot.py policy` |
+| **O-BR2** | The splash drawn: **amd64 done on a bench 2026-10-29** (§5a, frames at 18/s); arm64 owed (Mac) | `os7lab.py shot` / QMP screendump |
+| **O-BR3** | ~~The TPM boot with `splash`: nothing typed, a login prompt reached~~ **Done 2026-10-29**: `run-s5.py all` on 1.0.0.249, every phase PASS, the boot with `quiet splash console=ttyS0,115200` unlocked by the TPM (after this harness's usual #69 re-enrolment) | `run-s5.py boot` |
 | **O-BR4** | A machine with a BGRT table shows OS/7's mark and not the firmware's | hardware; no VM has a BGRT table |
 | **O-BR5** | The generated login lockup THROUGH THE GREETER on a machine: the dialog constructing (#111) and the mark at natural size and at scale 2. Rendered through librsvg at 1×/2×/4× on 2026-10-29 and legible; the greeter itself not yet | `check-image.py` for the file (built), `os7lab.py --mode Gui` for the screen |
 | **O-BR6** | ~~The tile at 16 px and the wordmark at 22 px, rendered, legible~~ **Done 2026-10-29 through librsvg:** the 7 reads at 16 px, the wordmark at 22 px is 52×22 and reads. Not on a device | `rsvg-convert` in `ubuntu:26.04` |
@@ -305,7 +364,8 @@ the boot-environment chooser and its text face fits the idiom; it stays.
    built the same day, 2026-10-29**: icon, lockup, baseline 0, `check-image.py`
    and hook 0090 taught both, rendered through librsvg; the website's copies and
    the applications remain ([SESSION-BRAND-FREEZE.md](SESSION-BRAND-FREEZE.md) §6).
-3. **Stage 3 — the boot splash (BR8).** The theme, the sprites, the command
+3. **Stage 3 — the boot splash (BR8). Built 2026-10-29** (§5, §5a,
+   [SESSION-BRAND-FREEZE.md](SESSION-BRAND-FREEZE.md) §7). As planned: the theme, the sprites, the command
    line and its migration, the package on both architectures, `check-image.py`
    taught the theme; then O-BR1 to O-BR4. The passphrase prompt is measured
    first, because it is the one thing here that can break a gate.
