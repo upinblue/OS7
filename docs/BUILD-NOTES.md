@@ -10170,3 +10170,42 @@ that used to be refused.
 *The general form, and it is #184's own:* **a check that has never been run is a
 comment with an exit code.**
 
+---
+
+## #190 — the boot splash broke the arm64 build: Ubuntu's plymouth hook needs fontconfig for every graphical theme, and does not depend on it
+
+**Found 2026-10-30**, by the first arm64 build ever made with the OS/7 Plymouth
+theme (BRAND-PLAN BR8), 72 minutes in, at hook 0022:
+
+```
+update-initramfs: Generating /boot/initrd.img-7.0.0-42-generic
+cp: cannot stat '/etc/fonts/fonts.conf': No such file or directory
+E: /usr/share/initramfs-tools/hooks/plymouth failed with return 1.
+dpkg: error processing package initramfs-tools (--configure):
+E: config/hooks/0022-install-os7-packages.hook.chroot failed (exit non-zero).
+```
+
+The brand work said "the same theme on both architectures" and listed arm64 as
+not measured; nothing had built it. Ubuntu's `hooks/plymouth`, read out of the
+package: for any theme that is not `text`, `details`, `tribar` or `ubuntu-text`
+it copies `/etc/fonts/fonts.conf` into the initramfs and runs `fc-cache`, under
+`set -e`. The amd64 image has fontconfig because a desktop pulls it in; the
+arm64 server image has neither file. plymouth does not depend on fontconfig, so
+apt was right to leave it out and the hook was wrong to need it.
+
+**The fix is a dependency of the package that brings the theme**, `os7-console:
+Depends: fontconfig` — not a package-list line for the arm64 image. The hook runs
+at EVERY initramfs rebuild, so the same failure waits for an arm64 machine that
+takes os7-console through `Update-OS7`: an image list does not reach a machine
+that is already installed, and a Depends does. Asked of an arm64 `ubuntu:26.04`
+before the next 75-minute build rather than after it: with `plymouth fontconfig`
+installed, `/etc/fonts/fonts.conf` and `fc-cache` exist, `script.so` is in the
+plymouth package, and the `ubuntu-logo-text-dark.png` the hook copies next is in
+base-files. 3.3 MiB of fonts.
+
+The amd64 medium built beside it, `OS7-1.0.0.262-amd64.iso`, passed its whole
+gate and is discarded anyway: a release is both media from one commit
+(RELEASE-PROCESS §1.3), and the fix is a commit.
+
+*The general form:* **"both architectures" is a claim about a build that has
+run.** It is the same sentence as "not verified on a machine", one level earlier.

@@ -4,7 +4,7 @@ Architecture: all
 Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
 Section: admin
 Priority: optional
-Depends: console-setup, kbd, plymouth
+Depends: console-setup, kbd, plymouth, fontconfig
 Homepage: https://github.com/upinblue/os7
 Description: OS/7 console fonts and palette
  What the machine looks like before anything logs in: two console fonts, the
@@ -27,3 +27,10 @@ Description: OS/7 console fonts and palette
  the plymouth package itself, so it is the same theme on both architectures.
  It is registered as the default.plymouth alternative at a priority above
  Ubuntu's bgrt, so an administrator's manual choice still wins.
+ .
+ It depends on fontconfig because Ubuntu's plymouth initramfs hook does, for
+ every graphical theme, without saying so: it copies /etc/fonts/fonts.conf and
+ runs fc-cache under `set -e`. The desktop image has both; the arm64 server
+ image had neither, so the first arm64 build with this theme failed at
+ update-initramfs (BUILD-NOTES #190) - and so would every update of an arm64
+ machine that took this package without it.
