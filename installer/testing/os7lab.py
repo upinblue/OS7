@@ -1373,12 +1373,25 @@ for _d, _n in zip("0123456789", ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9
 #
 # So a layout is a translation from character to POSITION, and the table below
 # is the difference from US for the layout OS/7 installs by default in this
-# repository's plans. It is verified against the machine rather than copied
-# from a keymap file — `os7lab.py type <bench> --verify` types the printable
-# set and reads it back off a screendump.
+# repository's plans.
+#
+# HOW IT IS VERIFIED, and this comment used to name an option that does not
+# exist (`--verify`, promised here and implemented nowhere). The guest itself is
+# asked: type the characters at a PowerShell prompt, press ENTER, and read
+# `(Get-PSReadLineOption).HistorySavePath` back over ssh. PSReadLine records the
+# line AS IT ARRIVED, so the answer comes from the machine's own keymap rather
+# than from a keymap file anybody could read wrongly. Measured that way on the
+# `gui` bench, 2026-09-22, XKBLAYOUT="de".
 #
 # Anything not listed falls through to the US position, which is right for
-# every unshifted letter and digit on both layouts.
+# every unshifted letter and digit on both layouts — AND IS SILENTLY WRONG for
+# everything German puts behind AltGr. `|` fell through to `shift-backslash`,
+# which on this machine is `'`, so `Get-OS7Version | Format-List` arrived as
+# `Get-OS7Version ' Format-List` and left PowerShell at a continuation prompt.
+# The keystrokes were perfect and the picture was of a shell waiting for a
+# closing quote. Hence the AltGr block, and hence the None entries: a character
+# whose German position is NOT established refuses rather than sending a key
+# that produces something else.
 LAYOUTS = {
     "us": {},
     "de": {
@@ -1395,6 +1408,21 @@ LAYOUTS = {
         "&": "shift-6", "%": "shift-5", "$": "shift-4", "\"": "shift-2",
         "!": "shift-1", "?": "shift-minus", ";": "shift-comma",
         ":": "shift-dot",
+        # THE KEY US KEYBOARDS DO NOT HAVE. A 105-key board has an extra key
+        # left of Y, qcode `less`, and German puts <, > and | on it.
+        "<": "less", ">": "shift-less",
+        # AltGr, which is `alt_r` as a qcode. Every one of these is a character
+        # a PowerShell command line contains and every one of them was
+        # arriving as something else.
+        "|": "alt_r-less", "@": "alt_r-q", "\\": "alt_r-minus",
+        "{": "alt_r-7", "[": "alt_r-8", "]": "alt_r-9", "}": "alt_r-0",
+        "~": "alt_r-bracket_right",
+        # DEAD KEYS, and therefore refused rather than mapped. `^` and the
+        # backtick are accents on a German board: the key press produces
+        # NOTHING until the next one, and what comes out then depends on it.
+        # The backtick matters — it is PowerShell's line continuation — so a
+        # command that needs one goes over the serial line or through ssh.
+        "^": None, "`": None, "´": None,
     },
 }
 
@@ -1405,6 +1433,12 @@ def qcodes_for(ch, layout="us"):
         raise SystemExit("unknown keyboard layout %r -- have: %s"
                          % (layout, ", ".join(sorted(LAYOUTS))))
     if ch in table:
+        if table[ch] is None:
+            raise SystemExit(
+                "%r is a DEAD KEY on layout %r: the key press produces nothing "
+                "until the next one, and what comes out then depends on it. "
+                "Send this over the serial line or through ssh, where no keymap "
+                "takes part." % (ch, layout))
         return table[ch]
     if ch in QCODE:
         return QCODE[ch]

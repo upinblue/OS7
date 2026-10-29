@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup will install OS/7 on the disk selected below.
+
+     Use the UP and DOWN ARROW keys to select a disk, then press ENTER.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+██████ vda       (no model)                 3.34 GB   -- SETUP MEDIUM --    ████
+     │ vdb       (no model)                25.77 GB   empty                 │
+     │                                                                      │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Every partition on the selected disk will be destroyed.
+
+
+
+
+
+
+
+
+
+
+ ENTER=Select   ESC=Back   F3=Quit

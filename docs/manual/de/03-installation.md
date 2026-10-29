@@ -93,18 +93,20 @@ Dateien des Benutzers nicht mit zurücknimmt.
 
 ### 8 — Installationsart (nur amd64)
 
-![Die Wahl zwischen Desktop und Headless.](images/setup-08-mode-desktop.png)
+![Die zwei Modi, mit markiertem Desktop.](images/setup-08-mode-desktop.png)
 
-**GUI** installiert den klassischen OS/7-Desktop mit Microsoft Edge und dem
-Intune-Portal. **Headless** installiert einen Server ohne Grafikstapel.
+**Desktop** installiert den klassischen OS/7-Desktop mit Microsoft Edge und
+dem Intune-Portal. **Headless** installiert einen Server ohne Grafikstapel.
+Der Bildschirm kommt auf Headless, Desktop ist also eine bewusste Wahl und
+nicht die Vorbelegung.
 
-![Dieselbe Auswahl mit markiertem Headless-Eintrag.](images/setup-08-mode-headless.png)
+![Derselbe Bildschirm mit markiertem Headless — so kommt er.](images/setup-08-mode-headless.png)
 
 Auf arm64 entfällt dieser Bildschirm, weil es dort nur Headless gibt.
 
 ### 9 — Netzwerk
 
-![Adapter und Methode. Setup wendet die Einstellungen an und prüft sie, bevor sie ins installierte System geschrieben werden.](images/setup-09-network.png)
+![Adapter und Methode, nach F4: die Adresse, die der Adapter tatsächlich bekommen hat.](images/setup-09-network.png)
 
 Setup zeigt die tatsächlich vorhandenen Adapter mit Typ, Treiber und
 Verbindungszustand. Drei Methoden stehen zur Wahl: DHCP, feste Adresse, oder
@@ -120,7 +122,7 @@ Bildschirm **9W** mit Netzwerkname und Authentifizierung.
 
 ### 10 und 11 — Kopieren und Einrichten
 
-![Die Fortschrittsanzeige beim Schreiben auf den Datenträger.](images/setup-10-execute-1.png)
+![Die Fortschrittsanzeige beim Schreiben auf den Datenträger, beim Schritt, der das Konto anlegt.](images/setup-10-execute-1.png)
 
 Ab hier arbeitet Setup: Partitionieren, LUKS anlegen, Pools erzeugen,
 Datasets anlegen, das Dateisystem entpacken, das System konfigurieren, den

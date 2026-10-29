@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup will use the following storage settings:
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │  Disk:             vdb  (25.77 GB)                                   │
+     │  Layout:           single disk                                       │
+     │  EFI partition:    512 MB   FAT32                                    │
+     │  Boot pool:        2 GB     ZFS  (bpool, GRUB-readable features)     │
+     │  Root pool:        23.09 GB   ZFS  (rpool)                           │
+     │  Encryption:       LUKS2, aes-xts-plain64  (passphrase)              │
+     │  Passphrase:       -- not set --                                     │
+     │  Swap:             zram, 50% of RAM (no swap on disk)                │
+     ├──────────────────────────────────────────────────────────────────────┤
+██████  The settings are correct.                                           ████
+
+
+     If all the settings are correct, press ENTER.
+
+     To change a setting, press the UP or DOWN ARROW keys to select it.
+
+
+
+ ENTER=Continue   ↑↓=Select   ESC=Back   F3=Quit

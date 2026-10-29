@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup needs a name for this computer and an account to administer it.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │  Computer name:     os7-phase3                                       │
+     │                                                                      │
+     │  User name:         os7admin                                         │
+     │                                                                      │
+     │  Full name:                                                          │
+     │                                                                      │
+     │  Password:          ███████████████████                              │
+     │                                                                      │
+     │  Confirm password: ████████████████████████████████████████          │
+     │                                                                      │
+     │  The account is added to sudo and administers this machine.          │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Press TAB to move between fields, then ENTER when they are correct.
+
+
+
+
+ TAB=Next field   ENTER=Continue   ESC=Back   F3=Quit

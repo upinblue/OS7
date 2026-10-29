@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup is about to write to the disk below.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │  vdb                                                                 │
+     │  25.77 GB   no partition table                                       │
+     │  /dev/disk/by-id/virtio-os7target                                    │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     ALL DATA ON THIS DISK WILL BE LOST.
+
+     Setup will create a new partition table, an EFI partition, a boot
+     pool and an encrypted root pool.
+
+     To format this disk, press F.
+     To choose a different disk, press ESC.
+
+
+
+
+
+
+ F=Format   ESC=Back   F3=Quit

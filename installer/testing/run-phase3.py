@@ -603,9 +603,59 @@ def phase_walk(font):
             for ch in text:
                 press(QCODE.get(ch, ch), 0.03)
 
+        def field_colour(rgb):
+            """Which palette the field is painted in, by counting pixels.
+
+            Not by sampling a coordinate: the row that is blank today need not
+            be blank tomorrow, and a picture of the wrong cell is a wrong
+            answer that looks like a right one. FIELD and CONTRAST cannot both
+            be on one screen, so a tally needs no luck.
+
+            The count is over RAW BYTES and is not triple-aligned, which is
+            sound here rather than sloppy: 0x33 and 0x66 occur in no other
+            colour Setup paints with (FIELD 00/57/AD, BRAND 12/89/FF, GREY C0,
+            BLACK 00, white FF), and 0x57 occurs in none of CONTRAST's, so
+            neither needle can be assembled across a pixel boundary. A 1-bit
+            console font on a truecolor framebuffer produces no blended pixels
+            at all - which is the same property read_text depends on.
+            """
+            field = rgb.count(bytes(palette.FIELD))
+            contrast = rgb.count(bytes(palette.CONTRAST))
+            # A field covers most of the screen; a handful either way would mean
+            # the assumption above has stopped holding, and that is not a pass.
+            if field > 1000 and contrast == 0:
+                return "default"
+            if contrast > 1000 and field == 0:
+                return "contrast"
+            return f"neither ({field} field, {contrast} contrast)"
+
         # -- screens 1, 2, 3: Welcome, Licence, Regional ---------------------
         w, h, rgb = shoot("40-welcome", 3.0)
         ok &= on_screen(w, h, rgb, "Welcome to Setup", "screen 1 is Welcome")
+
+        # F5, THE HIGH-CONTRAST FIELD (D5), AND BACK. Photographed here because
+        # screen 1 is the only screen where nothing has been collected yet, so a
+        # stray keystroke cannot change a plan; and asserted rather than merely
+        # photographed, because F5 doing nothing looks exactly like F5 working
+        # on a framebuffer that is truecolor (BUILD-NOTES #25 is the repaint
+        # this depends on). SetupFlow handles F5 globally and it TOGGLES, so the
+        # second press is what leaves the walk on the palette it found.
+        before = field_colour(rgb)
+        press("f5")
+        w, h, rgb = shoot("40b-welcome-high-contrast", 1.0)
+        after = field_colour(rgb)
+        if before == "default" and after == "contrast":
+            print("      ok    F5 repaints the field high-contrast, and back")
+        else:
+            ok = False
+            print(f"      FAIL  F5: the field was {before} and is now {after}")
+        press("f5", 1.0)
+        w, h, rgb = shoot("40-welcome", 1.0)
+        if field_colour(rgb) != "default":
+            ok = False
+            print(f"      FAIL  F5 again did not restore the field "
+                  f"({field_colour(rgb)})")
+
         press("ret")
         w, h, rgb = shoot("41-licence", 1.5)
         press("f8", 1.5)
@@ -613,7 +663,17 @@ def phase_walk(font):
         # regional values have their own coverage in run-phase1. ENTER continues
         # on arrival; this was three DOWNs to get past a screen that came up on
         # Language (BUILD-NOTES #77).
+        #
+        # PHOTOGRAPHED AND ASSERTED, and until 2026-09-22 it was neither: the
+        # walk pressed ENTER here with nothing checking that screen 3 was even
+        # on the glass. A screen that stopped appearing - or appeared with
+        # Language focused again, which is #77 - would have been walked straight
+        # past, and the ENTER would have landed on whatever came next. That is
+        # BUILD-NOTES #45's shape, and it is the third place in this one
+        # function where it had to be named.
         time.sleep(0.5)
+        w, h, rgb = shoot("40c-regional", 0.5)
+        ok &= on_screen(w, h, rgb, "regional settings", "screen 3 is Regional")
         press("ret")
 
         # -- screen 4: the disk ----------------------------------------------

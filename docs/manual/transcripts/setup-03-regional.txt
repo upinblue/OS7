@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup will use the following regional settings:
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │  Language:           English (United States)  (en_US.UTF-8)          │
+     │  Keyboard:           English (US)  (us)                              │
+     │  Time zone:          UTC                                             │
+     ├──────────────────────────────────────────────────────────────────────┤
+██████  The settings are correct.                                           ████
+     └──────────────────────────────────────────────────────────────────────┘
+
+     If all the settings are correct, press ENTER.
+
+     To change a setting, press the UP or DOWN ARROW keys to select it.
+     Then press ENTER to see alternatives.
+
+
+
+
+
+
+
+ ENTER=Continue   ↑↓=Select   F3=Quit

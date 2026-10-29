@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup can configure this computer's network connection now.
+
+     ┌─█████████────────────────────────────────────────────────────────────┐
+██████ enp0s6       Ethernet   virtio_net       link up                     ████
+     │                                                                      │
+     │                                                                      │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     ┌─ Method ─────────────────────────────────────────────────────────────┐
+██████ Obtain an address automatically (DHCP)                               ████
+     │ Specify an address (static TCP/IP)                                   │
+     │ Leave this computer without a network connection                     │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Setup will apply these settings now and test them before
+     writing them to the installed system. Press T to test.
+
+     enp0s6 was given 10.0.2.15/24. The settings work.
+
+
+
+ TAB=Next list   F4=Test   ENTER=Continue   ESC=Back   F3=Quit

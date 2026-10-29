@@ -9101,3 +9101,89 @@ for anything that read it.** The reader here was not even wrong to read it — i
 was wrong to have no other way of telling "there is nothing to read" from "I
 could not read it", which is the same three-outcome shape
 `Get-OS7TimeSynchronization` and `Get-OS7SecureBoot` were already built around.
+
+---
+
+## #185 — a qcode table that is right for ASCII is silently wrong for everything behind AltGr
+
+`os7lab.py type <bench> 'Get-OS7Version | Format-List'` put
+`Get-OS7Version ' Format-List` on the screen, and PowerShell sat at a
+continuation prompt waiting for a closing quote. The keystrokes were perfect.
+
+A qcode is a **key position** and the guest's keymap decides what it produces —
+which is #34's neighbour and was already written down for `minus`/`ß`. What was
+not written down is that the `de` table only listed the positions that MOVED,
+and fell through to the US table for everything else. `|` is `shift-backslash`
+on a US board and that position is `'` on a German one, so it fell through to a
+wrong key rather than to no key.
+
+**Every character German puts behind AltGr was in that state**: `|`, `@`, `\`,
+`{`, `[`, `]`, `}`, `~` — and `<` and `>`, which live on the extra key a 105-key
+board has and a US one does not (`less`). Ten characters, every one of them
+something a PowerShell command line contains.
+
+**The failure is invisible in the obvious place.** The picture showed a shell
+waiting for input, which looks like a slow machine. Nothing errored, nothing
+exited non-zero, and the harness carried on.
+
+Fixed by adding the AltGr block (`alt_r-…`) and the `less` key, and by entering
+`^`, `` ` `` and `´` as **None** so they REFUSE with a sentence: those are dead
+keys on a German board and the press produces nothing until the next one. The
+backtick is PowerShell's line continuation, so that refusal is load-bearing
+rather than pedantic.
+
+**Verified by asking the machine, not by reading a keymap.** Type the characters
+at a PowerShell prompt, press ENTER, then read
+`(Get-PSReadLineOption).HistorySavePath` back over ssh: PSReadLine records the
+line AS IT ARRIVED.
+
+```
+sent:     # <>|@\{[]}~ -_+*#'/()=&%$"!?;: ABZYabzy09
+arrived:  # <>|@\{[]}~ -_+*#'/()=&%$"!?;: ABZYabzy09
+```
+
+And the comment above that table had claimed all along that it was verified by
+`os7lab.py type <bench> --verify`. **There is no such option**, in that file or
+anywhere in the repository. A comment describing a verification that does not
+exist is worse than no comment: it answers the question a reader would otherwise
+have asked.
+
+*The general form:* **a lookup table with a fall-through is a table that cannot
+say "I do not know".** Every entry it lacks becomes an answer rather than a
+question, and the answer is whatever the default happened to be.
+
+---
+
+## #186 — the login screen's own session is a session, and three ways of excluding it were wrong
+
+`shoot-desktop.py` types a password at GDM and then has to know whether anyone
+is signed in. Four attempts, and the first three all reported a signed-in
+desktop while the password field was still on the screen:
+
+| guard | why it passed anyway |
+|---|---|
+| compare the screendump before and after, byte for byte | the greeter draws a **clock**; two pictures of the same greeter a minute apart differ |
+| `loginctl`, excluding `user != "gdm"` | the greeter runs as **gdm-greeter** |
+| `loginctl`, excluding `uid < 1000` | Ubuntu gives that dynamic account **60578** |
+
+The greeter's session is on `seat0` and its type is `wayland`, exactly like a
+person's. What separates them is the property logind has for precisely this:
+**`Class`** — `greeter` against `user`.
+
+```
+c1 gdm-greeter seat0 greeter wayland     <- not a person
+c2 os7admin    seat0 user    wayland     <- a person
+```
+
+The cost of getting it wrong is not one wrong answer. Every picture taken after
+a failed sign-in is a picture of a greeter, and they all look like pictures, so
+a whole five-minute run completed and reported nothing wrong.
+
+**The negative control is what proved the fourth version.** Asked at the
+greeter, the probe returns nothing — which none of the three earlier rules ever
+did. A guard that has never been observed to say "no" has not been tested.
+
+*The general form, and it is this repository's oldest:* **ask the subsystem that
+owns the distinction.** Two of these rules tried to reconstruct "is this a real
+login" from a name and a number that happen to correlate with it; logind simply
+knows.

@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Welcome to Setup.
+
+     This portion of the Setup program prepares OS/7 to run on your
+     computer.
+
+       • To set up OS/7 now, press ENTER.
+
+       • To repair or extend an existing OS/7 installation, press R.
+
+       • To quit Setup without installing OS/7, press F3.
+
+
+
+
+     OS/7 1.0.0.245 (preview)
+     Ubuntu 26.04 base, archive 20260921T000000Z
+
+
+
+
+
+ ENTER=Continue   R=Repair   F3=Quit

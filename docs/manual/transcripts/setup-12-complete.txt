@@ -1,0 +1,25 @@
+ OS/7 Setup                                             Version 1.0.0 (preview)
+
+
+     Setup has prepared this computer as follows.
+
+     ┌──────────────────────────────────────────────────────────────────────┐
+     │  OS/7 version: 1.0.0.245 (preview)                                   │
+     │  Language:     en_US.UTF-8                                           │
+     │  Keyboard:     us                                                    │
+     │  Time zone:    UTC                                                   │
+     │  Disk:         /dev/disk/by-id/virtio-os7target                      │
+     │  Encryption:   LUKS2 (passphrase set)                                │
+     │  Swap:         zram                                                  │
+     │  Computer:     os7-phase3                                            │
+     │  Account:      os7admin   (desktop)                                  │
+     │  Network:      enp0s6  DHCP                                          │
+     └──────────────────────────────────────────────────────────────────────┘
+
+     Remove the setup medium and press ENTER to restart.
+     This computer will ask for the disk passphrase when it starts.
+
+     A record of this installation is at /var/log/os7-setup/install.log.
+
+
+ ENTER=Restart   F3=Quit to a shell
