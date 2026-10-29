@@ -10084,3 +10084,89 @@ concluded the secret half was not on this host. That was the WINDOWS profile.
 a file inside the signed set says who made it, re-signing the set without
 rewriting the file publishes two answers, and the one a reader trusts is the one
 the code reads.
+
+---
+
+## #188 — with `splash`, a serial console whose terminal ANSWERS stalls the boot: plymouthd hangs until somebody presses a key
+
+**Found 2026-10-29** on the fourth preview's gate, by `run-firstrun.py`, which
+did not reach a login prompt in fifteen minutes on a machine `run-s5.py` had
+just booted five times. The serial log held one boot ID and the same block 1 809
+times — the initramfs's lines, systemd's terminal queries, and in the end
+`[!!!!!!] Failed to start up manager.` — and nothing else.
+
+**What differed was the far end of the serial line.** `vmconsole.Console`
+(run-s5, run-secureboot) answers terminal queries only once a `login:` has
+appeared, because only PowerShell needs the answers. `os7lab.py login` answered
+them from the first byte. Since `quiet splash` (BRAND-PLAN BR8, new in this
+release) plymouthd holds a serial console through the boot with its `details`
+plugin, and an answered query is INPUT to it.
+
+Three boots of the same disk, 1.0.0.262, kernel 7.0.0-42, systemd 259.9, TPM
+attached, `console=ttyS0,115200`, separated by one variable at a time:
+
+| boot | `splash` | the terminal | what happened |
+|---|---|---|---|
+| A | yes | silent until a prompt | login; 13 of 13 first-run checks |
+| B | yes | answers from the first byte (DSR and XTGETTCAP) | **no login in 300 s.** On the machine afterwards: `plymouth-start.service: start-post operation timed out` at 94 s, `plymouth-read-write` finished at 261 s, `multi-user.target reached after 4min 24.940s` — the moment Enter was pressed |
+| C | **no** | answers from the first byte | login after 55 s, 30 of them GRUB's menu (BRL8) |
+
+And `run-s5.py`'s own boots of the same disk, with a silent terminal: kdump at
+6.7 s, no failed unit. So the trigger is `splash` on a serial console plus a
+terminal that answers — not systemd 259.9, which moved under this release too.
+
+**This is a product defect, not only a harness one.** A real terminal on a
+serial console answers `ESC[6n` (every VT100 descendant) and often XTGETTCAP
+(xterm and its family) — which is what an administrator on a serial console,
+an IPMI Serial-over-LAN session or `virsh console` is looking at. OS/7 does not
+put `console=ttyS…` on an installed machine (SystemSteps: "an installed machine
+gets whatever its firmware gives it"), and the VGA console is measured fine with
+the splash (SESSION-BRAND-FREEZE §7d, login 15 s after the passphrase), so a
+default install is not affected. A machine an operator has given a serial
+console is — and an arm64 server whose firmware names its serial port in SPCR
+gets one without anybody asking. Which of the two answers (DSR or XTGETTCAP)
+is the trigger was NOT separated.
+
+**What is fixed here is the harness**: `os7lab.py login` answers queries only
+after `probe_state()` has found a prompt, vmconsole's rule. **The product is not
+fixed in 1.0.0.262**; the workaround is to take `splash` out of
+`GRUB_CMDLINE_LINUX_DEFAULT` on such a machine, and the release notes say so.
+The obvious product fixes each cost something real: `plymouth.ignore-serial-consoles`
+moves the passphrase prompt off the serial line, where a headless machine whose
+TPM did not unseal needs it, and dropping `splash` drops BR8.
+
+*The general form:* **the far end of a console is part of the experiment.** Two
+harnesses that both "drive the serial line" disagreed about one thing — when to
+answer — and only one of them was a terminal an operator might actually have.
+
+---
+
+## #189 — #184's fix asserted a word that `tail -2` can never contain on the run it exists to pass
+
+**Found 2026-10-29**, the first time #184's fix met a machine: `run-s5.py timer`
+3/4 went red with
+
+```
+2026-10-29T22:15:42Z STAGED 1.0.0.263 into os7_1.0.0.263_202610292214; not activated
+2026-10-29T22:15:42Z check: staged: 1.0.0.263 into os7_1.0.0.263_202610292214; activation and a reboot are pending
+```
+
+on its screen — the staging #184 asks for, done by that very run. The check
+required `"staging "` in the body, and the body is `tail -2` of update.log: when
+the check really stages, `Update-OS7` writes its own lines between `staging <v>
+from channel` and the verdict, so the word is never in the last two. The rule
+could pass only on a run that had staged nothing, which is the opposite of what
+it was written to tell apart. SESSION-ROLLBACK-CLONE-PIN §6 had said in as many
+words that it had never run on a machine.
+
+The two branches differ in their LAST line — `staged: <v> into <be>` against
+`staged: <v> already waits in` — and that is what is asked now, proven on both
+recorded tails (today's: staged; 2026-09-21's: already waits).
+
+The same run showed #183's fix working on a machine for the first time: `only
+the running environment is left`, after an update, a rollback and the removal
+that used to be refused.
+
+*The general form, and it is #184's own:* **a check that has never been run is a
+comment with an exit code.**
+

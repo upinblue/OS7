@@ -1296,7 +1296,18 @@ def phase_timer():
         # assertion — which exists to measure the FIRST — was green on a run in
         # which the timer had staged nothing at all. Reading the exit code and
         # not the branch is what made a precondition failure invisible here.
-        if code == "2" and "staging " in body and "already waits" not in body:
+        #
+        # ASKED OF THE CHECK'S LAST LINE, not of "staging ". service_status
+        # reads `tail -2` of update.log, and when the check really stages,
+        # Update-OS7 writes its own lines between "staging <v> from channel" and
+        # the verdict - so "staging " is NEVER in the body on the run this
+        # assertion exists to pass, and it went red on the first machine it met
+        # (1.0.0.262, 2026-10-29) with "check: staged: 1.0.0.263 into
+        # os7_1.0.0.263_…" right there. The two branches differ in their LAST
+        # line: "staged: <v> into <be>" against "staged: <v> already waits in".
+        last = next((l for l in reversed(body.splitlines()) if " check: " in l), "")
+        if code == "2" and re.search(r" check: staged: \S+ into ", last) \
+                and "already waits" not in body:
             print("      ok    3/4 with a channel: exit 2 — staged BY THIS RUN, reboot pending")
         elif code == "2":
             print("      FAIL  3/4 exit 2, but the check staged nothing — it found an "

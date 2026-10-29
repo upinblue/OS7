@@ -773,7 +773,15 @@ def cmd_login(a):
     b = Bench(a.name)
     b.require_running()
     s = Serial(b)
-    s.start_answering()
+    # NOT ANSWERING UNTIL SOMETHING IS AT A PROMPT, which is vmconsole's rule
+    # and was not this one's. Since `quiet splash` (BRAND-PLAN BR8) plymouthd
+    # holds the serial console through the boot with its `details` plugin,
+    # and what it draws includes the terminal queries systemd sent to the
+    # console. Answered from the first byte, every reply was input to plymouth,
+    # plymouth drew again - queries included - and the bench answered again:
+    # the same block 1 809 times in eight minutes with one boot ID, and no
+    # login prompt ever (1.0.0.262, 2026-10-29; BUILD-NOTES #188). PowerShell's PSReadLine is what needs
+    # the answers, and it only exists after a login, so answering starts there.
     try:
         print("    waiting for the machine to reach a prompt ...", flush=True)
         # WHAT THE MACHINE IS DOING IS ASKED, NOT READ OUT OF THE LOG. The log
@@ -784,6 +792,7 @@ def cmd_login(a):
         # to that is about now. The same rule as everywhere else here: ask the
         # thing itself, an old log line is not an answer.
         state = probe_state(s, a.timeout)
+        s.start_answering()
         if state == "dead":
             raise SystemExit("the machine did not start:\n" + s.text()[-2500:])
         if state == "passphrase":
