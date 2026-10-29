@@ -10012,3 +10012,75 @@ did. A guard that has never been observed to say "no" has not been tested.
 owns the distinction.** Two of these rules tried to reconstruct "is this a real
 login" from a name and a number that happen to correlate with it; logind simply
 knows.
+
+---
+
+## #187 — step 6 replaced the signatures and would have left every descriptor saying "development"; both published previews are development-signed
+
+**Found 2026-10-29** while preparing to publish the fourth preview, by verifying
+the PUBLISHED tree with the release key's public half rather than reading its
+file list. Fetched over the read-only sub-account (24 pool files, 234 268 104
+bytes, each at the size and sha256 its `Packages` entry records), then:
+
+```
+gpgv --keyring <release key alone> dists/os7-1.0/Release.gpg dists/os7-1.0/Release
+gpgv:                using EDDSA key 17C460671FF8A8DC2FD8AFA64A0EDD17EF8591AC
+gpgv: Can't check signature: No public key
+```
+
+`17C46067…` is the DEVELOPMENT key. The `Release`, the `InRelease` and
+`index/preview.json.asc` on the server are all signed by it, and so are all four
+published descriptors in their own words:
+
+```
+releases/1.0.0.175/{amd64,arm64}/release.json  signing.development = true
+releases/1.0.0.203/{amd64,arm64}/release.json  signing.development = true
+```
+
+So the rule RELEASE-PROCESS §5 puts first — never publish anything signed by a
+key whose user ID says NOT FOR RELEASE — has been broken by both publications,
+and nothing said so. HANDOFF's "every release the Software Update window can
+reach is development-signed" was the symptom, read as a property of benches.
+
+**And the documented fix would not have fixed it.** Step 6 was "replace the three
+signatures" (SESSION-PREVIEW-245 §9.3 lists exactly those three files). But every
+descriptor `build-os7-repo.sh` writes carries a `signing` block naming the key
+the CUT was made with, and `Get-OS7Release` decides `Development` from THAT
+block — deliberately: "the channel names an intention, the signing block names a
+fact". A cut is always made with the development key, because the release key
+is never reachable unattended (C7a). A release re-signed by the release key and
+nothing else would still say, inside a file the signed index vouches for, that it
+is a development build, and `Update-OS7` would demand `-AllowDevelopment` for it
+for ever.
+
+**The fix is `scripts/sign-release.sh`**, which is step 6 in full: for the ONE
+version being published it rewrites that version's descriptors to name the key
+that signs (in the builder's own JSON form), puts their new sha256 into the
+index, signs every suite's `Release` and the index with the release key —
+interactively, pinentry, nothing stored — and then asks it all back with a
+keyring holding the release key's public half ALONE: one signature each, the
+`VALIDSIG` primary fingerprint required to be the release key's, every
+descriptor required to hash to its entry, and the published version's required
+to say `development=false`. It refuses a key whose user ID says NOT FOR
+RELEASE, and a key that is not the public half the media's trust anchor ships —
+both proven to fire, with throwaway keys, on a copy of the published tree.
+
+**What it cannot fix: the past.** 1.0.0.175 and 1.0.0.203 stay development by
+their own descriptors, which is true of them. Their packages are re-covered by
+the release key's signature over the `Release` the next cut writes, and both
+releases' trust anchors already hold the release key (read out of their
+`os7-release` .debs in the pool), so a machine on either accepts a
+release-signed repository. The trust anchor's development key is the open
+question HANDOFF already names.
+
+**And the reason the operator thought this step could not run here is a path.**
+SESSION-PREVIEW-245 §5 found `~/.os7/gnupg-release` holding an empty keyring and
+concluded the secret half was not on this host. That was the WINDOWS profile.
+`setup-release-credentials.sh` puts the GNUPGHOME in the WSL home on purpose
+(#97: gpg-agent cannot make its socket on a Windows mount), and
+`/home/<user>/.os7/gnupg-release` holds `B62CBF99B3F5FAF9`, passphrase-protected.
+
+*The general form:* **a signature is not the only statement of who signed.** When
+a file inside the signed set says who made it, re-signing the set without
+rewriting the file publishes two answers, and the one a reader trusts is the one
+the code reads.

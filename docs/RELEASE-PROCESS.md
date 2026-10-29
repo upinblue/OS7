@@ -170,6 +170,21 @@ the release key on its token. **C7a's whole point is that a release key is not
 reachable unattended by a build script**, so this step is not inside a container
 and not inside `make`.
 
+**And the three signatures are not the whole step** (BUILD-NOTES #187): each
+descriptor names the key the cut was made with, and `Get-OS7Release` decides
+`Development` from that, so a cut re-signed and nothing else still calls itself a
+development build. Both published previews are in that state. The step is one
+command, in an interactive WSL shell, where the release key's GNUPGHOME lives:
+
+```bash
+scripts/sign-release.sh out/os7-repo <version> <channel>
+```
+
+It rewrites the published version's descriptors to name the signing key,
+re-hashes them into the index, signs every suite and the index, and verifies all
+of it against the release key's public half alone. It refuses a key that says
+NOT FOR RELEASE and a key the media do not ship.
+
 Two keys are in `os7-archive-keyring.gpg` from the first release onward. Rotation
 is only cheap if the successor is already trusted — the same reason hook 0010
 carries two Microsoft keys.

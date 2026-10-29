@@ -142,8 +142,11 @@ from `93fd496`, clean tree, `reproducible: true`; the whole of
 machine rows; the repository cut over the FETCHED published tree, so its index
 holds six entries — 1.0.0.175, .203 and .245 × two architectures — with .245
 recording that it supersedes .203. **What is not done is steps 6 to 10**: the
-release key's secret half is not on this host (§6 as designed), so the tree's
-three signatures are the development key's and replacing them is the operator's.
+tree's three signatures are the development key's and replacing them is the
+operator's. (This paragraph said the release key's secret half is not on this
+host. It is — in the WSL home, where `setup-release-credentials.sh` puts it
+because of #97; the check looked in the Windows profile. And replacing three
+signatures would not have been enough: #187, `scripts/sign-release.sh`.)
 [SESSION-PREVIEW-245.md](SESSION-PREVIEW-245.md) is that run, and the files to
 sign are §9.3 of it.
 
@@ -157,7 +160,10 @@ consecutive releases have now been paid for by the instruments.
 
 **1.0.0.203 was published on 2026-09-09** and is the second preview. Both media
 from `42156cf`; os7.org offers those images and the versioned manual; the GitHub
-pre-release carries the changelog and the descriptors. What that run measured,
+pre-release carries the changelog and the descriptors. **Its repository on the
+Storage Box is signed by the DEVELOPMENT key, and so is 1.0.0.175's**, and both
+releases' descriptors say `development: true` — measured 2026-10-29 by
+verifying the fetched tree against the release key alone (#187). What that run measured,
 and the five defects it found, is
 [SESSION-PREVIEW-203.md](SESSION-PREVIEW-203.md).
 
