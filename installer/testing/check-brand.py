@@ -52,21 +52,14 @@ BRAND_DIR = os.environ.get("OS7_BRAND_ROOT", os.path.join(REPO, "brand"))
 SCAN_ROOT = os.environ.get("OS7_SCAN_ROOT", REPO)
 WEB_ROOT = os.environ.get("OS7_WEB_ROOT", os.path.join(os.path.dirname(REPO), "os7-web"))
 
-# The consumers in the image, and what each is supposed to be (BRAND-PLAN §4).
-# "tile": byte-identical to brand/os7-tile.svg. "wordmark": contains the four
-# shapes of the mark, in either ink, and no <text>.
-CONSUMERS = [
-    ("the app icon LOGO=os7 names",
-     "build/config/includes.chroot/usr/share/icons/hicolor/scalable/apps/os7.svg",
-     "tile"),
-    ("the login screen's mark",
-     "build/packages/os7-desktop-theme/tree/usr/share/pixmaps/os7-logo-login.svg",
-     "wordmark"),
-]
-
-# Debt, named on every run. May fall and may not rise. Stage 2 of BRAND-PLAN §8
-# is what takes it to zero; lower this number as it does.
-BASELINE_DEFAULT = 2
+# The consumers in the image are brand.CONSUMERS (BRAND-PLAN §4): each must be
+# the generator's output byte for byte - the icon a copy of the tile, the login
+# mark the lockup rendered over the master and the vendor file.
+#
+# Debt, named on every run: consumers that are NOT that output. It may fall and
+# may not rise. It was 2 when this file was written on 2026-10-29, and Stage 2
+# took it to 0 the same day.
+BASELINE_DEFAULT = 0
 
 # BR1, recorded. The master is authoritative for the mark and this is the
 # check's record of it, so that a coordinate cannot move by accident - moving
@@ -272,28 +265,37 @@ def run():
 
     # ---------------------------------------------------------------- 8
     print()
-    print("  8. The consumers in the image - debt, named")
+    print("  8. The consumers in the image - each the generator's output (BR6)")
 
     tile_bytes = brand.read_text(tile_path) if os.path.exists(tile_path) else None
+    vendor_path = os.path.join(SCAN_ROOT, brand.VENDOR_REL)
+    vendor_text = brand.read_text(vendor_path) if os.path.exists(vendor_path) else None
+    if vendor_text is None:
+        note(f"the vendor file is missing at {vendor_path}; the lockup cannot be rendered")
     debt = 0
-    for what, rel, kind in CONSUMERS:
+    for what, rel, kind in brand.CONSUMERS:
         path = os.path.join(SCAN_ROOT, rel)
         if not os.path.exists(path):
             print(f"      ----  {what}: {rel} is absent")
             debt += 1
             continue
         text = brand.read_text(path)
-        if kind == "tile":
-            carries = tile_bytes is not None and text == tile_bytes
-            how = ("is byte-identical to brand/os7-tile.svg" if carries
-                   else "is NOT byte-identical to brand/os7-tile.svg")
-        else:
-            carries = carries_wordmark(text)
-            how = ("carries the four shapes and no <text>" if carries
-                   else "does NOT carry the four shapes, or sets them in a font")
-        print(f"      {'ok  ' if carries else '----'}  {what}: {how}")
-        if not carries:
+        wanted = None
+        if kind != "lockup" or vendor_text is not None:
+            try:
+                wanted = brand.render_consumer(kind, master, vendor_text)
+            except ValueError as error:
+                note(f"{what}: {error}")
+        same = wanted is not None and text == wanted
+        print(f"      {'ok  ' if same else '----'}  {what}: "
+              f"{'is' if same else 'is NOT'} byte-identical to what brand.py renders")
+        if not same:
             debt += 1
+        if kind == "lockup":
+            # The meaning behind the bytes, asked separately: a generator that
+            # itself emitted <text> would pass the byte rule and fail BR2.
+            check(carries_wordmark(text),
+                  "the login screen's mark carries the four shapes and sets nothing in a font")
 
     baseline = int(os.environ.get("OS7_BRAND_BASELINE", BASELINE_DEFAULT))
     check(debt <= baseline, f"consumers not carrying the mark: {debt}, baseline {baseline}",
@@ -350,11 +352,12 @@ def self_test():
             shutil.rmtree(scan, ignore_errors=True)
             shutil.copytree(os.path.join(REPO, "brand"), planted)
             master_text = brand.read_text(os.path.join(planted, brand.MASTER_NAME))
-            for _, rel, kind in CONSUMERS:
-                path = os.path.join(scan, rel)
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                brand.write_text(path, brand.render_tile(master_text) if kind == "tile"
-                                 else brand.render_white(master_text))
+            # The vendor file is an INPUT, not a consumer: it comes along verbatim.
+            vendor_text = brand.read_text(os.path.join(REPO, brand.VENDOR_REL))
+            brand.write_text(os.path.join(scan, brand.VENDOR_REL), vendor_text)
+            for _, rel, kind in brand.CONSUMERS:
+                brand.write_text(os.path.join(scan, rel),
+                                 brand.render_consumer(kind, master_text, vendor_text))
 
         def run_check(baseline=0):
             env = {**os.environ, "OS7_BRAND_ROOT": planted, "OS7_SCAN_ROOT": scan,
@@ -403,14 +406,14 @@ def self_test():
 
         # Defect 6: a consumer stops carrying the mark.
         fresh()
-        edit(CONSUMERS[1][1], "</svg>",
+        edit(brand.CONSUMERS[1][1], "</svg>",
              '  <text x="440" y="180" font-family="DejaVu Sans">OS/7</text>\n</svg>', root=scan)
         results.append(("a consumer that stops carrying the mark raises the debt and is caught",
                         run_check() != 0))
 
         # Defect 7: the consumer that must be byte-identical drifts by a byte.
         fresh()
-        edit(CONSUMERS[0][1], 'rx="12"', 'rx="13"', root=scan)
+        edit(brand.CONSUMERS[0][1], 'rx="12"', 'rx="13"', root=scan)
         results.append(("an icon that is no longer byte-identical to the tile is caught",
                         run_check() != 0))
     finally:

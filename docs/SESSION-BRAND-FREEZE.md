@@ -169,3 +169,69 @@ rasterised from the master, `quiet splash` on new installs and by firstboot
 migration on existing ones, the package on both architectures, the arm64 text
 theme gone, `check-image.py` taught the theme. O-BR1 first — the passphrase
 prompt on the serial line is the one thing here that can break a gate.
+
+---
+
+## 6. Stage 2, the same day: the image carries the mark
+
+Asked for after §1–§5 were written, in the same session and the same
+worktree. Scope as agreed: the icon becomes the tile, the login lockup is
+generated, the baseline goes to 0, `check-image.py` learns both. The website's
+copies and the GUI applications stay outside (BR3, BRL7).
+
+### 6a. What changed
+
+| what | how |
+|---|---|
+| `build/lib/brand.py` | knows the two consumers (`CONSUMERS`) and the vendor file (`VENDOR_REL`); `write` writes them, `verify` holds them. `render_login_lockup()` builds the greeter's file from the master's four shapes and the vendor's 215 paths; `shapes_of()` descends into nested groups because the vendor's file nests three deep |
+| `usr/share/icons/hicolor/scalable/apps/os7.svg` | a byte copy of `brand/os7-tile.svg` (1510 bytes; was 1705 with `<text>`) |
+| `usr/share/pixmaps/os7-logo-login.svg` | generated: the wordmark in white under `translate(210.5 18) scale(2.7)` — cap height 48 → 129.6 units, the cap line's foot on y=180 where the old text's baseline was, centred in the 880-unit viewBox — then the rule and the vendor group exactly as before. 218 `<path>` elements: 215 vendor, 3 wordmark. Natural size 216×98 unchanged. 13994 bytes; was 15014 |
+| `check-brand.py` | §8 now requires each consumer to be the generator's output byte for byte, plus "carries the four shapes and sets nothing in a font" for the lockup; `BASELINE_DEFAULT = 0`. 27 checks, 29 with the website checkout; the self-test's control writes the consumers through the same generator and copies the vendor file in as an input |
+| `check-image.py` | three new sections brought home from the squashfs (`desktop.iconsvg`, `desktop.loginsvg`, `desktop.vendorsvg`) and three new checks: the icon equals `brand/os7-tile.svg`, the login mark equals what `brand.py` renders from the repository's master and the IMAGE's vendor file, and it contains no `<text>` |
+| hook 0090 | the `fc-match 'DejaVu Sans'` block — "the greeter wordmark's face" — is replaced by `grep -q '<text'` on the lockup, which FAILS the build if a font-set mark ever comes back |
+| `os7-desktop-theme/README.md` | says the file is generated and where from |
+
+### 6b. What was measured
+
+**Rendered through librsvg 2.61.3**, in a plain `ubuntu:26.04` container with
+`librsvg2-bin` installed — the library behind GdkPixbuf's SVG loader, which is
+what the greeter uses, though not the greeter's own natural-size path:
+
+| file | size | result |
+|---|---|---|
+| lockup on `#0057ad` | 216×98 (natural), 432×196, 864×392 | wordmark crisp at all three; the vendor stripes a soft frame at 1×, resolved at 2× — as the previous file's comment predicted of that mark |
+| tile | 16×16, 64×64, 128×128 | the 7 reads at 16 px |
+| wordmark on `#0a0d12` | 52×22 (the website header's height), 510×216 | reads at 22 px |
+
+**`check-image.py` against the shipped `OS7-1.0.0.245-amd64.iso`**, hard-linked
+into the worktree's `out/` for the run and removed after: the three new checks
+go RED on the old medium — 1705 bytes read against 1510 expected for the icon,
+15014 against 13994 for the lockup, `<text>` present — and every other check
+stays as it was. The rule fires on the thing it is for.
+
+**And that run found a trap in the probe itself.** The first run also failed
+"the update and Ubuntu Pro autostart entries are hidden" with `<nothing read>`,
+which the committed `check-image.py` passes on the same ISO. The shipped
+`upinblue-logo.svg` ends WITHOUT a newline — its last byte is the `>` of
+`</svg>` — so `cat` left the cursor there, the next `<<<desktop.autostart>>>`
+marker landed on the same line, `parse_sections()` did not recognise it, and
+the autostart lines were appended to the vendor section while their own key
+never existed. `emit()` now ends every section with an `echo`;
+`parse_sections()` strips, so it costs nothing. Any `emit` of a file's contents
+had this hole; it was never hit because every file brought home before today
+ended in a newline. Recorded as BUILD-NOTES #172 — numbered above the main
+checkout's WORKING COPY, which another session had taken to #171 (uncommitted)
+while this worktree sat on 97335e4 (#167) and two sibling worktrees each held a
+#169; the number has to be re-checked when this branch is merged.
+
+### 6c. What was NOT measured
+
+* **The greeter on a machine.** librsvg rendering the file is not
+  `LoginDialog._updateLogoTexture` loading it at natural size times the scale
+  factor; the previous lockup's size reasoning carries over, but O-BR5 is owed
+  until `os7lab.py --mode Gui` shows the login screen with this file.
+* **No ISO has been built with it**, so the three new `check-image.py` checks
+  have gone red on an old medium and never green on a new one. Hook 0090's
+  `<text>` refusal has not run in a build.
+* **The website** is unchanged: its three files are to become byte copies of
+  `brand/` (BR3) and are not yet.

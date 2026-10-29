@@ -13,16 +13,28 @@ how they are regenerated.
 ## Regenerating
 
 ```bash
-python3 build/lib/brand.py write     # derive the white variant and the tile from the master
-python3 build/lib/brand.py verify    # are the derived files what the master makes, byte for byte
-python3 build/lib/brand.py show      # the tokens, and the contrast numbers BR4 rests on
-./installer/testing/check-brand.py   # the whole rule, in seconds; --self-test plants seven defects
+python3 build/lib/brand.py write     # derive everything from the master: the two files here,
+                                     #   and the two copies the image consumes (below)
+python3 build/lib/brand.py verify    # is each of them what the master makes, byte for byte
+python3 build/lib/brand.py show      # the tokens, the contrast numbers BR4 rests on, the lockup's transform
+./installer/testing/check-brand.py   # the whole rule, in seconds; --self-test is a control plus seven defects
 ```
 
 `build/lib/brand.py` reads the master, refuses to derive anything from a file
 that does not have the four shapes, and writes the derived files beside it. It
 imports `palette.py` for the Setup field colour rather than spelling the number
 again.
+
+## What the image consumes
+
+Two more files are this directory's output and live where the image needs
+them. `write` writes them, `verify` and the check hold them, and `check-image.py`
+compares them inside a built ISO (BR6). Neither is edited where it lies.
+
+| file | what it is |
+|---|---|
+| `build/config/includes.chroot/usr/share/icons/hicolor/scalable/apps/os7.svg` | a byte copy of `os7-tile.svg`: the icon `LOGO=os7` names, and what hook 0035 rasterises into Plymouth's fallback until the boot splash has a theme of its own (BR8) |
+| `build/packages/os7-desktop-theme/tree/usr/share/pixmaps/os7-logo-login.svg` | the login screen's lockup: the wordmark in white at scale 2.7 with its cap line's foot on y=180, a rule, and the vendor mark's 215 paths from `upinblue-logo.svg` beside it, white at 85 %. Natural size 216×98, which is what the greeter draws |
 
 ## The rules, in one paragraph each
 

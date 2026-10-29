@@ -529,13 +529,16 @@ else
 	note "${WANT_LOGO} belongs to '${owner:-nobody}' - an unowned file is not replaced by an update"
 fi
 
-# The face the wordmark names. fc-match answers with the family fontconfig WOULD
-# use; `dpkg -s fonts-dejavu-core` does not.
-DEJAVU="$(fc-match -f '%{family}' 'DejaVu Sans' 2>/dev/null || true)"
-if [ "${DEJAVU}" = "DejaVu Sans" ]; then
-	ok "fc-match 'DejaVu Sans' -> DejaVu Sans (the greeter wordmark's face)"
+# The wordmark names NO face. Until 2026-10-29 it was <text> in DejaVu Sans
+# Bold and this block asked fc-match whether that face would resolve. Since
+# docs/BRAND-PLAN.md BR2 the mark is drawn geometry, generated from
+# brand/os7-wordmark.svg by build/lib/brand.py, and a <text> element in this
+# file means somebody put the old mark back - or edited the generated file in
+# the tree instead of the master. Asked of the file, not of fontconfig.
+if grep -q '<text' "${WANT_LOGO}" 2>/dev/null; then
+	note "${WANT_LOGO} contains <text>: the greeter mark is set in a font again (BRAND-PLAN BR2)"
 else
-	note "fc-match 'DejaVu Sans' -> '${DEJAVU}': the greeter wordmark would substitute"
+	ok "${WANT_LOGO} sets nothing in a font - drawn geometry only (BRAND-PLAN BR2)"
 fi
 
 # 6d. The greeter's stylesheet. Hook 0035 step 9 moves it off Yaru with

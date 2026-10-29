@@ -15,13 +15,21 @@ geometry, the two inks, the byte-identity of the derived files, the contrast
 numbers and `<svg`-before-byte-256 at **26 checks**, and names the consumers in
 the image that do not yet carry the mark — **two, and that is the baseline**.
 
-**What is NOT built:** none of the image's surfaces shows this mark yet. The
-app icon, the login screen and the boot-splash fallback are still `<text>` in
-DejaVu Sans Bold on blue (§4, Stage 2); the boot splash is Ubuntu's `bgrt`
-theme with that icon diverted into its fallback, and no installed machine has
-ever shown it, because the installer puts neither `quiet` nor `splash` on the
-kernel command line (§2c, §5, Stage 3). Nothing in Stage 1 has been rendered on
-a machine (BRL5).
+**STAGE 2 IS BUILT ON THE IMAGE SIDE (2026-10-29, the same day).** The icon
+`LOGO=os7` names is a byte copy of the tile; the login screen's lockup is
+generated from the master and the vendor mark; `brand.py write` writes both,
+`check-brand.py` holds both at **baseline 0**, `check-image.py` compares both
+against the repository inside a built ISO, and hook 0090 fails a build whose
+greeter mark contains `<text>`. Rendered through librsvg 2.61.3 in a plain
+`ubuntu:26.04` container — the lockup at natural size, 2× and 4× on the field,
+the tile at 16, 64 and 128 px — and legible at every one; **not** yet through
+the greeter on a machine (O-BR5), and no ISO has been built with it.
+
+**What is NOT built:** the website's copies (BR3, the other repository), the
+tile in the GUI applications (BRL7), and the boot splash: it is still Ubuntu's
+`bgrt` theme with the icon — now the tile — diverted into its fallback, and no
+installed machine has ever shown it, because the installer puts neither `quiet`
+nor `splash` on the kernel command line (§2c, §5, Stage 3).
 
 Decisions are **BR1–BR8**, limitations **BRL1–BRL7**, owed measurements
 **O-BR1–O-BR6** (§7).
@@ -168,9 +176,9 @@ is to show, and when. The check's §8 reads the first two rows on every run.
 
 | surface | file | today | target | stage |
 |---|---|---|---|---|
-| app icon, `LOGO=os7`, GNOME About | `build/config/includes.chroot/usr/share/icons/hicolor/scalable/apps/os7.svg` | blue tile, `<text>` | byte-identical to `brand/os7-tile.svg` | 2 |
-| boot splash fallback | `spinner/bgrt-fallback.png`, diverted by hook 0035 from the icon | follows the icon | goes away with the theme (BR8) | 3 |
-| login screen | `build/packages/os7-desktop-theme/tree/usr/share/pixmaps/os7-logo-login.svg` | `<text>` in white, a rule, the vendor mark | a lockup GENERATED from `os7-wordmark-white.svg` and the vendor file, natural size chosen as the current one was (216×98, read out of `LoginDialog`) | 2 |
+| app icon, `LOGO=os7`, GNOME About | `build/config/includes.chroot/usr/share/icons/hicolor/scalable/apps/os7.svg` | **a byte copy of `brand/os7-tile.svg` since 2026-10-29** (was a blue tile with `<text>`) | as today; `check-image.py` compares it inside the ISO | 2, built |
+| boot splash fallback | `spinner/bgrt-fallback.png`, diverted by hook 0035 from the icon | follows the icon: the tile at 128 px | goes away with the theme (BR8) | 3 |
+| login screen | `build/packages/os7-desktop-theme/tree/usr/share/pixmaps/os7-logo-login.svg` | **GENERATED since 2026-10-29** from the master and the vendor file: the wordmark in white at scale 2.7, cap foot on y=180, the rule, the vendor mark; natural size 216×98 as before, read out of `LoginDialog` (was `<text>` in white) | as today; hook 0090 refuses `<text>`, `check-image.py` re-renders it from the shipped vendor file and compares | 2, built |
 | website header, footer, tab | `upinblue/os7-web`, `site/brand/` | the master's origin; comment above the `<svg>` tag | byte copies of `brand/` (BR3) | 2, other repository |
 | GUI applications | none yet | — | the tile, with the orange entering `Tokens.axaml` as a token first (G9 forbids a colour anywhere else under `src/`) | 2 or later |
 | administrator manual | `docs/manual/` | no mark | not planned | — |
@@ -263,10 +271,10 @@ the boot-environment chooser and its text face fits the idiom; it stays.
 | # | Limitation |
 |---|---|
 | **BRL1** | The website cannot be checked from this repository: it is private and a sibling checkout is optional. The check's §9 compares one when `OS7_WEB_ROOT` or `../os7-web` exists and says NOT CHECKED otherwise. Run from a worktree the default path resolves to nothing. |
-| **BRL2** | The image's consumers do not carry the mark: the icon and the login screen are `<text>` in DejaVu Sans Bold, and the boot fallback is rasterised from the icon. Debt 2, held as a baseline that may fall and may not rise. |
+| **BRL2** | **Closed 2026-10-29.** The icon and the login mark are the generator's output byte for byte and the check's baseline is 0; the boot fallback follows the icon. What remains outside the image is the website's copies (BRL1) and the GUI applications (BRL7). |
 | **BRL3** | No installed machine boots with `splash`; the current boot mark has never been shown on one (by the code, §2c — not measured on a screen). |
 | **BRL4** | The arm64 image ships `plymouth-theme-ubuntu-text`, the Ubuntu wordmark's text splash; the debrand hook that removes it is amd64-only. Dormant without `splash`. |
-| **BRL5** | Nothing in Stage 1 has been rendered: not the master at the website's 22 px, not the white variant on the field, not the tile at 16 px. |
+| **BRL5** | Rendered through librsvg 2.61.3 in a container — the lockup at 1×, 2× and 4× on the field, the tile at 16, 64 and 128 px, the wordmark at 22 px and 3× on dark — which is the library GdkPixbuf's SVG loader uses, and legible at every size. NOT yet through the greeter's own natural-size path on a machine, and not on a framebuffer. O-BR5 stays owed. |
 | **BRL6** | The website's light theme shows the orange mark on white at 2.88:1, below the 3:1 floor for non-text contrast. BR4 says nothing about a white ground; the website decides whether the light theme darkens the mark or the ground. |
 | **BRL7** | The GUI applications have no brand token: `check-gui-tokens.py` forbids a colour literal anywhere under `src/` outside `Tokens.axaml`, so the orange must enter as a token before the tile can appear in an application. |
 
@@ -276,8 +284,8 @@ the boot-environment chooser and its text face fits the idiom; it stays.
 | **O-BR2** | The splash drawn: a screenshot sequence of a boot on amd64, and one on arm64 (Mac) | `os7lab.py shot` over QMP; `vmscreen` |
 | **O-BR3** | The TPM boot with `splash`: nothing typed, a login prompt reached | `run-s5.py boot` |
 | **O-BR4** | A machine with a BGRT table shows OS/7's mark and not the firmware's | hardware; no VM has a BGRT table |
-| **O-BR5** | The login lockup generated from the white variant, rendered at scale 1 and 2 at natural size, and the greeter still constructing (#111) | `check-image.py` for the file, `os7lab.py --mode Gui` for the screen |
-| **O-BR6** | The tile at 16 px and the wordmark at 22 px, rendered, legible | `rsvg-convert` in the build container; eyes |
+| **O-BR5** | The generated login lockup THROUGH THE GREETER on a machine: the dialog constructing (#111) and the mark at natural size and at scale 2. Rendered through librsvg at 1×/2×/4× on 2026-10-29 and legible; the greeter itself not yet | `check-image.py` for the file (built), `os7lab.py --mode Gui` for the screen |
+| **O-BR6** | ~~The tile at 16 px and the wordmark at 22 px, rendered, legible~~ **Done 2026-10-29 through librsvg:** the 7 reads at 16 px, the wordmark at 22 px is 52×22 and reads. Not on a device | `rsvg-convert` in `ubuntu:26.04` |
 
 ---
 
@@ -293,7 +301,10 @@ the boot-environment chooser and its text face fits the idiom; it stays.
    file, at the natural size the current one measured; the website copies
    `brand/`; the orange enters `Tokens.axaml` and the tile reaches the
    applications' About. The check's baseline goes to 0. Each landing is
-   rendered (O-BR5, O-BR6) before it is called done.
+   rendered (O-BR5, O-BR6) before it is called done. **The image side was
+   built the same day, 2026-10-29**: icon, lockup, baseline 0, `check-image.py`
+   and hook 0090 taught both, rendered through librsvg; the website's copies and
+   the applications remain ([SESSION-BRAND-FREEZE.md](SESSION-BRAND-FREEZE.md) §6).
 3. **Stage 3 — the boot splash (BR8).** The theme, the sprites, the command
    line and its migration, the package on both architectures, `check-image.py`
    taught the theme; then O-BR1 to O-BR4. The passphrase prompt is measured

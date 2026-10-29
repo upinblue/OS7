@@ -10,7 +10,10 @@
   THE TILE (BRAND-PLAN BR5): the 7 from the wordmark, the same polygon, scaled
   by 0.664 into a 64-unit tile with a 12-unit corner and reversed
   out of the brand orange. It is the mark at icon size - the favicon on the
-  website, and what LOGO=os7 in /etc/os-release is to name on the image.
+  website, and what LOGO=os7 in /etc/os-release names on the image, where it
+  lives as a byte copy at usr/share/icons/hicolor/scalable/apps/os7.svg and is
+  also rasterised by hook 0035 into plymouth's bgrt fallback until the boot
+  splash has a theme of its own (BR8).
 
   It is the 7 alone and not the wordmark because the wordmark is 2.4 times as
   wide as it is tall: rendered into a 16px favicon it would be about six pixels

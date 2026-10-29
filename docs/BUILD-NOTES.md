@@ -9101,3 +9101,58 @@ for anything that read it.** The reader here was not even wrong to read it — i
 was wrong to have no other way of telling "there is nothing to read" from "I
 could not read it", which is the same three-outcome shape
 `Get-OS7TimeSynchronization` and `Get-OS7SecureBoot` were already built around.
+
+## #172 — a probe section whose command printed no trailing newline swallowed the next section's marker, and a check about autostart entries failed about an SVG
+
+**Found 2026-10-29** while teaching `check-image.py` the brand
+([BRAND-PLAN.md](BRAND-PLAN.md) BR6): three new `emit` lines brought `os7.svg`,
+`os7-logo-login.svg` and `upinblue-logo.svg` home from the squashfs with `cat`,
+and the first run against `OS7-1.0.0.245-amd64.iso` failed FOUR checks where
+three were expected — the three brand checks, which that medium carries the old
+marks for, and this one:
+
+```
+FAIL  the update and Ubuntu Pro autostart entries are hidden — <nothing read>
+```
+
+The committed `check-image.py`, run against the same ISO in the same minute,
+passes that check: `ubuntu-advantage-notification=hidden, update-notifier=hidden`.
+So the probe had changed what the autostart section contained, and nothing had
+touched that section.
+
+**The measurement.** `read_image()` called from a REPL and its sections printed:
+
+```
+desktop keys: [... 'desktop.iconsvg', 'desktop.loginsvg', 'desktop.vendorsvg', 'desktop.relupg', ...]
+autostart: None
+vendorsvg tail: '...</g>\n</svg><<<desktop.autostart>>>\nupdate-notifier hidden\nubuntu-advantage-notification hidden'
+```
+
+`upinblue-logo.svg` on the shipped image ends WITHOUT a newline — its last byte
+is the `>` of `</svg>`, the vendor's Illustrator export, carried verbatim
+because that is the point of the file. `emit()` printed `<<<key>>>\n`, ran the
+command and nothing else; `cat` left the cursor after that `>`; the next
+`printf` wrote `<<<desktop.autostart>>>` onto the SAME line;
+`parse_sections()` recognises a marker only when it starts its line; and so the
+autostart lines became the last two lines of the vendor section while
+`desktop.autostart` never existed.
+
+**What it means.** Every `emit` of a FILE's contents had this hole from the day
+the probe was written. It was never hit because every file brought home before
+today ended in a newline, and `cat` of a file is the natural thing to write.
+The failure then reads as a defect in the section AFTER the culprit, about a
+check that has nothing to do with the file — the shape #70's CR-LF and #16's
+echoed marker have: the framing broke, not the content, and the symptom points
+somewhere else.
+
+**The fix** is in `emit()`: it ends every section with an `echo`.
+`parse_sections()` strips each section, so the extra line costs nothing, and a
+section's content can no longer decide where the next one begins. Re-run on the
+245 medium: the three brand checks still red, as they must, and the autostart
+check green again.
+
+**The rule:** a framing protocol must terminate its own records and may not
+rely on the payload to do so. Anything here that interleaves markers with the
+output of arbitrary commands — this probe, the serial-line markers in the
+`run-*.py` harnesses, the hooks' `ok`/`note` lines — carries the same
+obligation.
