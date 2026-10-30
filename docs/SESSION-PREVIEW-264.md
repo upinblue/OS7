@@ -268,6 +268,12 @@ read back; the rewrites from `/download/<file>` to `/iso/<file>`, held by
 the deploy itself. RELEASE-PROCESS §3's check by name is owed from another
 network.
 
+**And from another network it works.** The operator opened
+`https://os7.org/download` away from this host's network on 2026-10-30 and
+reported the page working. That is a person looking, not a `curl -sI` with its
+status recorded, and an image fetched by name and checked against `SHA256SUMS`
+was not reported — the read-back hashes above remain the evidence for the bytes.
+
 ### 7.5 The site, the tag, the release
 
 `tools/publish-release.py` wrote the download page, `releases.json`, the
@@ -292,8 +298,9 @@ the download page did, for the hour between the 203 images going and the deploy.
 ## 8. What this run does NOT say
 
 * **arm64 has no boot gate**, as always; its evidence is `check-image.py`.
-* **The download by name was not fetched** — `os7.org` is blocked from this
-  network (§7.4). Its stand-ins are the read-back hashes and the rewrite check.
+* **The download by name was not fetched from this host** — `os7.org` is
+  blocked from this network (§7.4). The operator confirmed the download page
+  from another one; an image fetched by name and hashed there was not reported.
 * **No machine has updated from 1.0.0.175 or 1.0.0.203 to this release** against
   the published repository; the measured update starts at 1.0.0.264. That both
   trust anchors carry the release key was read out of their packages, not

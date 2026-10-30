@@ -144,10 +144,10 @@ first release signed by the RELEASE key.** Both media from `9a0059b`, clean tree
 descriptors are signed by `E39B3127…B3F5FAF9` and say `development: false`,
 asked back from the read-only account against the release key alone. The images
 are on os7.org in `/iso/`, read back by hash; the site, the tag
-`v1.0.0.264-preview` and the GitHub pre-release are up. **Not done: the download
-by name** — `os7.org` is blocked by this host's network, so §3 step 10's
-check is owed from another one — and no machine has updated from 175 or 203 to
-it. **New known limit, #188:** with `splash` on the command line, a serial
+`v1.0.0.264-preview` and the GitHub pre-release are up. The download page by
+name was confirmed by the operator from another network the same day, because
+`os7.org` is blocked by this host's. **Not done:** no machine has updated from
+175 or 203 to it. **New known limit, #188:** with `splash` on the command line, a serial
 console whose terminal answers queries stalls the boot until a key is pressed;
 BRAND-PLAN BRL9 holds the two fixes not taken.
 [SESSION-PREVIEW-264.md](SESSION-PREVIEW-264.md) is that run: five lines of work
