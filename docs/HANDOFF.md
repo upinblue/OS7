@@ -136,7 +136,26 @@ start-up animation, left a desktop that took no input in 2 of 22 logins. The
 fix closes it once it has opened (9 of 9 since); the race is rare enough that
 nine cannot prove it gone.
 
-**1.0.0.245 IS BUILT AND GATED (2026-09-21) AND IS NOT PUBLISHED.** Both media
+**1.0.0.264 WAS PUBLISHED ON 2026-10-30 — the third published preview, and the
+first release signed by the RELEASE key.** Both media from `9a0059b`, clean tree,
+`reproducible: true`; the whole amd64 gate green (`check-image` 192, `run-s5 all`
+108 ok in five phases, `run-firstrun` 13, `run-phase3` install + walk,
+`run-secureboot` 32) and `check-image arm64` 146. Its repository, index and
+descriptors are signed by `E39B3127…B3F5FAF9` and say `development: false`,
+asked back from the read-only account against the release key alone. The images
+are on os7.org in `/iso/`, read back by hash; the site, the tag
+`v1.0.0.264-preview` and the GitHub pre-release are up. **Not done: the download
+by name** — `os7.org` is blocked by this host's network, so §3 step 10's
+check is owed from another one — and no machine has updated from 175 or 203 to
+it. **New known limit, #188:** with `splash` on the command line, a serial
+console whose terminal answers queries stalls the boot until a key is pressed;
+BRAND-PLAN BRL9 holds the two fixes not taken.
+[SESSION-PREVIEW-264.md](SESSION-PREVIEW-264.md) is that run: five lines of work
+merged, a fifth logo, #187–#190, one medium pair thrown away, and §7.4 — why the
+images go up over SFTP and how an lftp exit code deleted 203's early.
+
+**1.0.0.245 was built and gated (2026-09-21) and never published**; 1.0.0.264
+carries everything it did. Both media
 from `93fd496`, clean tree, `reproducible: true`; the whole of
 [RELEASE-PROCESS.md](RELEASE-PROCESS.md) §2 green on them, including all four
 machine rows; the repository cut over the FETCHED published tree, so its index
@@ -159,8 +178,9 @@ by `check-image.py` on the first medium built against the new snapshot. Three
 consecutive releases have now been paid for by the instruments.
 
 **1.0.0.203 was published on 2026-09-09** and is the second preview. Both media
-from `42156cf`; os7.org offers those images and the versioned manual; the GitHub
-pre-release carries the changelog and the descriptors. **Its repository on the
+from `42156cf`; the GitHub pre-release carries the changelog and the
+descriptors. Its images left os7.org on 2026-10-30 — the webspace holds one
+release — and its packages stay in the repository. **Its repository on the
 Storage Box is signed by the DEVELOPMENT key, and so is 1.0.0.175's**, and both
 releases' descriptors say `development: true` — measured 2026-10-29 by
 verifying the fetched tree against the release key alone (#187). What that run measured,
@@ -197,9 +217,9 @@ none of them in scope. The first is fixed since; two are open:
 
 **Two things are still owed, in the order they cost:**
 
-1. **UL6 has never been satisfied and now has three releases that say so.** No
-   `archive/<version>/<arch>/*.deb` exists for 1.0.0.175, 1.0.0.203 or
-   1.0.0.245, and no tool builds one — §4's layout is proposed, not built. So
+1. **UL6 has never been satisfied and now has four releases that say so.** No
+   `archive/<version>/<arch>/*.deb` exists for 1.0.0.175, 1.0.0.203, 1.0.0.245
+   or 1.0.0.264, and no tool builds one — §4's layout is proposed, not built. So
    the reproducibility claim rests on `snapshot.ubuntu.com`, for which Canonical
    publishes no retention guarantee. Defensible for a preview; not for a
    `stable`.

@@ -10080,6 +10080,19 @@ concluded the secret half was not on this host. That was the WINDOWS profile.
 (#97: gpg-agent cannot make its socket on a Windows mount), and
 `/home/<user>/.os7/gnupg-release` holds `B62CBF99B3F5FAF9`, passphrase-protected.
 
+**And the passphrase prompt itself had to change.** Run from the desktop app's
+terminal panel, `sign-release.sh` drew pinentry-curses' dialog and gpg answered
+`signing failed: Timeout` about a minute later, twice, with nobody typing and
+nothing signed — the descriptors had been rewritten, the signatures had not, so
+nothing was in a half state a rerun could not repeat. gpg-agent has no
+`pinentry-timeout` set, and in a plain pty under `script` the same dialog waited
+the full 150 s until its input closed; a SIGWINCH six seconds in did not end it
+either. What closed it in the panel was not found. The script now passes
+`--pinentry-mode loopback`, so gpg asks on the terminal itself, and that was
+measured before it touched the release key: one `Enter passphrase:`, three gpg
+processes after it, three good signatures — gpg-agent caches a loopback
+passphrase as it does a pinentry one.
+
 *The general form:* **a signature is not the only statement of who signed.** When
 a file inside the signed set says who made it, re-signing the set without
 rewriting the file publishes two answers, and the one a reader trusts is the one

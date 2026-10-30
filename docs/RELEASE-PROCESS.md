@@ -211,6 +211,26 @@ Until step 3, the release exists and is invisible: `Get-OS7Release` lists what
 the index names and nothing else. A half-uploaded release is therefore not a
 release, rather than a release that fails halfway through an update.
 
+**The images go to the webspace over SFTP, never FTPS** (measured 2026-10-30,
+SESSION-PREVIEW-264 §7.4). The ISO account has SFTP on port 22 onto the
+document root, so they land in `/iso/`. FTPS fails for this webspace from two
+places: os7-web's deploy found the data channel reset from GitHub's runners, and
+from the release host every data channel presents a certificate from the
+network's TLS inspection. `ftps://` in lftp is *implicit* TLS on port 990, which
+the webspace does not answer at all. Two more traps on the way:
+
+* **Resolve the host by DNS over HTTPS.** The release host's resolver answers
+  `80.158.111.94` for the webspace's own name, as it does for `os7.org`. Pin
+  the answer with `--add-host`, and set `dns:order inet` in lftp, because its
+  own default asks for an AAAA first and that answer comes from the same
+  resolver. Pin the SSH host key, too: os7-web's `SSH_HOST_KEY` is the one to
+  compare with.
+* **lftp's exit status is its LAST command's.** In `-e "cls …; rm …; put …;
+  bye"` a failed listing does not stop the `rm`, and `|| die` behind it never
+  fires. That is how 1.0.0.203's images were deleted by an attempt that should
+  have stopped. Check each step's effect separately; the read-back hash is the
+  one that counts.
+
 ### 9. The website
 
 `tools/publish-release.py` in `upinblue/os7-web` measures the ISOs it is given

@@ -7,8 +7,17 @@
 #   scripts/sign-release.sh out/os7-repo 1.0.0.261 preview
 #
 # Run it in an INTERACTIVE Linux shell (on the Windows host: `wsl`, then cd to
-# the repository on /mnt/c). gpg asks for the release key's passphrase through
-# pinentry, ONCE; nothing here reads, stores or passes a passphrase.
+# the repository on /mnt/c). gpg asks for the release key's passphrase on the
+# terminal itself, ONCE, and gpg-agent keeps it for the signatures after the
+# first; nothing here reads, stores or passes a passphrase.
+#
+# On the terminal itself means `--pinentry-mode loopback`, not pinentry-curses.
+# In the desktop app's terminal panel the curses dialog twice ended with
+# "signing failed: Timeout" about a minute after it was drawn, with nobody
+# typing and nothing signed. In a plain pty the same dialog waited 150 s until
+# its input closed, and a SIGWINCH did not end it, so what closed it in the
+# panel is not known. Loopback was measured instead: one prompt, three gpg
+# processes, three good signatures.
 #
 # WHY THIS IS A SCRIPT AND NOT THREE gpg LINES. Step 6 was written as "replace
 # the three signatures", and that is not the whole of it. Every descriptor
@@ -56,7 +65,7 @@ VERSION="$2"
 CHANNEL="$3"
 
 [[ "$(uname -s)" == Linux ]] || die "run this in a Linux shell (on Windows: wsl)."
-[[ -t 0 && -t 1 ]] || die "no terminal: pinentry has nowhere to ask for the passphrase."
+[[ -t 0 && -t 1 ]] || die "no terminal: gpg has nowhere to ask for the passphrase."
 for t in gpg gpgv python3 sha256sum; do command -v "$t" >/dev/null || die "no $t in PATH"; done
 
 GNUPGHOME_REL="${OS7_GNUPGHOME:-${HOME}/.os7/gnupg-release}"
@@ -129,7 +138,7 @@ PY
 
 # --- 4. sign ------------------------------------------------------------------
 say ">>> signing (gpg asks for the passphrase once)"
-sign() { gpg --homedir "$GNUPGHOME_REL" --yes --local-user "$FPR" --digest-algo SHA512 "$@"; }
+sign() { gpg --homedir "$GNUPGHOME_REL" --yes --pinentry-mode loopback --local-user "$FPR" --digest-algo SHA512 "$@"; }
 for rel in "${TREE}"/dists/*/Release; do
 	d="$(dirname "$rel")"
 	rm -f "$d/Release.gpg" "$d/InRelease"

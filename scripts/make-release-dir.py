@@ -214,10 +214,12 @@ def main():
               f"all newer than the medium ({built})")
 
     # ---- SHA256SUMS, in the format sha256sum -c reads -----------------------
+    # newline="\n": on the Windows host write_text turns every "\n" into CRLF,
+    # and `sha256sum -c` then looks for a file called "OS7-<v>-amd64.iso\r".
     sums = dest / "SHA256SUMS"
     sums.write_text(
         "".join(f"{facts[a]['sha256']}  {facts[a]['file']}\n" for a in ARCHES),
-        encoding="utf-8")
+        encoding="utf-8", newline="\n")
 
     # ---- README.txt, from the measurements ---------------------------------
     banner = ""
@@ -320,7 +322,7 @@ def main():
             "  ships. Every character came off the machine's serial line.",
             "",
         ]
-    (dest / "README.txt").write_text("\n".join(lines), encoding="utf-8")
+    (dest / "README.txt").write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
     # ---- what to do with it ------------------------------------------------
     print(f"\n>>> {dest}")
