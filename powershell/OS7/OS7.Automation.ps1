@@ -180,6 +180,40 @@ function Assert-OS7AutomationName {
 # un-says what the machine did.
 # =============================================================================
 
+function Get-OS7ExistingZfsDataset {
+	<#
+	.SYNOPSIS
+		Internal. Filesystems by name — and "dataset does not exist" as an
+		EMPTY answer, while every other ZFS failure stays a failure.
+
+	.DESCRIPTION
+		BUILD-NOTES #192. Get-ZfsDataset THROWS for a dataset that is not there
+		(Invoke-ZfsNative, measured shape err.*), and both callers below asked
+		"does it exist yet?" with `-ErrorAction SilentlyContinue`. That
+		swallows a `throw` only while no try/catch is further up the call
+		stack. Typed over ssh there is none, and New-OS7ServiceDataset worked;
+		run by the Containers window's root helper, which wraps every verb in
+		try/catch, the same `throw` reached the helper's catch and the engine
+		was never set up — "cannot open 'rpool/DATA/lib/docker': dataset does
+		not exist", from the line that was asking exactly that.
+
+		The answer is decided by ZFS's own sentence, not by catching
+		everything: a missing `zfs` binary or a pool that cannot be read must
+		still say so.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[switch]$Recurse
+	)
+
+	try {
+		Get-ZfsDataset -Name $Name -Type Filesystem -Recurse:$Recurse
+	}
+	catch {
+		if ("$($_.Exception.Message)" -notmatch 'dataset does not exist') { throw }
+	}
+}
+
 function New-OS7ServiceDataset {
 	<#
 	.SYNOPSIS
@@ -227,15 +261,28 @@ function New-OS7ServiceDataset {
 		dataset created for durable state and left out of the snapshot policy
 		is durable against a rollback and against nothing else.
 
+	.PARAMETER NoLayout
+		Make no directory in it and change no mode. For a dataset that is
+		ANOTHER PROGRAM's root — the container engine's /var/lib/docker and
+		/var/lib/containerd (CONTAINERS-PLAN CT3) — where `state/` would be a
+		decision this layer has no business making, and the program sets its
+		own modes (dockerd makes its root 0710). Measured on the bench before
+		this switch existed (M-CT9): both engine roots came out with a
+		`state/` in them.
+
 	.EXAMPLE
 		New-OS7ServiceDataset -Name os7-automation
+
+	.EXAMPLE
+		New-OS7ServiceDataset -Name containerd -Backup $false -NoLayout
 	#>
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory, Position = 0)][string]$Name,
 		[string]$MountPoint,
 		[string]$Pool = $script:OS7AutomationPool,
-		[bool]$Backup = $true
+		[bool]$Backup = $true,
+		[switch]$NoLayout
 	)
 
 	Assert-OS7Elevated -Cmdlet 'New-OS7ServiceDataset' -Because (
@@ -272,7 +319,7 @@ function New-OS7ServiceDataset {
 
 	Import-OS7ZfsLayer
 
-	$existing = @(Get-ZfsDataset -Name $dataset -Type Filesystem -ErrorAction SilentlyContinue)
+	$existing = @(Get-OS7ExistingZfsDataset -Name $dataset)
 	if ($existing.Count) {
 		Write-OS7Step "$dataset already exists; checking rather than creating"
 	}
@@ -335,7 +382,9 @@ function New-OS7ServiceDataset {
 	# names a verb which does not do what the message says — and it is the shape
 	# of defect only a machine finds, because a check that drove the cmdlets
 	# against a scratch tree made the directories itself before it started.
-	$after = New-OS7ServiceDatasetLayout -Name $Name -MountPoint $MountPoint -Result $after
+	if (-not $NoLayout) {
+		$after = New-OS7ServiceDatasetLayout -Name $Name -MountPoint $MountPoint -Result $after
+	}
 
 	if ($Backup) {
 		$after = Add-OS7ServiceDatasetToBackup -Dataset $dataset -Result $after
@@ -471,7 +520,7 @@ function Get-OS7ServiceDataset {
 	$parent = "$Pool/$($script:OS7ServiceDatasetParent)"
 	$want = if ($Name) { "$parent/$Name" } else { $null }
 
-	$sets = @(Get-ZfsDataset -Name ($want ?? $parent) -Recurse -Type Filesystem -ErrorAction SilentlyContinue |
+	$sets = @(Get-OS7ExistingZfsDataset -Name ($want ?? $parent) -Recurse |
 		Where-Object { [string]$_.Name -ne $parent })
 	if ($Name) { $sets = @($sets | Where-Object { [string]$_.Name -eq $want }) }
 

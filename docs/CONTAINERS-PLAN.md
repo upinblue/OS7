@@ -4,7 +4,12 @@
 lives, how PowerShell reaches them, who may see them, and the window an administrator controls
 them from.**
 
-**Everything here is *Proposed 2026-10-29* and nothing is built.** Decisions are CT1–CT12, open
+**Proposed 2026-10-29; steps 1–4 and 6–8 are BUILT and have run on a machine since 2026-10-30**
+([SESSION-CONTAINERS-WINDOW.md](SESSION-CONTAINERS-WINDOW.md)): `Install-OS7ContainerHost`
+installed the archive's engine on an installed 1.0.0.264, and the Containers window drew it,
+signed in through polkit, created a container and cleaned one up. The owner decided CT5's
+channel and O-CT3 (both, the group as a root-equivalent opt-in) and moved a create dialog into
+v1, against CT12. What is left is step 5 — the engine on an ISO — and phase 2. Decisions are CT1–CT12, open
 questions O-CT1…, and a measurement still owed is `O-M…`, so the prefix tells "measured" from
 "owed". The measurements in §2 were taken on the x64 Windows host the same day. **The engine has
 run on an installed OS/7 machine the same day** (O-M1, M-CT7–M-CT10,
@@ -88,8 +93,11 @@ All on 2026-10-29, on the x64 Windows host with Docker Desktop.
   not measured here.
 - **O-M3 — the `journald` log driver** on this engine: that `docker logs` still reads it, and that
   a removed container's logs survive.
-- **O-M4 — the helper's cost.** A cold `pwsh` as root per call (CT5), and whether `pkexec` is on
-  the image at all — on Ubuntu it has been a package of its own since 22.04.
+- ~~**O-M4 — the helper's cost.**~~ **Answered 2026-10-30** (M-CT15, M-CT22): `pkexec` is on the
+  264 medium, in main; a call costs one cold `pwsh` as root; and `auth_admin_keep` holds across
+  separate pkexec processes for about five minutes FROM SIGN-IN, not from last use — so an
+  administrator working longer is asked again, which is polkit's default and the operator route's
+  reason to exist.
 - **O-M5 — Ubuntu's 29.1.3 CLI exit codes.** The nested daemon could not pull an image, so M-CT4's
   CLI half is Docker Desktop's client.
 - **arm64**, entirely.
@@ -351,7 +359,10 @@ G10, applied:
 - **No image builds**, and no editing of Compose files.
 - **No polling.**
 - **No update mechanism of its own.** It ships in the image and moves with the train.
-- **No create-a-container wizard in v1.**
+- ~~**No create-a-container wizard in v1.**~~ **Reversed by the owner 2026-10-30**: a create
+  dialog is in v1, and it is still a front-end — *Check* is `New-OS7Container -ValidateOnly`,
+  *Create* the same cmdlet. Named volumes only (CT3), and the environment's values never shown
+  again. Compose files stay phase 2.
 
 ---
 
@@ -402,18 +413,27 @@ and still decides, in the product layer, which endpoint to hit.
    **Wired into the OS7 module the same day**, once the other session's files were committed:
    `powershell/OS7/OS7.Container.ps1`, in all four lists, and the Docker module ships beside it in
    the `os7-module` .deb, because a product cmdlet whose layer is missing answers "module not
-   found". No machine has run these cmdlets yet; step 4 is the first.
-4. **`Install-OS7ContainerHost`**: CT3's two datasets **before** the package (with
-   `New-OS7ServiceDataset` no longer writing `state/` into a foreign root), CT7's `daemon.json`
-   with the bridge ranges and their collision check, then the package. Measured from the bench's
-   `installed` snapshot, along with O-M2, O-M3 and O-M6.
-5. **Delivery of the engine**: C8's universe question for `docker.io`, and package or role
-   (O-CT2). Only the engine: the PowerShell layers ship already.
-6. **The helper and its polkit rule**, with O-M4.
-7. **The window**: `src/OS7.App.Containers` on `OS7.Ui` and `OS7.Shell`, `--self-test`, and G12's
-   three checks extended to it.
-8. **`os7-app-containers`** as a package, on a machine through `os7lab`, and the manual's page from
-   `shoot-manual.py`.
+   found". They first ran on a machine in step 4.
+4. ~~**`Install-OS7ContainerHost`**~~ — **done 2026-10-30**, first run on bench `ctgui`: both
+   stores before the package, `New-OS7ServiceDataset -NoLayout` (no `state/` in a foreign root),
+   `daemon.json` with the ranges checked against addresses, routes and the open SSH sessions
+   (read from `/proc/net/tcp`, because sudo drops `$SSH_CONNECTION`), then the package, then five
+   read-backs. O-M3's first half measured; O-M2 and O-M6 still owed.
+5. **Delivery of the engine**: package or role (O-CT2), and what `Update-OS7`'s `autoremove`
+   does to an operator-installed engine. **C8's universe question is answered for machines
+   installed from 264** (M-CT16): their sources reach `docker.io` in the pinned archive.
+6. ~~**The helper and its polkit rule**~~ — **done 2026-10-30**: three wrappers in
+   `/usr/libexec` (polkit decides by path), one trust-boundary script, `org.os7.containers.operate`
+   (`auth_admin_keep`), `.destroy` (`auth_admin` every time) and `.install` (`auth_admin` every
+   time, its own words) — the last because the owner asked that the window set the engine up
+   itself (CT2's cmdlet, run from a button). O-M4 answered.
+7. ~~**The window**~~ — **done 2026-10-30**: `src/OS7.App.Containers`, `--self-test` 58, and
+   check-gui-logic.py holding the window's verb list equal to the module's, class for class.
+8. ~~**`os7-app-containers`**~~ — **built and run on a machine 2026-10-30**; `os7-desktop`
+   depends on it and hook 0022 installs it. A 1.0.0.266 medium built from the working tree
+   carried it (`check-image.py`: only the development-key line red), and a machine installed
+   from that medium set the engine up from the window's button. The manual's page from
+   `shoot-manual.py` is owed.
 
 Phase 2 (CT10) comes after all eight.
 
@@ -427,8 +447,10 @@ Phase 2 (CT10) comes after all eight.
 - **O-CT2 — How the role is delivered, and what `Update-OS7` does with it.** A `Recommends` of the
   release metapackage, or an operator install that the boot-environment clone and `autoremove`
   must leave alone.
-- **O-CT3 — The `docker` group as an explicit opt-in**, for administrators who accept root
-  equivalence for convenience (`Add-OS7ContainerOperator`?), or never.
+- ~~**O-CT3 — The `docker` group as an explicit opt-in**~~ — **decided by the owner
+  2026-10-30: yes, beside the helper.** `Add-OS7ContainerOperator` (ConfirmImpact High) says
+  root-equivalent in its result; the container verbs accept a process the socket answers
+  (`Assert-OS7ContainerElevated`). Measured over SSH (M-CT27).
 - **O-CT4 — The default bind address.** `127.0.0.1` in `daemon.json` is safe and surprising;
   Docker's `0.0.0.0` is familiar and open. CT8 says which one it is either way.
 - **O-CT5 — arm64.** The engine and the cmdlets apply, since a server-only architecture runs

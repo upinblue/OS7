@@ -359,11 +359,17 @@ function Assert-DockerStatus {
 	$sentence = "Could not $What — the engine answered $($Response.StatusCode)" +
 		$(if ($msg) { ": $msg" } else { '.' })
 
-	switch ($Response.StatusCode) {
-		404 { throw [System.Management.Automation.ItemNotFoundException]::new($sentence) }
-		400 { throw [System.ArgumentException]::new($sentence) }
-		default { throw [System.InvalidOperationException]::new($sentence) }
+	$ex = switch ($Response.StatusCode) {
+		404 { [System.Management.Automation.ItemNotFoundException]::new($sentence) }
+		400 { [System.ArgumentException]::new($sentence) }
+		default { [System.InvalidOperationException]::new($sentence) }
 	}
+	# The status rides along in the exception's own Data, so a caller can tell
+	# 409 "in use" from 403 "built in" from 500 without matching the engine's
+	# prose — which changes between releases, and a product decision keyed on
+	# it would be keyed on a translation.
+	$ex.Data['DockerStatus'] = [int]$Response.StatusCode
+	throw $ex
 }
 
 function ConvertTo-DockerApiVersion {
@@ -534,6 +540,7 @@ function Get-DockerEngine {
 		DriverType           = $pairs['driver-type']
 		BackingFilesystem    = $pairs['Backing Filesystem']
 		DockerRootDir        = Get-DockerField $i 'DockerRootDir'
+		LoggingDriver        = Get-DockerField $i 'LoggingDriver'
 		CgroupVersion        = Get-DockerField $i 'CgroupVersion'
 		Containers           = Get-DockerField $i 'Containers'
 		ContainersRunning    = Get-DockerField $i 'ContainersRunning'
@@ -912,18 +919,45 @@ function Get-DockerContainerLog {
 function Get-DockerImage {
 	<#
 	.SYNOPSIS
-		The images the engine holds.
+		The images the engine holds: a list, or one inspected in full.
+
+	.DESCRIPTION
+		With -Name, the image is inspected — RepoDigests, Config, the layers —
+		and a name the engine does not hold throws ItemNotFoundException.
+		RepoDigests is what a registry's answer is compared with to say
+		whether a newer image exists under the same tag
+		(Get-DockerDistribution).
 
 	.EXAMPLE
 		Get-DockerImage -Filter @{ reference = 'nginx' } | Select-Object RepoTags, Size
-	#>
-	[CmdletBinding()]
-	param([System.Collections.IDictionary]$Filter)
 
-	$q = @{}
-	$f = ConvertTo-DockerFilter -Table $Filter
-	if ($f) { $q.filters = $f }
-	Get-DockerResource -Path '/images/json' -Query $q -What 'list images' -TypeName 'Docker.Image'
+	.EXAMPLE
+		(Get-DockerImage -Name nginx:1.27).RepoDigests
+	#>
+	[CmdletBinding(DefaultParameterSetName = 'List')]
+	param(
+		[Parameter(ParameterSetName = 'Inspect', Mandatory, Position = 0, ValueFromPipelineByPropertyName)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$')]
+		[string[]]$Name,
+		[Parameter(ParameterSetName = 'List')][System.Collections.IDictionary]$Filter
+	)
+
+	process {
+		if ($PSCmdlet.ParameterSetName -eq 'Inspect') {
+			foreach ($n in $Name) {
+				$r = Invoke-DockerApi -Method GET -Path "/images/$(ConvertTo-DockerPathName -Name $n)/json"
+				Assert-DockerStatus -Response $r -Expected 200 -What "inspect image '$n'"
+				$i = Read-DockerJson -Response $r
+				$i.PSObject.TypeNames.Insert(0, 'Docker.ImageInspect')
+				$i
+			}
+			return
+		}
+		$q = @{}
+		$f = ConvertTo-DockerFilter -Table $Filter
+		if ($f) { $q.filters = $f }
+		Get-DockerResource -Path '/images/json' -Query $q -What 'list images' -TypeName 'Docker.Image'
+	}
 }
 
 function Get-DockerVolume {
@@ -1000,6 +1034,766 @@ function Get-DockerDiskUsage {
 }
 
 # =============================================================================
+# Creating, pulling and removing
+#
+# Added for CONTAINERS-PLAN's create dialog and clean-up (2026-10-30). Every
+# verb here asks the engine back afterwards, for the reason the lifecycle verbs
+# do: a status code is the engine's claim, and the object is the thing itself.
+# =============================================================================
+
+function ConvertTo-DockerPathName {
+	<#
+	.SYNOPSIS
+		Internal. An image, volume or network name as a URL path segment.
+
+	.DESCRIPTION
+		Escaped, and then the slashes put back. An image reference carries
+		them (`ghcr.io/org/app:1`), the engine's router matches `{name:.*}`,
+		and that is exactly what the docker CLI sends. Everything else that
+		could end the segment early — `?`, `#`, a space — stays escaped.
+	#>
+	param([Parameter(Mandatory)][string]$Name)
+
+	return ([uri]::EscapeDataString($Name) -replace '%2F', '/')
+}
+
+function Split-DockerReference {
+	<#
+	.SYNOPSIS
+		Internal. An image reference as repository, tag and digest.
+
+	.DESCRIPTION
+		THE TAG IS THE LAST COLON AFTER THE LAST SLASH, not the last colon:
+		`localhost:5000/app` has a port and no tag. And a reference with
+		neither tag nor digest means `latest` — said here, because the
+		engine's pull endpoint given an EMPTY tag pulls every tag the
+		repository has, which is not what anybody typing `nginx` meant.
+	#>
+	param([Parameter(Mandatory)][string]$Reference)
+
+	$ref = $Reference.Trim()
+	$digest = $null
+	$at = $ref.IndexOf('@')
+	if ($at -ge 0) { $digest = $ref.Substring($at + 1); $ref = $ref.Substring(0, $at) }
+	$slash = $ref.LastIndexOf('/')
+	$colon = $ref.LastIndexOf(':')
+	$tag = $null
+	if ($colon -gt $slash) { $tag = $ref.Substring($colon + 1); $ref = $ref.Substring(0, $colon) }
+	if (-not $tag -and -not $digest) { $tag = 'latest' }
+	[pscustomobject]@{
+		Repository = $ref
+		Tag        = $tag
+		Digest     = $digest
+		Reference  = if ($digest) { "$ref@$digest" } else { "${ref}:$tag" }
+	}
+}
+
+function ConvertFrom-DockerProgressStream {
+	<#
+	.SYNOPSIS
+		Internal. The engine's pull progress — JSON objects, one per line — as
+		objects.
+	#>
+	param([Parameter(Mandatory)]$Response)
+
+	$t = $Response.Text
+	if ([string]::IsNullOrWhiteSpace($t) -and $null -ne $Response.Bytes) {
+		$t = [System.Text.Encoding]::UTF8.GetString($Response.Bytes)
+	}
+	if ([string]::IsNullOrWhiteSpace($t)) { return }
+	foreach ($line in ($t -split "`r?`n")) {
+		if ([string]::IsNullOrWhiteSpace($line)) { continue }
+		try { $line | ConvertFrom-Json -Depth 16 } catch { [pscustomobject]@{ status = $line } }
+	}
+}
+
+function Receive-DockerImage {
+	<#
+	.SYNOPSIS
+		Pulls an image, and says whether anything changed.
+
+	.DESCRIPTION
+		THE ENGINE ANSWERS 200 FOR A PULL THAT FAILED. The status line is sent
+		before the registry has been asked anything, and the failure arrives
+		afterwards as an `error` object inside the stream — so a caller that
+		trusts the status reports success for an image that never arrived.
+		The stream is read for that object, and then the image is inspected:
+		it must be there.
+
+		  Downloaded   the engine did not hold it before
+		  Updated      it did, and the tag now names a different image
+		  UpToDate     it did, and the tag still names the same one
+
+		The outcome is decided by comparing the image's Id BEFORE and AFTER,
+		not by the engine's prose ("Image is up to date for …"), which is
+		English and is not a contract.
+
+	.EXAMPLE
+		Receive-DockerImage nginx:1.27
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$')]
+		[string[]]$Reference
+	)
+
+	process {
+		foreach ($r in $Reference) {
+			$ref = Split-DockerReference -Reference $r
+			if (-not $PSCmdlet.ShouldProcess($ref.Reference, 'pull image')) { continue }
+
+			$before = $null
+			try { $before = Get-DockerImage -Name $ref.Reference }
+			catch [System.Management.Automation.ItemNotFoundException] { $before = $null }
+
+			$q = @{ fromImage = $ref.Repository }
+			if ($ref.Digest) { $q.fromImage = "$($ref.Repository)@$($ref.Digest)" } else { $q.tag = $ref.Tag }
+			$resp = Invoke-DockerApi -Method POST -Path '/images/create' -Query $q
+			Assert-DockerStatus -Response $resp -Expected 200 -What "pull image '$($ref.Reference)'"
+
+			$lines = @(ConvertFrom-DockerProgressStream -Response $resp)
+			$failed = $lines | Where-Object { $null -ne (Get-DockerField $_ 'error') } | Select-Object -First 1
+			if ($failed) {
+				$ex = [System.InvalidOperationException]::new(
+					"Could not pull image '$($ref.Reference)' — the engine answered 200 and then said: " +
+					"$(Get-DockerField $failed 'error')")
+				$ex.Data['DockerStatus'] = 200
+				throw $ex
+			}
+
+			$after = Get-DockerImage -Name $ref.Reference
+			$outcome = if ($null -eq $before) { 'Downloaded' }
+			elseif ([string](Get-DockerField $before 'Id') -ne [string](Get-DockerField $after 'Id')) { 'Updated' }
+			else { 'UpToDate' }
+
+			[pscustomobject]@{
+				PSTypeName  = 'Docker.ImagePull'
+				Reference   = $ref.Reference
+				Outcome     = $outcome
+				Id          = Get-DockerField $after 'Id'
+				RepoDigests = @(Get-DockerField $after 'RepoDigests')
+				Status      = @($lines | ForEach-Object { Get-DockerField $_ 'status' } |
+						Where-Object { $_ } | Select-Object -Last 1)
+			}
+		}
+	}
+}
+
+function Get-DockerDistribution {
+	<#
+	.SYNOPSIS
+		What a registry says a tag names NOW, without pulling it.
+
+	.DESCRIPTION
+		The engine's /distribution endpoint asks the registry for the
+		manifest and returns its digest. When that digest is among a local
+		image's RepoDigests, the local image IS what the tag names; when it is
+		not, the registry has moved the tag on. That comparison is a product
+		decision and is made one layer up — this returns what the registry
+		said, or the engine's refusal in its own words (an unreachable
+		registry, a private one that wants credentials).
+
+		It reaches the network. Nothing here caches the answer.
+
+	.EXAMPLE
+		(Get-DockerDistribution nginx:1.27).Digest
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory, Position = 0, ValueFromPipelineByPropertyName)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$')]
+		[string]$Reference
+	)
+
+	$ref = Split-DockerReference -Reference $Reference
+	$r = Invoke-DockerApi -Method GET -Path "/distribution/$(ConvertTo-DockerPathName -Name $ref.Reference)/json"
+	Assert-DockerStatus -Response $r -Expected 200 -What "ask the registry about '$($ref.Reference)'"
+	$d = Read-DockerJson -Response $r
+	[pscustomobject]@{
+		PSTypeName = 'Docker.Distribution'
+		Reference  = $ref.Reference
+		Repository = $ref.Repository
+		Digest     = Get-DockerField $d 'Descriptor.digest'
+		MediaType  = Get-DockerField $d 'Descriptor.mediaType'
+		Platforms  = @(@(Get-DockerField $d 'Platforms') | Where-Object { $_ } | ForEach-Object {
+				'{0}/{1}' -f (Get-DockerField $_ 'os'), (Get-DockerField $_ 'architecture') })
+	}
+}
+
+function New-DockerContainer {
+	<#
+	.SYNOPSIS
+		Creates a container — and does not start it.
+
+	.DESCRIPTION
+		Builds the engine's create body from typed parameters, so that a caller
+		never writes the engine's JSON by hand: ExposedPorts and PortBindings
+		are two maps that must agree, and `HostPort` is a STRING in one of
+		them. The container is inspected afterwards and must answer with the
+		Id the engine just returned.
+
+		Refusals come back in the engine's words, with DockerStatus in the
+		exception's Data: 409 a name in use, 404 an image the engine does not
+		hold, 400 a body it cannot read.
+
+	.PARAMETER PortBinding
+		Objects with ContainerPort, Protocol (tcp or udp), HostPort and HostIp.
+		An empty HostIp is every address, which is the engine's default and
+		not this module's choice.
+
+	.PARAMETER Mount
+		Objects with Type (volume or bind), Source, Target and ReadOnly. A
+		named volume that does not exist is created by the engine.
+
+	.EXAMPLE
+		New-DockerContainer -Name web -Image nginx:1.27 -PortBinding ([pscustomobject]@{
+		    ContainerPort = 80; Protocol = 'tcp'; HostPort = 8080; HostIp = '127.0.0.1' })
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory, Position = 0)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]*$')]
+		[string]$Name,
+		[Parameter(Mandatory)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$')]
+		[string]$Image,
+		[object[]]$PortBinding,
+		[object[]]$Mount,
+		[System.Collections.IDictionary]$Environment,
+		[ValidateSet('no', 'always', 'unless-stopped', 'on-failure')][string]$RestartPolicy = 'no',
+		[System.Collections.IDictionary]$Label,
+		[string[]]$Command
+	)
+
+	if (-not $PSCmdlet.ShouldProcess($Name, "create container from $Image")) { return }
+
+	$exposed = [ordered]@{}
+	$bindings = [ordered]@{}
+	foreach ($p in @($PortBinding)) {
+		if ($null -eq $p) { continue }
+		$proto = [string](Get-DockerField $p 'Protocol')
+		if (-not $proto) { $proto = 'tcp' }
+		$key = '{0}/{1}' -f [int](Get-DockerField $p 'ContainerPort'), $proto
+		$exposed[$key] = @{}
+		if (-not $bindings.Contains($key)) { $bindings[$key] = [System.Collections.Generic.List[object]]::new() }
+		$bindings[$key].Add([ordered]@{
+				HostIp   = [string](Get-DockerField $p 'HostIp')
+				HostPort = [string](Get-DockerField $p 'HostPort')
+			})
+	}
+	$mounts = @(foreach ($m in @($Mount)) {
+			if ($null -eq $m) { continue }
+			[ordered]@{
+				Type     = [string](Get-DockerField $m 'Type')
+				Source   = [string](Get-DockerField $m 'Source')
+				Target   = [string](Get-DockerField $m 'Target')
+				ReadOnly = [bool](Get-DockerField $m 'ReadOnly')
+			}
+		})
+	# Under strict mode `.Keys` of an absent table throws, so the table is asked
+	# whether it exists first (#112/#119's shape).
+	$envList = @()
+	if ($Environment) { $envList = @(foreach ($k in ($Environment.Keys | Sort-Object)) { '{0}={1}' -f $k, $Environment[$k] }) }
+
+	$hostConfig = [ordered]@{ RestartPolicy = [ordered]@{ Name = $RestartPolicy } }
+	if ($bindings.Count) {
+		$pb = [ordered]@{}
+		foreach ($k in $bindings.Keys) { $pb[$k] = $bindings[$k].ToArray() }
+		$hostConfig.PortBindings = $pb
+	}
+	if ($mounts.Count) { $hostConfig.Mounts = $mounts }
+
+	$body = [ordered]@{ Image = $Image }
+	if ($Command) { $body.Cmd = @($Command) }
+	if ($envList.Count) { $body.Env = $envList }
+	if ($Label -and $Label.Count) {
+		$l = [ordered]@{}
+		foreach ($k in ($Label.Keys | Sort-Object)) { $l[[string]$k] = [string]$Label[$k] }
+		$body.Labels = $l
+	}
+	if ($exposed.Count) { $body.ExposedPorts = $exposed }
+	$body.HostConfig = $hostConfig
+
+	$r = Invoke-DockerApi -Method POST -Path '/containers/create' -Query @{ name = $Name } -Body $body
+	Assert-DockerStatus -Response $r -Expected 201 -What "create container '$Name'"
+	$made = Read-DockerJson -Response $r
+	$id = [string](Get-DockerField $made 'Id')
+
+	$c = Get-DockerContainer -Name $Name
+	if ([string](Get-DockerField $c 'Id') -ne $id) {
+		throw [System.InvalidOperationException]::new(
+			"The engine answered 201 with Id $id and '$Name' inspects as $(Get-DockerField $c 'Id').")
+	}
+	[pscustomobject]@{
+		PSTypeName = 'Docker.ContainerCreate'
+		Name       = $Name
+		Id         = $id
+		Warnings   = @(@(Get-DockerField $made 'Warnings') | Where-Object { $_ })
+		Container  = $c
+	}
+}
+
+function Remove-DockerImage {
+	<#
+	.SYNOPSIS
+		Removes an image or one of its tags, and asks the engine afterwards.
+
+	.DESCRIPTION
+		  Untagged   the engine removed the NAME and kept the image, because
+		             another tag still names it
+		  Deleted    the image itself is gone
+
+		An image a container uses is refused by the engine (409) unless
+		-Force, in the engine's words. The name must not inspect afterwards.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$')]
+		[string[]]$Name,
+		[switch]$Force
+	)
+
+	process {
+		foreach ($n in $Name) {
+			if (-not $PSCmdlet.ShouldProcess($n, 'remove image')) { continue }
+			$r = Invoke-DockerApi -Method DELETE -Path "/images/$(ConvertTo-DockerPathName -Name $n)" `
+				-Query @{ force = $(if ($Force) { '1' } else { '0' }); noprune = '0' }
+			Assert-DockerStatus -Response $r -Expected 200 -What "remove image '$n'"
+			$items = @(Read-DockerJson -Response $r)
+			$deleted = @($items | ForEach-Object { Get-DockerField $_ 'Deleted' } | Where-Object { $_ })
+			$untagged = @($items | ForEach-Object { Get-DockerField $_ 'Untagged' } | Where-Object { $_ })
+
+			$back = Invoke-DockerApi -Method GET -Path "/images/$(ConvertTo-DockerPathName -Name $n)/json"
+			if ($back.StatusCode -ne 404) {
+				throw [System.InvalidOperationException]::new(
+					"The engine answered 200 to removing image '$n' and still inspects it (status $($back.StatusCode)).")
+			}
+			[pscustomobject]@{
+				PSTypeName = 'Docker.ImageRemove'
+				Name       = $n
+				Outcome    = $(if ($deleted.Count) { 'Deleted' } else { 'Untagged' })
+				Deleted    = $deleted
+				Untagged   = $untagged
+			}
+		}
+	}
+}
+
+function Remove-DockerVolume {
+	<#
+	.SYNOPSIS
+		Removes a volume — its data with it — and asks the engine afterwards.
+
+	.DESCRIPTION
+		A volume a container uses, running or not, is refused by the engine
+		(409) in its own words. The volume must not inspect afterwards.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]*$')]
+		[string[]]$Name
+	)
+
+	process {
+		foreach ($n in $Name) {
+			if (-not $PSCmdlet.ShouldProcess($n, 'remove volume and its data')) { continue }
+			$r = Invoke-DockerApi -Method DELETE -Path "/volumes/$(ConvertTo-DockerPathName -Name $n)"
+			Assert-DockerStatus -Response $r -Expected 204 -What "remove volume '$n'"
+			$back = Invoke-DockerApi -Method GET -Path "/volumes/$(ConvertTo-DockerPathName -Name $n)"
+			if ($back.StatusCode -ne 404) {
+				throw [System.InvalidOperationException]::new(
+					"The engine answered 204 to removing volume '$n' and still lists it (status $($back.StatusCode)).")
+			}
+			[pscustomobject]@{ PSTypeName = 'Docker.VolumeRemove'; Name = $n; Outcome = 'Removed' }
+		}
+	}
+}
+
+function Remove-DockerNetwork {
+	<#
+	.SYNOPSIS
+		Removes a network the engine made, and asks the engine afterwards.
+
+	.DESCRIPTION
+		The engine refuses its own networks — bridge, host, none — with 403,
+		and a network a container is attached to, both in its own words.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param(
+		[Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+		[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]*$')]
+		[string[]]$Name
+	)
+
+	process {
+		foreach ($n in $Name) {
+			if (-not $PSCmdlet.ShouldProcess($n, 'remove network')) { continue }
+			$r = Invoke-DockerApi -Method DELETE -Path "/networks/$(ConvertTo-DockerPathName -Name $n)"
+			Assert-DockerStatus -Response $r -Expected 204 -What "remove network '$n'"
+			$back = Invoke-DockerApi -Method GET -Path "/networks/$(ConvertTo-DockerPathName -Name $n)"
+			if ($back.StatusCode -ne 404) {
+				throw [System.InvalidOperationException]::new(
+					"The engine answered 204 to removing network '$n' and still lists it (status $($back.StatusCode)).")
+			}
+			[pscustomobject]@{ PSTypeName = 'Docker.NetworkRemove'; Name = $n; Outcome = 'Removed' }
+		}
+	}
+}
+
+# =============================================================================
+# The engine on THIS host: the socket, its group, daemon.json, the package
+#
+# Generic Ubuntu knowledge, not OS/7's: where the package puts things and what
+# its units are called. WHICH ranges daemon.json carries, WHO is put in the
+# group and WHEN the package is installed are decisions one layer up
+# (CONTAINERS-PLAN CT2, CT3, CT7, O-CT3). Keeping these names here is also what
+# keeps P2-docker at zero: a unit name, a package name and a group name are
+# each a way of reaching the engine without its API.
+# =============================================================================
+
+$script:DockerDaemonConfig = '/etc/docker/daemon.json'
+$script:DockerPackages = @('docker.io', 'containerd', 'runc')
+$script:DockerUnits = @('docker.socket', 'docker.service')
+
+function Assert-DockerElevated {
+	<#
+	.SYNOPSIS
+		Internal. This layer's own root guard, in the words the product's uses.
+
+	.DESCRIPTION
+		BUILD-NOTES #149: a generic layer cannot call Assert-OS7Elevated without
+		inverting P2, so the verbs below that write system files and run apt
+		carry their own. The kernel is asked (/proc/self/status, the effective
+		uid), not a command.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Cmdlet,
+		[Parameter(Mandatory)][string]$Because
+	)
+
+	$status = '/proc/self/status'
+	if (-not [System.IO.File]::Exists($status)) { return }
+	$uid = $null
+	foreach ($line in [System.IO.File]::ReadAllLines($status)) {
+		if (-not $line.StartsWith('Uid:')) { continue }
+		$f = $line.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)
+		if ($f.Count -ge 3) { $uid = $f[2] }
+		break
+	}
+	if ($null -eq $uid -or $uid -eq '0') { return }
+	throw [System.InvalidOperationException]::new(
+		"$Cmdlet must run as root: it $Because. This process is uid $uid. Elevate the shell: " +
+		"sudo pwsh -NoProfile -c '$Cmdlet <parameters>'")
+}
+
+function Test-DockerSocketAccess {
+	<#
+	.SYNOPSIS
+		Can THIS process talk to the engine? $true, $false, or $null when
+		there is no engine socket at all.
+
+	.DESCRIPTION
+		ASKED OF THE SOCKET, by opening it: GET /_ping. Group membership is
+		read by the kernel at login, so /etc/group can name an account the
+		kernel still refuses until it logs in again, and a mode bit says
+		nothing about which groups this process carries. Three answers,
+		because "not allowed" and "nothing there" send an operator to two
+		different places.
+	#>
+	[CmdletBinding()]
+	[OutputType([bool])]
+	param()
+
+	try {
+		$r = Invoke-DockerApi -Method GET -Path '/_ping' -Unversioned
+		return ($r.StatusCode -eq 200)
+	}
+	catch [System.UnauthorizedAccessException] { return $false }
+	catch [System.IO.FileNotFoundException] { return $null }
+}
+
+function Get-DockerSocketMember {
+	<#
+	.SYNOPSIS
+		The accounts in the group that owns the engine's socket — each of them
+		root-equivalent on this machine.
+
+	.DESCRIPTION
+		The group is read off the SOCKET (its owning group), not assumed to be
+		called `docker`; the members off /etc/group, the local file, because
+		this is a local group and a directory that is down must not make the
+		answer disappear. $null when there is no socket.
+	#>
+	[CmdletBinding()]
+	param()
+
+	$socket = Get-DockerSocketPath
+	if (-not (Test-Path -LiteralPath $socket)) { return $null }
+	$group = [string](Get-Item -LiteralPath $socket -Force).Group
+	$members = @()
+	if (Test-Path -LiteralPath '/etc/group') {
+		foreach ($line in [System.IO.File]::ReadAllLines('/etc/group')) {
+			$f = $line -split ':'
+			if ($f.Count -ge 4 -and $f[0] -eq $group) {
+				$members = @($f[3] -split ',' | Where-Object { $_ })
+				break
+			}
+		}
+	}
+	[pscustomobject]@{
+		PSTypeName = 'Docker.SocketMembership'
+		Socket     = $socket
+		Group      = $group
+		Mode       = [string](Get-Item -LiteralPath $socket -Force).UnixMode
+		Members    = $members
+	}
+}
+
+function Set-DockerSocketMember {
+	<#
+	.SYNOPSIS
+		Internal. Puts an account into the socket's group, or takes it out, and
+		reads /etc/group back.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$UserName,
+		[Parameter(Mandatory)][ValidateSet('Add', 'Remove')][string]$Action
+	)
+
+	$m = Get-DockerSocketMember
+	if (-not $m) {
+		throw [System.IO.FileNotFoundException]::new(
+			'There is no engine socket on this machine, so there is no group to put anybody in.')
+	}
+	$argv = if ($Action -eq 'Add') { @('-a', $UserName, $m.Group) } else { @('-d', $UserName, $m.Group) }
+	$global:LASTEXITCODE = $null
+	$out = & gpasswd @argv 2>&1
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	if ($null -eq $code -or $code -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"gpasswd $($argv -join ' ') exited $code`: $(($out | ForEach-Object { "$_" }) -join ' ')")
+	}
+	# Asked of the group file afterwards, never of gpasswd's exit code.
+	$after = Get-DockerSocketMember
+	$isIn = $after.Members -contains $UserName
+	if (($Action -eq 'Add') -ne $isIn) {
+		throw [System.InvalidOperationException]::new(
+			"gpasswd reported success and '$UserName' is $(if ($isIn) { 'still' } else { 'not' }) in $($after.Group).")
+	}
+	return $after
+}
+
+function Add-DockerSocketMember {
+	<#
+	.SYNOPSIS
+		Adds an account to the group that owns the engine's socket. That
+		account becomes root-equivalent, from its next login.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param([Parameter(Mandatory, Position = 0)][ValidatePattern('^[a-z_][a-z0-9_.-]*\$?$')][string]$UserName)
+
+	Assert-DockerElevated -Cmdlet 'Add-DockerSocketMember' -Because 'changes /etc/group'
+	if (-not $PSCmdlet.ShouldProcess($UserName, 'give access to the container engine (root-equivalent)')) { return }
+	Set-DockerSocketMember -UserName $UserName -Action Add
+}
+
+function Remove-DockerSocketMember {
+	<#
+	.SYNOPSIS
+		Takes an account out of the group that owns the engine's socket. A
+		session that is already open keeps the group until it logs out.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([Parameter(Mandatory, Position = 0)][ValidatePattern('^[a-z_][a-z0-9_.-]*\$?$')][string]$UserName)
+
+	Assert-DockerElevated -Cmdlet 'Remove-DockerSocketMember' -Because 'changes /etc/group'
+	if (-not $PSCmdlet.ShouldProcess($UserName, 'take away access to the container engine')) { return }
+	Set-DockerSocketMember -UserName $UserName -Action Remove
+}
+
+function Get-DockerDaemonConfiguration {
+	<#
+	.SYNOPSIS
+		The engine's daemon.json, as an ordered table — or $null when there is
+		none.
+	#>
+	[CmdletBinding()]
+	param([string]$Path = $script:DockerDaemonConfig)
+
+	if (-not (Test-Path -LiteralPath $Path)) { return $null }
+	$text = [System.IO.File]::ReadAllText($Path)
+	if ([string]::IsNullOrWhiteSpace($text)) { return [ordered]@{} }
+	return ($text | ConvertFrom-Json -AsHashtable -Depth 32)
+}
+
+function Set-DockerDaemonConfiguration {
+	<#
+	.SYNOPSIS
+		Merges settings into daemon.json and reads the file back.
+
+	.DESCRIPTION
+		Keys that are not named are kept: daemon.json may carry settings an
+		administrator put there, and this verb is asked to set some, not to
+		own the file. The engine reads it at START, so a running engine keeps
+		its old configuration until it is restarted — the caller decides
+		whether that is now. Written 0644 root:root, as the package would.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param(
+		[Parameter(Mandatory)][System.Collections.IDictionary]$Setting,
+		[string]$Path = $script:DockerDaemonConfig
+	)
+
+	Assert-DockerElevated -Cmdlet 'Set-DockerDaemonConfiguration' -Because "writes $Path"
+	$current = Get-DockerDaemonConfiguration -Path $Path
+	$merged = [ordered]@{}
+	if ($current) { foreach ($k in $current.Keys) { $merged[$k] = $current[$k] } }
+	foreach ($k in $Setting.Keys) { $merged[[string]$k] = $Setting[$k] }
+	if (-not $PSCmdlet.ShouldProcess($Path, "set $(@($Setting.Keys) -join ', ')")) { return $current }
+
+	$dir = Split-Path -Parent $Path
+	if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+	$json = $merged | ConvertTo-Json -Depth 32
+	[System.IO.File]::WriteAllText($Path, $json + "`n", [System.Text.UTF8Encoding]::new($false))
+	[System.IO.File]::SetUnixFileMode($Path, [System.IO.UnixFileMode]'UserRead, UserWrite, GroupRead, OtherRead')
+
+	# Read back, key by key, as JSON — a setting that did not land is a refusal.
+	$back = Get-DockerDaemonConfiguration -Path $Path
+	foreach ($k in $Setting.Keys) {
+		$want = $Setting[$k] | ConvertTo-Json -Depth 32 -Compress
+		$got = if ($back.Contains([string]$k)) { $back[[string]$k] | ConvertTo-Json -Depth 32 -Compress } else { $null }
+		if ($want -ne $got) {
+			throw [System.InvalidOperationException]::new(
+				"$Path was written and reads back '$k' as $got, not $want.")
+		}
+	}
+	return $back
+}
+
+function Get-DockerPackage {
+	<#
+	.SYNOPSIS
+		Which of the engine's packages dpkg says are installed, at which
+		version.
+	#>
+	[CmdletBinding()]
+	param()
+
+	foreach ($p in $script:DockerPackages) {
+		$global:LASTEXITCODE = $null
+		$out = & env LC_ALL=C.UTF-8 dpkg-query -W -f '${Status}|${Version}' $p 2>$null
+		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+		$line = "$out"
+		$installed = ($code -eq 0 -and $line.StartsWith('install ok installed'))
+		[pscustomobject]@{
+			PSTypeName = 'Docker.Package'
+			Package    = $p
+			Installed  = $installed
+			Version    = if ($installed) { $line.Split('|')[1] } else { $null }
+		}
+	}
+}
+
+function Install-DockerEngine {
+	<#
+	.SYNOPSIS
+		Installs the engine from the machine's configured package sources,
+		enables its socket and service, and waits until the engine ANSWERS.
+
+	.DESCRIPTION
+		Three claims are not taken: that apt has a candidate (asked first, so
+		"no candidate" is a sentence and not a half-run install), that apt
+		installed it (dpkg is asked afterwards), and that the engine is up
+		(/_ping must answer). `systemctl enable` is run even though the package
+		enables both units, because a preseeded policy can tell it not to.
+
+		The package's Recommends are NOT installed. The engine needs none of
+		them, and a role that pulls in a fan-networking service and git is a
+		larger role than the one that was asked for.
+	#>
+	[CmdletBinding(SupportsShouldProcess)]
+	param([ValidateRange(5, 600)][int]$TimeoutSeconds = 60)
+
+	Assert-DockerElevated -Cmdlet 'Install-DockerEngine' -Because 'installs packages and enables system units'
+
+	$global:LASTEXITCODE = $null
+	$policy = & env LC_ALL=C.UTF-8 apt-cache policy $script:DockerPackages[0] 2>&1
+	$cand = ($policy | ForEach-Object { "$_" } | Where-Object { $_ -match '^\s*Candidate:' } |
+			Select-Object -First 1)
+	if (-not $cand -or $cand -match '\(none\)') {
+		throw [System.InvalidOperationException]::new(
+			"apt has no candidate for $($script:DockerPackages[0]) in this machine's package sources " +
+			"($("$cand".Trim())). It is in Ubuntu's universe component.")
+	}
+	if (-not $PSCmdlet.ShouldProcess(($script:DockerPackages -join ', '), 'install and enable')) { return }
+
+	$packages = $script:DockerPackages
+	$global:LASTEXITCODE = $null
+	$out = & env DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8 apt-get install -y --no-install-recommends @packages 2>&1
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	$missing = @(Get-DockerPackage | Where-Object { -not $_.Installed })
+	if ($null -eq $code -or $code -ne 0 -or $missing.Count) {
+		$tail = @($out | ForEach-Object { "$_" } | Select-Object -Last 8) -join "`n"
+		throw [System.InvalidOperationException]::new(
+			"apt-get install exited $code and dpkg reports $(@($missing | ForEach-Object Package) -join ', ') " +
+			"not installed:`n$tail")
+	}
+
+	$units = $script:DockerUnits
+	$global:LASTEXITCODE = $null
+	$en = & systemctl enable --now @units 2>&1
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	if ($null -eq $code -or $code -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl enable --now $($script:DockerUnits -join ' ') exited $code`: $(($en | ForEach-Object { "$_" }) -join ' ')")
+	}
+
+	$script:DockerNegotiated = @{}
+	$deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+	$answered = $false
+	while ([DateTime]::UtcNow -lt $deadline) {
+		try { if (Test-DockerSocketAccess) { $answered = $true; break } } catch { }
+		Start-Sleep -Milliseconds 500
+	}
+	if (-not $answered) {
+		throw [System.TimeoutException]::new(
+			"The engine's packages are installed and its units enabled, and /_ping did not answer " +
+			"within $TimeoutSeconds s. journalctl -u docker.service says why.")
+	}
+	return @(Get-DockerPackage)
+}
+
+function Restart-DockerEngine {
+	<#
+	.SYNOPSIS
+		Restarts the engine so it reads daemon.json again, and waits until it
+		answers.
+	#>
+	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	param([ValidateRange(5, 600)][int]$TimeoutSeconds = 60)
+
+	Assert-DockerElevated -Cmdlet 'Restart-DockerEngine' -Because 'restarts a system service'
+	if (-not $PSCmdlet.ShouldProcess('docker.service', 'restart')) { return }
+	$global:LASTEXITCODE = $null
+	$out = & systemctl restart docker.service 2>&1
+	$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
+	if ($null -eq $code -or $code -ne 0) {
+		throw [System.InvalidOperationException]::new(
+			"systemctl restart docker.service exited $code`: $(($out | ForEach-Object { "$_" }) -join ' ')")
+	}
+	$script:DockerNegotiated = @{}
+	$deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+	while ([DateTime]::UtcNow -lt $deadline) {
+		try { if (Test-DockerSocketAccess) { return Get-DockerEngine } } catch { }
+		Start-Sleep -Milliseconds 500
+	}
+	throw [System.TimeoutException]::new("The engine was restarted and /_ping did not answer within $TimeoutSeconds s.")
+}
+
+# =============================================================================
 # The recording, and the scenario it records
 # =============================================================================
 
@@ -1015,10 +1809,15 @@ function Invoke-DockerFixtureScenario {
 		checks what came back. A second copy of these steps in the test would
 		drift from the first, which is BUILD-NOTES #66 waiting to happen.
 
-		It creates one container and one volume, both named os7-fixture-*, and
-		removes both. Creating goes through Invoke-DockerApi directly because
-		this module has no create verb (CONTAINERS-PLAN CT12) — the scenario is
-		a harness, not a surface.
+		It creates one container, one volume, one network and one extra tag,
+		all named os7-fixture-*, and removes all four. The volume, the network
+		and the tag go through Invoke-DockerApi directly because this module
+		has no verb for making them — the scenario is a harness, not a surface.
+		The container is made with New-DockerContainer, which is a surface.
+
+		It PULLS the image and asks the registry about it, so recording needs
+		the network. The pull of an image the engine already holds is
+		UpToDate and costs one manifest request.
 
 		Every list is FILTERED to the probe. The recordings are committed to a
 		public repository, and an unfiltered list on a development host names
@@ -1032,21 +1831,37 @@ function Invoke-DockerFixtureScenario {
 
 	$probe = 'os7-fixture-probe'
 	$vol = 'os7-fixture-vol'
+	$net = 'os7-fixture-net'
+	$tag = 'os7-fixture-image:probe'
 	$out = [ordered]@{}
 
 	$out.Engine = Get-DockerEngine
+	$out.Pull = Receive-DockerImage -Reference $Image -Confirm:$false
+	$out.ImageInspected = Get-DockerImage -Name $Image
+	$out.Distribution = $null
+	$out.DistributionError = $null
+	try { $out.Distribution = Get-DockerDistribution -Reference $Image } catch { $out.DistributionError = $_.Exception }
 
-	$c = Invoke-DockerApi -Method POST -Path '/containers/create' -Query @{ name = $probe } -Body ([ordered]@{
-			Image  = $Image
-			Cmd    = @('sh', '-c', 'echo out-line; echo err-line >&2; sleep 300')
-			Labels = @{ 'org.os7.fixture' = '1' }
-		})
-	Assert-DockerStatus -Response $c -Expected 201 -What 'create the probe container'
 	$v = Invoke-DockerApi -Method POST -Path '/volumes/create' -Body ([ordered]@{
 			Name   = $vol
 			Labels = @{ 'org.os7.fixture' = '1' }
 		})
 	Assert-DockerStatus -Response $v -Expected 201 -What 'create the probe volume'
+
+	$create = @{
+		Name          = $probe
+		Image         = $Image
+		Command       = @('sh', '-c', 'echo out-line; echo err-line >&2; sleep 300')
+		Label         = @{ 'org.os7.fixture' = '1' }
+		Environment   = @{ OS7_FIXTURE = '1' }
+		RestartPolicy = 'unless-stopped'
+		PortBinding   = @([pscustomobject]@{ ContainerPort = 80; Protocol = 'tcp'; HostPort = 18080; HostIp = '127.0.0.1' })
+		Mount         = @([pscustomobject]@{ Type = 'volume'; Source = $vol; Target = '/data'; ReadOnly = $false })
+		Confirm       = $false
+	}
+	$out.Created = New-DockerContainer @create
+	$out.CreateAgainError = $null
+	try { $null = New-DockerContainer @create } catch { $out.CreateAgainError = $_.Exception }
 
 	$out.ListedCreated = @(Get-DockerContainer -All -Filter @{ name = $probe })
 	$out.ListedRunningOnly = @(Get-DockerContainer -Filter @{ name = $probe })
@@ -1062,14 +1877,34 @@ function Invoke-DockerFixtureScenario {
 	$out.Volumes = @(Get-DockerVolume -Filter @{ name = $vol })
 	$out.Networks = @(Get-DockerNetwork -Filter @{ name = 'bridge' })
 	if (-not $NoDiskUsage) { $out.DiskUsage = Get-DockerDiskUsage }
+
+	# The refusals a clean-up meets, recorded: a volume and an image a
+	# container still uses, and a network the engine owns.
+	$out.VolumeInUseError = $null
+	try { $null = Remove-DockerVolume -Name $vol -Confirm:$false } catch { $out.VolumeInUseError = $_.Exception }
+	$out.ImageInUseError = $null
+	try { $null = Remove-DockerImage -Name $Image -Confirm:$false } catch { $out.ImageInUseError = $_.Exception }
+	$t = Split-DockerReference -Reference $tag
+	$tr = Invoke-DockerApi -Method POST -Path "/images/$(ConvertTo-DockerPathName -Name $Image)/tag" `
+		-Query @{ repo = $t.Repository; tag = $t.Tag }
+	Assert-DockerStatus -Response $tr -Expected 201 -What 'tag the probe image'
+	$out.Untag = Remove-DockerImage -Name $tag -Confirm:$false
+	$nr = Invoke-DockerApi -Method POST -Path '/networks/create' -Body ([ordered]@{
+			Name   = $net
+			Labels = @{ 'org.os7.fixture' = '1' }
+		})
+	Assert-DockerStatus -Response $nr -Expected 201 -What 'create the probe network'
+	$out.NetworkRemove = Remove-DockerNetwork -Name $net -Confirm:$false
+	$out.BuiltinNetworkError = $null
+	try { $null = Remove-DockerNetwork -Name 'bridge' -Confirm:$false } catch { $out.BuiltinNetworkError = $_.Exception }
+
 	$out.Remove = Remove-DockerContainer -Name $probe -Confirm:$false
 	$out.GoneError = $null
 	try { $null = Get-DockerContainer -Name $probe } catch { $out.GoneError = $_.Exception }
 	$out.RemoveAgainError = $null
 	try { $null = Remove-DockerContainer -Name $probe -Confirm:$false } catch { $out.RemoveAgainError = $_.Exception }
 
-	$d = Invoke-DockerApi -Method DELETE -Path "/volumes/$vol"
-	Assert-DockerStatus -Response $d -Expected 204 -What 'remove the probe volume'
+	$out.VolumeRemove = Remove-DockerVolume -Name $vol -Confirm:$false
 	return $out
 }
 
@@ -1100,6 +1935,8 @@ function Save-DockerFixture {
 	try {
 		$null = Invoke-DockerApi -Method DELETE -Path '/containers/os7-fixture-probe' -Query @{ force = '1' }
 		$null = Invoke-DockerApi -Method DELETE -Path '/volumes/os7-fixture-vol'
+		$null = Invoke-DockerApi -Method DELETE -Path '/networks/os7-fixture-net'
+		$null = Invoke-DockerApi -Method DELETE -Path '/images/os7-fixture-image:probe'
 		$vr = Invoke-DockerApi -Method GET -Path '/version' -Unversioned
 		Assert-DockerStatus -Response $vr -Expected 200 -What 'ask the engine its version'
 		$ver = Read-DockerJson -Response $vr
@@ -1283,6 +2120,40 @@ function Test-DockerModule {
 					"$(if ($s.DiskUsage) { $s.DiskUsage.LayersSize })"
 			}
 
+			# Creating and pulling (2026-10-30).
+			Check ($s.Pull.Outcome -in 'Downloaded', 'UpToDate', 'Updated' -and $s.Pull.Id) `
+				'pull: the image is there afterwards, and the outcome is read off its Id' "$($s.Pull.Outcome)"
+			Check (@(Get-DockerField $s.ImageInspected 'RepoDigests').Count -ge 1) `
+				'inspect image: it carries the digest it was pulled by' "$(@(Get-DockerField $s.ImageInspected 'RepoDigests') -join ',')"
+			# THE PREMISE OF UPDATE DETECTION, asked of each engine: a tag that was
+			# just pulled must name, at the registry, a digest the local image
+			# carries. If an engine's image store records a different digest
+			# than the registry reports, every image would read as outdated.
+			$local = @(@(Get-DockerField $s.ImageInspected 'RepoDigests') | ForEach-Object { "$_".Split('@')[-1] })
+			Check ($null -ne $s.Distribution -and "$($s.Distribution.Digest)".StartsWith('sha256:') -and
+				$local -contains $s.Distribution.Digest) `
+				'registry: the digest it reports for a just-pulled tag is among the image''s RepoDigests' `
+				"$(if ($s.Distribution) { $s.Distribution.Digest } else { $s.DistributionError.Message })"
+			$pb = Get-DockerField $s.Created.Container 'HostConfig.PortBindings'
+			$b80 = if ($pb) { @(Get-DockerField $pb '80/tcp') | Select-Object -First 1 } else { $null }
+			Check ($s.Created.Id -and (Get-DockerField $b80 'HostIp') -eq '127.0.0.1' -and
+				"$(Get-DockerField $b80 'HostPort')" -eq '18080') `
+				'create: asked back, the port is bound where it was asked to be' "$(Get-DockerField $b80 'HostIp'):$(Get-DockerField $b80 'HostPort')"
+			$mnt = @(Get-DockerField $s.Created.Container 'Mounts') | Where-Object { (Get-DockerField $_ 'Name') -eq 'os7-fixture-vol' }
+			Check ($null -ne $mnt -and (Get-DockerField $s.Created.Container 'HostConfig.RestartPolicy.Name') -eq 'unless-stopped') `
+				'create: and the volume is mounted and the restart policy set'
+			Check ($s.CreateAgainError -and $s.CreateAgainError.Data['DockerStatus'] -eq 409) `
+				'create again: 409, carried in the exception''s Data, not read off its prose' "$(if ($s.CreateAgainError) { $s.CreateAgainError.Data['DockerStatus'] })"
+			Check ($s.VolumeInUseError -and $s.VolumeInUseError.Data['DockerStatus'] -eq 409) `
+				'remove a volume a container uses: refused, 409' "$(if ($s.VolumeInUseError) { $s.VolumeInUseError.Message })"
+			Check ($s.ImageInUseError -and $s.ImageInUseError.Data['DockerStatus'] -eq 409) `
+				'remove an image a container uses: refused, 409' "$(if ($s.ImageInUseError) { $s.ImageInUseError.Data['DockerStatus'] })"
+			Check ($s.Untag.Outcome -eq 'Untagged') 'remove a second tag: Untagged, and the image stays' "$($s.Untag.Outcome)"
+			Check ($s.NetworkRemove.Outcome -eq 'Removed') 'remove a network: 204, and asked back it is gone'
+			Check ($s.BuiltinNetworkError -and $s.BuiltinNetworkError.Data['DockerStatus'] -eq 403) `
+				'remove the engine''s own bridge: refused, 403' "$(if ($s.BuiltinNetworkError) { $s.BuiltinNetworkError.Data['DockerStatus'] })"
+			Check ($s.VolumeRemove.Outcome -eq 'Removed') 'remove the volume once nothing uses it: 204, and gone'
+
 			Check ($s.Remove.Outcome -eq 'Removed') 'remove: 204, and asked back it is gone'
 			Check ($s.GoneError -is [System.Management.Automation.ItemNotFoundException]) `
 				'inspecting a removed container is ItemNotFound' "$(if ($s.GoneError) { $s.GoneError.GetType().Name })"
@@ -1337,6 +2208,43 @@ function Test-DockerModule {
 			'a filter typed as a string is sent as the array the engine requires'
 		Check ((ConvertTo-DockerQueryString -Table @{ filters = '{"a":["b c"]}' }) -eq '?filters=%7B%22a%22%3A%5B%22b%20c%22%5D%7D') `
 			'a query value is escaped'
+
+		# References as people type them. The port in a registry name is the
+		# case that a last-colon split gets wrong; a missing tag is the case
+		# that the engine's pull gets wrong (every tag).
+		$refs = @(
+			@('nginx', 'nginx', 'latest', $null),
+			@('nginx:1.27', 'nginx', '1.27', $null),
+			@('localhost:5000/app', 'localhost:5000/app', 'latest', $null),
+			@('localhost:5000/app:2', 'localhost:5000/app', '2', $null),
+			@('ghcr.io/o/a@sha256:ab', 'ghcr.io/o/a', $null, 'sha256:ab')
+		)
+		foreach ($c in $refs) {
+			$p = Split-DockerReference -Reference $c[0]
+			Check ($p.Repository -eq $c[1] -and $p.Tag -eq $c[2] -and $p.Digest -eq $c[3]) `
+				"reference '$($c[0])' is repository '$($c[1])', tag '$($c[2])'" "$($p.Repository) | $($p.Tag) | $($p.Digest)"
+		}
+		Check ((ConvertTo-DockerPathName -Name 'ghcr.io/o/a:1') -eq 'ghcr.io/o/a%3A1') `
+			'an image name keeps its slashes in a path and nothing else unescaped'
+
+		# A PULL THAT FAILED AFTER ITS 200. No recording holds one — a real
+		# failure needs a registry that refuses — so the engine's documented
+		# shape is handed to the verb: the status line, then an `error` object.
+		$script:DockerNegotiated = @{ (Get-DockerSocketPath) = $script:DockerApiNewest }
+		$script:DockerTransportOverride = {
+			param($m, $target, $json)
+			if ($m -eq 'GET') {
+				return [pscustomobject]@{ StatusCode = 404; ContentType = 'application/json'; Bytes = $null; Text = '{"message":"No such image: ghost:1"}' } }
+			[pscustomobject]@{ StatusCode = 200; ContentType = 'application/json'; Bytes = $null
+				Text = "{`"status`":`"Pulling from library/ghost`"}`r`n{`"errorDetail`":{`"message`":`"manifest unknown`"},`"error`":`"manifest unknown`"}`r`n" }
+		}
+		$threw = $null
+		try { $null = Receive-DockerImage -Reference 'ghost:1' -Confirm:$false } catch { $threw = $_.Exception }
+		Check ($threw -is [System.InvalidOperationException] -and $threw.Message -match 'answered 200 and then said' -and
+			$threw.Message -match 'manifest unknown') `
+			'a pull the engine answered 200 and then failed is a refusal, in the engine''s words' "$(if ($threw) { $threw.Message })"
+		$script:DockerTransportOverride = $null
+		$script:DockerNegotiated = @{}
 
 		$denied = [System.Net.Http.HttpRequestException]::new('x',
 			[System.Net.Sockets.SocketException]::new([int][System.Net.Sockets.SocketError]::AccessDenied))
@@ -1410,5 +2318,11 @@ Export-ModuleMember -Function @(
 	'Get-DockerContainer', 'Start-DockerContainer', 'Stop-DockerContainer',
 	'Restart-DockerContainer', 'Remove-DockerContainer', 'Get-DockerContainerLog',
 	'Get-DockerImage', 'Get-DockerVolume', 'Get-DockerNetwork', 'Get-DockerDiskUsage',
+	'New-DockerContainer', 'Receive-DockerImage', 'Get-DockerDistribution',
+	'Remove-DockerImage', 'Remove-DockerVolume', 'Remove-DockerNetwork',
+	'Split-DockerReference',
+	'Test-DockerSocketAccess', 'Get-DockerSocketMember', 'Add-DockerSocketMember', 'Remove-DockerSocketMember',
+	'Get-DockerDaemonConfiguration', 'Set-DockerDaemonConfiguration',
+	'Get-DockerPackage', 'Install-DockerEngine', 'Restart-DockerEngine',
 	'Test-DockerModule'
 )

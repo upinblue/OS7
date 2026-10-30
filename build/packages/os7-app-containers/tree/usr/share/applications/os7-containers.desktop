@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Containers
+GenericName=Container Management
+Comment=See and operate the containers on this machine
+Exec=/usr/lib/os7/apps/containers/os7-containers
+Icon=network-server
+Terminal=false
+
+# Where Computer Management lives in a Windows administrator's head: System.
+Categories=System;Monitor;
+Keywords=docker;container;compose;image;volume;engine;
+StartupNotify=true
+StartupWMClass=os7-containers

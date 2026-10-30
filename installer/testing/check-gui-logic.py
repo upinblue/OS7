@@ -41,9 +41,15 @@ SRC = os.environ.get("OS7_SCAN_ROOT", os.path.join(REPO, "src"))
 # ---------------------------------------------------------------------------
 CAPABILITIES = {
     "OS7.Shell": {
-        "why": "the one way an application reaches the PowerShell surface (G4)",
+        "why": "the one way an application reaches the PowerShell surface (G4), "
+               "and the one way it reaches an OS/7 root helper through polkit (G5)",
         "start_process": ["PowerShellRunner.cs"],
         "open_files": [],
+        # The ONLY file under src/ that may name pkexec, and the reason the
+        # grant is a file and not a project: G5 refuses `pkexec pwsh`, and what
+        # makes this different is that PolkitHelper.cs builds the path itself
+        # from /usr/libexec/ and a name that must be os7-… — §3 holds that.
+        "pkexec": ["PolkitHelper.cs"],
     },
     "OS7.Ui": {
         "why": "the design system: control themes and one drawing primitive",
@@ -53,6 +59,13 @@ CAPABILITIES = {
     "OS7.App.SoftwareUpdate": {
         "why": "a front-end over Get-OS7Release and a systemd unit; it has no "
                "business touching a file",
+        "start_process": [],
+        "open_files": [],
+    },
+    "OS7.App.Containers": {
+        "why": "a front-end over Invoke-OS7ContainerVerb. It reaches the engine "
+               "through OS7.Shell only, opens no file and starts nothing — the "
+               "root helper is OS7.Shell's to start, not this application's",
         "start_process": [],
         "open_files": [],
     },
@@ -167,6 +180,8 @@ def layer_rules(scan_root):
 
             if can_invoke(text):
                 for program in FORBIDDEN_PROGRAMS:
+                    if program.strip() == "pkexec" and granted(project, "pkexec", relative):
+                        continue
                     if program in text:
                         programs.append(f"{project}/{relative} names {program.strip()}")
 
@@ -326,6 +341,96 @@ def surface_rules(scan_root):
         check(False, "the Nautilus extension is where it is expected", ext)
 
 
+def container_rules(scan_root):
+    """
+    CONTAINERS-PLAN CT5, CT11 and G7, for the Containers window.
+
+    THE VERB TABLE IS MIRRORED, AND THE MIRROR IS HELD. The window names the
+    verbs it sends, with their class, in Services/ContainerVerbs.cs; the module
+    decides what each verb does and which class it is, in OS7.Container.ps1.
+    Every verb the window names must be in the module's table WITH THE SAME
+    CLASS: a button cannot ask for a verb the helper does not have, and a verb
+    that deletes cannot be sent to the helper whose polkit action remembers
+    the password. Read statically from both files, so this needs no pwsh.
+    """
+    print()
+    print("  3b. The Containers window and the one table it shares with the root helper")
+
+    def at(*parts):
+        return os.path.join(scan_root, *parts)
+
+    verbs_cs = at("OS7.App.Containers", "Services", "ContainerVerbs.cs")
+    module = os.path.join(REPO, "powershell", "OS7", "OS7.Container.ps1")
+    if not os.path.exists(verbs_cs):
+        check(False, "ContainerVerbs.cs is where it is expected", verbs_cs)
+        return
+    window = dict(re.findall(r'new\("([a-z-]+)",\s*VerbClass\.(\w+)', strip_comments(verbs_cs, read(verbs_cs))))
+    table = dict(re.findall(r"^\s*'([a-z-]+)'\s*=\s*@\{\s*Class\s*=\s*'(\w+)'", read(module), re.M))
+    check(len(window) >= 20, "the window names its verbs", f"{len(window)} verb(s)")
+    missing = sorted(v for v in window if v not in table)
+    check(not missing, "every verb the window sends is in Invoke-OS7ContainerVerb's table",
+          ", ".join(missing) if missing else f"{len(window)} of {len(table)}")
+    wrong = sorted(f"{v}: window {c}, module {table[v]}" for v, c in window.items()
+                   if v in table and table[v] != c)
+    check(not wrong, "and with the SAME class, so a deleting verb cannot reach the helper that remembers the password",
+          "; ".join(wrong))
+
+    channel = at("OS7.App.Containers", "Services", "ContainerChannel.cs")
+    if os.path.exists(channel):
+        text = strip_comments(channel, read(channel))
+        check("Invoke-OS7ContainerVerb" in text,
+              "the direct channel ends in Invoke-OS7ContainerVerb — the helper's cmdlet too")
+        check("@'" in text, "an argument reaches PowerShell inside a here-string, never as syntax")
+        for forbidden in ("Get-OS7Container", "Start-OS7Container", "Remove-OS7Container", "Get-Docker", "-UnixSocket"):
+            check(forbidden not in text, f"the channel names no cmdlet of its own: no {forbidden}")
+    else:
+        check(False, "ContainerChannel.cs is where it is expected", channel)
+
+    helper = at("OS7.Shell", "PolkitHelper.cs")
+    if os.path.exists(helper):
+        text = strip_comments(helper, read(helper))
+        check('"/usr/libexec/"' in text and "^os7-[a-z0-9-]+$" in text,
+              "pkexec is given /usr/libexec/os7-… and nothing a caller could choose")
+        check("ArgumentList" in text, "and its arguments as a list, never one command line")
+    else:
+        check(False, "PolkitHelper.cs is where it is expected", helper)
+
+    # CT11: the details pane renders the object; no property list lives there.
+    grid = at("OS7.App.Containers", "ViewModels", "PropertyGrid.cs")
+    if os.path.exists(grid):
+        text = strip_comments(grid, read(grid))
+        check("EnumerateObject" in text, "the details pane renders whatever the cmdlet sent (CT11)")
+
+    # The environment. M-CT6 is why the socket is root's; the window must not
+    # become the place a password is shown.
+    # SelfTest.cs reads the OUTGOING description it just built, which is the
+    # one place the word may appear as a read; CreateForm.cs writes it.
+    src = "".join(strip_comments(f, read(f)) for f in source_files(at("OS7.App.Containers"))
+                  if not f.endswith("SelfTest.cs"))
+    check('"Environment")' not in src,
+          "the window never reads a container's environment back out of an answer")
+
+    pkg = os.path.join(REPO, "build", "packages", "os7-app-containers", "tree")
+    policy = os.path.join(pkg, "usr", "share", "polkit-1", "actions", "org.os7.containers.policy")
+    if os.path.exists(policy):
+        text = read(policy)
+        check("/usr/libexec/os7-container-helper<" in text and "/usr/libexec/os7-container-helper-destroy<" in text,
+              "polkit has an action for each helper, by path")
+        destroy = text.split('id="org.os7.containers.destroy"')[-1]
+        check("<allow_active>auth_admin</allow_active>" in destroy,
+              "and removing asks for the password EVERY time")
+    else:
+        check(False, "the polkit policy is where it is expected", policy)
+    helper_ps1 = os.path.join(pkg, "usr", "lib", "os7", "container-helper.ps1")
+    if os.path.exists(helper_ps1):
+        text = read(helper_ps1)
+        check("Invoke-OS7ContainerVerb" in text and "-Class $classes" in text,
+              "the root helper runs the module's table and passes the class its wrapper chose")
+        check("\\z" in text, "and validates with \\z, not $ (BUILD-NOTES #151)")
+    else:
+        check(False, "the root helper script is where it is expected", helper_ps1)
+
+
 def refusal_rules(scan_root):
     print()
     print("  4. What they REFUSE, they refuse the way the rest of the product does")
@@ -362,6 +467,7 @@ def app_self_tests(image):
     for project, binary in (
         ("OS7.App.SoftwareUpdate", "os7-software-update"),
         ("OS7.App.Versions", "os7-versions"),
+        ("OS7.App.Containers", "os7-containers"),
     ):
         command = (
             f"cd /work/src/{project} && "
@@ -434,6 +540,23 @@ def self_test():
         with open(view, "w", encoding="utf-8") as handle:
             handle.write(original)
 
+        # A deleting verb sent to the helper that remembers the password.
+        verbs = os.path.join(planted, "OS7.App.Containers", "Services", "ContainerVerbs.cs")
+        original = read(verbs)
+        anchor = 'new("volume-remove", VerbClass.Destroy)'
+        assert anchor in original, "the verb table's planting anchor is gone"
+        with open(verbs, "w", encoding="utf-8") as handle:
+            handle.write(original.replace(anchor, 'new("volume-remove", VerbClass.Operate)', 1))
+        results.append(("a Destroy verb mirrored as Operate is caught", run_planted() != 0))
+        with open(verbs, "w", encoding="utf-8") as handle:
+            handle.write(original)
+
+        # pkexec named anywhere but PolkitHelper.cs.
+        plant(("OS7.App.Containers", "Services", "ContainerChannel.cs"),
+              "\t\tvar args = arguments ?? Array.Empty<string>();",
+              '\t\tvar psi = new System.Diagnostics.ProcessStartInfo("pkexec");',
+              "pkexec named outside PolkitHelper.cs is caught")
+
         # A project nobody declared.
         os.makedirs(os.path.join(planted, "OS7.App.Undeclared"))
         with open(os.path.join(planted, "OS7.App.Undeclared", "X.cs"), "w",
@@ -467,6 +590,7 @@ def main():
     layer_rules(SRC)
     no_handwritten_initialize(SRC)
     surface_rules(SRC)
+    container_rules(SRC)
     refusal_rules(SRC)
 
     if image:

@@ -3367,6 +3367,19 @@ Export-ModuleMember -Function Get-OS7Version,
 	# and a published port in words. Reading is root's, because the socket is.
 	Get-OS7Container, Get-OS7ContainerLog,
 	Start-OS7Container, Stop-OS7Container, Restart-OS7Container, Remove-OS7Container,
+	# What else the engine holds, a clean-up that removes exactly what it
+	# showed, Compose applications as one, and the create dialog as a cmdlet
+	# (2026-10-30). The host as a role, with its stores laid out BEFORE the
+	# package; container operators, who are root-equivalent by choice; and the
+	# verb table both of the window's channels end in.
+	Get-OS7ContainerImage, Remove-OS7ContainerImage,
+	Get-OS7ContainerVolume, Remove-OS7ContainerVolume,
+	Get-OS7ContainerNetwork, Remove-OS7ContainerNetwork,
+	Get-OS7ContainerApplication, Start-OS7ContainerApplication, Stop-OS7ContainerApplication,
+	Get-OS7ContainerUnused, Remove-OS7ContainerUnused, New-OS7Container,
+	Get-OS7ContainerOperator, Add-OS7ContainerOperator, Remove-OS7ContainerOperator,
+	Get-OS7ContainerHost, Install-OS7ContainerHost,
+	Get-OS7ContainerVerb, Invoke-OS7ContainerVerb,
 	# The only cmdlet in this product that sends anything to a third party.
 	# Nothing calls it.
 	Send-OS7HardwareProbe

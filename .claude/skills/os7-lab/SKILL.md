@@ -173,6 +173,11 @@ arm64 side is **unrun**.
   Write `/etc/docker/daemon.json` with `bip` and `default-address-pools`
   outside 172.16/12 BEFORE installing the package; deleting `docker0` is the
   way back in.
+- **A fresh GUI bench's first boot asks for the passphrase where `login` cannot see it**
+  (BUILD-NOTES #191). Under `splash` the prompt never reaches the serial console, so `login`
+  waits forever and every Enter it probes with is an empty passphrase. Reboot, and in GRUB's
+  editor — over the serial line, read off a `shot` — append ` plymouth.enable=0` to the `linux`
+  line and boot it with Ctrl-X; then `login` sees the prompt and types it.
 - **The host console must not decide what the guest may say**, and it tries
   twice. stdout is reconfigured to UTF-8 (a `systemctl status` once died on
   systemd's own `○`), and `subprocess` is given `encoding="utf-8",

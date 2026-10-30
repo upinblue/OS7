@@ -10222,3 +10222,68 @@ gate and is discarded anyway: a release is both media from one commit
 
 *The general form:* **"both architectures" is a claim about a build that has
 run.** It is the same sentence as "not verified on a machine", one level earlier.
+
+---
+
+## #191 — a freshly installed GUI bench under `splash` asks for its passphrase where no harness can answer
+
+**Found** 2026-10-30 on bench `ctgui`, the 1.0.0.264 GUI medium installed by
+`os7lab.py install --mode Gui` ([SESSION-CONTAINERS-WINDOW.md](SESSION-CONTAINERS-WINDOW.md) §4).
+
+The install-time TPM seal did not open on the bench's first boot ("TPM policy does not match
+current system state"), so the machine needed its passphrase — expected on a bench, which is not
+a control for anything PCR-measured. **The prompt never reached the serial console as text.**
+What arrived instead, once per attempt, was the OS/7 TPM handler's lines and a block of terminal
+queries (XTGETTCAP, two cursor reports, two OSC 3008). `os7lab.py login` waits for `unlock disk`
+or `Enter passphrase`, so it waited forever; every probing Enter it sent was an EMPTY passphrase
+and started another round. The passphrase typed on the serial line went nowhere, and typed at the
+virtual keyboard it only echoed on tty1 — plymouth, with no display yet ("Display output is not
+active"), was not reading either.
+
+**The way through, for one boot:** GRUB's editor over the SERIAL line (GRUB draws only on the
+screen, but reads serial input): `e`, two lines up from the end, Ctrl-E, append
+` plymouth.enable=0`, Ctrl-X. Without plymouth the prompt is ordinary text on the serial console
+and `os7lab.py login` types it. A screenshot is how to see where the editor's cursor is.
+
+**What this is not:** a product defect on a real machine, where the prompt is on the screen and a
+person types it. It is #188's family — `splash` and a serial harness — at the one boot where a
+passphrase is required, which #188's boots did not need. `os7lab.py` does not yet do this by itself.
+
+---
+
+## #192 — `-ErrorAction SilentlyContinue` swallows a `throw` only while nothing up the stack has a `try`
+
+**Found** 2026-10-30 on bench `ct266` (1.0.0.266 GUI), pressing the Containers window's
+*Set up the engine…* ([SESSION-CONTAINERS-WINDOW.md](SESSION-CONTAINERS-WINDOW.md) §4b).
+
+`New-OS7ServiceDataset` asked whether its dataset already existed with
+`Get-ZfsDataset -Name … -ErrorAction SilentlyContinue`. `Get-ZfsDataset` THROWS for a
+dataset that is not there (`Invoke-ZfsNative`; the measured shape is in the Zfs
+fixtures `err.*`). Typed over ssh, `Install-OS7ContainerHost` worked — the same day,
+on bench `ctgui`. Run by the window's root helper it died on that very line:
+*"cannot open 'rpool/DATA/lib/docker': dataset does not exist"*.
+
+**The difference was a `try` two frames up.** `-ErrorAction SilentlyContinue` sets
+the preference inside the call, and a `throw` under that preference is suppressed —
+unless a `try`/`catch` exists further up the call stack, in which case the `throw`
+goes straight to it. The helper wraps every verb in `try`/`catch` (it must: a refusal
+is one sentence on stderr). So the same cmdlet behaves differently depending on
+whether its CALLER is careful, and the careful caller is the one that breaks.
+
+A reproduction wrapped in `try` threw both with and without
+`$ErrorActionPreference = 'Stop'` — which is the trap again, in the measurement.
+
+**Fixed where the engine setup reaches it**: `Get-OS7ExistingZfsDataset`
+(OS7.Automation.ps1) asks inside its OWN `try`, turns ZFS's own sentence
+*"dataset does not exist"* into an empty answer, and rethrows everything else.
+`New-OS7ServiceDataset` and `Get-OS7ServiceDataset` use it.
+
+**Not fixed, same shape, named here so nobody has to find them again:**
+`OS7.Storage.ps1:586`, `OS7.Update.ps1:1364` and `OS7.Update.ps1:2171` — each a
+`Get-ZfsDataset … -ErrorAction SilentlyContinue` over a dataset that exists on every
+machine installed since its layout landed, so the throw has not been seen. The two
+in `OS7.Update.ps1` are under `run-s5.py`'s gate, which is the place to change them.
+
+**The rule:** never use `-ErrorAction` to ask whether something exists. Ask in your
+own `try`, and decide on the failure's own words.
+

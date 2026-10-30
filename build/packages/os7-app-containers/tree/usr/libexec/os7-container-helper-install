@@ -1,0 +1,12 @@
+#!/bin/sh
+# OS/7 — the Containers window's root helper: making this machine a container
+# host. docs/CONTAINERS-PLAN.md CT2, CT5.
+#
+# It runs ONE verb, install-host, which is Install-OS7ContainerHost: the
+# engine's two datasets first, its configuration second, the archive's
+# packages third. polkit's org.os7.containers.install is keyed on this path and
+# asks for an administrator's password EVERY time, in words that say a package
+# is about to be installed — the removal helper's action would have asked in
+# the wrong words, and a prompt that says something other than what happens is
+# a prompt people learn not to read.
+exec /usr/bin/pwsh -NoProfile -NonInteractive -File /usr/lib/os7/container-helper.ps1 -Channel install "$@"

@@ -42,4 +42,11 @@
   -->
   <FontFamily x:Key="os7_font">Tahoma, DejaVu Sans, Liberation Sans, sans-serif</FontFamily>
 
+  <!--
+    A FIXED-PITCH FACE, for what a program printed: a container's log. Cascadia
+    Mono first because the installed console already carries it (D15), so the
+    log in a window and the log at the console are the same letters.
+  -->
+  <FontFamily x:Key="os7_font_mono">Cascadia Mono, DejaVu Sans Mono, Liberation Mono, monospace</FontFamily>
+
 </ResourceDictionary>

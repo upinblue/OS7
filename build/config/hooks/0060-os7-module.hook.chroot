@@ -196,7 +196,12 @@ check_module Hardware Get-HardwareDevice Get-HardwareIdName \
 check_module Docker Get-DockerEngine Get-DockerContainer Start-DockerContainer \
 	Stop-DockerContainer Restart-DockerContainer Remove-DockerContainer \
 	Get-DockerContainerLog Get-DockerImage Get-DockerVolume Get-DockerNetwork \
-	Get-DockerDiskUsage Test-DockerModule
+	Get-DockerDiskUsage New-DockerContainer Receive-DockerImage \
+	Get-DockerDistribution Remove-DockerImage Remove-DockerVolume \
+	Remove-DockerNetwork Split-DockerReference Test-DockerSocketAccess \
+	Get-DockerSocketMember Add-DockerSocketMember Remove-DockerSocketMember \
+	Get-DockerDaemonConfiguration Set-DockerDaemonConfiguration Get-DockerPackage \
+	Install-DockerEngine Restart-DockerEngine Test-DockerModule
 # The boot-environment cmdlets are named here rather than left to the stub that
 # used to stand in for them: they are what Restore-OS7 AND Update-OS7 are built
 # out of (docs/SESSION-BOOT-ENVIRONMENTS.md), they are staged from the same one
@@ -262,7 +267,14 @@ check_module OS7 Get-OS7Version Set-OS7Mode Update-OS7 Restore-OS7 \
 	Install-OS7Driver Repair-OS7Driver Get-OS7DriverRegression \
 	Send-OS7HardwareProbe \
 	Get-OS7Container Get-OS7ContainerLog Start-OS7Container Stop-OS7Container \
-	Restart-OS7Container Remove-OS7Container
+	Restart-OS7Container Remove-OS7Container \
+	Get-OS7ContainerImage Remove-OS7ContainerImage Get-OS7ContainerVolume \
+	Remove-OS7ContainerVolume Get-OS7ContainerNetwork Remove-OS7ContainerNetwork \
+	Get-OS7ContainerApplication Start-OS7ContainerApplication \
+	Stop-OS7ContainerApplication Get-OS7ContainerUnused Remove-OS7ContainerUnused \
+	New-OS7Container Get-OS7ContainerOperator Add-OS7ContainerOperator \
+	Remove-OS7ContainerOperator Get-OS7ContainerHost Install-OS7ContainerHost \
+	Get-OS7ContainerVerb Invoke-OS7ContainerVerb
 
 # A file that is PRESENT AND EMPTY still imports and still exports nothing, so
 # the export check above cannot see it. `cp -a` onto a full filesystem produces

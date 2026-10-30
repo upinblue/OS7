@@ -255,6 +255,22 @@
 		# the docker CLI (P2-docker).
 		'Get-OS7Container', 'Get-OS7ContainerLog',
 		'Start-OS7Container', 'Stop-OS7Container', 'Restart-OS7Container', 'Remove-OS7Container',
+		# The rest of the engine and the window's v1 (2026-10-30): images with
+		# "used by" and whether the registry moved the tag on, volumes with
+		# whether the backup reaches them, networks, Compose applications
+		# operated as one, a clean-up whose preview IS the list it acts on, and
+		# the create dialog. Install-OS7ContainerHost lays the stores out
+		# BEFORE the package (CT3). An operator in the socket's group is
+		# root-equivalent and chosen as such (O-CT3). Invoke-OS7ContainerVerb
+		# is the one table the window and the root helper both end in (CT5).
+		'Get-OS7ContainerImage', 'Remove-OS7ContainerImage',
+		'Get-OS7ContainerVolume', 'Remove-OS7ContainerVolume',
+		'Get-OS7ContainerNetwork', 'Remove-OS7ContainerNetwork',
+		'Get-OS7ContainerApplication', 'Start-OS7ContainerApplication', 'Stop-OS7ContainerApplication',
+		'Get-OS7ContainerUnused', 'Remove-OS7ContainerUnused', 'New-OS7Container',
+		'Get-OS7ContainerOperator', 'Add-OS7ContainerOperator', 'Remove-OS7ContainerOperator',
+		'Get-OS7ContainerHost', 'Install-OS7ContainerHost',
+		'Get-OS7ContainerVerb', 'Invoke-OS7ContainerVerb',
 		# The ONLY cmdlet in this product that transmits anything about the
 		# machine to a third party. Nothing calls it, ConfirmImpact is High, and
 		# the tool it needs is deliberately not on an OS/7 image.

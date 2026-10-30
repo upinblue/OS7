@@ -1,0 +1,15 @@
+#!/bin/sh
+# OS/7 — the Containers window's root helper: read and operate.
+# docs/CONTAINERS-PLAN.md CT5.
+#
+# pkexec starts THIS FILE, and polkit's action org.os7.containers.operate is
+# keyed on its exact path (org.freedesktop.policykit.exec.path). That action
+# remembers the password for a few minutes, so it may only ever run verbs that
+# read or that can be undone by another verb — and the script below refuses
+# any other class BY NAME before anything runs. Deleting verbs go to
+# os7-container-helper-destroy, whose action asks every time.
+#
+# A shell wrapper and not a pwsh shebang: Linux passes a shebang's arguments
+# as ONE string, so `#!/usr/bin/pwsh -NoProfile -File` would reach pwsh as a
+# single argument it does not understand.
+exec /usr/bin/pwsh -NoProfile -NonInteractive -File /usr/lib/os7/container-helper.ps1 -Channel operate "$@"

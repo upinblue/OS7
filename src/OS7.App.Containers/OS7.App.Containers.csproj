@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Containers — the machine's container engine, in a window.
+    docs/CONTAINERS-PLAN.md CT9-CT12.
+
+    A FRONT-END AND NOTHING ELSE (G3). Every judgement it shows — which
+    container needs attention, who can reach a port, what a clean-up would
+    remove and which of it is safe, whether a tag moved on at the registry — is
+    an OS7 cmdlet's, reached through ONE verb table (Invoke-OS7ContainerVerb)
+    that the root helper reaches too. The details pane renders the cmdlet's
+    object, so a property added to a cmdlet appears here with no C# (CT11).
+
+    It never runs as root (G5). An operator the administrator put in the
+    socket's group talks to the engine directly; anybody else signs in through
+    polkit, and the helper behind it runs exactly one cmdlet per verb (CT5).
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>OS7.App.Containers</RootNamespace>
+    <AssemblyName>os7-containers</AssemblyName>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OS7.Ui\OS7.Ui.csproj" />
+    <ProjectReference Include="..\OS7.Shell\OS7.Shell.csproj" />
+  </ItemGroup>
+
+</Project>

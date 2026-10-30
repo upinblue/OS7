@@ -1,0 +1,10 @@
+#!/bin/sh
+# OS/7 — the Containers window's root helper: verbs that DELETE.
+# docs/CONTAINERS-PLAN.md CT5.
+#
+# polkit's action org.os7.containers.destroy is keyed on this path and asks for
+# an administrator's password EVERY time: removing a container deletes what it
+# wrote outside its volumes, removing a volume deletes data. A second file,
+# because polkit decides by the program's path and there is no other way to
+# give one window two different prompts.
+exec /usr/bin/pwsh -NoProfile -NonInteractive -File /usr/lib/os7/container-helper.ps1 -Channel destroy "$@"

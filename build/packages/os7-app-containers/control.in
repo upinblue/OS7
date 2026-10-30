@@ -1,0 +1,32 @@
+Package: os7-app-containers
+Version: @OS7_VERSION@
+Architecture: @OS7_ARCH@
+Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
+Section: admin
+Priority: optional
+Depends: dotnet-runtime-10.0, libfontconfig1, libx11-6, libice6, libsm6, polkitd, pkexec, os7-module (= @OS7_VERSION@)
+Recommends: os7-desktop-theme (= @OS7_VERSION@)
+Homepage: https://github.com/upinblue/os7
+Description: OS/7 Containers — the machine's container engine, in a window
+ Computer Management's idiom for one Docker engine (docs/CONTAINERS-PLAN.md):
+ a tree of what the engine holds, a list, the selected object's properties and
+ a status line. The default view is what needs attention, not what is there.
+ .
+ It implements no policy. Which containers need attention, who can reach a
+ published port, what a clean-up would remove and which of it is safe, whether
+ a registry has moved a tag on — every one of those is an OS7 cmdlet's answer,
+ reached through one verb table that the root helper reaches too. The details
+ pane renders the cmdlet's object as it came, so a property a cmdlet gains
+ appears here with no change to the application.
+ .
+ It never runs as root. An account an administrator made a container operator
+ talks to the engine directly; anybody else signs in through polkit, and the
+ helper behind it runs exactly one cmdlet per verb. Seeing and operating
+ remember the password for a few minutes; removing asks every time. pkexec is
+ a Depends because the two helpers are started through it and Ubuntu ships it
+ as a package of its own.
+ .
+ It installs no engine. Install-OS7ContainerHost does that, from PowerShell,
+ with the engine's two stores on datasets of their own first.
+ .
+ amd64 only. arm64 is server-only and has no desktop; the cmdlets work there.

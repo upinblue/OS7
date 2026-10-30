@@ -63,4 +63,40 @@
     <Setter Property="FontWeight" Value="Bold" />
   </Style>
 
+  <!--
+    AN EDIT FIELD, as Windows 2000 drew one: a white field sunk two pixels into
+    the face. The sinking is the os7_sunken_pane BevelBorder the field sits in;
+    this class takes the Simple theme's own border and background away so that
+    the bevel is the only edge, and gives the selection the system's colours.
+
+    A CLASS AND NOT EVERY TextBox, and not a ControlTheme of its own: the
+    Simple theme's TextBox template carries the caret, the selection and the
+    IME, and a replacement template is a second copy of all three to keep
+    right through an Avalonia update — for an edge two brushes already draw.
+
+        <ui:BevelBorder Theme="{DynamicResource os7_sunken_pane}">
+          <TextBox Classes="field" />
+        </ui:BevelBorder>
+  -->
+  <Style Selector="TextBox.field">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Foreground" Value="{DynamicResource os7_text_brush}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource os7_text_brush}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource os7_select_brush}" />
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource os7_selecttext_brush}" />
+    <Setter Property="FontFamily" Value="{DynamicResource os7_font}" />
+    <Setter Property="FontSize" Value="{DynamicResource os7_font_size}" />
+    <Setter Property="MinHeight" Value="{DynamicResource os7_control_height}" />
+    <Setter Property="Padding" Value="4,2" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="TextBox.field:pointerover /template/ Border, TextBox.field:focus /template/ Border">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+  <Style Selector="TextBox.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource os7_font_mono}" />
+  </Style>
+
 </Styles>

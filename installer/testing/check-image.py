@@ -103,7 +103,7 @@ emit os-release        cat /mnt/sq/etc/os-release
 # §6.1). dpkg is asked, file by file, because "the hook ran" is not the fact —
 # the ownership is.
 emit dpkg.os7          bash -c 'chroot /mnt/root dpkg-query -W -f="\${db:Status-Abbrev} \${Package} \${Version}\n" "os7-*" 2>/dev/null || true'
-emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice /usr/lib/systemd/system/os7-storage-relief.timer /usr/libexec/os7-storage-relief /etc/update-motd.d/40-os7-storage /opt/microsoft/powershell/7/powershell.config.json /usr/lib/os7/apps/versions/os7-versions /usr/share/nautilus-python/extensions/os7-versions.py /usr/lib/os7/apps/software-update/os7-software-update; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
+emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice /usr/lib/systemd/system/os7-storage-relief.timer /usr/libexec/os7-storage-relief /etc/update-motd.d/40-os7-storage /opt/microsoft/powershell/7/powershell.config.json /usr/lib/os7/apps/versions/os7-versions /usr/share/nautilus-python/extensions/os7-versions.py /usr/lib/os7/apps/software-update/os7-software-update /usr/lib/os7/apps/containers/os7-containers /usr/libexec/os7-container-helper /usr/libexec/os7-container-helper-destroy /usr/libexec/os7-container-helper-install /usr/share/polkit-1/actions/org.os7.containers.policy; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
 emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
@@ -1118,7 +1118,7 @@ def main() -> None:
         # The GUI applications (GUI-APPS-PLAN). amd64 only — arm64 is
         # server-only and has no desktop, so a headless medium must NOT carry
         # them and this list is the only place that says so.
-        expected += ["os7-app-softwareupdate", "os7-app-versions"]
+        expected += ["os7-app-softwareupdate", "os7-app-versions", "os7-app-containers"]
     for pkg in expected:
         check(f"ii  {pkg} {version}" in dpkg_os7,
               f"{pkg} is installed at {version}",
@@ -1205,7 +1205,16 @@ def main() -> None:
                 ("/usr/share/nautilus-python/extensions/os7-versions.py",
                  "os7-app-versions"),
                 ("/usr/lib/os7/apps/software-update/os7-software-update",
-                 "os7-app-softwareupdate")):
+                 "os7-app-softwareupdate"),
+                # CT5: the window's way to root is these two files and nothing
+                # else, and polkit names them by path. A medium with the window
+                # and not the helpers draws a Sign in… that can never succeed.
+                ("/usr/lib/os7/apps/containers/os7-containers", "os7-app-containers"),
+                ("/usr/libexec/os7-container-helper", "os7-app-containers"),
+                ("/usr/libexec/os7-container-helper-destroy", "os7-app-containers"),
+                ("/usr/libexec/os7-container-helper-install", "os7-app-containers"),
+                ("/usr/share/polkit-1/actions/org.os7.containers.policy",
+                 "os7-app-containers")):
             check(owners.get(path_, "").strip() == owner,
                   f"dpkg -S: {path_} belongs to {owner}",
                   owners.get(path_, "(not asked)").strip())

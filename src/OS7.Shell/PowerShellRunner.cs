@@ -155,13 +155,28 @@ public sealed class PowerShellRunner
 	}
 
 	/// <summary>Run one script and hand back what it said.</summary>
-	public async Task<ShellResult> RunAsync(string script, CancellationToken ct = default)
+	public Task<ShellResult> RunAsync(string script, CancellationToken ct = default) =>
+		RunAsync(script, standardInput: null, ct);
+
+	/// <summary>
+	/// Run one script with something to read on its standard input.
+	/// </summary>
+	/// <remarks>
+	/// STANDARD INPUT, NOT THE COMMAND LINE, for anything that may hold a
+	/// secret. A process's arguments are readable by every account on the
+	/// machine through <c>/proc/&lt;pid&gt;/cmdline</c>, and the Containers
+	/// window's create dialog carries a container's environment — which is
+	/// where passwords are put. <paramref name="standardInput"/> is written and
+	/// closed before the output is read.
+	/// </remarks>
+	public async Task<ShellResult> RunAsync(string script, string? standardInput, CancellationToken ct = default)
 	{
 		var psi = new ProcessStartInfo
 		{
 			FileName = _pwsh,
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,
+			RedirectStandardInput = standardInput is not null,
 			UseShellExecute = false,
 		};
 
@@ -172,26 +187,7 @@ public sealed class PowerShellRunner
 		psi.ArgumentList.Add("-Command");
 		psi.ArgumentList.Add(PlainTextPrefix + script);
 
-		using var process = new Process { StartInfo = psi };
-
-		try
-		{
-			process.Start();
-		}
-		catch (Exception ex)
-		{
-			return new ShellResult(127, string.Empty, $"{_pwsh} could not be started: {ex.Message}");
-		}
-
-		var stdout = process.StandardOutput.ReadToEndAsync(ct);
-		var stderr = process.StandardError.ReadToEndAsync(ct);
-
-		await process.WaitForExitAsync(ct).ConfigureAwait(false);
-
-		return new ShellResult(
-			process.ExitCode,
-			await stdout.ConfigureAwait(false),
-			Clean(await stderr.ConfigureAwait(false)));
+		return await ProcessRun.RunAsync(psi, standardInput, _pwsh, ct).ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -204,4 +200,49 @@ public sealed class PowerShellRunner
 				.Split('\n')
 				.Select(line => line.TrimEnd('\r').Trim())
 				.Where(line => line.Length > 0));
+}
+
+/// <summary>
+/// Starting a process and collecting what it said — ONCE, for both channels.
+/// </summary>
+/// <remarks>
+/// <see cref="PowerShellRunner"/> and <see cref="PolkitHelper"/> both end here,
+/// so that reading stdout and stderr concurrently (a child that fills one pipe
+/// while the parent waits on the other deadlocks), writing standard input and
+/// closing it, and turning a start failure into a sentence are written once.
+/// It lives in this file because this is the file check-gui-logic.py lets start
+/// a process.
+/// </remarks>
+internal static class ProcessRun
+{
+	public static async Task<ShellResult> RunAsync(
+		ProcessStartInfo psi, string? standardInput, string what, CancellationToken ct)
+	{
+		using var process = new Process { StartInfo = psi };
+
+		try
+		{
+			process.Start();
+		}
+		catch (Exception ex)
+		{
+			return new ShellResult(127, string.Empty, $"{what} could not be started: {ex.Message}");
+		}
+
+		var stdout = process.StandardOutput.ReadToEndAsync(ct);
+		var stderr = process.StandardError.ReadToEndAsync(ct);
+
+		if (standardInput is not null)
+		{
+			await process.StandardInput.WriteAsync(standardInput.AsMemory(), ct).ConfigureAwait(false);
+			process.StandardInput.Close();
+		}
+
+		await process.WaitForExitAsync(ct).ConfigureAwait(false);
+
+		return new ShellResult(
+			process.ExitCode,
+			await stdout.ConfigureAwait(false),
+			PowerShellRunner.Clean(await stderr.ConfigureAwait(false)));
+	}
 }

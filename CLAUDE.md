@@ -66,7 +66,7 @@ here either — this file points, they rule.
 | What the OS owes an automation workload — and what it deliberately leaves to a product above, decisions AU1–AU14 | [docs/AUTOMATION-PLAN.md](docs/AUTOMATION-PLAN.md) — **PHASE 1 IS BUILT AND HAS RUN ON A MACHINE (2026-09-14)**: secrets, the job journal, the job contract, the service dataset, locks, per-job Kerberos caches and notification, in `powershell/OS7/OS7.Automation.ps1` and `build/packages/os7-automation/` ([SESSION-AUTOMATION-PRIMITIVES.md](docs/SESSION-AUTOMATION-PRIMITIVES.md)). Its governing rule is AU1: **the OS provides primitives, a product above provides policy**, because the alternative is the engine twice in two languages with nobody at the seam (#66) — and it is decidable by grep, held at 0 by `check-automation-logic.py`. `Start-OS7Job` **widens** the templated-unit + polkit + journal pattern the Software Update window proved (O-G6) rather than replacing it. **FOUR OF ITS DECISIONS WERE WRONG AND ARE CORRECTED IN PLACE**, each with the measurement that did it: `--tpm2-pcrs=` defaults to EMPTY so `host+tpm2` does NOT inherit #69/#100 (AUL2 shrinks); systemd's host key lives at `/var/lib/systemd/credential.secret`, which is INSIDE the boot environment, so **`tpm2` alone is the sealing target** and `host+tpm2` would have put the KEY back where AU6 keeps the SECRET out of; AU11 needs **no MTA**; and the journal's schema IS a contract. **AND A MACHINE FOUND THREE DEFECTS WHILE EVERY CHECK HERE WAS GREEN** — a directory the cmdlet's own error message promised and did not create, a property read that throws under strict mode because the journal has two writers, and `RuntimeMaxSec=`, which systemd IGNORES for `Type=oneshot` so that every job ran with no timeout (#155). **AND PHASE 1'S MEASUREMENTS ARE DONE SINCE 2026-09-15** — M-AU3 (the fence, eleven questions asked of the FILESYSTEM after the first probe reported the opposite by asking whether a command threw), M-AU5 (AUL4 is three walls, and the third made `-Identity` unusable: the journal is root-owned, so the STARTER now writes the Result when the job cannot), M-AU7 (a real KDC in a container, no password typed: the ticket lands in the named cache and the default one STAYS EMPTY), M-AU8 (the store is outside `rpool/ROOT` and a new boot environment does not swallow it), a delivered notification, `-Unconfined` (10 of 11, and the eleventh is the TPM it deliberately keeps), and polkit's headless half. **A zero-byte keytab found two more defects**: both refusals blamed the realm for a file on this machine, while `Get-DirectoryKeytabPrincipal` had always said existence proves nothing. What is still owed: **ticket expiry and renewal**, a `Restore-OS7` rollback over a secret, polkit's dialog (needs a seat) and arm64 |
 | The identity and access management application on top of OS/7: what it is, the layer cut against the OS, decisions IG1–IG14 | [docs/IAM-PLAN.md](docs/IAM-PLAN.md), with [docs/IAM-SCOPE.md](docs/IAM-SCOPE.md) as its capability scope — **all *Proposed*, nothing built.** It is **not an OS feature and must not become one**: AU1 is the line, and routing roles, attestation and separation of duties through the cmdlet surface would end with two hundred cmdlets of business logic in `powershell/OS7/`. Two decisions do most of the work — **IG5**, every derived fact carries its derivation (without it, individual-versus-role reporting and attestation of any kind are unimplementable *late*), and **IG6**, the plan is an artifact, which turns the reconciler, attestation and separation of duties into producers and validators of plans rather than three more engines. **The AD cmdlets are deliberately NOT its foundation** — a .NET application has `S.DS.P` natively, so what transfers is [AD-PLAN.md](docs/AD-PLAN.md)'s measured knowledge and not its code, and OS/7's AD surface should stop growing toward being a provisioning engine |
 | Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is what a machine taught it** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable (M-V22). The answer is Time Machine's own: Apple takes no pre-restore snapshot either, it moves the existing file aside, so OS/7 keeps what it is about to overwrite by the strongest means available where it stands — a snapshot with privilege, a rename without ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md)). **AND SINCE 2026-09-15 DOMAIN USERS HAVE VERSIONS AT ALL** (VL7, closed): `rpool/DATA/lib/os7-domain-homes` — where every domain account's home is — was in no backup policy, so a domain-joined machine snapshotted nobody's work. One line of defaults and a firstboot migration for machines already installed. Measuring it found the bigger one beside it: a dataset with NO snapshots returned an empty list in silence, and the window turned that into a claim — *"1 versions, back to today"* — because it asks with `-IncludeCurrent`, so V6's own sentence was unreachable for every file that EXISTS (#163). Then clicking found the refusal arriving as PowerShell's ConciseView stack trace, drawn twice ([SESSION-VERSIONS-DOMAIN-HOMES.md](docs/SESSION-VERSIONS-DOMAIN-HOMES.md)) |
-| Containers on OS/7: which engine, where its data lives, how PowerShell reaches it, who may see it, and the window an administrator controls them from, decisions CT1–CT12 | [docs/CONTAINERS-PLAN.md](docs/CONTAINERS-PLAN.md) — **all *Proposed*; steps 1–3 of its eight are done, and the window is step 7.** Its §3 answers the owner's requirement — *easy to keep up to date* — first: every fact in one place and a check on every seam, so the engine version lives in the pin, the API's shape in `powershell/Docker/` (whose range IS its recordings of real engines), the judgements in `OS7.Container.ps1`, and the window renders the cmdlet's object. **Measured on a machine:** the archive's `docker.io` works on OS/7's ZFS root and makes no dataset per layer; a plain `apt install docker.io` puts the image store INSIDE the boot environment and its own dataset where no OS/7 cmdlet sees it, so the store's two datasets come first; and the engine's default bridge `172.17.0.0/16` cut a bench off from its SSH peer, so OS/7 owns and checks the ranges. The generic layer speaks the Engine API and never the CLI, because the CLI exits 0 for a start that started nothing ([SESSION-CONTAINERS-ZFS.md](docs/SESSION-CONTAINERS-ZFS.md), [SESSION-DOCKER-MODULE.md](docs/SESSION-DOCKER-MODULE.md), [SESSION-CONTAINER-STATES.md](docs/SESSION-CONTAINER-STATES.md)). **No image carries the engine yet** |
+| Containers on OS/7: which engine, where its data lives, how PowerShell reaches it, who may see it, and the window an administrator controls them from, decisions CT1–CT12 | [docs/CONTAINERS-PLAN.md](docs/CONTAINERS-PLAN.md) — **the window is BUILT AND HAS RUN ON A MACHINE (2026-10-30)**: `Install-OS7ContainerHost` installed the archive's engine on an installed 1.0.0.264 with both stores on their own datasets first, and `os7-containers` drew the engine, signed in through polkit, created a container and cleaned one up ([SESSION-CONTAINERS-WINDOW.md](docs/SESSION-CONTAINERS-WINDOW.md)). The owner decided CT5's channel (a polkit helper, AND the `docker` group as an explicit, root-equivalent opt-in), moved a create dialog into v1, and asked that the window set the engine up itself — a third polkit action. The window ships on the amd64 GUI medium; the engine deliberately does not (CT3) and is set up from the window or `Install-OS7ContainerHost`. A machine found BUILD-NOTES #192 doing it: `-ErrorAction SilentlyContinue` stops swallowing a `throw` the moment a caller has a `try`. Still owed: arm64 boots, Compose deploys, O-M2/O-M6. Its §3 answers the owner's requirement — *easy to keep up to date* — first: every fact in one place and a check on every seam, so the engine version lives in the pin, the API's shape in `powershell/Docker/` (whose range IS its recordings of real engines), the judgements in `OS7.Container.ps1`, and the window renders the cmdlet's object. **Measured on a machine:** the archive's `docker.io` works on OS/7's ZFS root and makes no dataset per layer; a plain `apt install docker.io` puts the image store INSIDE the boot environment and its own dataset where no OS/7 cmdlet sees it, so the store's two datasets come first; and the engine's default bridge `172.17.0.0/16` cut a bench off from its SSH peer, so OS/7 owns and checks the ranges. The generic layer speaks the Engine API and never the CLI, because the CLI exits 0 for a start that started nothing ([SESSION-CONTAINERS-ZFS.md](docs/SESSION-CONTAINERS-ZFS.md), [SESSION-DOCKER-MODULE.md](docs/SESSION-DOCKER-MODULE.md), [SESSION-CONTAINER-STATES.md](docs/SESSION-CONTAINER-STATES.md)). **No image carries the engine yet** |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -693,11 +693,23 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   as FINE are the point: a stop
                                           #   leaves 143 or 137, and an attention
                                           #   view that called those failures
-                                          #   would cry wolf. 86 checks; --prove
-                                          #   plants seven defects and requires
-                                          #   each RED. It found the Compose
-                                          #   project never being read - the
-                                          #   label's key has dots in it.
+                                          #   would cry wolf. Since 2026-10-30 a
+                                          #   SECOND world: images (the registry
+                                          #   three ways), volumes and their
+                                          #   backup, networks, applications in
+                                          #   dependency order, the clean-up
+                                          #   whose preview IS what it removes,
+                                          #   the create dialog's cmdlet, the
+                                          #   verb table's classes, the operator
+                                          #   and the bridge ranges against a
+                                          #   recorded /proc/net/tcp. 157 checks;
+                                          #   --prove plants 17 defects and
+                                          #   requires each RED - two of them
+                                          #   are what a MACHINE found while
+                                          #   every check was green: side
+                                          #   streams on a verb's stdout (#60
+                                          #   again) and an unreadable backup
+                                          #   policy read as "not backed up".
                                           #   Seconds, needs pwsh
 ./installer/testing/capture-docker-fixtures.py desktop | bench <name>
                                           #   record a REAL engine into
@@ -862,9 +874,10 @@ matters.** `powershell/Zfs/`, `powershell/Net/`, `powershell/Time/`,
 `powershell/Systemd/`, `powershell/Directory/`, `powershell/Hardware/` and
 `powershell/Docker/` are the generic layers — none knows anything about OS/7,
 and all seven would run on any Ubuntu host.
-`powershell/OS7/` is the product layer on top, and it is **176 of the 313
-functions** — measured 2026-10-29 by asking the modules, when the container
-layer put six here and twelve in `powershell/Docker/`. Asking is the only way
+`powershell/OS7/` is the product layer on top, and it is **195 of the 348
+functions** — measured 2026-10-30 by asking the modules, when the container
+window's v1 put nineteen more here and sixteen more in `powershell/Docker/`
+(176 of 313 the day before). Asking is the only way
 this line has ever been right for long: on 2026-09-15 it read 170 of 295, and
 it had drifted by six again within a day. (It said 164 of 288 that morning, and 140 of 243 the morning before;
 `check-module-parts.py` holds POWERSHELL-REFERENCE.md's per-module rows against
@@ -1373,6 +1386,15 @@ src/                        OS/7's own GUI applications and the design system
                             never recomputed, and the update runs in
                             os7-update@<version>.service so the app never has
                             root. --self-test is 57 decisions with no display
+  OS7.App.Containers/       the third, and the first whose cmdlets were built
+                            FOR it (docs/CONTAINERS-PLAN.md CT9-CT12):
+                            Computer Management's idiom for one engine. Every
+                            word it shows is a cmdlet's, through ONE verb table
+                            (Invoke-OS7ContainerVerb) that its root helper ends
+                            in too; check-gui-logic.py holds the window's copy
+                            of the verbs equal to the module's, class for
+                            class. The details pane renders the cmdlet's
+                            object. --self-test is 60 decisions with no display
   OS7.App.Versions/         the second. `os7-versions <path>` is the WHOLE
                             contract with whatever file manager is installed
                             (V3), and the window decides nothing a cmdlet has
@@ -1525,8 +1547,11 @@ powershell/OS7/             the OS7 module - ONE source, staged by build.sh
                             (docs/CONTAINERS-PLAN.md CT6, CT8): what needs
                             attention by default, a published port in words,
                             and a read refused in #148's words, because the
-                            engine's socket is root's. No call to `docker` and
-                            no request to the socket - P2-docker
+                            engine's socket is root's. Since 2026-10-30 also
+                            images, volumes, networks, applications, the
+                            clean-up, New-OS7Container, the host role, the
+                            operators and the window's verb table. No call to
+                            `docker` and no request to the socket - P2-docker
   OS7.Update.ps1            the update train: Update-OS7, Get-OS7Release,
                             Set-OS7UpdateChannel, Test-OS7Update. LAST of the
                             TWENTY-THREE dot-sourced files, and last because it

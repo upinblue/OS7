@@ -35,8 +35,23 @@
 		# engine said 304 — the distinction the CLI throws away (M-CT4).
 		'Get-DockerContainer', 'Start-DockerContainer', 'Stop-DockerContainer',
 		'Restart-DockerContainer', 'Remove-DockerContainer', 'Get-DockerContainerLog',
-		# The rest of what the engine holds, read only.
+		# The rest of what the engine holds.
 		'Get-DockerImage', 'Get-DockerVolume', 'Get-DockerNetwork', 'Get-DockerDiskUsage',
+		# Creating, pulling, asking a registry, removing (2026-10-30). Each asks
+		# the engine back; a pull is read for the error the engine sends AFTER
+		# its 200.
+		'New-DockerContainer', 'Receive-DockerImage', 'Get-DockerDistribution',
+		'Remove-DockerImage', 'Remove-DockerVolume', 'Remove-DockerNetwork',
+		# An image reference as repository, tag and digest — with the registry
+		# port that a last-colon split gets wrong, and `latest` said out loud.
+		'Split-DockerReference',
+		# The engine on this host: whether this process can open the socket
+		# (asked of the socket), who is in its group, daemon.json, and the
+		# package — installed from the machine's own sources, enabled, and
+		# waited for until /_ping answers.
+		'Test-DockerSocketAccess', 'Get-DockerSocketMember', 'Add-DockerSocketMember', 'Remove-DockerSocketMember',
+		'Get-DockerDaemonConfiguration', 'Set-DockerDaemonConfiguration',
+		'Get-DockerPackage', 'Install-DockerEngine', 'Restart-DockerEngine',
 		# The self-test: RECORDED engine responses, one set per engine version.
 		'Test-DockerModule'
 	)
@@ -49,7 +64,7 @@
 			Tags         = @('Docker', 'Containers', 'Linux', 'OS7')
 			LicenseUri   = 'https://github.com/upinblue/os7/blob/main/LICENSE'
 			ProjectUri   = 'https://github.com/upinblue/os7'
-			ReleaseNotes = 'v0: engine, containers (read, start, stop, restart, remove, logs), images, volumes, networks and disk usage. No create, no exec, no build — CONTAINERS-PLAN CT10 and CT12.'
+			ReleaseNotes = 'v0: engine, containers (read, create, start, stop, restart, remove, logs), images (list, inspect, pull, remove, registry digest), volumes and networks (list, remove) and disk usage. No exec, no build — CONTAINERS-PLAN CT12.'
 		}
 	}
 }

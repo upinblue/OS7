@@ -1403,8 +1403,77 @@ build_os7_automation() {
 }
 
 # ---------------------------------------------------------------------------
+# os7-app-containers - the Containers window, its two root helpers and their
+# polkit actions. docs/CONTAINERS-PLAN.md CT5, CT9-CT12.
+#
+# THE HELPERS ARE IN THIS PACKAGE AND NOT IN os7-module, because the window is
+# the only thing that uses them: an administrator at a shell elevates the shell
+# (`sudo pwsh`), and a container operator needs no helper at all. The verbs the
+# helpers run are the module's (Invoke-OS7ContainerVerb), so the package carries
+# a trust boundary and no logic.
+#
+# pkexec IS A Depends. Ubuntu ships it as a package of its own since 22.04; it
+# was on the 1.0.0.264 medium (measured 2026-10-30, /usr/bin/pkexec in the
+# squashfs), and a Depends is what makes "was" into "will be".
+# ---------------------------------------------------------------------------
+build_os7_app_containers() {
+	if [[ "${OS7_ARCH}" != "amd64" ]]; then
+		echo "    os7-app-containers: SKIPPED on ${OS7_ARCH} - arm64 is server-only"
+		return 0
+	fi
+
+	local stage; stage="$(pkg_begin os7-app-containers)"
+	local dst="${stage}/usr/lib/os7/apps/containers"
+	mkdir -p "${dst}"
+
+	echo "    os7-app-containers: publishing for linux-x64"
+	DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
+		dotnet publish "${REPO}/src/OS7.App.Containers" -c Release -r linux-x64 \
+		--self-contained false -o "${dst}" --nologo
+
+	[[ -f "${dst}/os7-containers" ]] || {
+		echo "!!! dotnet publish produced no binary" >&2; exit 1; }
+
+	# THE MODES ARE DECLARED - BUILD-NOTES #117. pkg_finish turns the bind
+	# mount's 0777 into 0644, which would ship a window that cannot start and
+	# two helpers pkexec cannot execute.
+	chmod 0755 "${dst}/os7-containers"
+	chmod 0644 "${dst}"/*.so
+	rm -f "${dst}"/*.pdb "${dst}"/*.dbg
+	chmod 0755 "${stage}/usr/libexec/os7-container-helper" \
+		"${stage}/usr/libexec/os7-container-helper-destroy" \
+		"${stage}/usr/libexec/os7-container-helper-install"
+	chmod 0644 "${stage}/usr/lib/os7/container-helper.ps1" \
+		"${stage}/usr/share/polkit-1/actions/org.os7.containers.policy"
+
+	echo "    os7-app-containers: --self-test"
+	( cd "${dst}" && ./os7-containers --self-test >/dev/null ) || {
+		echo "!!! os7-containers --self-test FAILED" >&2; exit 1; }
+
+	# The helpers are what pkexec runs as root, so they are parsed before they
+	# ship: a syntax error here is a window whose every Sign in fails.
+	sh -n "${stage}/usr/libexec/os7-container-helper" || exit 1
+	sh -n "${stage}/usr/libexec/os7-container-helper-destroy" || exit 1
+	sh -n "${stage}/usr/libexec/os7-container-helper-install" || exit 1
+
+	pkg_copyright os7-app-containers "${stage}"
+	pkg_control  os7-app-containers "${stage}" "${OS7_ARCH}"
+	pkg_finish   os7-app-containers "${stage}" "${OS7_ARCH}" \
+		./usr/lib/os7/apps/containers/os7-containers \
+		./usr/lib/os7/apps/containers/OS7.Ui.dll \
+		./usr/lib/os7/apps/containers/OS7.Shell.dll \
+		./usr/lib/os7/apps/containers/libSkiaSharp.so \
+		./usr/libexec/os7-container-helper \
+		./usr/libexec/os7-container-helper-destroy \
+		./usr/libexec/os7-container-helper-install \
+		./usr/lib/os7/container-helper.ps1 \
+		./usr/share/polkit-1/actions/org.os7.containers.policy \
+		./usr/share/applications/os7-containers.desktop
+}
+
+# ---------------------------------------------------------------------------
 ALL=(os7-release os7-console os7-module os7-powershell os7-backup os7-automation os7-setup
-     os7-app-softwareupdate os7-app-versions
+     os7-app-softwareupdate os7-app-versions os7-app-containers
      os7-base os7-server os7-desktop)
 
 WANT=( "$@" )
@@ -1421,6 +1490,7 @@ for pkg in "${WANT[@]}"; do
 		os7-setup)   build_os7_setup   ;;
 		os7-app-softwareupdate) build_os7_app_softwareupdate ;;
 		os7-app-versions)       build_os7_app_versions      ;;
+		os7-app-containers)     build_os7_app_containers    ;;
 		os7-base|os7-server|os7-desktop) build_metapackage "${pkg}" ;;
 		*) echo "!!! unknown package '${pkg}'. Known: ${ALL[*]}" >&2; exit 1 ;;
 	esac

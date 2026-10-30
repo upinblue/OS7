@@ -1,0 +1,161 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:OS7.Ui.Controls;assembly=OS7.Ui"
+        xmlns:vm="clr-namespace:OS7.App.Containers.ViewModels"
+        x:Class="OS7.App.Containers.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Containers"
+        Width="1180" Height="700"
+        MinWidth="900" MinHeight="520"
+        WindowStartupLocation="CenterScreen">
+
+  <!--
+    COMPUTER MANAGEMENT'S IDIOM, FOR ONE ENGINE. docs/CONTAINERS-PLAN.md CT9.
+
+    Tree on the left, list in the middle, the selected object's properties on
+    the right, a status line at the bottom, and the verbs in a toolbar above.
+    Every word in the list's State and Reachable columns is the cmdlet's; the
+    properties pane renders the cmdlet's object as it came (CT11).
+  -->
+
+  <DockPanel Margin="{DynamicResource os7_window_padding}">
+
+    <!-- ============================================================ toolbar -->
+    <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+      <Button Name="RefreshButton" Content="Refresh" Margin="0,0,6,4" ToolTip.Tip="Ask the engine again (F5)" />
+      <Button Name="SignInButton" Content="Sign in…" Margin="0,0,6,4"
+              Theme="{DynamicResource os7_default_button}"
+              IsVisible="{Binding ShowSignIn}" />
+      <Button Name="InstallButton" Content="Set up the engine…" Margin="0,0,6,4"
+              Theme="{DynamicResource os7_default_button}"
+              IsVisible="{Binding ShowInstall}"
+              ToolTip.Tip="Install-OS7ContainerHost: datasets first, then the engine from the Ubuntu archive" />
+
+      <Button Name="StartButton" Content="Start" Margin="0,0,6,4"
+              IsVisible="{Binding IsContainerNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="StopButton" Content="Stop" Margin="0,0,6,4"
+              IsVisible="{Binding IsContainerNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="RestartButton" Content="Restart" Margin="0,0,6,4"
+              IsVisible="{Binding IsContainerNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="LogButton" Content="Log…" Margin="0,0,6,4"
+              IsVisible="{Binding IsContainerNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="RemoveButton" Content="Remove…" Margin="0,0,6,4"
+              IsVisible="{Binding IsContainerNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="NewButton" Content="New container…" Margin="0,0,6,4"
+              IsVisible="{Binding IsContainerNode}" IsEnabled="{Binding Ready}" />
+
+      <Button Name="AppStartButton" Content="Start application" Margin="0,0,6,4"
+              IsVisible="{Binding IsApplicationNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="AppStopButton" Content="Stop application" Margin="0,0,6,4"
+              IsVisible="{Binding IsApplicationNode}" IsEnabled="{Binding CanAct}" />
+
+      <Button Name="CheckUpdatesButton" Content="Check for updates" Margin="0,0,6,4"
+              IsVisible="{Binding IsImageNode}" IsEnabled="{Binding Ready}"
+              ToolTip.Tip="Ask each image's registry what its tag names now. Pulls nothing." />
+      <Button Name="ImageRemoveButton" Content="Remove…" Margin="0,0,6,4"
+              IsVisible="{Binding IsImageNode}" IsEnabled="{Binding CanAct}" />
+
+      <Button Name="VersionsButton" Content="Previous versions…" Margin="0,0,6,4"
+              IsVisible="{Binding IsVolumeNode}" IsEnabled="{Binding CanAct}" />
+      <Button Name="VolumeRemoveButton" Content="Remove…" Margin="0,0,6,4"
+              IsVisible="{Binding IsVolumeNode}" IsEnabled="{Binding CanAct}" />
+
+      <Button Name="NetworkRemoveButton" Content="Remove…" Margin="0,0,6,4"
+              IsVisible="{Binding IsNetworkNode}" IsEnabled="{Binding CanRemoveNetwork}" />
+
+      <Button Name="CleanupButton" Content="Clean up…" Margin="0,0,6,4" IsEnabled="{Binding Ready}"
+              ToolTip.Tip="Show what is unused and what removing it would free, before anything is removed" />
+    </WrapPanel>
+
+    <!-- ======================================================== status line -->
+    <ui:BevelBorder DockPanel.Dock="Bottom" Theme="{DynamicResource os7_sunken_pane}"
+                    Padding="6,3" Margin="0,8,0,0" Background="{DynamicResource os7_face_brush}">
+      <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
+    </ui:BevelBorder>
+
+    <!-- What the last action said. The cmdlet's outcome and state, or its
+         refusal in its own words — never "an error occurred". -->
+    <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" TextWrapping="Wrap"
+               Text="{Binding ActionResult}" IsVisible="{Binding ShowActionResult}" />
+
+    <Grid ColumnDefinitions="190,*,320">
+
+      <!-- ============================================================ tree -->
+      <ListBox Grid.Column="0" Name="Nodes"
+               ItemsSource="{Binding Nodes}"
+               SelectedItem="{Binding SelectedNode, Mode=TwoWay}">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:NodeItem">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="{Binding Title}" />
+              <TextBlock Grid.Column="1" Text="{Binding Count}" Margin="6,0,0,0" />
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <!-- ============================================================ list -->
+      <DockPanel Grid.Column="1" Margin="8,0">
+        <TextBlock DockPanel.Dock="Top" Classes="heading" Text="{Binding Heading}" Margin="0,0,0,6" />
+
+        <!-- The column headers, raised like a list view's. -->
+        <ui:BevelBorder DockPanel.Dock="Top" Theme="{DynamicResource os7_raised_pane}" Padding="6,3">
+          <Grid ColumnDefinitions="1.6*,1.1*,1.7*,2.4*,1.2*">
+            <TextBlock Grid.Column="0" Text="{Binding Header0}" />
+            <TextBlock Grid.Column="1" Text="{Binding Header1}" />
+            <TextBlock Grid.Column="2" Text="{Binding Header2}" />
+            <TextBlock Grid.Column="3" Text="{Binding Header3}" />
+            <TextBlock Grid.Column="4" Text="{Binding Header4}" />
+          </Grid>
+        </ui:BevelBorder>
+
+        <Panel>
+          <ListBox Name="Rows"
+                   ItemsSource="{Binding Rows}"
+                   SelectedItem="{Binding SelectedRow, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:ObjectRow">
+                <Grid ColumnDefinitions="1.6*,1.1*,1.7*,2.4*,1.2*">
+                  <TextBlock Grid.Column="0" Text="{Binding C0}" TextTrimming="CharacterEllipsis"
+                             FontWeight="{Binding NeedsAttention, Converter={x:Static vm:Converters.BoldWhen}}" />
+                  <TextBlock Grid.Column="1" Text="{Binding C1}" TextTrimming="CharacterEllipsis" Margin="0,0,6,0" />
+                  <TextBlock Grid.Column="2" Text="{Binding C2}" TextTrimming="CharacterEllipsis" Margin="0,0,6,0" />
+                  <TextBlock Grid.Column="3" Text="{Binding C3}" TextTrimming="CharacterEllipsis" Margin="0,0,6,0" />
+                  <TextBlock Grid.Column="4" Text="{Binding C4}" TextTrimming="CharacterEllipsis" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <!-- When there is nothing, say which kind of nothing — and when the
+               engine is root's, say so, with the way in (CT5). -->
+          <ui:BevelBorder Theme="{DynamicResource os7_sunken_pane}"
+                          Padding="{DynamicResource os7_pane_padding}"
+                          IsVisible="{Binding ShowMessage}"
+                          VerticalAlignment="Top" Margin="0,30,0,0" MaxWidth="560">
+            <SelectableTextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+          </ui:BevelBorder>
+        </Panel>
+      </DockPanel>
+
+      <!-- ====================================================== properties -->
+      <DockPanel Grid.Column="2">
+        <TextBlock DockPanel.Dock="Top" Classes="heading" Text="Properties" Margin="0,0,0,6" />
+        <ui:BevelBorder Theme="{DynamicResource os7_sunken_pane}" Padding="6">
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Details}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PropertyRow">
+                  <Grid ColumnDefinitions="118,*" Margin="0,1">
+                    <TextBlock Grid.Column="0" Classes="muted" Text="{Binding Label}" TextWrapping="Wrap" Margin="0,0,6,0" />
+                    <SelectableTextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </ui:BevelBorder>
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</Window>

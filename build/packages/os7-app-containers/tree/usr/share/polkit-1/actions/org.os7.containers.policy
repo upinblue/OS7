@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  OS/7 - who may administer containers from the Containers window, and how
+  they prove it. docs/CONTAINERS-PLAN.md CT5.
+
+  TWO ACTIONS, BECAUSE polkit DECIDES BY THE PROGRAM'S PATH. pkexec names the
+  action whose exec.path annotation matches the program it was asked to run,
+  so a window that wants two kinds of prompt needs two programs:
+
+    org.os7.containers.operate   /usr/libexec/os7-container-helper
+        seeing, starting, stopping, creating. auth_admin_keep in an active
+        local session: the password is remembered for a few minutes, because a
+        prompt on every refresh is a prompt people learn to clear unread.
+
+    org.os7.containers.destroy   /usr/libexec/os7-container-helper-destroy
+        removing a container, an image, a volume, a network, a clean-up.
+        auth_admin EVERY TIME: a volume is a workload's data.
+
+    org.os7.containers.install   /usr/libexec/os7-container-helper-install
+        making this machine a container host: datasets, configuration, and the
+        engine's packages from the Ubuntu archive. auth_admin EVERY TIME, and
+        a message that says so.
+
+  A remote or inactive session gets auth_admin for all three - the same line the
+  Software Update window's rule draws (49-os7-update.rules).
+
+  WHAT THIS DOES NOT DO: it gives nobody the engine's socket. An administrator
+  who wants an account to work without these prompts makes it a container
+  operator with Add-OS7ContainerOperator, which is root-equivalent and says so.
+-->
+<policyconfig>
+  <vendor>OS/7</vendor>
+  <vendor_url>https://github.com/upinblue/os7</vendor_url>
+
+  <action id="org.os7.containers.operate">
+    <description>Administer the containers on this machine</description>
+    <description xml:lang="de">Die Container dieses Rechners verwalten</description>
+    <message>Authentication is required to see and operate the containers on this machine. Whoever holds the container engine can read every container's environment, passwords included.</message>
+    <message xml:lang="de">Zum Anzeigen und Bedienen der Container dieses Rechners ist eine Authentifizierung nötig. Wer die Container-Engine hält, kann die Umgebung jedes Containers lesen, Passwörter eingeschlossen.</message>
+    <icon_name>system-run</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/os7-container-helper</annotate>
+  </action>
+
+  <action id="org.os7.containers.destroy">
+    <description>Remove containers, images, volumes or networks</description>
+    <description xml:lang="de">Container, Images, Volumes oder Netzwerke entfernen</description>
+    <message>Authentication is required to remove containers, images, volumes or networks. Removing a volume deletes the data in it.</message>
+    <message xml:lang="de">Zum Entfernen von Containern, Images, Volumes oder Netzwerken ist eine Authentifizierung nötig. Ein Volume zu entfernen löscht die Daten darin.</message>
+    <icon_name>edit-delete</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/os7-container-helper-destroy</annotate>
+  </action>
+
+  <action id="org.os7.containers.install">
+    <description>Make this machine a container host</description>
+    <description xml:lang="de">Diesen Rechner als Container-Host einrichten</description>
+    <message>Authentication is required to install the container engine on this machine. Its data gets datasets of its own, and its packages are downloaded from the Ubuntu archive.</message>
+    <message xml:lang="de">Zum Installieren der Container-Engine auf diesem Rechner ist eine Authentifizierung nötig. Ihre Daten erhalten eigene Datasets, und ihre Pakete werden aus dem Ubuntu-Archiv geladen.</message>
+    <icon_name>system-software-install</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/os7-container-helper-install</annotate>
+  </action>
+</policyconfig>
