@@ -136,6 +136,27 @@ start-up animation, left a desktop that took no input in 2 of 22 logins. The
 fix closes it once it has opened (9 of 9 since); the race is rare enough that
 nine cannot prove it gone.
 
+**1.0.0.272 IS BUILT, GATED AND ITS REPOSITORY CUT, AND NOT PUBLISHED
+(2026-10-31) — the kernel from `resolute-proposed` for CVE-2026-98432.** 267 ships linux 7.0.0-42.42, which
+the CVE (Ubuntu priority High, CVSS 9.8) affects; Ubuntu had the fix in
+`-proposed` only (7.0.0-43.43). The pin gained its first **archive exception**:
+the kernel's files by pool path and sha256 beside an unchanged snapshot, honoured
+on the medium by hook 0005 and in the repository by `build-os7-repo.sh`, and
+asked of the artefact by `check-image.py` (BUILD-NOTES #196 is why hook 0005
+removes the suite itself). Both media from `3a1b497`; `check-image` amd64 205,
+`run-s5 all` 108 ok, `run-firstrun` 13, `run-phase3` install + walk,
+`run-secureboot` 32, the no-VM gate green, `check-image` arm64 153. **The field path was measured on a
+machine** installed from the published 267 medium: `Update-OS7` to 272 boots
+7.0.0-43-generic, `Restore-OS7` goes back to 42. **The repository is cut**
+(step 5) into `out/os7-repo`, over the published tree fetched by hash: the
+index holds the published 8 entries plus 272 per architecture, and apt in a
+clean container takes 7.0.0-43.43 from OS/7's repository on both architectures.
+[SESSION-CVE-2026-98432.md](SESSION-CVE-2026-98432.md) §9. **Owed:** steps 6–10
+(signing with the release key, archive and tag `3a1b497`, publish, website,
+verify from outside); machines in the field
+still need #193's way past their own updater before they can take it; the
+exception block comes out in the first release whose snapshot carries 43.
+
 **1.0.0.267 WAS PUBLISHED ON 2026-10-31 — the fourth published preview, and the
 first with the Containers window.** Both media from `b8a904b`, clean tree,
 `reproducible: true`; the whole amd64 gate green (`check-image` 198, `run-s5 all`
