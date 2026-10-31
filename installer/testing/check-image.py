@@ -187,6 +187,21 @@ emit packages.count    bash -c 'wc -l < /mnt/sq/usr/lib/os7/packages.manifest'
 # made on a dependency graph and one of them was wrong about what installs the
 # kernel (BUILD-NOTES #62), so they are asked of the artefact from now on.
 emit packages.curated  bash -c "grep -E '^(dotnet|aspnetcore|linux-(generic|image-generic|headers|main-modules-zfs))' /mnt/sq/usr/lib/os7/packages.manifest | cut -f1 | sort || true"
+# THE ARCHIVE EXCEPTION (os7-release.conf), asked of the artefact: what shipped
+# at which version, which kernels /boot holds and which one the MEDIUM boots,
+# and whether the exception's suite really left. Every file in sources.list.d is
+# read, not only *.sources: live-build writes a config/archives source as a
+# .list, and the pin check below would never have seen one left behind.
+emit packages.manifest cat /mnt/sq/usr/lib/os7/packages.manifest
+emit apt.files         bash -c 'ls -1 /mnt/sq/etc/apt/sources.list.d/ /mnt/sq/etc/apt/preferences.d/ 2>/dev/null || true'
+emit apt.everysource   bash -c 'cat /mnt/sq/etc/apt/sources.list /mnt/sq/etc/apt/sources.list.d/* 2>/dev/null || true'
+emit apt.lists         bash -c 'ls -1 /mnt/sq/var/lib/apt/lists/ 2>/dev/null || true'
+emit boot.kernels      bash -c 'cd /mnt/sq/boot 2>/dev/null && ls -1 vmlinuz-* 2>/dev/null || true'
+# The medium's own kernel is casper/vmlinuz-<abi> - NOT casper/vmlinuz, and not
+# byte-identical to the one in /boot (measured on OS7-1.0.0.267-amd64.iso: a
+# cmp against casper/vmlinuz answered DIFF for the only kernel there was). So
+# it is asked by NAME, which carries the ABI.
+emit casper.kernel     bash -c 'cd /mnt/iso/casper 2>/dev/null && ls -1 vmlinuz* 2>/dev/null || true'
 # THE DESKTOP'S IDENTITY, asked of the SHIPPED image (amd64; empty on arm64,
 # which is server-only and has no desktop at all).
 #
@@ -944,6 +959,137 @@ def secureboot_checks(img: dict[str, str], arch: str, check) -> None:
           f"/boot/grub/grub.cfg, the stub gcd's compiled-in prefix would resolve to")
 
 
+def pin_values(text: str) -> dict[str, str]:
+    """KEY="value" out of a release.conf, where a value may span lines.
+
+    The archive exception's file lists do, and the line parser main() uses for
+    OS7_REPO_AUTH reads them as empty — harmless there, wrong here.
+    """
+    return dict(re.findall(r'^(OS7_\w+)="([^"]*)"', text, re.M))
+
+
+def exception_debs(pin: dict[str, str], arch: str) -> list[tuple[str, str, str, str]]:
+    """(package, version, pool path, sha256) for each pinned file of one arch.
+
+    Name and version come from the file name, which is how the pin writes them
+    down once (os7-release.conf, "The archive EXCEPTION").
+    """
+    debs = []
+    for line in pin.get(f"OS7_ARCHIVE_EXCEPTION_DEBS_{arch}", "").splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        path, sha = parts
+        name, version = path.rsplit("/", 1)[1].split("_")[:2]
+        debs.append((name, version.replace("%3a", ":"), path, sha))
+    return debs
+
+
+def archive_exception_checks(img: dict[str, str], arch: str, check) -> None:
+    """The archive exception, asked of the finished medium.
+
+    Hook 0005 checks the chroot while live-build is still running; this checks
+    what shipped. Six questions, because a medium can get any one of them wrong
+    alone: the old kernel beside the new one, the -proposed source left on
+    every machine, the preference left behind with it, the suite's index files,
+    a live kernel that is not the installed one, and an image.json that says
+    something other than what is there.
+    """
+    pin = pin_values(img.get("release.conf", ""))
+    debs = exception_debs(pin, arch)
+    leftovers = [f for f in img.get("apt.files", "").split()
+                 if f.startswith("os7-archive-exception")]
+    try:
+        recorded = json.loads(img.get("image.json", "") or "{}").get("archive_exception")
+    except ValueError:
+        recorded = None
+
+    if not debs:
+        check(not leftovers and recorded is None,
+              "no archive exception is declared, and the image carries none",
+              ", ".join(leftovers) or ("image.json records one" if recorded else "none"))
+        return
+
+    suite = pin.get("OS7_ARCHIVE_EXCEPTION_SUITE", "")
+    snapshot = pin.get("OS7_ARCHIVE_EXCEPTION_SNAPSHOT", "")
+    reason = pin.get("OS7_ARCHIVE_EXCEPTION_REASON", "")
+    print(f"      note  archive exception: {len(debs)} package(s) from {suite} "
+          f"@ {snapshot}, for {reason}")
+
+    check(bool(suite) and suite not in img.get("apt.everysource", ""),
+          "no apt source in the shipped image names the exception suite", suite or "(no suite in the pin)")
+    check(not leftovers, "the exception's source and preference left the image",
+          ", ".join(leftovers) or "gone")
+    stale = [l for l in img.get("apt.lists", "").split() if f"_dists_{suite}_" in l]
+    check(not stale, "no apt index of the exception suite is left in the image",
+          f"{len(stale)} file(s)" if stale else "none")
+
+    manifest = {}
+    for line in img.get("packages.manifest", "").splitlines():
+        f = line.split("\t")
+        if len(f) >= 2:
+            manifest[f[0].split(":")[0]] = f[1]
+    wrong = [f"{n} {manifest.get(n, 'absent')} (pin {v})" for n, v, _, _ in debs
+             if manifest.get(n) != v]
+    check(not wrong, f"the {len(debs)} pinned package(s) shipped at the pinned version",
+          "; ".join(wrong) or ", ".join(sorted({v for _, v, _, _ in debs})))
+
+    abis = sorted(n[len("linux-image-"):] for n, _, _, _ in debs
+                  if re.match(r"linux-image-\d", n))
+    if abis:
+        want = [f"vmlinuz-{a}" for a in abis]
+        kernels = sorted(img.get("boot.kernels", "").split())
+        check(kernels == want, "/boot holds the exception's kernel and no other",
+              ", ".join(kernels) or "(none)")
+        live = sorted(img.get("casper.kernel", "").split())
+        check(live == want, "the medium boots the exception's kernel (casper/)",
+              ", ".join(live) or "no vmlinuz on the medium")
+
+    got = {(p.get("package"), p.get("pinned"), p.get("installed"), p.get("sha256"))
+           for p in (recorded or {}).get("packages", [])}
+    want_pk = {(n, v, v, s) for n, v, _, s in debs}
+    check(bool(recorded) and recorded.get("suite") == suite
+          and recorded.get("snapshot") == snapshot and recorded.get("reason") == reason
+          and got == want_pk,
+          "image.json records the exception, pinned and installed alike",
+          "absent" if not recorded else
+          f"{len(got & want_pk)} of {len(want_pk)} package records agree")
+
+
+# A pretend exception, for --self-test. It is deliberately NOT read from the
+# repository's pin: the real exception is meant to be deleted one release from
+# now, and the rule has to stay provable after it is.
+_EXC_CONF = """\
+OS7_ARCHIVE_EXCEPTION_REASON="CVE-0000-00000"
+OS7_ARCHIVE_EXCEPTION_SUITE="resolute-proposed"
+OS7_ARCHIVE_EXCEPTION_SNAPSHOT="20990101T000000Z"
+OS7_ARCHIVE_EXCEPTION_DEBS_amd64="
+pool/main/l/linux-meta/linux-image-generic_9.9.9-2.2_amd64.deb {a}
+pool/main/l/linux-signed/linux-image-9.9.9-2-generic_9.9.9-2.2_amd64.deb {b}
+"
+""".format(a="a" * 64, b="b" * 64)
+
+
+def exception_fixture() -> dict[str, str]:
+    """The readings of a CORRECT medium for archive_exception_checks()."""
+    debs = exception_debs(pin_values(_EXC_CONF), "amd64")
+    return {
+        "release.conf": _EXC_CONF,
+        "apt.files": "os7.sources\nmicrosoft-prod.list\nos7-desktop-exclusions.pref",
+        "apt.everysource": "deb https://snapshot.ubuntu.com/ubuntu/20990101T000000Z/ resolute main",
+        "apt.lists": "snapshot.ubuntu.com_ubuntu_x_dists_resolute-updates_main_binary-amd64_Packages",
+        "packages.manifest": "linux-firmware\t1\tall\n" + "\n".join(
+            f"{n}\t{v}\tamd64" for n, v, _, _ in debs),
+        "boot.kernels": "vmlinuz-9.9.9-2-generic",
+        "casper.kernel": "vmlinuz-9.9.9-2-generic",
+        "image.json": json.dumps({"archive_exception": {
+            "reason": "CVE-0000-00000", "suite": "resolute-proposed",
+            "snapshot": "20990101T000000Z",
+            "packages": [{"package": n, "pinned": v, "installed": v, "filename": p,
+                          "sha256": s} for n, v, p, s in debs]}}),
+    }
+
+
 def self_test() -> int:
     """Run secureboot_checks() over a RECORDED correct medium and require green.
 
@@ -974,6 +1120,52 @@ def self_test() -> int:
               f"medium — the RULE is wrong, not the image.")
         return 1
     print("The Secure Boot rule passes on a correctly assembled medium.")
+
+    # THE ARCHIVE EXCEPTION: a control first — a correct medium must pass —
+    # then one planted defect per thing a medium can get wrong, each required
+    # to turn at least one check red on its own.
+    print("\n### the archive-exception rule, over a correct medium")
+    archive_exception_checks(exception_fixture(), "amd64", check)
+    if bad:
+        print(f"\n{bad} archive-exception check(s) fail on a correct medium — the RULE is wrong.")
+        return 1
+    planted = {
+        "the -proposed source left in sources.list.d":
+            ("apt.files", lambda v: v + "\nos7-archive-exception.list"),
+        "the preference left in preferences.d":
+            ("apt.files", lambda v: v + "\nos7-archive-exception.pref"),
+        "a source line still naming the suite":
+            ("apt.everysource", lambda v: v + "\ndeb https://snapshot.ubuntu.com/ubuntu/x/ resolute-proposed main"),
+        "the suite's index left in /var/lib/apt/lists":
+            ("apt.lists", lambda v: v + "\nsnapshot.ubuntu.com_ubuntu_x_dists_resolute-proposed_main_binary-amd64_Packages"),
+        "the snapshot's kernel shipped instead":
+            ("packages.manifest", lambda v: v.replace("9.9.9-2.2", "9.9.9-1.1", 1)),
+        "the old kernel left beside the new one":
+            ("boot.kernels", lambda v: v + "\nvmlinuz-9.9.9-1-generic"),
+        "a live kernel that is not the installed one":
+            ("casper.kernel", lambda v: ""),
+        "image.json silent about the exception":
+            ("image.json", lambda v: "{}"),
+    }
+    print("\n### the archive-exception rule, over eight planted defects")
+    undetected = []
+    for what, (key, plant) in planted.items():
+        fails = 0
+
+        def quiet(ok, _what, _detail=""):
+            nonlocal fails
+            fails += 0 if ok else 1
+        img2 = exception_fixture()
+        img2[key] = plant(img2[key])
+        archive_exception_checks(img2, "amd64", quiet)
+        print(f"      ok    {what}: {fails} check(s) red" if fails
+              else f"      FAIL  {what}: NOT DETECTED")
+        if not fails:
+            undetected.append(what)
+    if undetected:
+        print(f"\n{len(undetected)} planted defect(s) passed the archive-exception rule.")
+        return 1
+    print("\nThe archive-exception rule passes a correct medium and catches all eight defects.")
     return 0
 
 
@@ -1536,6 +1728,9 @@ def main() -> None:
                       for tok in line.split()[1:]})
     for u in ms_uris:
         print(f"      note  additional source (expected, cannot be pinned by URL): {u}")
+
+    # -- the archive exception (os7-release.conf) ----------------------------
+    archive_exception_checks(img, arch, check)
 
     # -- what Setup itself says --------------------------------------------
     setup = img.get("setup.version", "")

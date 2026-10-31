@@ -1,0 +1,183 @@
+#!/bin/bash
+# OS/7 — the archive exception: check what arrived, then take the suite away.
+#
+# os7-release.conf may name ONE exception to the archive snapshot: a short list
+# of packages, each by pool path and sha256, from one other suite at one other
+# timestamp, for one stated reason. The first is the kernel from
+# resolute-proposed, for CVE-2026-98432. build.sh turns that block into
+# config/archives/os7-archive-exception.{list,pref}.chroot, and live-build
+# installed from it before any hook ran.
+#
+# This hook is the other half, and it runs FIRST because both of its jobs have
+# to be done before anything else uses apt or records what the image holds:
+#
+#   1. ASK THE THING ITSELF. Every pinned package must be installed at the
+#      pinned version, and the .deb apt fetched for it must have the pinned
+#      hash. dpkg's records and the file, never apt's exit code (#13, #72).
+#      And NOTHING ELSE may have come from the exception suite: an installed
+#      (package, version) that the suite offers and no other source does is a
+#      package the preference was supposed to keep out.
+#   2. REMOVE THE SUITE. live-build will not: lb_chroot_archives' remove stage
+#      exits early when the chroot and binary mirrors are equal - they are, by
+#      the pin - and that early exit comes before it deletes any config/archives
+#      source or preference. Left in place, every OS/7 machine would carry a
+#      -proposed source and a preference for packages it already has, and
+#      check-image.py's pin check reads *.sources only, so a .list file would
+#      have slipped past it too (it now asks for both).
+#
+# Declared and absent is a FAILURE, not a skip: a build that was told to carry
+# the fixed kernel and quietly shipped the old one is the outcome this exists to
+# prevent. Not declared for this architecture and the files present anyway is a
+# failure as well, because then something other than the pin wrote them.
+
+set -euo pipefail
+exec 1>&2
+
+echo ">>> hook 0005: archive exception"
+
+[ -r /usr/lib/os7/release.conf ] || {
+	echo "!!! /usr/lib/os7/release.conf missing - build.sh did not stage the pin" >&2
+	exit 1
+}
+# shellcheck source=/dev/null
+. /usr/lib/os7/release.conf
+
+ARCH="$(dpkg --print-architecture)"
+LIST=/etc/apt/sources.list.d/os7-archive-exception.list
+PREF=/etc/apt/preferences.d/os7-archive-exception.pref
+eval "DEBS=\${OS7_ARCHIVE_EXCEPTION_DEBS_${ARCH}-}"
+
+if [ -z "${DEBS//[[:space:]]/}" ]; then
+	if [ -e "${LIST}" ] || [ -e "${PREF}" ]; then
+		echo "!!! no archive exception is declared for ${ARCH}, and ${LIST} or ${PREF}" >&2
+		echo "!!! exists anyway. Something other than the pin wrote it." >&2
+		exit 1
+	fi
+	echo "    none declared for ${ARCH}"
+	exit 0
+fi
+
+if [ ! -r "${LIST}" ] || [ ! -r "${PREF}" ]; then
+	echo "!!! the pin declares an archive exception for ${ARCH} and live-build did not" >&2
+	echo "!!! install its source: ${LIST} / ${PREF}. build.sh writes them into" >&2
+	echo "!!! config/archives/ - was that step reached?" >&2
+	exit 1
+fi
+
+# ---- 1a. each pinned package, by version and by hash ------------------------
+PINNED=""
+n=0
+while read -r path sha; do
+	[ -n "${path}" ] || continue
+	file="${path##*/}"
+	name="${file%%_*}"
+	rest="${file#*_}"
+	version="${rest%%_*}"
+	version="${version//%3a/:}"
+	got="$(dpkg-query -W -f='${Version}' "${name}" 2>/dev/null || true)"
+	if [ "${got}" != "${version}" ]; then
+		echo "!!! ${name} is ${got:-not installed}; the archive exception pins ${version}" >&2
+		exit 1
+	fi
+	# apt names a cached file exactly as the pool does (epoch as %3a included).
+	cached="/var/cache/apt/archives/${file}"
+	if [ ! -r "${cached}" ]; then
+		echo "!!! ${cached} is not there to compare with the pinned hash." >&2
+		echo "!!! The version matches, but a version is a claim and the hash is the" >&2
+		echo "!!! measurement; this hook does not pass on the claim alone." >&2
+		exit 1
+	fi
+	actual="$(sha256sum "${cached}" | cut -d' ' -f1)"
+	if [ "${actual}" != "${sha}" ]; then
+		echo "!!! ${file}: sha256 ${actual}, the pin says ${sha}" >&2
+		exit 1
+	fi
+	PINNED="${PINNED}${name}	${version}
+"
+	n=$((n + 1))
+	echo "    ${name} ${version}: installed, sha256 ${sha:0:16}… matches"
+done <<EOF
+${DEBS}
+EOF
+
+# ---- 1b. and nothing else from the suite ------------------------------------
+# apt keeps one Packages file per source in /var/lib/apt/lists, named after the
+# URI with / turned into _. The exception suite's files are the ones naming
+# dists_<suite>_; every other Packages file is "another source".
+export OS7_EXC_SUITE="${OS7_ARCHIVE_EXCEPTION_SUITE}" OS7_EXC_PINNED="${PINNED}"
+python3 - <<'PY'
+import glob, gzip, os, subprocess, sys
+
+suite = os.environ["OS7_EXC_SUITE"]
+pinned = {tuple(l.split("\t")) for l in os.environ["OS7_EXC_PINNED"].splitlines() if l}
+
+def pairs(path):
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8", errors="replace") as fh:
+        name = None
+        for line in fh:
+            if line.startswith("Package: "):
+                name = line[9:].strip()
+            elif line.startswith("Version: ") and name:
+                yield (name, line[9:].strip())
+                name = None
+
+lists = [p for p in glob.glob("/var/lib/apt/lists/*_Packages*")
+         if not p.endswith((".lz4", ".xz", ".zst"))]
+mine = [p for p in lists if f"_dists_{suite}_" in os.path.basename(p)]
+if not mine:
+    sys.exit(f"!!! no Packages index for {suite} under /var/lib/apt/lists - "
+             "this check cannot answer, so it fails rather than pass")
+offered = set()
+for p in mine:
+    offered.update(pairs(p))
+elsewhere = set()
+for p in lists:
+    if p not in mine:
+        elsewhere.update(pairs(p))
+
+out = subprocess.run(["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\n"],
+                     capture_output=True, text=True, check=True).stdout
+installed = {tuple(l.split("\t")) for l in out.splitlines() if l}
+installed = {(n.split(":")[0], v) for n, v in installed}
+
+stray = sorted((installed & offered) - elsewhere - pinned)
+if stray:
+    print(f"!!! {len(stray)} package(s) came from {suite} without being pinned:", file=sys.stderr)
+    for n, v in stray:
+        print(f"!!!   {n} {v}", file=sys.stderr)
+    sys.exit(1)
+missing = sorted(pinned - installed)
+if missing:
+    sys.exit(f"!!! pinned and not installed: {missing}")
+print(f"    nothing else installed came from {suite} "
+      f"({len(offered)} versions offered, {len(installed)} installed)")
+PY
+
+# ---- 1c. the kernel the image boots is the exception's ----------------------
+# Only meaningful when the exception carries a kernel image, which the first one
+# does. Every /boot/vmlinuz-* must belong to a pinned package: a 42 left beside
+# the 43 would be the kernel the medium boots, by sort order, in some places.
+if printf '%s' "${PINNED}" | cut -f1 | grep -q '^linux-image-[0-9]'; then
+	for k in /boot/vmlinuz-*; do
+		[ -e "${k}" ] || continue
+		owner="$(dpkg -S "${k}" 2>/dev/null | cut -d: -f1 || true)"
+		if ! printf '%s' "${PINNED}" | cut -f1 | grep -qx "${owner}"; then
+			echo "!!! ${k} belongs to '${owner:-nobody}', not to the archive exception" >&2
+			exit 1
+		fi
+		echo "    ${k} -> ${owner}"
+	done
+fi
+
+# ---- 2. remove the suite ------------------------------------------------------
+rm -f "${LIST}" "${PREF}"
+for f in /var/lib/apt/lists/*_dists_"${OS7_ARCHIVE_EXCEPTION_SUITE}"_*; do
+	[ -e "${f}" ] && rm -f "${f}"
+done
+if grep -rqs -- "${OS7_ARCHIVE_EXCEPTION_SUITE}" /etc/apt/sources.list /etc/apt/sources.list.d/ \
+	|| [ -e "${PREF}" ]; then
+	echo "!!! ${OS7_ARCHIVE_EXCEPTION_SUITE} is still named in apt's configuration after removal" >&2
+	exit 1
+fi
+echo "    ${n} package(s) from ${OS7_ARCHIVE_EXCEPTION_SUITE} @ ${OS7_ARCHIVE_EXCEPTION_SNAPSHOT} (${OS7_ARCHIVE_EXCEPTION_REASON}); suite removed"

@@ -499,7 +499,7 @@ export KERNEL_RELEASE ZFS_VERSION AUTHD_VERSION AZCMAGENT_VERSION INTUNE_VERSION
 export PWSH_SHA SETUP_SHA MODULE_VERSION MANIFEST_SHA
 
 python3 - "${RELEASE_JSON}" <<'PY'
-import json, os, sys
+import json, os, subprocess, sys
 
 env = os.environ
 def v(name):
@@ -580,6 +580,33 @@ doc = {
 
     "packages_manifest": "sha256:" + env["MANIFEST_SHA"],
 }
+
+# THE ARCHIVE EXCEPTION, when the pin declares one for this architecture
+# (os7-release.conf, "The archive EXCEPTION"). Beside "base" because it is the
+# one place this image's Ubuntu half did NOT come from the snapshot "base"
+# names, and a reader of this file must not have to know that from elsewhere.
+# Pinned and installed, per this file's rule; hook 0005 already failed the build
+# if the two differ, so a disagreement here means 0005 did not run.
+exc_debs = env.get("OS7_ARCHIVE_EXCEPTION_DEBS_" + env["OS7_BUILD_ARCH"], "")
+exc = []
+for line in exc_debs.splitlines():
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    path, sha = parts
+    name, version = path.rsplit("/", 1)[1].split("_")[:2]
+    version = version.replace("%3a", ":")
+    got = subprocess.run(["dpkg-query", "-W", "-f=${Version}", name],
+                         capture_output=True, text=True).stdout.strip() or None
+    exc.append({"package": name, "pinned": version, "installed": got,
+                "filename": path, "sha256": sha})
+if exc:
+    doc["archive_exception"] = {
+        "reason":   env["OS7_ARCHIVE_EXCEPTION_REASON"],
+        "suite":    env["OS7_ARCHIVE_EXCEPTION_SUITE"],
+        "snapshot": env["OS7_ARCHIVE_EXCEPTION_SNAPSHOT"],
+        "packages": exc,
+    }
 
 with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump(doc, fh, indent=2, sort_keys=False)

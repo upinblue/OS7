@@ -520,6 +520,32 @@ exact version and applies the hotfix with one `apt full-upgrade`. What no
 container covers: a hotfix applied through `Update-OS7` on a booted machine,
 which rides the same `run-s5.py update` gate as the full release.
 
+**The other way out: an ARCHIVE EXCEPTION inside a release (2026-10-31).** The
+hotfix overlays the base's snapshot without a new medium. When a fix exists only
+in `resolute-proposed` and a new medium is wanted anyway, the pin can name ONE
+exception beside the snapshot instead: a suite, a timestamp, a reason, and a
+short list of files by pool path and sha256 (`os7-release.conf`, "The archive
+EXCEPTION"). The first was the kernel `7.0.0-43.43` for CVE-2026-98432, which
+Ubuntu itself had not released: `-updates` held `7.0.0-42.42`, the fix was in
+`-proposed` only.
+
+It is honoured in both places a machine gets packages from, with the same
+bytes. The medium installs the files from the exception suite during the chroot
+stage, through a preference that admits exactly those packages at exactly that
+version; hook 0005 compares each fetched `.deb` with the pinned hash, refuses any
+other package from the suite, and removes the suite again — live-build does not,
+because its `remove` stage exits early when the chroot and binary mirrors are
+equal (BUILD-NOTES #196). `build-os7-repo.sh` fetches the same files by the same
+paths, checks the same hashes and re-hosts them in OS/7's pool, so `Update-OS7`'s
+`full-upgrade` gives an updated machine the kernel a fresh install has. The
+descriptor and `image.json` both carry an `archive_exception` block, because a
+reader who saw only `base.archive_snapshot` would believe the old kernel shipped.
+`check-image.py` asks the finished medium all of it, and its `--self-test` plants
+eight defects against the rule.
+
+An exception is removed by deleting the block in the first release whose
+snapshot carries the fix in `-updates` or `-security`.
+
 **Ubuntu Pro / ESM / Livepatch** interact with all of this and are unexamined.
 Pro adds suites that must be snapshot-pinned too; Livepatch changes a running
 kernel underneath a version number that claims to describe it. Neither is a

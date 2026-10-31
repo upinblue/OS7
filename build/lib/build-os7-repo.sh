@@ -339,6 +339,56 @@ if [[ -n "${OS7_HOTFIX_DEBS}" ]]; then
 fi
 export OS7_HOTFIX_POOL_FILES OS7_HOTFIX_BASE
 
+# The ARCHIVE EXCEPTION (os7-release.conf), re-hosted. The medium installs these
+# packages from the exception suite at build time; a machine that UPDATES gets
+# them from here, because Update-OS7 points apt at the base snapshot and at this
+# suite and at nothing else. The same files, by the same pool paths and the same
+# hashes, so an updated machine holds the bytes a fresh install holds.
+#
+# Fetched from the snapshot service at the exception's timestamp and refused on
+# a hash mismatch BEFORE they reach the pool. A file the pool already holds with
+# the right hash is not fetched again: one tree carries every release, and the
+# second architecture's cut must not repeat the first's 190 MB.
+OS7_EXCEPTION_POOL_FILES=""
+eval "EXCEPTION_DEBS=\${OS7_ARCHIVE_EXCEPTION_DEBS_${OS7_ARCH}-}"
+if [[ -n "${EXCEPTION_DEBS//[[:space:]]/}" ]]; then
+	command -v curl >/dev/null || {
+		echo "!!! curl is not installed, and the archive exception has to be fetched" >&2
+		exit 1
+	}
+	while read -r path sha; do
+		[[ -n "${path}" ]] || continue
+		file="${path##*/}"
+		name="${file%%_*}"
+		rel="pool/main/${name:0:1}/${name}/${file}"
+		dest="${OUT_DIR}/${rel}"
+		if [[ -r "${dest}" && "$(sha256sum "${dest}" | cut -d' ' -f1)" == "${sha}" ]]; then
+			echo "    archive exception: ${file} - the pool already holds it"
+		else
+			mkdir -p "$(dirname "${dest}")"
+			url="${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_EXCEPTION_SNAPSHOT}/${path}"
+			code="$(curl -sS -o "${dest}.part" -w '%{http_code}' "${url}")" || code="curl failed"
+			if [[ "${code}" != "200" ]]; then
+				rm -f "${dest}.part"
+				echo "!!! archive exception ${url}: ${code}" >&2
+				exit 1
+			fi
+			got="$(sha256sum "${dest}.part" | cut -d' ' -f1)"
+			if [[ "${got}" != "${sha}" ]]; then
+				rm -f "${dest}.part"
+				echo "!!! archive exception ${file}: sha256 ${got}, the pin says ${sha}" >&2
+				exit 1
+			fi
+			mv -f "${dest}.part" "${dest}"
+			echo "    archive exception: ${file} fetched, sha256 ${sha:0:16}…"
+		fi
+		OS7_EXCEPTION_POOL_FILES+="${rel}"$'\n'
+		BUILT_NAMES+=( "${file}" )
+	done <<< "${EXCEPTION_DEBS}"
+fi
+export OS7_EXCEPTION_POOL_FILES OS7_ARCHIVE_EXCEPTION_REASON OS7_ARCHIVE_EXCEPTION_SUITE \
+	OS7_ARCHIVE_EXCEPTION_SNAPSHOT
+
 # ---------------------------------------------------------------------------
 # 3. The indices apt reads.
 #
@@ -609,6 +659,30 @@ descriptor = {
 }
 if hotfix is not None:
     descriptor["hotfix"] = hotfix
+
+# The archive exception — where this release's Ubuntu half does NOT come from
+# "base". Said by the release itself, because a reader of the descriptor who
+# saw only the snapshot would believe the kernel is 42.42 (os7-release.conf).
+exception = []
+for rel in os.environ.get("OS7_EXCEPTION_POOL_FILES", "").splitlines():
+    rel = rel.strip()
+    if not rel:
+        continue
+    path = os.path.join(out, rel.replace("/", os.sep))
+    exception.append({
+        "package":  field(path, "Package"),
+        "version":  field(path, "Version"),
+        "arch":     field(path, "Architecture"),
+        "filename": rel,
+        "sha256":   sha256(path),
+    })
+if exception:
+    descriptor["archive_exception"] = {
+        "reason":   os.environ["OS7_ARCHIVE_EXCEPTION_REASON"],
+        "suite":    os.environ["OS7_ARCHIVE_EXCEPTION_SUITE"],
+        "snapshot": os.environ["OS7_ARCHIVE_EXCEPTION_SNAPSHOT"],
+        "packages": exception,
+    }
 json.dump(descriptor, sys.stdout, indent=2, sort_keys=False)
 sys.stdout.write("\n")
 PY

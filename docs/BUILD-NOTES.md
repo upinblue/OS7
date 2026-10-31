@@ -10435,3 +10435,43 @@ unanswered — exit 0 after 15 s, no process and no password request left behind
 seven cases and requires the planted copy without the bound to hang until its outer
 limit.
 
+## #196 — live-build installs a `config/archives/` source for the chroot and, in OS/7's configuration, never takes it out again
+
+**Found** 2026-10-31, reading live-build before the first archive exception
+(the kernel from `resolute-proposed`, CVE-2026-98432) was built.
+
+`config/archives/<name>.list.chroot` and `<name>.pref.chroot` are live-build's way
+to add a source for the chroot stage alone: `lb_chroot_archives chroot install`
+copies them to `/etc/apt/sources.list.d/<name>.list` and
+`/etc/apt/preferences.d/<name>.pref`, and the `remove` stage is meant to take them
+out before the image is packed. In live-build 3.0~a57-1ubuntu54 that stage starts
+with an early exit:
+
+    if [ "${LB_PARENT_MIRROR_CHROOT}" = "${LB_PARENT_MIRROR_BINARY}" ] && \
+       [ "${LB_PARENT_MIRROR_CHROOT_SECURITY}" = "${LB_PARENT_MIRROR_BINARY_SECURITY}" ] && \
+       [ ! -d chroot/root/packages ]
+    then ... Restore_packaged_apt_preferences; exit 0
+
+`auto/config` sets every mirror to the one pinned snapshot, and `packages.chroot`
+is forbidden (#71), so all three conditions hold on every OS/7 build and the exit
+is always taken — before the code that removes `config/archives` sources and
+preferences. A chroot-only source would ship on every machine. And
+`check-image.py`'s pin check read `sources.list` and `*.sources`, never `*.list`,
+which is the name live-build gives such a file, and a snapshot URL passes its
+"every source is pinned" test anyway. Two blind spots, lined up.
+
+**Handled, not changed.** Hook 0005 removes the exception's source, preference
+and index files itself, after checking what arrived, and fails if apt's
+configuration still names the suite. `check-image.py` reads every file in
+`sources.list.d` and `preferences.d` and the index directory, and fails on any of
+them naming the exception; `--self-test` plants each leftover and requires it
+red. The rule for the next person: **a live-build stage that "removes" something
+may not run at all; ask the image.**
+
+Measured on the first build that carried an exception (a dirty probe,
+`OS7-1.0.0.271-amd64.iso`): hook 0005 found all five kernel packages at
+`7.0.0-43.43` with the pinned hashes, of the 1 553 versions the suite offered none
+other installed, `/boot` held `vmlinuz-7.0.0-43-generic` alone, and the suite was
+removed. `check-image.py amd64` on that medium: the six exception checks green,
+and the kernel the medium boots signed by Canonical.
+

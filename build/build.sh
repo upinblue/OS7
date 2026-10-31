@@ -242,6 +242,75 @@ for sub in package-lists hooks includes.chroot packages.chroot; do
 done
 
 # ---------------------------------------------------------------------------
+# THE ARCHIVE EXCEPTION (os7-release.conf, "The archive EXCEPTION"). One suite
+# beside the snapshot, for the chroot stage only, admitting the pinned packages
+# at their pinned versions and NOTHING else from it. Written here and not
+# authored under build/config/archives/, because the URL is the pin's and no
+# other file in the repository may carry one.
+#
+# The preference does the admitting. A package-specific pin outranks the
+# suite-wide one in apt's policy, so each named package gets 990 at its exact
+# version and everything else in the suite gets -1, which apt never installs.
+# 990 and not 1001: the exception may move a package forward from the snapshot,
+# never backwards.
+#
+# Hook 0005 is the other half: it checks what arrived against the pinned hashes
+# and removes both files, which live-build's own clean-up skips in this
+# configuration (the pin says why).
+# ---------------------------------------------------------------------------
+eval "EXCEPTION_DEBS=\${OS7_ARCHIVE_EXCEPTION_DEBS_${ARCH}-}"
+if [[ -n "${EXCEPTION_DEBS//[[:space:]]/}" ]]; then
+	for _v in OS7_ARCHIVE_EXCEPTION_REASON OS7_ARCHIVE_EXCEPTION_SUITE OS7_ARCHIVE_EXCEPTION_SNAPSHOT; do
+		if [[ -z "${!_v:-}" ]]; then
+			echo "!!! ${_v} is not set: an archive exception without it has no meaning" >&2
+			exit 1
+		fi
+	done
+	EXC_PREF=""
+	EXC_COMPONENTS=""
+	while read -r _path _sha; do
+		[[ -n "${_path}" ]] || continue
+		_file="${_path##*/}"
+		_name="${_file%%_*}"
+		_rest="${_file#*_}"
+		_ver="${_rest%%_*}"
+		_ver="${_ver//%3a/:}"
+		if [[ ! "${_sha}" =~ ^[0-9a-f]{64}$ ]]; then
+			echo "!!! archive exception ${_file}: '${_sha}' is not a sha256" >&2
+			exit 1
+		fi
+		if [[ "${_file}" != *"_${ARCH}.deb" && "${_file}" != *"_all.deb" ]]; then
+			echo "!!! archive exception ${_file} is not a ${ARCH} package" >&2
+			exit 1
+		fi
+		_comp="$(cut -d/ -f2 <<< "${_path}")"
+		[[ " ${EXC_COMPONENTS} " == *" ${_comp} "* ]] || EXC_COMPONENTS+="${EXC_COMPONENTS:+ }${_comp}"
+		EXC_PREF+="Package: ${_name}"$'\n'"Pin: version ${_ver}"$'\n'"Pin-Priority: 990"$'\n\n'
+		echo "    archive exception: ${_name} ${_ver} from ${OS7_ARCHIVE_EXCEPTION_SUITE}"
+	done <<< "${EXCEPTION_DEBS}"
+
+	mkdir -p "${WORK}/config/archives"
+	printf '%s\n' \
+		"# OS/7 archive exception (${OS7_ARCHIVE_EXCEPTION_REASON}), written by build.sh" \
+		"# for the chroot stage only. Hook 0005 removes it." \
+		"deb ${OS7_ARCHIVE_BASE}/${OS7_ARCHIVE_EXCEPTION_SNAPSHOT}/ ${OS7_ARCHIVE_EXCEPTION_SUITE} ${EXC_COMPONENTS}" \
+		> "${WORK}/config/archives/os7-archive-exception.list.chroot"
+	{
+		echo "# OS/7 archive exception (${OS7_ARCHIVE_EXCEPTION_REASON}), written by build.sh."
+		echo "# The named packages at their pinned versions, and nothing else from"
+		echo "# ${OS7_ARCHIVE_EXCEPTION_SUITE}. Hook 0005 removes it."
+		echo
+		printf '%s' "${EXC_PREF}"
+		echo "Package: *"
+		echo "Pin: release a=${OS7_ARCHIVE_EXCEPTION_SUITE}"
+		echo "Pin-Priority: -1"
+	} > "${WORK}/config/archives/os7-archive-exception.pref.chroot"
+	unset _v _path _sha _file _name _rest _ver _comp
+else
+	echo "    archive exception: none declared for ${ARCH}"
+fi
+
+# ---------------------------------------------------------------------------
 # The chroot half of the pin. Two files, and the difference between them is the
 # point:
 #
