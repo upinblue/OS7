@@ -136,8 +136,8 @@ start-up animation, left a desktop that took no input in 2 of 22 logins. The
 fix closes it once it has opened (9 of 9 since); the race is rare enough that
 nine cannot prove it gone.
 
-**1.0.0.272 IS BUILT, GATED AND ITS REPOSITORY CUT, AND NOT PUBLISHED
-(2026-10-31) — the kernel from `resolute-proposed` for CVE-2026-98432.** 267 ships linux 7.0.0-42.42, which
+**1.0.0.272 WAS PUBLISHED ON 2026-10-31 — the fifth published preview, and
+the kernel from `resolute-proposed` for CVE-2026-98432.** 267 ships linux 7.0.0-42.42, which
 the CVE (Ubuntu priority High, CVSS 9.8) affects; Ubuntu had the fix in
 `-proposed` only (7.0.0-43.43). The pin gained its first **archive exception**:
 the kernel's files by pool path and sha256 beside an unchanged snapshot, honoured
@@ -151,11 +151,19 @@ machine** installed from the published 267 medium: `Update-OS7` to 272 boots
 (step 5) into `out/os7-repo`, over the published tree fetched by hash: the
 index holds the published 8 entries plus 272 per architecture, and apt in a
 clean container takes 7.0.0-43.43 from OS/7's repository on both architectures.
-[SESSION-CVE-2026-98432.md](SESSION-CVE-2026-98432.md) §9. **Owed:** steps 6–10
-(signing with the release key, archive and tag `3a1b497`, publish, website,
-verify from outside); machines in the field
-still need #193's way past their own updater before they can take it; the
-exception block comes out in the first release whose snapshot carries 43.
+**Published** in step 8's order: signed by the release key, `development: false`,
+superseding 267, tag `v1.0.0.272-preview` on `3a1b497`. Asked back over the
+read-only account, the whole published tree is byte-identical to the signed one
+(81 pool files by hash, three signatures against the release key alone).
+**A machine installed from the 272 medium reads the published repository**: its
+own `Get-OS7Release`, root, nothing patched, lists 272 release-signed. That is
+#193's fix proven against the real server.
+[SESSION-CVE-2026-98432.md](SESSION-CVE-2026-98432.md) §9–§10. **Owed:** the
+download path by name over HTTP (this host's network blocks `os7.org`, and a
+fetch from outside failed with no status); machines on 267 and earlier still
+need #193's way past their own updater, which the 272 notes say has not been
+tested; the exception block comes out in the first release whose snapshot
+carries 43.
 
 **1.0.0.267 WAS PUBLISHED ON 2026-10-31 — the fourth published preview, and the
 first with the Containers window.** Both media from `b8a904b`, clean tree,
