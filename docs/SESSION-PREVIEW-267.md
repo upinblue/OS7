@@ -242,13 +242,58 @@ All three are in the tree for 1.0.0.268; none is in a published release.
 | #194 | `os7-release` per architecture; `build-os7-repo.sh` keeps an identical arch:all file and refuses a different one; `Get-OS7Release` asks `dpkg` for the machine's architecture | `check-os7-repo.py` 143 ok: both `os7-release` files in the pool, each index its own, the installed descriptor names the probe's architecture after the other cut ran last, a planted arch:all difference refused; `check-update-logic.py`: a lying manifest does not make amd64 foreign, planted copy red; and the FULL cut of both architectures into a scratch tree, amd64 then arm64: all eight arch:all packages identical and kept, each index serving its own `os7-release` whose descriptor names its own architecture | 1.0.0.267 with the arm64 descriptor and the fixed module: amd64 own, arm64 foreign. apt takes `all` → `amd64` of one name as an upgrade (clean container) |
 | #195 | the enrolment under `timeout` (120 s), stdin closed; after the bound the operator sentence and exit 0 | `check-reseal-migration.py`: seven cases against fakes, the blocking one ends; a copy without the bound hangs | the real `systemd-cryptenroll`: unanswered with a 15 s bound, exit 0 after 15 s, nothing left behind; answered within 90 s, re-sealed and the seal opens |
 
-**What is still open, and is a decision rather than a fix:**
+**What is still open, and is a decision rather than a fix:** no machine in the
+field can take these fixes through its own `Update-OS7`, because that is the
+code with #193 in it. Every machine installed from 175, 203, 264 or 267 needs one
+step from outside the update train. (The Software Update window was the other
+open point; §11.)
 
-* **The Software Update window cannot list releases from the published
-  repository.** It calls `Get-OS7Release` as the desktop user, and the
-  credential is `0600 root` by OS/7's decision. It now shows the root
-  sentence instead of a wrong one.
-* **No machine in the field can take these fixes through its own
-  `Update-OS7`**, because that is the code with #193 in it. Every machine
-  installed from 175, 203, 264 or 267 needs one step from outside the update
-  train.
+## 11. The Software Update window, against the published repository
+
+The window calls `Get-OS7Release -Available` as the desktop user, and the
+credential is `0600 root`. The owner chose that root writes the verified list
+somewhere readable. As built:
+
+* every `Get-OS7Release` run **as root** against the machine's own source writes
+  what it listed, or the sentence it failed with, to `/run/os7/releases.json`
+  (0644, directory 0755, only root can create it). The daily timer, a `sudo`
+  listing and `Update-OS7` all leave it behind;
+* an **unprivileged** call starts `os7-release-list.service`, a oneshot that runs
+  `Get-OS7Release` as root and nothing else, waits for it, and reads the file.
+  It refuses a list stamped before it asked, one naming another source, channel or
+  release, and one in a file or directory anyone else could write;
+* `49-os7-release-list.rules` lets an **active local session** start that one
+  unit without a password. Anything else gets systemd's default policy;
+* `/run`, not `/var`: a copy in `/var` would be cloned into the next boot
+  environment and name the release just installed as applicable. And the timer
+  alone would not do: `/run` is empty after every boot, and the timer runs once
+  a day.
+
+The window's code did not change.
+
+**On `u267gui`** — GUI, installed from the published 1.0.0.267 medium, with the
+fixed module and the three files copied in, the preview channel switched on:
+
+| | |
+|---|---|
+| `os7admin` over ssh | refused by polkit: *"Access denied as the requested operation requires interactive authentication"*, and the root sentence with the `sudo pwsh -c` form |
+| signed in at the greeter, Software Update from the start menu | **the eight published releases, no prompt**, "Your software is up to date", the arm64 rows explained as another architecture |
+| the journal | `os7-release-list.service` started as the window opened, every fetch with `--netrc-file`, finished in 2.7 s |
+| the file | `-rw-r--r-- root`, written at the second the window asked |
+
+The first picture showed 1.0.0.175 as released **2026-03-09**. It was published on
+3 September. `Get-OS7Release` rendered the index's date with `[string]`
+("09/03/2026 07:53:54"), and a German machine read it back day-first. The
+window's self-test had named that limit and called the fix in `Get-OS7Release`
+owed. `Format-OS7Timestamp` now sends ISO 8601 in UTC, and the second picture
+showed 2026-09-03.
+
+`check-update-logic.py` holds all of it with no systemd. A fake `systemctl`
+files a request, and a thread running as root plays systemd: it runs the real
+`Get-OS7Release`, refuses the way polkit refuses ssh, or "runs" without writing.
+The cases: the list arrives and matches root's own JSON field for field, the
+refusal, a silent unit not answered from the old file, root's failure in root's
+words, a loose directory refused, and the date. Two plants go red, the freshness
+check removed and the old date line. Its first run caught a defect no machine had
+reached yet: `Start-SystemdUnit` is unknown inside the module until
+`Import-OS7SystemdLayer` has run.

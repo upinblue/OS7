@@ -1,0 +1,38 @@
+// OS/7 — who may ask root to list the update channel.
+// os7-release-list.service; BUILD-NOTES #193's open half.
+//
+// WHAT THIS GRANTS: an active local session may START one unit without a
+// password. That unit fetches OS/7's signed release index and its descriptors,
+// verifies them, and writes the list to /run/os7/releases.json. It installs
+// nothing, stages nothing and changes no configuration; the worst a session can
+// do with it is make the machine fetch a few kilobytes it would fetch anyway.
+// So the Software Update window can show what is on offer without asking for an
+// administrator's password just to LOOK — the password is asked where something
+// is about to change, by 49-os7-update.rules.
+//
+// WHAT IT DOES NOT: the credential the fetch needs stays root's. The session
+// gets the list, never the means to fetch it.
+//
+// Only `start`, only this unit, only an active local session. A remote or
+// inactive session gets systemd's default policy for manage-units, which asks
+// for an administrator — and Get-OS7Release then says to run it with sudo.
+//
+// 49- rather than 50-: below the range a local administrator would use, so a
+// site policy in /etc/polkit-1/rules.d/ wins without having to know this file
+// exists.
+
+polkit.addRule(function (action, subject) {
+	if (action.id !== "org.freedesktop.systemd1.manage-units") {
+		return polkit.Result.NOT_HANDLED;
+	}
+	if (action.lookup("unit") !== "os7-release-list.service") {
+		return polkit.Result.NOT_HANDLED;
+	}
+	if (action.lookup("verb") !== "start") {
+		return polkit.Result.NOT_HANDLED;
+	}
+	if (subject.local && subject.active) {
+		return polkit.Result.YES;
+	}
+	return polkit.Result.NOT_HANDLED;
+});

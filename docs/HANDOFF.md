@@ -164,9 +164,12 @@ everything else worked: the update itself, a package set identical to a fresh 26
 the migrations once unblocked, and the rollback. **All three are fixed in the tree
 for 1.0.0.268** (session doc §10), each with a check proven to fire, and #193's fix
 took the bench from 264 to 267 against the real repository with nothing patched in
-memory. **Two decisions are open:** how the Software Update window lists releases
-when the credential is `0600 root`, and how machines already in the field get past
-their own broken updater.
+memory. **The Software Update window lists the published releases again**, as
+the desktop user and without a password: root writes the verified list to
+`/run/os7/releases.json`, and an unprivileged `Get-OS7Release` asks
+`os7-release-list.service` for it (session doc §11, seen on a GUI machine installed
+from the published 267 medium). **One decision is open:** how machines already in
+the field get past their own broken updater.
 [SESSION-PREVIEW-267.md](SESSION-PREVIEW-267.md) is that run, including the two
 arm64 builds that did not count (NETSDK1047 from a parallel check, and a start
 without `OS7_RELEASE_PUBKEY`), both now in RELEASE-PROCESS §3 steps 1–2.

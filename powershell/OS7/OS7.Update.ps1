@@ -102,6 +102,25 @@ $script:OS7AptSource = '/etc/apt/sources.list.d/os7.sources'
 # than pasted into place by hand.
 $script:OS7AptAuthConf = '/etc/apt/auth.conf.d/os7.conf'
 
+# WHAT THE CHANNEL OFFERS, AS ROOT LAST FETCHED AND VERIFIED IT.
+#
+# The credential above is 0600 root, so an unprivileged Get-OS7Release cannot
+# fetch the index — and the Software Update window runs as the desktop user
+# (BUILD-NOTES #193's open half, decided 2026-10-31). So every Get-OS7Release
+# that runs AS ROOT against the machine's own source writes what it listed
+# here, verified exactly as it is listed; an unprivileged one asks root to do
+# that through the unit below and reads the result. The credential never
+# leaves root.
+#
+# /run, not /var: the list describes THIS boot's release. A copy in /var would
+# be cloned into the next boot environment and rolled back with the old one,
+# and would then name as "applicable" the release a machine had just installed.
+# The unit does nothing but list — no staging, no apt — which is why its polkit
+# rule (os7-release, 49-os7-release-list.rules) may let an active local session
+# start it without a password.
+$script:OS7ReleaseListFile = '/run/os7/releases.json'
+$script:OS7ReleaseListUnit = 'os7-release-list.service'
+
 # THE PIN, AND WHY THIS FILE READS IT RATHER THAN release.json.
 #
 # There are three files called release.json in this repository and they have
@@ -377,6 +396,34 @@ function Copy-OS7RepoFile {
 			(Get-OS7RepoRefusalMessage -Uri $uri -Code $code -Credential $credential))
 	}
 	return $false
+}
+
+function Format-OS7Timestamp {
+	<#
+	.SYNOPSIS
+		A timestamp as ISO 8601 in UTC, whatever shape it arrived in. Internal.
+
+	.DESCRIPTION
+		ConvertFrom-Json turns the index's "2026-09-03T07:53:54Z" into a
+		[datetime], and `[string]` over that renders it in a culture's shape —
+		"09/03/2026 07:53:54". A reader in another culture cannot tell 3
+		September from 9 March, and the Software Update window, on a German
+		machine reading the published index, showed 1.0.0.175 as released
+		2026-03-09 (its self-test had named this limit and called the fix in
+		Get-OS7Release owed). A string that was never a date passes through.
+	#>
+	param([AllowNull()]$Value)
+
+	if ($null -eq $Value) { return '' }
+	if ($Value -is [datetime]) {
+		return $Value.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ',
+			[System.Globalization.CultureInfo]::InvariantCulture)
+	}
+	if ($Value -is [datetimeoffset]) {
+		return $Value.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ',
+			[System.Globalization.CultureInfo]::InvariantCulture)
+	}
+	return [string]$Value
 }
 
 function Get-OS7MachineArchitecture {
@@ -814,6 +861,18 @@ function Get-OS7Release {
 	}
 	$Channel = Get-OS7UpdateChannel -Channel $Channel
 
+	# The machine's own source behind a credential this process may not open:
+	# root fetches, verifies and writes it down, and this reads what root wrote
+	# ($script:OS7ReleaseListFile). The Software Update window is this case.
+	if (-not $Source -and (Get-OS7RepoCredentialState -Uri $base) -eq 'unreadable') {
+		return Get-OS7ReleaseListFromRoot -Base $base -Channel $Channel -Here $here
+	}
+	# And root, listing the machine's own source, writes down what it listed —
+	# the releases, or the sentence it failed with — for those who cannot.
+	$keep   = (-not $Source) -and (Test-OS7ProcessIsRoot)
+	$listed = [System.Collections.Generic.List[object]]::new()
+	$myArch = Get-OS7MachineArchitecture
+
 	$work = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
 		'os7-release-' + [System.Diagnostics.Process]::GetCurrentProcess().Id)
 	[System.IO.Directory]::CreateDirectory($work) | Out-Null
@@ -821,7 +880,6 @@ function Get-OS7Release {
 		$index = Get-OS7ReleaseIndex -BaseUri $base -Channel $Channel -WorkDir $work
 		$mine  = [string]$here.FullVersion
 		$myMajor = if ($mine) { ([version]$mine).Major } else { -1 }
-		$myArch  = Get-OS7MachineArchitecture
 
 		foreach ($entry in @(Get-OS7ManifestField $index 'releases')) {
 			$version = [string](Get-OS7ManifestField $entry 'version')
@@ -862,11 +920,11 @@ function Get-OS7Release {
 			$entryArch = [string](Get-OS7ManifestField $entry 'architecture')
 			$foreignArch = [bool]($entryArch -and $myArch -and $entryArch -ne $myArch)
 
-			[pscustomobject]@{
+			$release = [pscustomobject]@{
 				PSTypeName   = 'OS7.Release'
 				Version      = $version
 				Channel      = [string](Get-OS7ManifestField $index 'channel')
-				Released     = [string](Get-OS7ManifestField $entry 'released')
+				Released     = Format-OS7Timestamp (Get-OS7ManifestField $entry 'released')
 				Architecture = $entryArch
 				Suite        = [string](Get-OS7ManifestField $entry 'os7_suite')
 				Snapshot     = [string](Get-OS7ManifestField $entry 'archive_snapshot')
@@ -901,10 +959,198 @@ function Get-OS7Release {
 				Migrations   = @(Get-OS7ManifestField $entry 'migrations')
 				Descriptor   = $descriptor
 			}
+			$listed.Add($release)
+			$release
 		}
+		if ($keep) {
+			Save-OS7ReleaseList -Base $base -Channel $Channel -Here $here -Architecture $myArch `
+				-Releases $listed
+		}
+	}
+	catch {
+		# The failure is written down too, in root's own words: an unprivileged
+		# caller would otherwise see "root did not answer" for what was really a
+		# rotated credential or an expired index.
+		if ($keep) {
+			Save-OS7ReleaseList -Base $base -Channel $Channel -Here $here -Architecture $myArch `
+				-Releases $listed -Failure $_.Exception.Message
+		}
+		throw
 	}
 	finally {
 		[System.IO.Directory]::Delete($work, $true)
+	}
+}
+
+function Test-OS7ProcessIsRoot {
+	<#
+	.SYNOPSIS
+		Whether this process's EFFECTIVE uid is 0. Internal.
+
+	.DESCRIPTION
+		/proc/self/status, Assert-OS7Elevated's source for the same question and
+		for its reason: the kernel's answer, no subprocess, and no account that
+		merely happens to be called root. $false where /proc cannot answer.
+	#>
+	$status = '/proc/self/status'
+	if (-not [System.IO.File]::Exists($status)) { return $false }
+	foreach ($line in [System.IO.File]::ReadAllLines($status)) {
+		if (-not $line.StartsWith('Uid:')) { continue }
+		$f = $line.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)
+		return ($f.Count -ge 3 -and $f[2] -eq '0')
+	}
+	return $false
+}
+
+function Save-OS7ReleaseList {
+	<#
+	.SYNOPSIS
+		Write down what root just listed, for those who cannot fetch it.
+		Internal.
+
+	.DESCRIPTION
+		$script:OS7ReleaseListFile, 0644 in a 0755 directory under /run — which
+		only root can create, so only root can have written it. Written to a
+		temporary name and renamed into place, so a reader sees the old list or
+		the new one and never half of either.
+
+		`checked_unix` is what a reader compares; `checked` is for a person.
+		A failure to write is a WARNING and never fails the listing it records:
+		the operator who typed `sudo pwsh -c 'Get-OS7Release'` asked for the
+		list, not for this file.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Base,
+		[Parameter(Mandatory)][string]$Channel,
+		[Parameter(Mandatory)]$Here,
+		[AllowEmptyString()][string]$Architecture,
+		[AllowEmptyCollection()][System.Collections.Generic.List[object]]$Releases,
+		[string]$Failure
+	)
+
+	$now = [datetimeoffset]::UtcNow
+	$doc = [ordered]@{
+		schema               = 1
+		checked              = $now.ToString('yyyy-MM-ddTHH:mm:ssZ')
+		checked_unix         = $now.ToUnixTimeMilliseconds()
+		source               = $Base
+		channel              = $Channel
+		machine_version      = [string]$Here.FullVersion
+		machine_architecture = $Architecture
+		ok                   = (-not $Failure)
+		error                = $(if ($Failure) { $Failure } else { $null })
+		releases             = @($(if ($Releases) { $Releases.ToArray() }))
+	}
+	$file = $script:OS7ReleaseListFile
+	$tmp  = "$file.$PID.tmp"
+	try {
+		$dir = [System.IO.Path]::GetDirectoryName($file)
+		if (-not [System.IO.Directory]::Exists($dir)) {
+			[System.IO.Directory]::CreateDirectory($dir,
+				[System.IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute') |
+				Out-Null
+		}
+		[System.IO.File]::WriteAllText($tmp, (ConvertTo-Json -InputObject $doc -Depth 12))
+		[System.IO.File]::SetUnixFileMode($tmp,
+			[System.IO.UnixFileMode]'UserRead, UserWrite, GroupRead, OtherRead')
+		[System.IO.File]::Move($tmp, $file, $true)
+	}
+	catch {
+		Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $tmp
+		Write-Warning "the release list was not written to ${file}: $($_.Exception.Message)"
+	}
+}
+
+function Get-OS7ReleaseListFromRoot {
+	<#
+	.SYNOPSIS
+		Ask root to list the channel, and read what it wrote. Internal.
+
+	.DESCRIPTION
+		For a process that cannot open the repository credential. It starts
+		$script:OS7ReleaseListUnit — which runs Get-OS7Release as root and does
+		nothing else — waits for it, and reads $script:OS7ReleaseListFile.
+
+		WHAT IT TRUSTS, AND WHY THAT IS ENOUGH. The file is root's (only root can
+		write under /run, and a file or directory any other account could write
+		is refused), it was written AFTER this asked (`checked_unix`, the same
+		clock), and it names this machine's source, channel, release and
+		architecture. Every release in it was verified by root against the
+		signed index before it was written, exactly as it would have been here.
+		A stale file — a unit that did not run — is never read as an answer.
+
+		A session polkit does not let start the unit — over ssh, typically —
+		gets the root sentence, with root's own reason beside it.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Base,
+		[Parameter(Mandatory)][string]$Channel,
+		[Parameter(Mandatory)]$Here
+	)
+
+	$asked = [datetimeoffset]::UtcNow.ToUnixTimeMilliseconds()
+	$startFailure = $null
+	Write-OS7Step "asking root for the release list ($($script:OS7ReleaseListUnit))"
+	try {
+		# The layers load on demand (P2-systemd); without this the name does not
+		# resolve, and the failure would read as "root could not be asked".
+		Import-OS7SystemdLayer
+		Start-SystemdUnit -Name $script:OS7ReleaseListUnit -Confirm:$false | Out-Null
+	}
+	catch { $startFailure = $_.Exception.Message }
+
+	$file = $script:OS7ReleaseListFile
+	$doc = $null
+	if ([System.IO.File]::Exists($file)) {
+		$loose = [int][System.IO.UnixFileMode]'GroupWrite, OtherWrite'
+		$entries = @(
+			[System.IO.FileInfo]::new($file),
+			[System.IO.DirectoryInfo]::new([System.IO.Path]::GetDirectoryName($file)))
+		foreach ($e in $entries) {
+			if (([int]$e.UnixFileMode -band $loose) -ne 0) {
+				throw [System.InvalidOperationException]::new(
+					"$($e.FullName) can be written by accounts other than root " +
+					"($($e.UnixFileMode)), so what it says about this machine's releases " +
+					'is not root''s word. Refusing it.')
+			}
+		}
+		# -DateKind String: the dates reach the caller exactly as root wrote
+		# them, not re-rendered through this session's time zone.
+		try { $doc = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json -DateKind String }
+		catch { $doc = $null }
+	}
+
+	$fresh = $false
+	if ($null -ne $doc -and $null -ne $doc.PSObject.Properties['checked_unix']) {
+		# No slack: root writes AFTER it was asked, on the same clock, so a list
+		# stamped before this asked is an earlier run's and never the answer.
+		$fresh = ([long]$doc.checked_unix -ge $asked)
+	}
+
+	if (-not $fresh) {
+		$why = if ($startFailure) { $startFailure }
+			else { "$($script:OS7ReleaseListUnit) ran and did not write $file" }
+		throw [System.InvalidOperationException]::new(
+			"this machine's update channel needs the credential in $($script:OS7AptAuthConf), " +
+			"which only root can read, and root could not be asked to fetch the list:`n" +
+			"  $why`n" +
+			"  Run the command as root:  sudo pwsh -NoProfile -c 'Get-OS7Release'")
+	}
+	if (-not [bool]$doc.ok) {
+		throw [System.InvalidOperationException]::new([string]$doc.error)
+	}
+	if ([string]$doc.source -ne $Base -or [string]$doc.channel -ne $Channel -or
+			[string]$doc.machine_version -ne [string]$Here.FullVersion) {
+		throw [System.InvalidOperationException]::new(
+			"root listed channel '$($doc.channel)' at $($doc.source) for $($doc.machine_version); " +
+			"this asked for '$Channel' at $Base for $($Here.FullVersion). Another channel than " +
+			"the machine's own needs root:  sudo pwsh -NoProfile -c 'Get-OS7Release -Channel $Channel'")
+	}
+
+	foreach ($r in @($doc.releases)) {
+		if ($null -eq $r) { continue }
+		$r.PSObject.TypeNames.Insert(0, 'OS7.Release')
+		$r
 	}
 }
 

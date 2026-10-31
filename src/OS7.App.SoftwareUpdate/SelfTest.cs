@@ -273,8 +273,10 @@ public static class SelfTest
 		// is May 6th to en-US and 5 June to en-GB — and only the culture that
 		// RENDERED it can say which. On a machine whose culture is not that
 		// one, this repair reads it as the current culture does, and is
-		// silently wrong. That is why fixing Get-OS7Release is owed rather
-		// than optional.
+		// silently wrong: on a German bench reading the published index, the
+		// window showed 1.0.0.175 (3 September) as 2026-03-09. Get-OS7Release
+		// sends ISO 8601 in UTC since 1.0.0.268 (Format-OS7Timestamp); this
+		// repair stays for a module older than that.
 		var ambiguous = ReleaseRow.FormatDate("05/06/2026");
 		Check("an ambiguous date still produces SOMETHING rather than falling through",
 			ambiguous.StartsWith("2026-", StringComparison.Ordinal));

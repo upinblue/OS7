@@ -1,0 +1,32 @@
+[Unit]
+# OS/7 — list what the update channel offers, as root, and write it down.
+#
+# The repository credential is 0600 root (RELEASE-PROCESS §4.2), so a process
+# that is not root cannot fetch the release index — and the Software Update
+# window runs as the desktop user. This unit is how such a process asks:
+# Get-OS7Release, run unprivileged, starts it, waits, and reads
+# /run/os7/releases.json, which every Get-OS7Release run AS ROOT writes
+# (OS7.Update.ps1, $script:OS7ReleaseListFile). BUILD-NOTES #193's open half.
+#
+# IT ONLY LISTS. No staging, no apt, no boot environment: what it does is fetch
+# a signed index and its descriptors and verify them, which is what lets
+# 49-os7-release-list.rules allow an active local session to start it without
+# a password. Staging is os7-update-check.service's, and that one keeps its
+# timer and its exit-code contract.
+Description=OS/7 release list - what the update channel offers, verified as root
+Documentation=file:///usr/lib/os7/migrations/README
+
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=TZ=UTC
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-release-list
+
+# One signed index and one descriptor per release; minutes would mean the
+# repository is not answering, and the caller is waiting.
+TimeoutStartSec=5min
+
+# No [Install]: it runs when somebody asks, and at no other time.

@@ -574,6 +574,19 @@ build_os7_release() {
 	ln -sfn ../os7-update-check.timer \
 		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-update-check.timer"
 
+	# The release list a process that is not root can ask for (BUILD-NOTES
+	# #193's open half): a unit that runs Get-OS7Release as root and nothing
+	# else, its pwsh -File script, and the polkit rule that lets an active
+	# local session start it without a password. NOT enabled — it runs when
+	# asked. The rule must be readable by polkitd, which is not root.
+	chmod 0644 "${stage}/usr/lib/systemd/system/os7-release-list.service" \
+	           "${stage}/usr/libexec/os7-release-list" \
+	           "${stage}/usr/share/polkit-1/rules.d/49-os7-release-list.rules"
+	if head -c 2 "${stage}/usr/libexec/os7-release-list" | grep -q '#!'; then
+		echo "!!! os7-release: os7-release-list has a shebang; it is pwsh -File, never executed" >&2
+		exit 1
+	fi
+
 	# The journal-flush ordering drop-in (BUILD-NOTES #109): /var/log is a ZFS
 	# dataset with no mount unit, so without this the flush writes the journal
 	# onto the boot environment's root dataset and zfs-mount then buries it.
@@ -679,6 +692,9 @@ build_os7_release() {
 		./usr/lib/systemd/system/os7-update-check.timer \
 		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
 		./usr/libexec/os7-update-check \
+		./usr/lib/systemd/system/os7-release-list.service \
+		./usr/libexec/os7-release-list \
+		./usr/share/polkit-1/rules.d/49-os7-release-list.rules \
 		./usr/share/keyrings/os7-archive-keyring.gpg \
 		./etc/apt/sources.list.d/os7.sources \
 		./etc/apt/apt.conf.d/99os7-one-update-path \

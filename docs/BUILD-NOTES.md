@@ -10327,10 +10327,37 @@ As `os7admin` the same call refused with the root sentence. `check-update-logic.
 now runs a server that refuses anonymous requests, with the credential file in the
 shape the medium ships, and plants the old line in a copy to prove the check fires.
 
-**Not fixed, and a decision:** the Software Update window runs `Get-OS7Release` as the
-desktop user, and the credential is `0600 root`, so the window shows the root sentence
-instead of a list. And no machine in the field can take the fix through its own
-`Update-OS7`.
+**The window, decided and built the same day.** The Software Update window runs
+`Get-OS7Release` as the desktop user and the credential stays `0600 root`. So every
+`Get-OS7Release` run AS ROOT against the machine's own source writes what it listed —
+or the sentence it failed with — to `/run/os7/releases.json` (0644, in a 0755 directory
+only root can create). An unprivileged call starts `os7-release-list.service`, which
+runs `Get-OS7Release` as root and nothing else, and reads the result. It refuses a
+list written before it asked, one naming another source, channel or release, and one
+in a file or directory anyone else could write. A polkit rule
+(`49-os7-release-list.rules`, in `os7-release`) lets an active local session start
+that one unit without a password; over ssh the default policy refuses and the caller
+gets the root sentence with systemd's reason. `/run` and not `/var`: a copy in `/var`
+would be cloned into the next boot environment and name the release just installed as
+applicable. The window itself did not change.
+
+On `u267gui`, a GUI machine installed from the published 1.0.0.267 medium with the
+fixed module and the three files: the window, opened from the start menu after a
+sign-in at the greeter, listed all eight published releases with no prompt. The
+journal shows the unit run as root, every fetch with `--netrc-file`, in 2.7 s. Over
+ssh, the same cmdlet as `os7admin` was refused by polkit (*"interactive authentication
+has not been enabled by the calling program"*). The first `check-update-logic.py` run
+of this path caught one more defect before any machine did: `Start-SystemdUnit` does
+not resolve inside the module until `Import-OS7SystemdLayer` has run.
+
+**And a date the window had always got wrong.** `Released` was `[string]` over the
+`[datetime]` ConvertFrom-Json makes, so "2026-09-03T07:53:54Z" arrived as "09/03/2026
+07:53:54", and the German bench showed 1.0.0.175 as released 2026-03-09. The window's
+self-test had named the limit and called the fix in `Get-OS7Release` owed.
+`Format-OS7Timestamp` sends ISO 8601 in UTC. After that, the same window showed
+2026-09-03.
+
+**Still open:** no machine in the field can take the fix through its own `Update-OS7`.
 
 ## #194 — `os7-release` is `Architecture: all` and carries one architecture's `release.json`, so every amd64 machine that updates becomes "arm64"
 

@@ -1369,6 +1369,10 @@ def main():
     def last(err):
         return (err.strip().splitlines() or [""])[-1][:130]
 
+    def tail3(err):
+        # The refusals put their reason on the line BEFORE the sudo form.
+        return " | ".join(l.strip() for l in err.strip().splitlines()[-3:])[:260]
+
     write_auth(SECRET)
     del served[:]
     rc, err, listed = releases()
@@ -1378,6 +1382,17 @@ def main():
           "and every request it made carried the credential",
           "%d request(s), %d anonymous" % (len(served), sum(1 for _p, ok in served if not ok)))
     check(SECRET not in err, "the password is in no stream of the cmdlet")
+
+    # Released as ISO 8601 in UTC. `[string]` over the [datetime] ConvertFrom-
+    # Json makes renders "08/27/2026 00:00:00", and a reader in another culture
+    # cannot tell 3 September from 9 March: the Software Update window showed
+    # the published 1.0.0.175 as released 2026-03-09 on a German machine.
+    import re
+    iso = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+    entry = next((e for e in listed if e.get("Version") == NEXT_VERSION), {})
+    check(iso.match(str(entry.get("Released", ""))) is not None,
+          "Released is an ISO timestamp in UTC, not a culture's rendering",
+          str(entry.get("Released")))
 
     rc, out, err, _ = run_update(
         work, bindir, "-Stage -AllowDevelopment -Channel development -Source %s" % HTTP)
@@ -1453,6 +1468,17 @@ def main():
               "PROVEN: without the credential on curl, the same call is refused",
               last(err))
 
+    planted = plant("culture-date",
+                    "Released     = Format-OS7Timestamp (Get-OS7ManifestField $entry 'released')",
+                    "Released     = [string](Get-OS7ManifestField $entry 'released')")
+    check(planted is not None, "the date plant found its line")
+    if planted:
+        rc, err, listed = releases(module=planted)
+        entry = next((e for e in listed if e.get("Version") == NEXT_VERSION), {})
+        check(iso.match(str(entry.get("Released", ""))) is None,
+              "PROVEN: the old [string] renders the date in a culture's shape",
+              str(entry.get("Released")))
+
     planted = plant("manifest-arch",
                     "$arch = ([string](Invoke-OS7Native -Command 'dpkg' "
                     "-Arguments @('--print-architecture'))).Trim()",
@@ -1467,6 +1493,164 @@ def main():
 
     with open("/usr/lib/os7/release.json", "w", newline="\n") as fh:
         json.dump(manifest, fh)
+
+    # -- the list root writes, and what a user reads (#193's open half) -------
+    #
+    # The credential is 0600 root and the Software Update window runs as the
+    # desktop user. So root's Get-OS7Release writes what it listed to
+    # /run/os7/releases.json, and an unprivileged one starts
+    # os7-release-list.service, waits, and reads that. There is no systemd in
+    # this container, so the user gets a fake `systemctl` that files a request
+    # and waits; a thread here, running as root, plays systemd: it runs the
+    # REAL Get-OS7Release as root, or refuses the way polkit refuses an ssh
+    # session, or "runs" and writes nothing. Everything the user's process does
+    # after that — the freshness, the identity, the modes, the objects — is the
+    # module's own code against a real file.
+    print("\n  the release list root writes, and what an unprivileged caller reads")
+    import glob
+    import time
+
+    rc, out, err, obj = set_channel(
+        "-Channel development -Uri %s -Credential $c" % HTTP)
+    check(rc == 0, "the machine's own source is the refusing server, with its credential",
+          last(err))
+
+    LIST = "/run/os7/releases.json"
+    if os.path.exists(LIST):
+        os.remove(LIST)
+    root_script = ("Import-Module /work/powershell/OS7/OS7.psd1 -Force; "
+                   "try { $r = @(Get-OS7Release); ConvertTo-Json -InputObject @($r) -Depth 6 -Compress } "
+                   "catch { [Console]::Error.WriteLine('THREW: ' + $_.Exception.Message); exit 3 }")
+    got = sh(["pwsh", "-NoProfile", "-NonInteractive", "-c", root_script])
+    check(got.returncode == 0 and os.path.exists(LIST),
+          "root's Get-OS7Release writes what it listed to %s" % LIST, last(got.stderr or ""))
+    root_json = (got.stdout.strip().splitlines() or ["[]"])[-1]
+    doc = {}
+    if os.path.exists(LIST):
+        doc = json.load(open(LIST, encoding="utf-8"))
+        fmode = oct(os.stat(LIST).st_mode & 0o777)
+        dmode = oct(os.stat(os.path.dirname(LIST)).st_mode & 0o777)
+        check(fmode == "0o644" and dmode == "0o755",
+              "readable by everyone, writable by root alone", "file %s, dir %s" % (fmode, dmode))
+        check(doc.get("ok") is True and any(r.get("Version") == NEXT_VERSION
+                                            for r in doc.get("releases", [])),
+              "and it holds the verified releases", "ok=%s" % doc.get("ok"))
+        check(SECRET not in open(LIST, encoding="utf-8").read(),
+              "and not the password")
+
+    fake_sys = "/tmp/fake-systemd"
+    req_dir = "/tmp/os7-fake-systemd"
+    os.makedirs(fake_sys, exist_ok=True)
+    os.makedirs(req_dir, exist_ok=True)
+    os.chmod(req_dir, 0o1777)
+    with open(os.path.join(fake_sys, "systemctl"), "w", newline="\n") as fh:
+        fh.write("#!/bin/sh\n"
+                 "if [ \"$1\" = start ]; then\n"
+                 "  req=%s/request.$$\n"
+                 "  echo \"$2\" > \"$req\"\n"
+                 "  i=0\n"
+                 "  while [ ! -e \"$req.done\" ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done\n"
+                 "  rc=$(cat \"$req.done\" 2>/dev/null || echo 1)\n"
+                 "  [ \"$rc\" = 0 ] || echo 'Failed to start os7-release-list.service: "
+                 "Interactive authentication required.' >&2\n"
+                 "  rm -f \"$req\" \"$req.done\"\n"
+                 "  exit $rc\n"
+                 "fi\n"
+                 "exit 0\n" % req_dir)
+    os.chmod(os.path.join(fake_sys, "systemctl"), 0o755)
+
+    systemd_mode = {"mode": "run"}
+    stop_systemd = threading.Event()
+
+    def fake_systemd():
+        while not stop_systemd.is_set():
+            for req in glob.glob(os.path.join(req_dir, "request.*")):
+                if req.endswith(".done") or os.path.exists(req + ".done"):
+                    continue
+                unit = open(req).read().strip()
+                rc_unit = "1"
+                if unit == "os7-release-list.service" and systemd_mode["mode"] == "run":
+                    r = sh(["pwsh", "-NoProfile", "-NonInteractive", "-c",
+                            "Import-Module /work/powershell/OS7/OS7.psd1 -Force; "
+                            "try { $null = @(Get-OS7Release); exit 0 } catch { exit 1 }"])
+                    rc_unit = str(r.returncode)
+                elif systemd_mode["mode"] == "ran-silently":
+                    rc_unit = "0"
+                with open(req + ".done", "w") as fh:
+                    fh.write(rc_unit)
+            time.sleep(0.1)
+
+    threading.Thread(target=fake_systemd, daemon=True).start()
+    user_env2 = dict(user_env)
+    user_env2["PATH"] = fake_sys + os.pathsep + user_env["PATH"]
+
+    def user_releases(module="/work/powershell/OS7/OS7.psd1"):
+        script = ("Import-Module %s -Force; "
+                  "try { $r = @(Get-OS7Release -Available); "
+                  "      ConvertTo-Json -InputObject @($r) -Depth 6 -Compress } "
+                  "catch { [Console]::Error.WriteLine('THREW: ' + $_.Exception.Message); "
+                  "        exit 3 }" % module)
+        got = sh(["runuser", "-u", "os7check", "--", "pwsh", "-NoProfile",
+                  "-NonInteractive", "-c", script], env=user_env2)
+        listed = []
+        try:
+            listed = json.loads((got.stdout.strip().splitlines() or ["[]"])[-1])
+        except ValueError:
+            pass
+        return got.returncode, got.stderr or "", listed, (got.stdout.strip().splitlines() or [""])[-1]
+
+    before = os.stat(LIST).st_mtime if os.path.exists(LIST) else 0
+    systemd_mode["mode"] = "run"
+    rc, err, listed, user_json = user_releases()
+    check(rc == 0 and any(e.get("Version") == NEXT_VERSION for e in listed),
+          "an unprivileged caller gets the list: root fetched it on request", tail3(err))
+    check(os.path.exists(LIST) and os.stat(LIST).st_mtime > before,
+          "and root wrote it AFTER it was asked, not from an earlier run")
+    try:
+        same = json.loads(user_json) == json.loads(root_json)
+    except ValueError:
+        same = False
+    check(same, "and the objects are the ones root listed, field for field — the window "
+          "parses the same JSON either way")
+
+    systemd_mode["mode"] = "deny"
+    rc, err, listed, _ = user_releases()
+    check(rc != 0 and "only root can read" in err and "sudo pwsh" in err
+          and "Interactive authentication required" in err,
+          "a session polkit refuses gets the root sentence, with polkit's reason beside it",
+          tail3(err))
+
+    systemd_mode["mode"] = "ran-silently"
+    rc, err, listed, _ = user_releases()
+    check(rc != 0 and "did not write" in err,
+          "a unit that ran and wrote nothing is NOT answered from the old file", tail3(err))
+
+    write_auth("rotated-away-7731")
+    systemd_mode["mode"] = "run"
+    rc, err, listed, _ = user_releases()
+    check(rc != 0 and "refused the credential" in err,
+          "root's own failure reaches the caller in root's words", tail3(err))
+    check("rotated-away-7731" not in err and "rotated-away-7731" not in open(LIST).read(),
+          "without the password, in the error or in the file")
+    write_auth(SECRET)
+
+    os.chmod(os.path.dirname(LIST), 0o777)
+    rc, err, listed, _ = user_releases()
+    check(rc != 0 and "other than root" in err,
+          "a list in a directory anyone could write is refused", tail3(err))
+    os.chmod(os.path.dirname(LIST), 0o755)
+
+    planted = plant("no-freshness",
+                    "$fresh = ([long]$doc.checked_unix -ge $asked)", "$fresh = $true")
+    check(planted is not None, "the freshness plant found its line")
+    if planted:
+        systemd_mode["mode"] = "ran-silently"
+        rc, err, listed, _ = user_releases(module=planted)
+        check(rc == 0 and listed,
+              "PROVEN: without the freshness check the old file IS read as the answer",
+              "rc=%s, %d release(s)" % (rc, len(listed)))
+
+    stop_systemd.set()
     srv.shutdown()
 
     print()

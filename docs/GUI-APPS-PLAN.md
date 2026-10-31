@@ -268,6 +268,16 @@ truthfully, before any authentication happens, and the polkit prompt appears at 
 operator presses the button that changes something — which is also the only moment it can be
 honestly explained.
 
+**Corrected 2026-10-31, for `Get-OS7Release`.** The published repository needs a credential, and
+that credential is `0600 root`, so as the user `Get-OS7Release` cannot fetch anything (BUILD-NOTES
+#193). The split by cmdlet survives, and so does the application's single call. Run unprivileged,
+the cmdlet asks root through `os7-release-list.service`, a unit that lists and does nothing else
+and that a polkit rule lets an active local session start without a password. It then reads the
+list root wrote under `/run/os7`. The window still draws before any authentication, and the
+password is still asked only where something changes. What changed is that "reading" for this one
+cmdlet means asking root to read for you. Measured on a GUI machine installed from the published
+1.0.0.267 medium (SESSION-PREVIEW-267 §11).
+
 ### G7 — Every application has a cmdlet that does the same job, and the cmdlet is authoritative. Proposed 2026-09-14.
 
 No capability is GUI-only. arm64 is server-only and amd64 installs headless by operator choice, so a

@@ -1,0 +1,26 @@
+# OS/7 — list the update channel as root, so that it is written down.
+#
+# Run as `pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-release-list`
+# by os7-release-list.service, which an unprivileged Get-OS7Release starts. The
+# writing is Get-OS7Release's own: run as root against the machine's own source
+# it writes /run/os7/releases.json — the releases it listed, or the sentence it
+# failed with — so this file decides nothing and holds no copy of that format.
+#
+# Exit 0 when the list was made, 1 when it was not; either way the file says
+# which, in root's words, for the caller that is waiting on it.
+#
+# No shebang on purpose: invoked as `pwsh -File`, never executed (0644) — the
+# same convention as os7-update-check.
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+	$null = @(Get-OS7Release)
+	exit 0
+}
+catch {
+	[Console]::Error.WriteLine("os7-release-list: $($_.Exception.Message)")
+	exit 1
+}
