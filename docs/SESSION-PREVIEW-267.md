@@ -171,9 +171,9 @@ RELEASE-PROCESS §3 step 10's check by name is owed from another network.
 
 * **arm64 has no boot gate**, as always; its evidence is `check-image.py`.
 * **The download by name was not fetched** (§7).
-* **No machine has updated from 1.0.0.264 to this release** against the
-  published repository. The measured update starts at 1.0.0.267, against a
-  served copy.
+* **An installed machine cannot update from the published repository with
+  the shipped cmdlets** (§9, #193). The update from 1.0.0.264 to this release
+  ran only with one internal function replaced in memory.
 * **The Containers window was not driven on a machine installed from this
   medium.** It ran on an installed 1.0.0.264 with this release's packages and
   on a GUI machine installed from a test medium built from this source
@@ -182,3 +182,73 @@ RELEASE-PROCESS §3 step 10's check by name is owed from another network.
 * **The manual's pictures are still 1.0.0.245's**, and it has no Containers
   chapter.
 * **UL6 stands**: no per-release archive of the `.deb` files; step 7 was the tag.
+
+## 9. The update from 1.0.0.264, against the published repository
+
+**2026-10-31, the day after the release.** The question was whether a machine on
+this release can take the next one. Every update measured until now went against a
+repository a harness served over plain HTTP, signed by the development key, with
+`-AllowDevelopment`. Not one machine had ever updated from the published Storage
+Box, across four releases. So: bench `u264`, installed headless from the published
+`OS7-1.0.0.264-amd64.iso`, updated to 1.0.0.267 the way the manual says. The updater
+code is identical in 264 and 267 (`git diff 9a0059b b8a904b` on `OS7.Update.ps1` and
+`os7-release` is empty), so this measures the code 267 itself will update with.
+
+| step | result |
+|---|---|
+| the shipped state | `os7.sources` points at the published URI, `Enabled: no`; `/etc/apt/auth.conf.d/os7.conf` present, `0600`; no `update.conf` |
+| `Set-OS7UpdateChannel -Channel preview` | **works**, no `-Uri`, no `-Credential`. Its read-back is a real `apt-get update` against the Storage Box |
+| `Get-OS7Release` | **fails**: *"no release index for channel 'preview'"* — #193. Anonymous 401, with the apt credential 200 |
+| the same, `Copy-OS7RepoFile` replaced in memory with one that passes `--netrc-file` | the index verified by `gpgv` against the 264 medium's keyring: *"Korrekte Signatur von OS/7 release signing key"*. 1.0.0.267 amd64 `Applicable`, `Development: False` |
+| `Update-OS7`, no `-AllowDevelopment`, same session | **`From 1.0.0.264, To 1.0.0.267, Applied, Activated`**: clone, `apt install os7-desktop=1.0.0.267`, `full-upgrade`, `autoremove`, 7 firstboot migrations recorded, initramfs, menu |
+| the package set after it | identical to a fresh 1.0.0.267 amd64 install: 1 526 packages, none extra, no version apart. `os7-app-containers` came in automatically. The update removed nothing |
+| reboot | 1.0.0.267 running, its boot environment active, 25 container cmdlets |
+| `Get-OS7Version` | **`Architecture: arm64`** on an amd64 machine — #194. `os7-release` is `all`, and the pool's copy carries the arm64 descriptor, in all four published releases. `Get-OS7Release` now judges the amd64 entries foreign |
+| firstboot migrations | **hung** at `50-tpm2-reseal`, waiting on a passphrase prompt with no timeout — #195. Answered once by hand: re-sealed, the new seal opens, 60 to 80 ran |
+| `Restore-OS7`, reboot | 1.0.0.264 running again, `release.json` amd64; the disk unlocked from the TPM with nothing typed |
+
+**What this run proves works**: the published repository from the outside with the
+medium's own credential, the release key accepted by the trust anchor of the previous
+release's medium, the choice of the applicable release, the whole update into a new
+boot environment, the package set it lands on, the migrations once they can run, and
+the rollback.
+
+**What it proves does not**: #193 is the one that matters. No machine anywhere can
+use `Update-OS7`, the Software Update window or the unattended timer against the
+published repository, and a fixed release cannot be delivered by the broken updater.
+#194 turns the next update's architecture decision around on every amd64 machine that
+updated. #195 holds a fleet's migrations behind an invisible prompt on the day PCR 7
+moves.
+
+**Bench notes**, not product findings: the first boot stalled under `splash` because
+`os7lab.py login` answers Plymouth's terminal queries (#188). Waiting on the serial
+line WITHOUT answering until *"Please unlock disk"* appeared, then logging in, worked
+every time. And the update printed twelve `could not unmount
+/run/os7-update/run/os7-update/…` lines, the `--rbind /run` seeing its own mount
+point. The gate's log does not carry the update's output, so whether it prints them
+too was not compared. Each migration was recorded twice (14 entries for 7); the second
+pass skips them as already run.
+
+The bench is kept: `u264`, snapshots `installed` (fresh 264) and
+`rolled-back-from-267` (264 running, the 267 environment beside it).
+
+## 10. The three fixes, and what each was checked against
+
+All three are in the tree for 1.0.0.268; none is in a published release.
+
+| | fix | check | on a machine (`u264`) |
+|---|---|---|---|
+| #193 | `Copy-OS7RepoFile` passes apt's file to curl as `--netrc-file`, reads the status code, and throws on 401/403 with a sentence per case: none, refused (by account), unreadable (root, `sudo pwsh -c`) | `check-update-logic.py`: a server that refuses anonymous requests, the credential in the shipped shape; listing, `Update-OS7`, the three refusals, an unprivileged caller, and a planted copy without the netrc that goes red | the fixed file in the 264 module: `Get-OS7Release` as root lists the published releases; as `os7admin` the root sentence; **`Update-OS7` 264 → 267 applied and activated with nothing patched in memory** |
+| #194 | `os7-release` per architecture; `build-os7-repo.sh` keeps an identical arch:all file and refuses a different one; `Get-OS7Release` asks `dpkg` for the machine's architecture | `check-os7-repo.py` 143 ok: both `os7-release` files in the pool, each index its own, the installed descriptor names the probe's architecture after the other cut ran last, a planted arch:all difference refused; `check-update-logic.py`: a lying manifest does not make amd64 foreign, planted copy red; and the FULL cut of both architectures into a scratch tree, amd64 then arm64: all eight arch:all packages identical and kept, each index serving its own `os7-release` whose descriptor names its own architecture | 1.0.0.267 with the arm64 descriptor and the fixed module: amd64 own, arm64 foreign. apt takes `all` → `amd64` of one name as an upgrade (clean container) |
+| #195 | the enrolment under `timeout` (120 s), stdin closed; after the bound the operator sentence and exit 0 | `check-reseal-migration.py`: seven cases against fakes, the blocking one ends; a copy without the bound hangs | the real `systemd-cryptenroll`: unanswered with a 15 s bound, exit 0 after 15 s, nothing left behind; answered within 90 s, re-sealed and the seal opens |
+
+**What is still open, and is a decision rather than a fix:**
+
+* **The Software Update window cannot list releases from the published
+  repository.** It calls `Get-OS7Release` as the desktop user, and the
+  credential is `0600 root` by OS/7's decision. It now shows the root
+  sentence instead of a wrong one.
+* **No machine in the field can take these fixes through its own
+  `Update-OS7`**, because that is the code with #193 in it. Every machine
+  installed from 175, 203, 264 or 267 needs one step from outside the update
+  train.

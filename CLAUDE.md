@@ -541,6 +541,17 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   migration's own read-back is
                                           #   proven to FIRE on a copy with the
                                           #   doing removed. 24 checks, ~20 s
+./installer/testing/check-reseal-migration.py
+                                          #   firstboot migration 50-tpm2-reseal
+                                          #   against fake cryptsetup and
+                                          #   systemd-cryptenroll (#195): a seal
+                                          #   that does not open used to leave the
+                                          #   enrolment waiting for a passphrase
+                                          #   with no timeout, and every migration
+                                          #   behind it waited too. Seven cases,
+                                          #   the blocking one required to END,
+                                          #   and a copy without the bound
+                                          #   required to hang. ~30 s, docker
 ./installer/testing/check-vm-arch.py      # the harness port's own check: the
                                           #   arm64 command lines byte-identical
                                           #   to the pre-port construction, the

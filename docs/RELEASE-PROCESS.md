@@ -635,6 +635,21 @@ asserted against the pool), and `check-update-logic.py` ("a release for
 another architecture" — listed, not applicable, not chosen, refused by name,
 and the twin-version preference).
 
+**4. And a fourth place, found 2026-10-31 by the first update from the
+published repository (BUILD-NOTES #194): the PACKAGES.** "Rebuilt under ONE
+filename by either run" assumed the two builds were the same package, and
+`os7-release` was not: arch:all, carrying `release.json`, which names its
+architecture. The second cut's copy replaced the first's, and all four
+published releases offered every amd64 machine the arm64 descriptor. Fixed
+three ways in 1.0.0.268: `os7-release` is one package per architecture;
+`build-os7-repo.sh` refuses to put an arch:all file into the pool over a
+different package of the same name and keeps the pool's copy when they are the
+same (content compared, not archive bytes); and `Get-OS7Release` takes the
+machine's architecture from `dpkg`, not from the manifest. `check-os7-repo.py`
+requires both `os7-release` files in the pool, each index naming its own, the
+installed `release.json` naming the probe's architecture after the other cut
+ran last, and a planted arch:all difference refused.
+
 ---
 
 ## 8. Open questions

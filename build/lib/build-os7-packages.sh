@@ -635,7 +635,16 @@ build_os7_release() {
 	fi
 
 	pkg_copyright os7-release "${stage}"
-	pkg_control  os7-release "${stage}" all
+	# ONE PACKAGE PER ARCHITECTURE, not arch:all (BUILD-NOTES #194). Nothing in
+	# it is compiled, but release.json names the architecture, the variant and
+	# the per-arch component hashes, and os7.sources names `Architectures:`. As
+	# arch:all, both cuts wrote os7-release_<v>_all.deb into one pool, the
+	# second replaced the first, and every published os7-release from 1.0.0.175
+	# to .267 carried the arm64 descriptor — so an amd64 machine that updated
+	# called itself arm64 and judged its own releases foreign. Content that
+	# differs by architecture is an architecture-specific package; Debian has
+	# no other answer to that.
+	pkg_control  os7-release "${stage}" "${OS7_ARCH}"
 
 	# The credential is required IN THE PACKAGE when this build wrote one, and
 	# absent from the list when it did not — the refusal above is what decides
@@ -653,7 +662,7 @@ build_os7_release() {
 		printf '/etc/apt/auth.conf.d/os7.conf\n' >> "${stage}/DEBIAN/conffiles"
 	fi
 
-	pkg_finish   os7-release "${stage}" all \
+	pkg_finish   os7-release "${stage}" "${OS7_ARCH}" \
 		"${extra_must[@]+${extra_must[@]}}" \
 		"${mig_must[@]+${mig_must[@]}}" \
 		./usr/lib/os7/release.conf \
@@ -683,7 +692,7 @@ build_os7_release() {
 	# every check green. dpkg-deb -c prints the mode the archive actually holds.
 	if (( ${#extra_must[@]} )); then
 		local deb_mode
-		deb_mode="$(dpkg-deb -c "${OUT_DIR}/os7-release_${OS7_VERSION}_all.deb" \
+		deb_mode="$(dpkg-deb -c "${OUT_DIR}/os7-release_${OS7_VERSION}_${OS7_ARCH}.deb" \
 			| awk '$NF == "./etc/apt/auth.conf.d/os7.conf" { print $1 }')"
 		if [[ "${deb_mode}" != "-rw-------" ]]; then
 			echo "!!! os7-release: the credential is in the package as '${deb_mode}'" >&2

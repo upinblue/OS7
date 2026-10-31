@@ -148,8 +148,25 @@ over SFTP and were read back by hash before the index went up last, which is
 §3 step 8's order. 264 had uploaded its index before its images. Site
 (os7-web `d26bb01`), tag `v1.0.0.267-preview` and the GitHub pre-release are up.
 **Not done:** the download page by name, because `os7.org` is blocked from this
-host's network; an update from 264 to 267 against the published repository; the
-window on a machine installed from this medium.
+host's network; the window on a machine installed from this medium.
+**AND NO INSTALLED MACHINE CAN UPDATE FROM THE PUBLISHED REPOSITORY (measured
+2026-10-31, §9 of the session doc).** The first update ever tried against it, 264 →
+267 on a bench, found three defects. #193: `Get-OS7Release` fetches the index with
+bare curl and without the apt credential, so the Storage Box answers 401 and
+`Update-OS7`, the Software Update window and the timer stop at their first step, on
+every release since 175. The fix cannot reach a machine through its own broken
+updater, so how existing machines get across needs a decision. #194: `os7-release`
+is `Architecture: all`, and the pool's copy carries the arm64 `release.json`, so an
+updated amd64 machine calls itself arm64 and judges the next amd64 release foreign.
+#195: `50-tpm2-reseal` waits forever on a passphrase prompt when the seal does not
+open, and the migrations behind it wait too. With #193 bypassed in memory,
+everything else worked: the update itself, a package set identical to a fresh 267,
+the migrations once unblocked, and the rollback. **All three are fixed in the tree
+for 1.0.0.268** (session doc §10), each with a check proven to fire, and #193's fix
+took the bench from 264 to 267 against the real repository with nothing patched in
+memory. **Two decisions are open:** how the Software Update window lists releases
+when the credential is `0600 root`, and how machines already in the field get past
+their own broken updater.
 [SESSION-PREVIEW-267.md](SESSION-PREVIEW-267.md) is that run, including the two
 arm64 builds that did not count (NETSDK1047 from a parallel check, and a start
 without `OS7_RELEASE_PUBKEY`), both now in RELEASE-PROCESS §3 steps 1–2.

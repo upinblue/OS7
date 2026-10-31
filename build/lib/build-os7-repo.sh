@@ -268,10 +268,52 @@ done
 
 # pool/main/o/<source>/ — the layout every Debian archive uses, and the one
 # apt-ftparchive's Filename: field will record relative to the repository root.
+#
+# AN ARCH:ALL FILE THE POOL ALREADY HOLDS MUST BE THE SAME PACKAGE
+# (BUILD-NOTES #194). The two architectures' cuts write into ONE pool and an
+# arch:all package has ONE file name, so the second cut's file used to replace
+# the first's with nobody comparing them. os7-release was arch:all and carried
+# its architecture's release.json, and from 1.0.0.175 to .267 every amd64
+# machine was offered the arm64 descriptor. This enforces what arch:all
+# MEANS — identical on every architecture. The same content keeps the file
+# already in the pool (its hash may already be in a signed index); different
+# content refuses the cut and names what differs.
+#
+# CONTENT, NOT BYTES: every path with its type, mode and link target, every
+# regular file's sha256, and DEBIAN/ — not the archive, whose tar mtimes and
+# compression differ between two builds of one tree.
+deb_content() {
+	local dir
+	dir="$(mktemp -d)"
+	dpkg-deb -R "$1" "${dir}"
+	( cd "${dir}" \
+	  && find . -mindepth 1 -printf '%y %m %p -> %l\n' | LC_ALL=C sort \
+	  && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum )
+	rm -rf "${dir}"
+}
+
 BUILT_NAMES=()
 for deb in "${DEBS[@]}"; do
 	name="$(dpkg-deb -f "${deb}" Package)"
 	mkdir -p "${POOL}/${name}"
+	target="${POOL}/${name}/$(basename "${deb}")"
+	if [[ "${deb}" == *_all.deb && -e "${target}" ]]; then
+		differs="$(mktemp)"
+		if diff <(deb_content "${target}") <(deb_content "${deb}") > "${differs}"; then
+			echo "    $(basename "${deb}"): the pool already holds this package - kept"
+			rm -f "${deb}" "${differs}"
+			BUILT_NAMES+=( "$(basename "${deb}")" )
+			continue
+		fi
+		echo "!!! $(basename "${deb}") is arch:all and the pool already holds a" >&2
+		echo "!!! DIFFERENT package under that name - the other architecture's cut," >&2
+		echo "!!! or an earlier one. arch:all means identical on every architecture," >&2
+		echo "!!! and replacing it would hand one architecture's content to both" >&2
+		echo "!!! (BUILD-NOTES #194). What differs (< in the pool, > this build):" >&2
+		head -20 "${differs}" | sed 's/^/!!!   /' >&2
+		rm -f "${differs}"
+		exit 1
+	fi
 	mv -f "${deb}" "${POOL}/${name}/"
 	BUILT_NAMES+=( "$(basename "${deb}")" )
 done
@@ -301,10 +343,10 @@ export OS7_HOTFIX_POOL_FILES OS7_HOTFIX_BASE
 # 3. The indices apt reads.
 #
 # EVERY binary-* directory in the tree is regenerated, not only this run's.
-# The pool is shared between the per-arch runs and eight of the ten packages
-# are arch:all — rebuilt under ONE filename by either run — so after this run
-# replaced them, the other architecture's Packages would record hashes of
-# files that no longer exist. Regenerating both from the pool that is
+# The pool is shared between the per-arch runs and most of the packages are
+# arch:all — one filename for both runs, kept when identical (above) — so an
+# index this run did not regenerate could still record hashes of files the
+# pool no longer holds, from a tree cut before that rule existed. Regenerating both from the pool that is
 # actually there is what keeps a two-run tree installable on both sides; on
 # a single-arch tree the loop visits one directory and nothing changes.
 #

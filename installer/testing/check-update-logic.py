@@ -1287,6 +1287,188 @@ def main():
           "a credential for a file:// URI is refused, not written",
           (err.strip().splitlines() or [""])[-1][:130])
 
+    # -- the INDEX behind the credential (BUILD-NOTES #193) -------------------
+    #
+    # The section above proves the credential reaches APT. This one proves it
+    # reaches the update train's OWN fetch — the index, its signature and the
+    # descriptors — which is a different transport (curl) and which, until
+    # 1.0.0.268, carried no credential at all: Set-OS7UpdateChannel's read-back
+    # fetched, and the very next Get-OS7Release on every installed machine
+    # read the Storage Box's 401 as "no release index". Nothing caught it
+    # because every server this check and run-s5.py ever stood up answered
+    # anonymously.
+    #
+    # So the server here REFUSES anonymous requests, the way the real one does
+    # (RELEASE-PROCESS §4.1a), and it listens on port 80 so the URI has the
+    # default port and the credential line has the bare host — the shape the
+    # medium ships for the real host. curl and gpgv are the real ones.
+    print("\n  Get-OS7Release and Update-OS7 behind the credential (#193)")
+    import base64
+    import functools
+    import http.server
+    import shutil
+    import threading
+
+    build_repo(work)
+    LOGIN = "u661569-sub2"
+    want_auth = "Basic " + base64.b64encode(("%s:%s" % (LOGIN, SECRET)).encode()).decode()
+    served = []
+
+    class RefusingHandler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            ok = self.headers.get("Authorization") == want_auth
+            served.append((self.path, ok))
+            if not ok:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="os7"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            super().do_GET()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 80),
+        functools.partial(RefusingHandler, directory=os.path.join(work, "repo")))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    HTTP = "http://127.0.0.1"
+
+    # The SHIPPED shape, comments and all, as build-os7-packages.sh writes it
+    # into os7-release: curl reads apt's file as a netrc, so the comment lines
+    # are part of what is being checked.
+    def write_auth(password):
+        with open(AUTH, "w", newline="\n") as fh:
+            fh.write("# OS/7 — the credential for OS/7's own package repository.\n"
+                     "# Shipped by os7-release; docs/RELEASE-PROCESS.md §4.2.\n"
+                     "#\n"
+                     "# READ-ONLY, and it protects nothing that is not already public:\n"
+                     "# what it fetches is a released product and its integrity is GPG's.\n"
+                     "# Set-OS7UpdateChannel -Credential replaces it.\n"
+                     "machine 127.0.0.1\nlogin %s\npassword %s\n" % (LOGIN, password))
+        os.chmod(AUTH, 0o600)
+
+    def releases(module="/work/powershell/OS7/OS7.psd1", user=None, env=None):
+        script = ("Import-Module %s -Force; "
+                  "try { $r = @(Get-OS7Release -Source '%s' -Channel development); "
+                  "      ConvertTo-Json -InputObject @($r) -Depth 4 -Compress } "
+                  "catch { [Console]::Error.WriteLine('THREW: ' + $_.Exception.Message); "
+                  "        exit 3 }" % (module, HTTP))
+        cmd = ["pwsh", "-NoProfile", "-NonInteractive", "-c", script]
+        if user:
+            cmd = ["runuser", "-u", user, "--"] + cmd
+        got = sh(cmd, env=env)
+        listed = []
+        try:
+            listed = json.loads((got.stdout.strip().splitlines() or ["[]"])[-1])
+        except ValueError:
+            pass
+        return got.returncode, got.stderr or "", listed
+
+    def last(err):
+        return (err.strip().splitlines() or [""])[-1][:130]
+
+    write_auth(SECRET)
+    del served[:]
+    rc, err, listed = releases()
+    check(rc == 0 and any(e.get("Version") == NEXT_VERSION for e in listed),
+          "with the shipped credential, Get-OS7Release lists the release", last(err))
+    check(served and all(ok for _p, ok in served),
+          "and every request it made carried the credential",
+          "%d request(s), %d anonymous" % (len(served), sum(1 for _p, ok in served if not ok)))
+    check(SECRET not in err, "the password is in no stream of the cmdlet")
+
+    rc, out, err, _ = run_update(
+        work, bindir, "-Stage -AllowDevelopment -Channel development -Source %s" % HTTP)
+    check(rc == 0 and '"Applied":true' in (out.strip().splitlines() or [""])[-1].replace(" ", ""),
+          "and Update-OS7 reads the index and the descriptor through it", last(err))
+
+    os.remove(AUTH)
+    rc, err, _ = releases()
+    check(rc != 0 and "401" in err and "has none" in err and "-Credential" in err,
+          "with NO credential, the refusal says 401 and sends the operator to -Credential",
+          last(err))
+    check("not an OS/7 repository" not in err,
+          "and not to the URI or the channel, which is what #193 said")
+
+    write_auth("rotated-away-7731")
+    rc, err, _ = releases()
+    check(rc != 0 and "refused the credential" in err and ("account " + LOGIN) in err,
+          "a REFUSED credential is named by its account", last(err))
+    check("rotated-away-7731" not in err, "and never by its password")
+
+    # The Software Update window asks as the desktop user, and the file is
+    # 0600 root. That caller cannot fetch; it must be told why, in #148's form.
+    write_auth(SECRET)
+    sh(["useradd", "-m", "os7check"])
+    user_env = dict(os.environ)
+    user_env["HOME"] = "/home/os7check"
+    rc, err, _ = releases(user="os7check", env=user_env)
+    check(rc != 0 and "only root can read" in err and "sudo pwsh" in err,
+          "an unprivileged caller is told the credential is root's, with the sudo form",
+          last(err))
+
+    # #194's second half: the machine's architecture is dpkg's. The manifest
+    # says arm64, the fake dpkg says amd64 — which is the state every amd64
+    # machine reached by updating from a two-architecture repository while
+    # os7-release was arch:all.
+    with open("/usr/lib/os7/release.json") as fh:
+        manifest = json.load(fh)
+    lying = dict(manifest, architecture="arm64")
+    with open("/usr/lib/os7/release.json", "w", newline="\n") as fh:
+        json.dump(lying, fh)
+
+    def releases_fake_dpkg(module="/work/powershell/OS7/OS7.psd1"):
+        return releases(module=module, env=channel_env)
+
+    rc, err, listed = releases_fake_dpkg()
+    entry = next((e for e in listed if e.get("Version") == NEXT_VERSION), {})
+    check(rc == 0 and entry.get("ForeignArchitecture") is False and entry.get("Applicable") is True,
+          "a manifest that says arm64 on an amd64 machine does not make amd64 foreign (#194)",
+          "ForeignArchitecture=%s Applicable=%s %s" % (
+              entry.get("ForeignArchitecture"), entry.get("Applicable"), last(err)))
+
+    # PROVEN TO FIRE: each rule above, removed from a COPY of the module, must
+    # turn its own assertion red. A plant whose text did not match is itself a
+    # failure, so a refactor cannot quietly turn these into checks of nothing.
+    def plant(name, old, new):
+        root = "/tmp/plant-" + name
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.copytree("/work/powershell", root)
+        path = os.path.join(root, "OS7", "OS7.Update.ps1")
+        text = open(path, encoding="utf-8").read()
+        if old not in text:
+            return None
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text.replace(old, new, 1))
+        return os.path.join(root, "OS7", "OS7.psd1")
+
+    planted = plant("no-netrc", "$curlArgs += @('--netrc-file', $script:OS7AptAuthConf)",
+                    "$null = $credential")
+    check(planted is not None, "the credential plant found its line")
+    if planted:
+        rc, err, listed = releases(module=planted)
+        check(rc != 0 and "401" in err,
+              "PROVEN: without the credential on curl, the same call is refused",
+              last(err))
+
+    planted = plant("manifest-arch",
+                    "$arch = ([string](Invoke-OS7Native -Command 'dpkg' "
+                    "-Arguments @('--print-architecture'))).Trim()",
+                    "$arch = ''")
+    check(planted is not None, "the architecture plant found its line")
+    if planted:
+        rc, err, listed = releases_fake_dpkg(module=planted)
+        entry = next((e for e in listed if e.get("Version") == NEXT_VERSION), {})
+        check(entry.get("ForeignArchitecture") is True,
+              "PROVEN: reading the manifest's architecture makes amd64 foreign again",
+              "ForeignArchitecture=%s" % entry.get("ForeignArchitecture"))
+
+    with open("/usr/lib/os7/release.json", "w", newline="\n") as fh:
+        json.dump(manifest, fh)
+    srv.shutdown()
+
     print()
     if bad:
         print("%d problem(s)." % bad)

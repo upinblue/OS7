@@ -26,16 +26,32 @@
 # machine is functional, and a permanently red unit on every boot would bury
 # the message it is trying to deliver. When U8 closes, the escrow lookup goes
 # exactly here.
+#
+# AND IT MUST NEVER WAIT FOR AN ANSWER NOBODY CAN GIVE (BUILD-NOTES #195).
+# systemd-cryptenroll with no unlock key does not fail: it asks for the
+# current passphrase through systemd's password agents, with no timeout, and
+# os7-migrations-firstboot has none either. Measured on a bench on 2026-10-31:
+# the unit sat in `activating` and every migration after this one waited with
+# it — on exactly the boot this script exists for. So the ask is BOUNDED. A
+# person at the console (Plymouth, or systemd-tty-ask-password-agent) has
+# ASK_SECONDS to answer and the seal is repaired; after that the script says
+# what to type and the migrations go on.
+#
+# The three paths below are the machine's; the OS7_RESEAL_* variables exist so
+# installer/testing/check-reseal-migration.py can run this exact file against
+# fakes. Nothing on a machine sets them.
 set -u
 
 TAG="os7/50-tpm2-reseal"
-LUKS=/dev/disk/by-partlabel/os7-luks
+LUKS="${OS7_RESEAL_LUKS:-/dev/disk/by-partlabel/os7-luks}"
+TPM="${OS7_RESEAL_TPM:-/sys/class/tpm/tpm0}"
+ASK_SECONDS="${OS7_RESEAL_ASK_SECONDS:-120}"
 
 if [ ! -e "${LUKS}" ]; then
 	echo "${TAG}: no ${LUKS} — not an encrypted OS/7 install, nothing to re-seal"
 	exit 0
 fi
-if [ ! -e /sys/class/tpm/tpm0 ]; then
+if [ ! -e "${TPM}" ]; then
 	echo "${TAG}: no TPM on this machine — the passphrase is the unlock path"
 	exit 0
 fi
@@ -53,9 +69,12 @@ fi
 
 echo "${TAG}: the TPM2 seal does not open here — PCR 7 moved (a Secure Boot"
 echo "${TAG}: policy update, or an install that sealed from the live session)."
-echo "${TAG}: re-enrolling against this boot's own PCR 7 …"
-if systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 \
-		"${LUKS}"; then
+echo "${TAG}: re-enrolling against this boot's own PCR 7 — it needs the current"
+echo "${TAG}: passphrase, and waits ${ASK_SECONDS}s for somebody at the console to type it …"
+timeout "${ASK_SECONDS}" systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto \
+	--tpm2-pcrs=7 "${LUKS}" </dev/null
+rc=$?
+if [ "${rc}" -eq 0 ]; then
 	# The enrolment's exit code is a diagnostic; the seal opening is the fact.
 	if cryptsetup open --test-passphrase --token-only "${LUKS}" >/dev/null 2>&1; then
 		echo "${TAG}: re-sealed, and the new seal opens"
@@ -63,6 +82,9 @@ if systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 \
 	fi
 	echo "${TAG}: re-enrolment reported success and the seal still does not open" >&2
 	exit 1
+fi
+if [ "${rc}" -eq 124 ]; then
+	echo "${TAG}: nobody typed the passphrase within ${ASK_SECONDS}s."
 fi
 
 echo "${TAG}: cannot re-seal unattended: enrolment needs an existing secret and"

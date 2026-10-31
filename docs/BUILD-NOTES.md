@@ -10287,3 +10287,124 @@ in `OS7.Update.ps1` are under `run-s5.py`'s gate, which is the place to change t
 **The rule:** never use `-ErrorAction` to ask whether something exists. Ask in your
 own `try`, and decide on the failure's own words.
 
+## #193 — `Get-OS7Release` fetches the index without the credential apt has, so no installed machine can read the published repository
+
+**Found** 2026-10-31 on bench `u264`, the first update ever attempted against the
+PUBLISHED repository ([SESSION-PREVIEW-267.md](SESSION-PREVIEW-267.md) §9).
+
+`Set-OS7UpdateChannel -Channel preview` on a fresh 1.0.0.264 worked: it wrote the
+source, and its read-back (a real `apt-get update`) fetched, because apt reads the
+read-only account from `/etc/apt/auth.conf.d/os7.conf`. The very next command,
+`Get-OS7Release`, said *"no release index for channel 'preview'"*.
+`Copy-OS7RepoFile` fetches `index/`, its `.asc` and `releases/` with a bare
+`curl -fsSL`, and curl does not read apt's auth.conf. Asked on the machine:
+anonymous **401**, `curl --netrc-file /etc/apt/auth.conf.d/os7.conf` **200**.
+
+So the credential was built for apt and never reached the update train's own
+transport. Every machine installed from 1.0.0.175, .203, .264 and .267 refuses the
+published repository at its first step. `Update-OS7`, the Software Update window and
+`os7-update-check` all ask `Get-OS7Release` first. The 1.0.0.267 module, once installed,
+said the same sentence at the same line.
+
+**Why nothing caught it:** `run-s5.py` serves its repository over plain HTTP with no
+authentication, `check-update-logic.py` tests the credential against a fake apt and
+`Get-OS7Release` only against `file://` trees, and `check-os7-repo.py` installs with
+apt. The two halves were each tested against a server that answered them.
+
+**And the updater that runs is the installed one.** A fix in the next release does
+not reach a machine through `Update-OS7`, because the machine's own `Update-OS7` is
+the one that cannot read the index.
+
+**Fixed in the tree (1.0.0.268), and run against the real repository.**
+`Copy-OS7RepoFile` hands curl apt's own file with `--netrc-file` when the process can
+open it, asks curl for the status code instead of using `--fail`, and THROWS on 401
+or 403 with one sentence for each case: no credential (*-Credential*), a refused one
+(named by its account, never its password, *"may have been rotated"*), and one the
+process cannot read (*"only root can read"*, with the `sudo pwsh -c` form). On `u264`,
+with the fixed file installed into the 264 module, `Get-OS7Release` as root listed
+the published releases and `Update-OS7` took 264 to 267 with nothing patched in memory.
+As `os7admin` the same call refused with the root sentence. `check-update-logic.py`
+now runs a server that refuses anonymous requests, with the credential file in the
+shape the medium ships, and plants the old line in a copy to prove the check fires.
+
+**Not fixed, and a decision:** the Software Update window runs `Get-OS7Release` as the
+desktop user, and the credential is `0600 root`, so the window shows the root sentence
+instead of a list. And no machine in the field can take the fix through its own
+`Update-OS7`.
+
+## #194 — `os7-release` is `Architecture: all` and carries one architecture's `release.json`, so every amd64 machine that updates becomes "arm64"
+
+**Found** 2026-10-31 on bench `u264`, after the update to 1.0.0.267 had succeeded
+(with #193 bypassed in memory, SESSION-PREVIEW-267 §9).
+
+`Get-OS7Version` on the amd64 machine: `Architecture : arm64`, `Built` the arm64
+entry's timestamp. `/usr/lib/os7/release.json` is shipped by `os7-release`, which is
+`Architecture: all` and is generated from `OS7_ARCH` (its descriptor, and the apt
+source's `Architectures:`). The repository is cut once per architecture into one
+pool. Both cuts produce `os7-release_<v>_all.deb`, the same file name, and the second
+cut's file replaces the first's. **All four published `os7-release` packages, 175 to
+267, carry the arm64 descriptor.**
+
+The descriptor is not decoration. `Get-OS7Release` takes the machine's architecture
+from it (`$here.Architecture`), so after the update the amd64 machine judged the amd64
+entries `ForeignArchitecture: True` and the arm64 ones its own. The next update would
+have been chosen by the wrong row. The apt source was saved by `--force-confold`,
+because `Set-OS7UpdateChannel` had already edited it. The package set came through
+unharmed: identical to a fresh 1.0.0.267 amd64 install, 1 526 packages, no version
+apart.
+
+**Why nothing caught it:** `run-s5.py` builds a one-architecture repository, and
+RELEASE-PROCESS §7.3 fixed three single-architecture assumptions on 2026-09-01 —
+this is a fourth, in the pool rather than the index. No step compares an `_all.deb` a
+cut is about to write with the one already in the pool under that name.
+
+**Fixed in the tree (1.0.0.268), three ways.** `os7-release` is one package per
+architecture; apt takes `all` → `amd64` of one package name as an ordinary upgrade
+(measured in a clean `ubuntu:26.04`: *"1 upgraded … Unpacking demo-release
+(1.0.0.268) over (1.0.0.267)"*, then `amd64`). `build-os7-repo.sh` compares an arch:all
+file with the pool's copy of that name — every path, mode, link target and file
+hash, and `DEBIAN/` — keeps the pool's copy when they are the same package and
+REFUSES the cut when they are not. And `Get-OS7Release` takes the machine's
+architecture from `dpkg --print-architecture` (`Get-OS7MachineArchitecture`), so a
+machine already carrying the wrong descriptor judges correctly. Seen on `u264`, on
+1.0.0.267 with the published arm64 descriptor installed and the fixed module: the
+amd64 entry `ForeignArchitecture: False`, the arm64 one `True` — the reverse of what
+the shipped module said on the same machine.
+`check-os7-repo.py` and `check-update-logic.py` hold all three, each proven to fire.
+And the guard does not stand in a release's way: the full cut of both architectures
+(`make repo-amd64`, then `make repo-arm64` under emulation, into a scratch tree)
+found all eight arch:all packages identical and kept them, and each index serves its
+own `os7-release`, whose descriptor names its own architecture.
+
+## #195 — `50-tpm2-reseal` waits forever for a passphrase when the seal does not open, and every migration after it waits with it
+
+**Found** 2026-10-31 on bench `u264`, first boot of 1.0.0.267 after the update.
+
+The migration header promises that, with the seal stale and no secret reachable, it
+*"says so, names the one command an operator runs, and exits 0"*. It never gets
+there. `systemd-cryptenroll --wipe-slot=tpm2 --tpm2-pcrs=7` with no unlock key asks
+through systemd's password agents: *"Please enter current passphrase for disk"*,
+`NotAfter` unset, and `os7-migrations-firstboot` has `TimeoutStartUSec=infinity`. The
+unit stayed `activating`, and 60 to 80 did not run. Answered with the disk passphrase
+(the bench's test value) through `systemd-reply-password`, the re-seal worked — *"re-sealed,
+and the new seal opens"*, `--token-only` exit 0 — the other six migrations ran, and the
+NEXT boot unlocked from the TPM with nothing typed.
+
+The trigger here was the bench: `os7lab.py up` attaches devices the install did not
+have, and PCRs 0–7 measure the platform. But a seal that does not open is exactly the
+case the migration exists for, a shim or dbx update (UL1), and on that day every
+machine in a fleet would hold its firstboot migrations behind a prompt nobody sees.
+The exit-0 branch was measured only in a container with no TPM, where the script
+leaves at *"no TPM on this machine"*.
+
+**Fixed in the tree (1.0.0.268).** The enrolment runs under `timeout`, 120 s by
+default, with stdin closed. A person at the console still has the prompt and can
+repair the seal; after the bound the script says *"nobody typed the passphrase
+within …"*, names the command, exits 0, and the migrations go on. With the real
+`systemd-cryptenroll` on `u264`, on a seal that did not open: 15 s bound,
+unanswered — exit 0 after 15 s, no process and no password request left behind;
+90 s bound, answered — *"re-sealed, and the new seal opens"*, `--token-only` exit 0.
+`installer/testing/check-reseal-migration.py` runs the shipped file against fakes in
+seven cases and requires the planted copy without the bound to hang until its outer
+limit.
+

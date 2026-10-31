@@ -1,6 +1,6 @@
 Package: os7-release
 Version: @OS7_VERSION@
-Architecture: all
+Architecture: @OS7_ARCH@
 Maintainer: Bastian Wirth <bastian.wirth@upinblue.com>
 Section: admin
 Priority: important

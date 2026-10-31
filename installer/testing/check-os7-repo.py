@@ -762,6 +762,33 @@ def main():
     print(f"      merging the second architecture — OS/7 {version} ({other})")
     build_more(version, DEV_CHANNEL, label=f"the {other} merge", arch=other)
 
+    # THE POOL GUARD, SEEN TO FIRE (#194). An arch:all file the pool holds
+    # with content this build would not produce — os7-base with one file
+    # added — and the other architecture's cut once more. It must refuse, and
+    # the pool must then be exactly what the probe below expects. Without the
+    # guard the cut replaces the file and exits 0, which is how arm64's
+    # release.json reached every amd64 machine.
+    print("      planting a different arch:all package in the pool")
+    base_deb = os.path.join(repo_dir, "pool", "main", "o", "os7-base",
+                            f"os7-base_{version}_all.deb")
+    with open(base_deb, "rb") as fh:
+        base_original = fh.read()
+    tamper = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
+                  "-v", f"{repo_dir}:/out", f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
+                  "set -e; d=$(mktemp -d); "
+                  f"dpkg-deb -R /out/pool/main/o/os7-base/os7-base_{version}_all.deb $d; "
+                  "echo planted > $d/usr/share/doc/os7-base/planted; "
+                  f"dpkg-deb -b $d /out/pool/main/o/os7-base/os7-base_{version}_all.deb >/dev/null"])
+    with open(base_deb, "rb") as fh:
+        tampered = fh.read() != base_original
+    planted_all = build_more(version, DEV_CHANNEL, expect_fail=True, arch=other)
+    with open(base_deb, "wb") as fh:
+        fh.write(base_original)
+    shutil.rmtree(os.path.join(repo_dir, ".incoming"), ignore_errors=True)
+    with open(base_deb, "rb") as fh:
+        planted_restored = (tamper.returncode == 0 and tampered
+                            and fh.read() == base_original)
+
     print(f"      installing from it in a clean {TEST_IMAGE}")
     got = run(["docker", "run", "--rm", "--platform", f"linux/{args.arch}",
                "-v", f"{repo_dir}:/repo:ro", TEST_IMAGE, "bash", "-c", PROBE])
@@ -862,15 +889,16 @@ def main():
           "the merge run supersedes nothing — the other architecture's history "
           "is another machine's story")
 
-    # THE HASHES ARE THE POOL'S, IN EVERY INDEX. Eight of the ten packages are
-    # arch:all, rebuilt under ONE filename by either run — so after the merge
-    # run replaced them, an index this run did NOT regenerate would record
-    # hashes of files that no longer exist, and apt on that architecture would
-    # refuse every install with a hash-sum mismatch.
+    # THE HASHES ARE THE POOL'S, IN EVERY INDEX. Most packages are arch:all —
+    # ONE filename for both runs — so an index the merge run did NOT
+    # regenerate would record hashes of files the pool no longer holds, and apt
+    # on that architecture would refuse every install with a hash-sum mismatch.
+    # os7-base stands in for them; os7-release was the example until #194 made
+    # it a package per architecture.
     all_deb = None
-    pool_o = os.path.join(repo_dir, "pool", "main", "o", "os7-release")
+    pool_o = os.path.join(repo_dir, "pool", "main", "o", "os7-base")
     for name in sorted(os.listdir(pool_o) if os.path.isdir(pool_o) else []):
-        if name == f"os7-release_{version}_all.deb":
+        if name == f"os7-base_{version}_all.deb":
             all_deb = os.path.join(pool_o, name)
     if all_deb:
         with open(all_deb, "rb") as fh:
@@ -882,7 +910,7 @@ def main():
             recorded = ""
             with open(pk) as fh:
                 for stanza in fh.read().split("\n\n"):
-                    if f"os7-release_{version}_all.deb" not in stanza:
+                    if f"os7-base_{version}_all.deb" not in stanza:
                         continue
                     recorded = next((l.split(": ", 1)[1]
                                      for l in stanza.splitlines()
@@ -894,10 +922,39 @@ def main():
               "— the merge run regenerated both",
               ("stale: " + ", ".join(stale)) if stale else pool_sha[:16] + "…")
     else:
-        check(False, "os7-release_%s_all.deb is in the pool" % version)
+        check(False, "os7-base_%s_all.deb is in the pool" % version)
+
+    # EACH ARCHITECTURE HAS ITS OWN os7-release (BUILD-NOTES #194). It carries
+    # release.json, which names the architecture, so as arch:all the merge
+    # run's copy replaced this run's and every machine of THIS architecture
+    # was offered the other one's descriptor — all four published releases
+    # until 1.0.0.268. Both files in the pool, and each index naming its own.
+    rel_pool = os.path.join(repo_dir, "pool", "main", "o", "os7-release")
+    rel_names = set(os.listdir(rel_pool)) if os.path.isdir(rel_pool) else set()
+    check({f"os7-release_{version}_{args.arch}.deb",
+           f"os7-release_{version}_{other}.deb"} <= rel_names
+          and f"os7-release_{version}_all.deb" not in rel_names,
+          "os7-release is one package per architecture, both in the pool",
+          ", ".join(sorted(n for n in rel_names if f"_{version}_" in n)))
+    wrong_rel = []
+    for a in (args.arch, other):
+        pk = os.path.join(repo_dir, "dists", "os7-1.0", "main", f"binary-{a}", "Packages")
+        with open(pk) as fh:
+            for stanza in fh.read().split("\n\n"):
+                if ("Package: os7-release\n" in stanza + "\n"
+                        and f"Version: {version}\n" in stanza + "\n"
+                        and f"_{version}_{a}.deb" not in stanza):
+                    wrong_rel.append(a)
+    check(not wrong_rel, "and each architecture's Packages names its own",
+          ("wrong: " + ", ".join(wrong_rel)) if wrong_rel else "")
 
     # -- what the builder refuses --------------------------------------------
     print("\n  what the builder refuses")
+    check(planted_all.returncode != 0 and "DIFFERENT package" in
+          (planted_all.stdout + planted_all.stderr),
+          "an arch:all file the pool holds with DIFFERENT content (#194)",
+          ((planted_all.stdout + planted_all.stderr).strip().splitlines() or [""])[-1][:110])
+    check(planted_restored, "and the pool is put back exactly as it was afterwards")
     check(bad_base.returncode != 0 and "not in this repository" in
           (bad_base.stdout + bad_base.stderr),
           "a hotfix of a base this repository does not hold")
@@ -956,6 +1013,11 @@ def main():
           "ID and VERSION_ID are untouched — Intune reads them")
     check(f'"version":"{version}"' in f.get("reljson", ""),
           "the package's release.json names this release")
+    # The other architecture's cut ran LAST, which is the order a release takes
+    # and the order that put arm64's descriptor on every amd64 machine (#194).
+    check(f'"architecture":"{args.arch}"' in f.get("reljson", ""),
+          f"and THIS machine's architecture, {args.arch}, though {other}'s cut ran last",
+          next((p for p in f.get("reljson", "").split(",") if '"architecture"' in p), "")[:60])
 
     # -- UL10 ---------------------------------------------------------------
     print("\n  UL10 — a base-files upgrade can no longer revert the branding")
@@ -1126,7 +1188,7 @@ def main():
                  f"{BUILD_IMAGE}:{args.arch}", "bash", "-c",
                  "/work/build/lib/build-os7-packages.sh "
                  "/work/build/config/os7-release.conf /out os7-release"])
-        deb = os.path.join(out, f"os7-release_{version}_all.deb")
+        deb = os.path.join(out, f"os7-release_{version}_{args.arch}.deb")
         return r.returncode, (r.stdout or "") + (r.stderr or ""), deb
 
     def deb_has_credential(deb):

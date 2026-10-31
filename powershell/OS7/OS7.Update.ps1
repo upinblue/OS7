@@ -323,6 +323,20 @@ function Copy-OS7RepoFile {
 		A MISSING FILE IS NOT AN ERROR HERE. It is one for the caller to
 		describe: "no index for channel X" and "no descriptor for version Y" are
 		different sentences and only the caller knows which it is asking for.
+
+		A REFUSED REQUEST IS, and it throws here (BUILD-NOTES #193). OS/7's own
+		repository answers an anonymous request with 401, so this fetch carries
+		the credential apt reads — the same file, $script:OS7AptAuthConf, handed
+		to curl as a netrc. Until 1.0.0.268 it carried nothing: apt fetched,
+		this did not, and every installed machine read the 401 as "no release
+		index … not an OS/7 repository", which sends an operator to the URI and
+		the channel when the answer is the credential. 401 and 403 are never a
+		missing file, so no caller gets to describe them as one.
+
+		curl matches a netrc `machine` on the HOST alone, while apt's
+		auth.conf may name `host:port`. Get-OS7AptAuthHost writes the bare host
+		for a default port, which is what OS/7's URI has; a repository on
+		another port would need its own credential line without the port.
 	#>
 	param(
 		[Parameter(Mandatory)][string]$BaseUri,
@@ -338,15 +352,125 @@ function Copy-OS7RepoFile {
 		return $true
 	}
 
-	# --fail so a 404 is an exit code rather than a file containing an error
-	# page, which is the shape that gets hashed and then fails as "signature
-	# does not verify" about something that was never a signature.
-	try {
-		Invoke-OS7Native -Command 'curl' -Arguments @(
-			'-fsSL', '--retry', '3', '-o', $Destination, $uri) | Out-Null
+	# The status code is ASKED FOR rather than turned into an exit code with
+	# --fail, because 401 and 404 need different sentences. Anything but 200
+	# leaves a body on disk (an error page), and it is removed: that is the
+	# shape that gets hashed and then fails as "signature does not verify"
+	# about something that was never a signature.
+	$credential = Get-OS7RepoCredentialState -Uri $uri
+	$curlArgs = @()
+	if ($credential -eq 'readable') {
+		$curlArgs += @('--netrc-file', $script:OS7AptAuthConf)
 	}
-	catch { return $false }
-	return [System.IO.File]::Exists($Destination)
+	$curlArgs += @('-sSL', '--retry', '3', '-o', $Destination, '-w', '%{http_code}', $uri)
+	try {
+		$code = ([string](Invoke-OS7Native -Command 'curl' -Arguments $curlArgs)).Trim()
+	}
+	catch {
+		Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $Destination
+		return $false
+	}
+	if ($code -eq '200') { return [System.IO.File]::Exists($Destination) }
+	Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $Destination
+	if ($code -in @('401', '403')) {
+		throw [System.InvalidOperationException]::new(
+			(Get-OS7RepoRefusalMessage -Uri $uri -Code $code -Credential $credential))
+	}
+	return $false
+}
+
+function Get-OS7MachineArchitecture {
+	<#
+	.SYNOPSIS
+		The architecture this machine installs packages for. Internal.
+
+	.DESCRIPTION
+		dpkg's answer, not the release manifest's (BUILD-NOTES #194).
+		/usr/lib/os7/release.json describes the RELEASE that os7-release
+		carried, and until 1.0.0.268 that package was arch:all: both
+		architectures' cuts wrote one file name into one pool, the second
+		replaced the first, and every amd64 machine that updated from the
+		published repository would have carried the arm64 descriptor and judged
+		its own architecture's releases foreign. dpkg is what decides which
+		packages this machine can install, so it is what decides which releases
+		are this machine's. The manifest answers only when dpkg cannot.
+	#>
+	try {
+		$arch = ([string](Invoke-OS7Native -Command 'dpkg' -Arguments @('--print-architecture'))).Trim()
+		if ($arch) { return $arch }
+	}
+	catch { Write-Verbose "dpkg --print-architecture failed: $($_.Exception.Message)" }
+	return [string](Get-OS7Version).Architecture
+}
+
+function Get-OS7RepoCredentialState {
+	<#
+	.SYNOPSIS
+		Whether this process can hand the repository the credential apt has.
+		Internal.
+
+	.DESCRIPTION
+		Three answers, because they send an operator three different places:
+		`none` (not an http(s) URI, or no credential file), `readable`, and
+		`unreadable` — the file exists and this process may not open it. It is
+		0600 root by OS/7's decision (Write-OS7AptCredential), so `unreadable`
+		is what every unprivileged caller gets, the Software Update window
+		included. Asked of the file by opening it, not by reading its mode: the
+		mode is a prediction, the open is the answer.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Uri,
+		[string]$Path = $script:OS7AptAuthConf
+	)
+
+	if (-not (Get-OS7AptAuthHost -Uri $Uri)) { return 'none' }
+	if (-not [System.IO.File]::Exists($Path)) { return 'none' }
+	try {
+		[System.IO.File]::OpenRead($Path).Dispose()
+		return 'readable'
+	}
+	catch [System.UnauthorizedAccessException] { return 'unreadable' }
+}
+
+function Get-OS7RepoRefusalMessage {
+	<#
+	.SYNOPSIS
+		The sentence for a repository that refused this machine. Internal.
+
+	.DESCRIPTION
+		One per credential state, each naming the one thing to do. The login is
+		named so an operator can tell WHICH credential was refused; the password
+		never is.
+	#>
+	param(
+		[Parameter(Mandatory)][string]$Uri,
+		[Parameter(Mandatory)][string]$Code,
+		[Parameter(Mandatory)][string]$Credential
+	)
+
+	$authHost = Get-OS7AptAuthHost -Uri $Uri
+	$head = "the repository at $authHost refused this request (HTTP $Code)."
+	switch ($Credential) {
+		'unreadable' {
+			return "$head This machine's credential for it is $($script:OS7AptAuthConf), " +
+				'which only root can read, and this session is ' +
+				"'$([System.Environment]::UserName)'.`n" +
+				"  Run the command as root:  sudo pwsh -NoProfile -c 'Get-OS7Release'"
+		}
+		'readable' {
+			$login = Get-OS7AptCredentialLogin -MachineHost $authHost
+			return "$head It refused the credential in $($script:OS7AptAuthConf)" +
+				$(if ($login) { " (account $login)" } else { '' }) +
+				', which may have been rotated since this machine was installed.' +
+				"`n  Give it the current one:  sudo pwsh -NoProfile -c " +
+				"'Set-OS7UpdateChannel -Credential (Get-Credential)'"
+		}
+		default {
+			return "$head It needs a credential and this machine has none for $authHost " +
+				"in $($script:OS7AptAuthConf).`n  Give it one:  sudo pwsh -NoProfile -c " +
+				"'Set-OS7UpdateChannel -Credential (Get-Credential)'"
+		}
+	}
 }
 
 function Test-OS7RepoSignature {
@@ -697,6 +821,7 @@ function Get-OS7Release {
 		$index = Get-OS7ReleaseIndex -BaseUri $base -Channel $Channel -WorkDir $work
 		$mine  = [string]$here.FullVersion
 		$myMajor = if ($mine) { ([version]$mine).Major } else { -1 }
+		$myArch  = Get-OS7MachineArchitecture
 
 		foreach ($entry in @(Get-OS7ManifestField $index 'releases')) {
 			$version = [string](Get-OS7ManifestField $entry 'version')
@@ -735,7 +860,6 @@ function Get-OS7Release {
 			# Only a POSITIVE mismatch blocks — a side that does not state its
 			# architecture is today's single-arch world, not a refusal.
 			$entryArch = [string](Get-OS7ManifestField $entry 'architecture')
-			$myArch    = [string]$here.Architecture
 			$foreignArch = [bool]($entryArch -and $myArch -and $entryArch -ne $myArch)
 
 			[pscustomobject]@{
@@ -2067,7 +2191,7 @@ function Update-OS7 {
 		if ($target.ForeignArchitecture) {
 			throw [System.InvalidOperationException]::new(
 				"$to is built for $($target.Architecture) and this machine is " +
-				"$((Get-OS7Version).Architecture). A release moves a machine within its " +
+				"$(Get-OS7MachineArchitecture). A release moves a machine within its " +
 				'own architecture; this is a different product.')
 		}
 
