@@ -161,6 +161,16 @@ both `release.json` and `SHA256SUMS`, assembled by `scripts/make-release-dir.py`
 with `--no-screenshots`. Its `SHA256SUMS` is byte-identical to the one on the
 webspace.
 
+**The release notes were corrected on 2026-10-31, the day after publication.**
+They said an installed 1.0.0.264 reaches this release with `Update-OS7` or from
+Software Update, and §9 measured that it does not (#193). Their "Not measured"
+item for that update became the measurement. They now say that updating does not
+work on any published release and that this one is installed from the medium,
+that the fix ships with 1.0.0.268 and cannot arrive through the installed updater,
+and they name #194 and #195 in words. The gate's bullet now says its repository
+asks for no credential and the published one does. Nothing else changed. The
+body was read back from GitHub and is identical to the corrected text.
+
 **The public path by name was NOT fetched.** From this host `os7.org` resolves
 to the filter, and by name the connection times out. Through the DoH address
 (`167.235.125.41`) TLS presents a certificate from an authority this machine
