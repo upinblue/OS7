@@ -139,6 +139,25 @@ lost on a Docker Desktop restart, and what fails afterwards says
 `exec format error` about a shell script (§7.1). Read its JSON back and require
 `linux/arm64` and `qemu-aarch64` in it.
 
+**A release build is not the bare `make` above.** It takes two host paths,
+and the same two go to `make repo-<arch>` in step 5:
+
+```bash
+make build-amd64 OS7_RELEASE_PUBKEY=/mnt/c/Users/<you>/.os7/os7-release-key.pub \
+                 OS7_REPO_CREDENTIAL=/mnt/c/Users/<you>/.os7/storagebox.conf
+```
+
+Without `OS7_RELEASE_PUBKEY` the medium's trust anchor holds the development
+key alone, and a machine installed from it can never be handed a release
+signed by the release key: that build is thrown away. One 1.0.0.267 build was
+started that way and stopped (SESSION-PREVIEW-267 §2). And two builds share
+the .NET projects' `obj/` directories: start the second architecture only once
+the first one's log says `>>> Running live-build`, and run nothing that builds
+`installer/src/OS7.Setup` (`check-installer-cmdlets.py`,
+`check-version-rule.py`, `check-netplan-rule.py`) while a build is in its
+package stage. Two restores for two RIDs at once end in `NETSDK1047`. The
+repository cut of one architecture may run while the other is in live-build.
+
 ### 3. Ask the artefacts what they are
 
 ```bash
@@ -228,8 +247,10 @@ the webspace does not answer at all. Two more traps on the way:
 * **lftp's exit status is its LAST command's.** In `-e "cls …; rm …; put …;
   bye"` a failed listing does not stop the `rm`, and `|| die` behind it never
   fires. That is how 1.0.0.203's images were deleted by an attempt that should
-  have stopped. Check each step's effect separately; the read-back hash is the
-  one that counts.
+  have stopped. Since 1.0.0.267 every lftp session starts with
+  `set cmd:fail-exit yes`, so its first failed command ends it with a failure.
+  Check each step's effect separately anyway; the read-back hash is the one
+  that counts.
 
 ### 9. The website
 
