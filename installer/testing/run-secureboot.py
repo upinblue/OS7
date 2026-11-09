@@ -689,7 +689,13 @@ def phase_policy():
             # rejected passphrase that was never typed. Measured on the first
             # run of this phase, which failed exactly that way.
             c.drop()
-            c.answering = True
+            # NOT ANSWERING YET (BUILD-NOTES #188, and vmconsole's own rule):
+            # with `splash` plymouthd holds the serial console through the rest
+            # of the boot and an answered terminal query is INPUT to it. This
+            # line used to switch answering on here, before the passphrase, and
+            # on 1.0.0.277's gate the boot after it stalled in systemd's query
+            # block, redrawn until the 600 s ran out; the same phase alone, a
+            # second later, passed. Nothing before a login needs an answer.
             c.send(s5.PASSPHRASE)
             # NOT "unlock disk" — and that is BUILD-NOTES #182, #16's shape again.
             # With `splash` on the kernel line (Setup writes it since BRAND-PLAN

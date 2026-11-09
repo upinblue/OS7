@@ -1380,7 +1380,11 @@ def phase_timer():
         # Activated, not yet booted: the banner's OTHER sentence. The ESP stub
         # is what it reads, so the activation has to be the real one.
         if pending_be:
-            ps(c, f"Import-Module OS7; Set-OS7BootEnvironment -Name {pending_be} | Out-Null",
+            # -Confirm:$false: the cmdlet is ConfirmImpact High and ASKS, and the
+            # first version of this line waited for an answer until it timed out
+            # (1.0.0.277's gate) - the only red in an otherwise green run.
+            ps(c, f"Import-Module OS7; Set-OS7BootEnvironment -Name {pending_be} "
+                  f"-Confirm:$false | Out-Null",
                "activate the staged environment", timeout=600)
             text = ask(c, "printf 'S5-%s\\n' MOTD2; sh /etc/update-motd.d/41-os7-update",
                        "the banner after activation")

@@ -197,6 +197,23 @@ pool, the `Release` names the union of architectures, each descriptor lands
 under `releases/<version>/<arch>/`, and the index holds one entry per
 (version, architecture). There is no separate merge tool to forget.
 
+### 5b. Rehearse the field update against the cut tree
+
+**A machine installed from the PREVIOUS published medium, updated to the cut
+tree, before step 6** — served over local HTTP (`os7lab.py up <bench> --serve
+<tree>`), development-signed, which every published trust anchor accepts beside
+the release key. Then reboot it and ask it: version, kernel, failed units, the
+firstboot migrations, and whatever this release changes that a person sees.
+Snapshot the bench first (`os7lab.py snapshot`), so the real update in step 10
+starts from the same state.
+
+`run-s5.py update` cannot do this: it takes a medium to the next build of the
+SAME tree, so a defect that lives in the difference between two releases is
+invisible to it. On 2026-11-09 this step found two (SESSION-PREVIEW-277 §5):
+a release's boot-menu configuration reached an updated machine one release late
+(#198), and the migration written for it failed its own read-back on the
+machine. Both cost a commit and a medium pair; neither cost a published release.
+
 ### 6. Sign, off the build machine
 
 The `Release` → `InRelease`/`Release.gpg`, and `index/<channel>.json.asc`, with

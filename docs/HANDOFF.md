@@ -136,6 +136,27 @@ start-up animation, left a desktop that took no input in 2 of 22 logins. The
 fix closes it once it has opened (9 of 9 since); the race is rare enough that
 nine cannot prove it gone.
 
+**1.0.0.277 (2026-11-09) — the sixth preview: the archive of 2026-11-09,
+PowerShell 7.6.9, no kernel exception, and the first update from one published
+release to the next rehearsed before publication.** 35 security moves in the
+archive (apt, the .NET runtime, bind9, gnome-shell, gvfs, libsoup3, pcre2,
+net-snmp, python3-pil); 7.0.0-43.43 now from `-updates`, byte-identical to what
+272 took from `-proposed`, so the exception is gone; pwsh 7.6.5 → 7.6.9 (.NET
+10.0.11 → 10.0.14; the Windows parameter sets re-asked: identical). The build
+containers were two months old and `os7-setup` carried .NET 10.0.11 until a
+NuGet advisory stopped the build (#197); rebuilt, fonts bit-identical. Four
+owner-chosen items from SESSION-QOL-SURVEY §3: the boot menu (5 s instead of
+Ubuntu's 30 on ZFS, monochrome, no memory tests), the terminal (Cascadia Mono,
+Campbell, 120×30, a *PowerShell* entry), `Get-OS7RestoreAside` for the owner of
+the files, and an "update is ready" banner line and desktop notification.
+**275 and 276 were built and never released**: rehearsing 272 → 275 on bench
+`p272` found that activation builds the new menu in the OLD environment (#198,
+firstboot migration `81-boot-menu`); `check-image.py` found hook 0075 disabling
+the new banner (#199); rehearsing 272 → 276 found the migration failing its own
+read-back on grub-mkconfig's section marker. 272 → 277 on the same bench: clean,
+migrations green, the menu right. **`out/` and `.vm/` are junctions to
+`D:\OS7` since this session** (C: ran full). [SESSION-PREVIEW-277.md](SESSION-PREVIEW-277.md).
+
 **1.0.0.272 WAS PUBLISHED ON 2026-10-31 — the fifth published preview, and
 the kernel from `resolute-proposed` for CVE-2026-98432.** 267 ships linux 7.0.0-42.42, which
 the CVE (Ubuntu priority High, CVSS 9.8) affects; Ubuntu had the fix in
@@ -269,11 +290,11 @@ none of them in scope. The first is fixed since; two are open:
   [SESSION-QOL-SURVEY.md](SESSION-QOL-SURVEY.md)), which found the same thing
   independently: the launcher is hidden and `/usr/bin/update-manager` is
   diverted to a shim that starts OS/7's Software Update. §4.1.
-* **`Get-OS7RestoreAside` says in its own docstring that it is unprivileged and
-  throws a raw .NET exception as an ordinary user**: its default dataset list
-  comes from `/etc/os7/backup.json`, which is `600 root:root`. With `-Dataset`
-  named it works as the user. #148/#149's shape in a cmdlet neither reached.
-  §4.2.
+* ~~**`Get-OS7RestoreAside` says in its own docstring that it is unprivileged and
+  throws a raw .NET exception as an ordinary user**~~ — **fixed in 1.0.0.277**:
+  unprivileged it walks the default sources, and `Get-OS7BackupPolicy` refuses
+  in #148's words; `check-storage-logic.py` §9 holds it, and on a machine
+  updated to 277 `os7admin` got an answer (SESSION-PREVIEW-277 §7). §4.2.
 * **The shell panel is `#131313` where the theme declares `#d4d0c8`** — the
   stylesheet loads (the journal says so), `Get-OS7Theme` reports Classic, every
   other themed surface is right, and the panel's own background is not. #85's

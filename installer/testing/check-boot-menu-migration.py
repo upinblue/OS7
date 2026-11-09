@@ -9,7 +9,7 @@ wait, colours and memory tests into two files os7-console ships. A fresh
 install reads them; a machine that UPDATES did not, because Set-OS7BootEnvironment
 generates the new environment's menu in the RUNNING one - the previous release,
 which has neither file (measured on bench p272, 1.0.0.272 -> 1.0.0.275,
-SESSION-PREVIEW-275). The migration rebuilds the running environment's menu
+SESSION-PREVIEW-277). The migration rebuilds the running environment's menu
 when it disagrees with that environment's configuration, and only then.
 
 WHAT IT RUNS. The shipped file itself, in a plain ubuntu:26.04 container, with
@@ -22,7 +22,7 @@ previous environment wrote" is made by running it under the previous
 configuration, not typed. The theme script is the one os7-console ships.
 
 WHAT IT DOES NOT. It is not GRUB. Whether the real grub-mkconfig reads these
-files is read in the image (SESSION-PREVIEW-275 §4.1), and whether a machine
+files is read in the image (SESSION-PREVIEW-277 §4.1), and whether a machine
 that updated boots the new menu is the field update's question.
 
 PROVEN TO FIRE. The state question is removed from a COPY of the migration, and
@@ -52,7 +52,7 @@ for f in /etc/default/grub /etc/default/grub.d/*.cfg; do [ -f "$f" ] && . "$f"; 
 # output sits between `### BEGIN /etc/grub.d/<script> ###` and its END, written
 # whether the script emits anything or not. Leaving them out is how the first
 # version of this check passed a migration that grepped for the word
-# `memtest86+` and failed on bench p272 on the marker (SESSION-PREVIEW-275).
+# `memtest86+` and failed on bench p272 on the marker (SESSION-PREVIEW-277).
 sec() { echo "### BEGIN /etc/grub.d/$1 ###"; cat; echo "### END /etc/grub.d/$1 ###"; }
 {
   printf 'set menu_color_normal=cyan/blue\nset menu_color_highlight=white/blue\n' | sec 05_debian_theme
@@ -136,7 +136,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     driver = (DRIVER.replace("__SCRIPT__", SCRIPT).replace("__THEME__", THEME)
               .replace("__DROPIN__", DROPIN))
-    print("\n### 81-boot-menu against fakes (SESSION-PREVIEW-275, Q5 / BRL8)")
+    print("\n### 81-boot-menu against fakes (SESSION-PREVIEW-277, Q5 / BRL8)")
     got = subprocess.run(["docker", "run", "--rm", "-v", REPO + ":/repo:ro", IMAGE,
                           "bash", "-c", driver],
                          capture_output=True, text=True, encoding="utf-8", errors="replace")

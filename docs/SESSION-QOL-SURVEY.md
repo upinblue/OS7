@@ -595,3 +595,24 @@ first graphical login, with the shipped (uninstrumented) extension, opened on
 the desktop with `OverviewActive false`, took Ctrl+Alt+T, drew the window
 list, and `sudo pwsh` asked `[sudo: authenticate] Passwort:` and titled the
 window `Administrator: PowerShell`.
+
+## 10. Q5, Q11 and Q13, built for 1.0.0.277 (2026-11-09)
+
+Chosen by the owner for the sixth preview. The record of the run is
+[SESSION-PREVIEW-277.md](SESSION-PREVIEW-277.md) §4–§7; here only what each
+item became.
+
+| Q | built | not built |
+|---|---|---|
+| **Q5** the boot menu | `os7-console`: `/etc/default/grub.d/50-os7-boot-menu.cfg` (`GRUB_RECORDFAIL_TIMEOUT=5`, `GRUB_DISABLE_MEMTEST=true`) and `/etc/grub.d/06_os7_theme` (`light-gray/black`), both conffiles; firstboot migration `81-boot-menu` for machines that update (#198). Read on a 1.0.0.272 machine first: the menu was Debian's blue, not monochrome as §3 assumed — `05_debian_theme` gives white/black only to `GRUB_DISTRIBUTOR=Ubuntu` | the "Advanced options" submenu (`GRUB_DISABLE_SUBMENU` would flatten it, not remove it) and readable entry titles for OS/7's own entries |
+| **Q11** the terminal | Cascadia Mono 11, Campbell, 120×30, `visible-name='PowerShell'` in the default profile; `fonts-cascadia-code` a Depends of `os7-desktop-theme`; a *PowerShell* menu entry starting `pwsh -Login` | — |
+| **Q13** "restart to finish" | `os7-update-check` writes `/run/os7/update-pending`; `41-os7-update` in the login banner ("ready to install … Set-OS7BootEnvironment", or "Restart to finish" once the ESP names it); a desktop notification from a user path unit in `os7-app-softwareupdate` | Software Update's own *Restart now* for a release the timer staged |
+
+And from §4.2 of SESSION-MANUAL-APPS-AND-SHOTS: `Get-OS7RestoreAside` answers an
+unprivileged caller.
+
+**Seen on a machine:** Q5 and the banner line on a 272 → 277 update (bench
+`p272`, Headless). **Not yet seen:** the terminal profile and the desktop
+notification on a GUI machine — both asked of the medium by `check-image.py`
+(the profile through dconf, the face through fontconfig, the units by symlink),
+and the notifier's arguments dry-run in a container.

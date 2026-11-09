@@ -1,7 +1,7 @@
 #!/bin/sh
 # Q5 and BRL8 — the boot menu's wait, colours and memory tests, on a machine
 # that UPDATED to the release shipping them (SESSION-QOL-SURVEY Q5, BRAND-PLAN
-# BRL8, SESSION-PREVIEW-275).
+# BRL8, SESSION-PREVIEW-277).
 #
 # THE STATE: os7-console ships /etc/default/grub.d/50-os7-boot-menu.cfg and
 # /etc/grub.d/06_os7_theme, and a fresh install reads both when Setup runs
