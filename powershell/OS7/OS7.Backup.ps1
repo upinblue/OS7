@@ -344,7 +344,21 @@ function Get-OS7BackupPolicy {
 
 	$configured = Test-Path -LiteralPath $script:OS7BackupConfig -PathType Leaf
 	$doc = if ($configured) {
-		Get-Content -Raw -LiteralPath $script:OS7BackupConfig | ConvertFrom-Json
+		# THE FILE IS 0600 root:root, so an unprivileged session cannot read it,
+		# and Get-Content then wrote a .NET "Access to the path … is denied" and
+		# handed ConvertFrom-Json nothing — #148's shape, found on a machine
+		# through Get-OS7RestoreAside, which calls this and promises to be
+		# unprivileged (SESSION-MANUAL-APPS-AND-SHOTS §4.2). The refusal is a
+		# sentence, and it stays an UnauthorizedAccessException so a caller that
+		# can do without the policy can tell this case from a broken file.
+		$text = try { [System.IO.File]::ReadAllText($script:OS7BackupConfig) }
+		catch [System.UnauthorizedAccessException] {
+			throw [System.UnauthorizedAccessException]::new(
+				"the backup policy is $($script:OS7BackupConfig), which only root can read, " +
+				"and this session is '$([System.Environment]::UserName)'.`n" +
+				"  Run the command as root:  sudo pwsh -NoProfile -c 'Get-OS7BackupPolicy'")
+		}
+		$text | ConvertFrom-Json
 	}
 	else {
 		[pscustomobject]@{

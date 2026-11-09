@@ -274,8 +274,11 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   for `systemctl reboot` and never
                                           #   for shutdown. The Windows side is
                                           #   RECORDED from a real Windows pwsh
-                                          #   7.6.5 - the pinned version - so a
-                                          #   difference is a platform one.
+                                          #   7.6.5 and re-asked of 7.6.9 when
+                                          #   the pin moved there (2026-11-09,
+                                          #   all 14 sets unchanged) - the
+                                          #   pinned version - so a difference
+                                          #   is a platform one.
                                           #   OS7_MODULE_ROOT plants the defect on
                                           #   a copy and it goes RED. Seconds,
                                           #   needs only pwsh, both hosts
@@ -922,7 +925,8 @@ shipped `Restart-Computer` powers an OS/7 machine off and reports success**
 (#142; upstream PowerShell/PowerShell#14684 since 2021; the product's own manual
 told operators to type it). Every Windows parameter is declared and either
 honoured or refused BY NAME with a reason; `check-compat-windows.py` drives that
-table against parameter sets recorded from a real Windows pwsh 7.6.5.
+table against parameter sets recorded from a real Windows pwsh 7.6.5 (and
+re-asked of 7.6.9, the pin since 2026-11-09: identical).
 
 Z1 says OS7 reaches ZFS only through Zfs, P2 says the same about the network,
 **P2-time** about the clock, **P2-systemd** about units, **P2-directory**
@@ -967,7 +971,8 @@ does not need one.** An administrator signs in to a domain controller *from* an
 OS/7 machine with their own AD admin account and works as themselves; that is an
 outbound LDAPS connection and nothing else — no machine account, no keytab, no
 new package. The last clause is a measurement rather than a hope:
-`System.DirectoryServices.Protocols` ships **inside** pwsh 7.6.5 on Linux,
+`System.DirectoryServices.Protocols` ships **inside** pwsh 7.6.5 on Linux (and
+7.6.9, asked 2026-11-09),
 resolves with no `Add-Type` and reaches `libldap`, and `libldap2` is a Depends of
 `libcurl4t64` while `curl` is in `os7-base.list.chroot`, so it is there on both
 architectures. `System.DirectoryServices` (ADSI) loads on the same host and

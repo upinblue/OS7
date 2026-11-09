@@ -235,6 +235,35 @@ center-new-windows=false
 # to (org.gnome.Terminal.Legacy.Profile), because the group is a path and not a
 # schema name and the naive check in that hook would silently pass it.
 login-shell=true
+#
+# A TERMINAL THAT LOOKS INTENDED (SESSION-QOL-SURVEY Q11, 2026-11-09). Until
+# then this profile was gnome-terminal's own: the system monospace face, the
+# GTK theme's colours - which under OS7-Classic are black on WHITE, where
+# PSReadLine's syntax colours (its strings are dark yellow, its operators dark
+# grey) were chosen for a dark console and half of them are illegible - and
+# 80x24, which wraps every Format-Table PowerShell prints.
+#
+# So it is Windows Terminal's default for PowerShell, value for value:
+#   * Cascadia Mono, the face Windows Terminal ships and the one the installed
+#     console's PSFs are already made from (D15). It comes from the archive as
+#     fonts-cascadia-code, which this package Depends on, and hook 0090 asks
+#     fontconfig what the name resolves to - a font name that resolves to
+#     nothing falls back to the default face in silence (#85's shape).
+#   * the "Campbell" scheme, Windows Terminal's default: the sixteen colours
+#     below in gnome-terminal's order (black, red, green, yellow, blue,
+#     magenta, cyan, white, then the bright eight), #CCCCCC on #0C0C0C.
+#   * 120 columns by 30 rows, Windows Terminal's default size.
+# 11 points rather than Windows Terminal's 12 so that 120 columns still fit a
+# 1280-pixel screen with the window's frame.
+visible-name='PowerShell'
+use-system-font=false
+font='Cascadia Mono 11'
+use-theme-colors=false
+foreground-color='#CCCCCC'
+background-color='#0C0C0C'
+palette=['#0C0C0C', '#C50F1F', '#13A10E', '#C19C00', '#0037DA', '#881798', '#3A96DD', '#CCCCCC', '#767676', '#E74856', '#16C60C', '#F9F1A5', '#3B78FF', '#B4009E', '#61D6D6', '#F2F2F2']
+default-size-columns=120
+default-size-rows=30
 
 [org/gnome/desktop/applications/terminal]
 # Which terminal opens when something asks for "a terminal" - Files' "Open in

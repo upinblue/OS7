@@ -1,0 +1,14 @@
+# OS/7 — notice when the unattended update check stages a release
+# (SESSION-QOL-SURVEY Q13).
+#
+# PathChanged fires when the file is closed after a write, which includes its
+# creation; os7-update-check writes it only when what it says changes, so a
+# release staged once is announced once while a person is signed in - and again
+# at the next sign-in, by the service itself.
+[Unit]
+Description=OS/7 — watch for an update waiting to be installed
+PartOf=graphical-session.target
+
+[Path]
+PathChanged=/run/os7/update-pending
+Unit=os7-update-notify.service

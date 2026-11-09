@@ -43,6 +43,44 @@ function Write-CheckLog {
 	} catch { }
 }
 
+# WHAT THE MACHINE IS WAITING FOR, where a person will see it (SESSION-QOL-SURVEY
+# Q13). Staging used to tell nobody: exit 2 reached the journal and Intune, and
+# the operator at the machine learned of a prepared release only by asking.
+# This file is read by the login banner (/etc/update-motd.d/41-os7-update) and
+# by the desktop's notifier (os7-update-notify, a user unit) - both of which
+# must not ask ZFS or start pwsh, which is why the verdict is written down here
+# by the one process that decided it. /run, not /var: it describes THIS boot,
+# and a copy in /var would be cloned into the next boot environment and
+# announce the release that environment already is.
+#
+# Written only when it changes, so the daily "already waits" run does not
+# re-raise a desktop notification every day - the login does that. Never
+# throws: the verdict matters more than the announcement.
+$pendingFile = '/run/os7/update-pending'
+
+function Set-PendingState {
+	param([string]$Version, [string]$BootEnvironment)
+	try {
+		$dir = [System.IO.Path]::GetDirectoryName($pendingFile)
+		if (-not [System.IO.Directory]::Exists($dir)) {
+			[System.IO.Directory]::CreateDirectory($dir) | Out-Null
+			[System.IO.File]::SetUnixFileMode($dir, [System.IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute')
+		}
+		$json = [ordered]@{ Version = $Version; BootEnvironment = $BootEnvironment } |
+			ConvertTo-Json -Compress
+		if ([System.IO.File]::Exists($pendingFile) -and
+			[System.IO.File]::ReadAllText($pendingFile).Trim() -eq $json) { return }
+		[System.IO.File]::WriteAllText($pendingFile, $json + "`n")
+		[System.IO.File]::SetUnixFileMode($pendingFile, [System.IO.UnixFileMode]'UserRead, UserWrite, GroupRead, OtherRead')
+	}
+	catch { Write-CheckLog "note: could not write ${pendingFile}: $($_.Exception.Message)" }
+}
+
+function Clear-PendingState {
+	try { if ([System.IO.File]::Exists($pendingFile)) { [System.IO.File]::Delete($pendingFile) } }
+	catch { Write-CheckLog "note: could not remove ${pendingFile}: $($_.Exception.Message)" }
+}
+
 function Get-ConfField {
 	param([string]$Name)
 	# KEY="value" lines, the pin-file shape. Parsed here rather than through
@@ -77,6 +115,7 @@ if ([System.IO.File]::Exists($sourcesFile)) {
 	$enabled = ($body -match '(?m)^URIs:\s*\S') -and ($body -notmatch '(?m)^Enabled:\s*no\b')
 }
 if (-not $enabled) {
+	Clear-PendingState
 	Write-CheckLog 'nothing to do: no update channel is configured on this machine (Set-OS7UpdateChannel)'
 	exit 0
 }
@@ -89,6 +128,7 @@ try {
 		Sort-Object -Property @{ Expression = { [version]$_.Version } } |
 		Select-Object -Last 1
 	if (-not $target) {
+		Clear-PendingState
 		Write-CheckLog 'nothing to do: this machine runs the newest release the channel offers'
 		exit 0
 	}
@@ -106,6 +146,7 @@ try {
 	$staged = @(Get-OS7BootEnvironment) |
 		Where-Object { $_.Release -eq $target.Version -and $_.Complete }
 	if ($staged) {
+		Set-PendingState -Version $target.Version -BootEnvironment $staged[0].Name
 		Write-CheckLog ("staged: $($target.Version) already waits in " +
 			"$($staged[0].Name); activation and a reboot are pending")
 		exit 2
@@ -119,6 +160,7 @@ try {
 			"$($result.Reason)")
 		exit 1
 	}
+	Set-PendingState -Version $result.To -BootEnvironment $result.BootEnvironment
 	Write-CheckLog ("staged: $($result.To) into $($result.BootEnvironment); " +
 		'activation and a reboot are pending')
 	exit 2

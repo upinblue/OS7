@@ -10475,3 +10475,55 @@ other installed, `/boot` held `vmlinuz-7.0.0-43-generic` alone, and the suite wa
 removed. `check-image.py amd64` on that medium: the six exception checks green,
 and the kernel the medium boots signed by Canonical.
 
+
+---
+
+## #197 — the build container's toolchain is cached and unpinned, and a NuGet advisory found it two months old
+
+**Found 2026-11-09** by `check-os7-repo.py`, on the tree that became 1.0.0.275,
+before any medium was built. It builds every OS/7 package and stopped at the
+installer:
+
+    os7-setup.csproj : error NU1903: Warning As Error: Package
+    'Microsoft.DotNet.ILCompiler' 10.0.11 has a known high severity
+    vulnerability, https://github.com/advisories/GHSA-p3jp-9v83-76w9
+
+GHSA-p3jp-9v83-76w9 is CVE-2026-111497, an out-of-bounds write in .NET's Brotli
+decoder, fixed in 10.0.14. GitHub published it on 2026-11-03, three days after
+1.0.0.272 was built with the same toolchain, which is why that build passed.
+
+**Where 10.0.11 came from.** `os7-setup` is NativeAOT: the runtime is compiled
+INTO the binary, from the ILCompiler package whose version follows the SDK. The
+SDK is `dotnet-sdk-10.0` from the Ubuntu archive, installed by the Dockerfile
+from `archive.ubuntu.com` — live, not the pinned snapshot. And `make
+image-<arch>` is a plain `docker build`, so the `apt-get install` layer is a
+CACHE HIT on every run. The `os7-build` images were two months old: SDK
+10.0.111, runtime 10.0.11, for every release since they were built. Nothing
+the release pins says which .NET is inside `os7-setup`, and nothing checked.
+
+What the advisory does NOT reach, asked rather than assumed: PowerShell carries
+its own runtime and is pinned (7.6.9 reports .NET 10.0.14), and the three GUI
+applications are framework-dependent on the IMAGE's `dotnet-runtime-10.0`,
+which the archive snapshot decides (10.0.14 at 20261109T000000Z).
+
+**Fixed by rebuilding both containers with `--no-cache`**, the old images kept as
+`os7-build:<arch>-pre-20261109`. 62 of the amd64 container's 257 packages moved,
+among them `dotnet-sdk-10.0` 10.0.111 → 10.0.114 (runtime 10.0.14),
+`libfreetype6` 2.14.2+dfsg-1ubuntu0.1 → ubuntu0.2, `systemd`, `libc6` and
+`gnupg`; `live-build`, `debootstrap`, `xorriso` and `squashfs-tools` did not
+move. `libfreetype` is the one that could have changed the product's pixels
+(the pin's console-font section says why), so both console fonts were rebuilt
+in the new container before anything else: both PSFs `sha256 ok` against the
+pin, bit for bit.
+
+**What is not fixed: the container is still unpinned.** It is the third place a
+release takes bytes from somewhere `os7-release.conf` does not reach, beside
+Microsoft's unpinned packages (#144) and the libfreetype that the font pins
+exist to fence. The release process now says to rebuild the containers without
+the cache for a release (RELEASE-PROCESS §3, steps 1–2), and
+`check-os7-repo.py` — which runs NuGet's audit as part of building the packages
+— is the check that notices when that was forgotten.
+
+*The general form:* **a cache is a pin nobody wrote down.** The Dockerfile says
+"the newest SDK", the layer cache said "the one from September", and the second
+is what every build got.

@@ -139,6 +139,21 @@ lost on a Docker Desktop restart, and what fails afterwards says
 `exec format error` about a shell script (§7.1). Read its JSON back and require
 `linux/arm64` and `qemu-aarch64` in it.
 
+**And the build containers are rebuilt without the cache** (BUILD-NOTES #197):
+
+```bash
+docker build --no-cache --provenance=false --platform linux/amd64 -t os7-build:amd64 .
+docker build --no-cache --provenance=false --platform linux/arm64 -t os7-build:arm64 .
+```
+
+The Dockerfile installs the .NET SDK — whose runtime NativeAOT compiles into
+`os7-setup` — from the live archive, and `make image-<arch>` reuses the cached
+layer, so without this a release ships whatever runtime the container had the
+day it was first built. Tag the old image first (`os7-build:<arch>-pre-<date>`),
+and rebuild the console fonts in the new one before anything else: `libfreetype`
+comes from the same layer and decides their pixels, and both build scripts fail
+on a PSF that is not the pinned one.
+
 **A release build is not the bare `make` above.** It takes two host paths,
 and the same two go to `make repo-<arch>` in step 5:
 

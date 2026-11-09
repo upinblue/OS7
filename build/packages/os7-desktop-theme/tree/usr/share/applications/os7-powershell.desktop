@@ -1,0 +1,21 @@
+[Desktop Entry]
+# The word a Windows administrator types into a menu (SESSION-QOL-SURVEY Q11).
+# The Terminal launcher already lands in PowerShell, through bash's login
+# hand-off - which an administrator may switch off with OS7_NO_PWSH. This one
+# starts PowerShell itself, as a LOGIN shell: `pwsh -Login` runs /etc/profile
+# through a NON-interactive `sh -l`, so the environment is the console's and
+# 95-os7-powershell.sh's first guard keeps it from handing off a second time.
+Type=Application
+Name=PowerShell
+Comment=PowerShell 7 in a terminal window
+Comment[de]=PowerShell 7 in einem Terminalfenster
+Comment[fr]=PowerShell 7 dans une fenêtre de terminal
+Comment[nl]=PowerShell 7 in een terminalvenster
+Comment[it]=PowerShell 7 in una finestra di terminale
+Comment[es]=PowerShell 7 en una ventana de terminal
+Keywords=pwsh;shell;prompt;command;console;cmd;
+Icon=org.gnome.Terminal
+Exec=gnome-terminal --title=PowerShell -- /usr/bin/pwsh -Login -NoLogo
+Terminal=false
+Categories=System;
+StartupNotify=true

@@ -1234,6 +1234,23 @@ def phase_timer():
             print("      FAIL  1/4 the timer is not enabled on the machine")
             ok = False
 
+        # BRL8, asked of the menu GRUB actually reads: Ubuntu's 00_header writes
+        # `set timeout=${GRUB_RECORDFAIL_TIMEOUT:-30}` into every EFI menu on
+        # ZFS, and os7-console's drop-in is what makes that 5. Counted in the
+        # generated file, because the drop-in being installed is not the same
+        # fact as update-grub having read it.
+        text = ask(c, "printf 'S5-%s\\n' WAIT; grep -c 'set timeout=30' /boot/grub/grub.cfg; "
+                      "grep -c 'set timeout=5' /boot/grub/grub.cfg",
+                   "the boot menu's wait")
+        counts = [l.strip() for l in body_of(text, "S5-WAIT").splitlines()
+                  if l.strip().isdigit()]
+        if len(counts) >= 2 and counts[0] == "0" and int(counts[1]) > 0:
+            print("      ok         the installed menu waits 5 s — no 30-second recordfail wait (BRL8)")
+        else:
+            print(f"      FAIL       /boot/grub/grub.cfg: 'timeout=30' x{counts[0] if counts else '?'}, "
+                  f"'timeout=5' x{counts[1] if len(counts) > 1 else '?'}")
+            ok = False
+
         # A. No reachable channel: the machine is put back into the shipped
         # state (the rollback brought the configured channel back with /etc).
         ps(c, "Import-Module OS7; Set-OS7UpdateChannel -Disable | Out-Null",
@@ -1328,6 +1345,31 @@ def phase_timer():
         else:
             print("      FAIL       the check reported staged and no environment exists")
             ok = False
+        # AND SOMEBODY IS TOLD (SESSION-QOL-SURVEY Q13). Staging used to reach
+        # the journal and nobody else. The check writes what it staged to
+        # /run/os7/update-pending, and the login banner reads it - asked here
+        # by running the banner's own script, as pam_motd does, as root.
+        text = ask(c, "printf 'S5-%s\\n' PEND; cat /run/os7/update-pending; "
+                      "printf 'S5-%s\\n' MOTD; sh /etc/update-motd.d/41-os7-update",
+                   "the staged release is announced")
+        pend = body_of(text, "S5-PEND").split("S5-MOTD")[0]
+        motd = body_of(text, "S5-MOTD")
+        be_m = re.search(r'"BootEnvironment":"([^"]+)"', pend)
+        pending_be = be_m.group(1) if be_m else ""
+        if staged and f'"Version":"{staged}"' in pend and pending_be:
+            print(f"      ok         /run/os7/update-pending names {staged} in {pending_be}")
+        else:
+            print("      FAIL       /run/os7/update-pending does not name the staged release:")
+            print(pend.strip()[:300] or "<absent>")
+            ok = False
+        if pending_be and "ready to install" in motd \
+                and f"Set-OS7BootEnvironment {pending_be}" in motd:
+            print("      ok         the login banner says it is ready, and the one command "
+                  "that activates it")
+        else:
+            print("      FAIL       the login banner does not announce the staged release:")
+            print(motd.strip()[:400] or "<nothing printed>")
+            ok = False
         # And running it again stages nothing twice.
         code, body = service_status(c, "the check, again")
         if code == "2" and "already" in body:
@@ -1335,6 +1377,20 @@ def phase_timer():
         else:
             print(f"      FAIL  4/4 expected exit 2 + already-staged, got {code}")
             ok = False
+        # Activated, not yet booted: the banner's OTHER sentence. The ESP stub
+        # is what it reads, so the activation has to be the real one.
+        if pending_be:
+            ps(c, f"Import-Module OS7; Set-OS7BootEnvironment -Name {pending_be} | Out-Null",
+               "activate the staged environment", timeout=600)
+            text = ask(c, "printf 'S5-%s\\n' MOTD2; sh /etc/update-motd.d/41-os7-update",
+                       "the banner after activation")
+            motd2 = body_of(text, "S5-MOTD2")
+            if "Restart to finish" in motd2 and "ready to install" not in motd2:
+                print("      ok         once activated, it says: restart to finish")
+            else:
+                print("      FAIL       after activation the banner should say 'Restart to finish':")
+                print(motd2.strip()[:400] or "<nothing printed>")
+                ok = False
         m.power_off()
     return ok
 

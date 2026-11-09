@@ -575,8 +575,21 @@ function Get-OS7RestoreAside {
 
 	$roots = if ($Dataset) { @($Dataset) }
 	else {
-		$policy = Get-OS7BackupPolicy -ConfigOnly
-		if ($policy.Sources) { @($policy.Sources.Dataset) } else { @('rpool/USERDATA') }
+		# The policy is root's (0600), and this verb is meant for the OWNER of
+		# the files. Unprivileged, the default sources are walked instead: they
+		# are where a user's own files live — rpool/USERDATA and the domain
+		# homes — and therefore where Restore-OS7File, run by that user, put
+		# anything aside. It used to die here with a .NET message
+		# (SESSION-MANUAL-APPS-AND-SHOTS §4.2).
+		$policy = try { Get-OS7BackupPolicy -ConfigOnly }
+		catch [System.UnauthorizedAccessException] {
+			Write-Verbose ("the backup policy cannot be read by this session; " +
+				"walking the default sources: $($script:OS7BackupDefaultSources -join ', ')")
+			$null
+		}
+		if (-not $policy) { @($script:OS7BackupDefaultSources) }
+		elseif ($policy.Sources) { @($policy.Sources.Dataset) }
+		else { @('rpool/USERDATA') }
 	}
 
 	$now = Get-Date

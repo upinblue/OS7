@@ -1,0 +1,14 @@
+# OS/7 — say at the desktop that an update is waiting (SESSION-QOL-SURVEY Q13).
+#
+# Started twice over: by graphical-session.target when a person signs in,
+# because the release may have been staged while nobody was, and by
+# os7-update-notify.path whenever the unattended check writes a new state.
+# The script exits quietly when there is nothing waiting.
+[Unit]
+Description=OS/7 — tell the desktop that an update is waiting
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/os7-update-notify

@@ -1,0 +1,38 @@
+#!/bin/sh
+# OS/7 — tell the person at the desktop that an update is waiting
+# (SESSION-QOL-SURVEY Q13).
+#
+# Run as the USER, by os7-update-notify.service: once when the graphical
+# session starts, and again whenever os7-update-check rewrites
+# /run/os7/update-pending (os7-update-notify.path). It reads that file and
+# nothing else - the root process that staged the release decided what it
+# says, and this one only puts it on the screen. No pwsh, no ZFS: it runs at
+# every login.
+#
+# It does NOT say whether the release has already been activated. That is in
+# the ESP stub, which only root can read; the login banner (41-os7-update,
+# run as root by pam_motd) says it. Here the sentence is the staged one, and
+# it is true of the state the unattended path leaves a machine in.
+set -u
+
+state=/run/os7/update-pending
+[ -r "${state}" ] || exit 0
+
+field() {
+	sed -n 's/.*"'"$1"'":"\{0,1\}\([^,"}]*\)"\{0,1\}.*/\1/p' "${state}" 2>/dev/null
+}
+
+version="$(field Version)"
+be="$(field BootEnvironment)"
+[ -n "${version}" ] && [ -n "${be}" ] || exit 0
+
+# desktop-entry ties the notification to Software Update's own entry, so the
+# Shell shows it under that name and icon.
+exec notify-send \
+	--app-name="Software Update" \
+	--icon=system-software-update \
+	--hint=string:desktop-entry:os7-software-update \
+	"OS/7 ${version} is ready to install" \
+	"It was prepared in the background. To finish, open PowerShell and run
+sudo Set-OS7BootEnvironment ${be}
+then restart the computer."

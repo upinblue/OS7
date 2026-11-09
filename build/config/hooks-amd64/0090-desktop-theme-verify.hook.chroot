@@ -163,6 +163,22 @@ if [ -s /etc/dconf/db/os7 ]; then
 	# the only thing that makes it happen is bash being started as a login
 	# shell. docs/BUILD-NOTES.md #86.
 	check_key "/org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/login-shell" "true"
+	# And it looks intended (SESSION-QOL-SURVEY Q11). The face is asked of
+	# fontconfig as well, because a profile naming a font that is not there
+	# draws in the default face and says nothing.
+	check_key "/org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/font" "'Cascadia Mono 11'"
+	check_key "/org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/use-theme-colors" "false"
+	check_key "/org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/default-size-columns" "120"
+	tfam="$(fc-match -f '%{family}' 'Cascadia Mono' 2>/dev/null || true)"
+	case ",${tfam}," in
+		*",Cascadia Mono,"*) ok "fontconfig resolves 'Cascadia Mono' (${tfam})" ;;
+		*) note "the terminal profile names Cascadia Mono and fontconfig resolves it to '${tfam:-nothing}'" ;;
+	esac
+	if desktop-file-validate /usr/share/applications/os7-powershell.desktop >/dev/null 2>&1; then
+		ok "/usr/share/applications/os7-powershell.desktop validates"
+	else
+		note "os7-powershell.desktop: $(desktop-file-validate /usr/share/applications/os7-powershell.desktop 2>&1 | head -3 | tr '\n' ' ')"
+	fi
 	check_key /org/gnome/desktop/applications/terminal/exec "'gnome-terminal'"
 	# The Windows shortcuts (SESSION-QOL-SURVEY Q18), the custom one included -
 	# it lives under a relocatable schema's path and is read back the same way.

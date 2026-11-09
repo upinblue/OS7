@@ -103,7 +103,7 @@ emit os-release        cat /mnt/sq/etc/os-release
 # §6.1). dpkg is asked, file by file, because "the hook ran" is not the fact —
 # the ownership is.
 emit dpkg.os7          bash -c 'chroot /mnt/root dpkg-query -W -f="\${db:Status-Abbrev} \${Package} \${Version}\n" "os7-*" 2>/dev/null || true'
-emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice /usr/lib/systemd/system/os7-storage-relief.timer /usr/libexec/os7-storage-relief /etc/update-motd.d/40-os7-storage /opt/microsoft/powershell/7/powershell.config.json /usr/lib/os7/apps/versions/os7-versions /usr/share/nautilus-python/extensions/os7-versions.py /usr/lib/os7/apps/software-update/os7-software-update /usr/lib/os7/apps/containers/os7-containers /usr/libexec/os7-container-helper /usr/libexec/os7-container-helper-destroy /usr/libexec/os7-container-helper-install /usr/share/polkit-1/actions/org.os7.containers.policy; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
+emit dpkg.owners       bash -c 'for f in /opt/microsoft/powershell/7/pwsh /usr/local/share/powershell/Modules/OS7/OS7.psd1 /usr/lib/os7-setup/os7-setup /usr/share/consolefonts/os7-console-16x32.psf.gz /usr/lib/os7/release.json /etc/apt/sources.list.d/os7.sources /etc/profile.d/95-os7-powershell.sh /usr/libexec/os7-migrate-firstboot /usr/lib/systemd/system/os7-job@.service /usr/lib/systemd/system/os7-automation.slice /usr/lib/systemd/system/os7-storage-relief.timer /usr/libexec/os7-storage-relief /etc/update-motd.d/40-os7-storage /opt/microsoft/powershell/7/powershell.config.json /usr/lib/os7/apps/versions/os7-versions /usr/share/nautilus-python/extensions/os7-versions.py /usr/lib/os7/apps/software-update/os7-software-update /usr/lib/os7/apps/containers/os7-containers /usr/libexec/os7-container-helper /usr/libexec/os7-container-helper-destroy /usr/libexec/os7-container-helper-install /usr/share/polkit-1/actions/org.os7.containers.policy /etc/update-motd.d/41-os7-update /usr/libexec/os7-update-notify /usr/lib/systemd/user/os7-update-notify.path /etc/default/grub.d/50-os7-boot-menu.cfg /etc/grub.d/06_os7_theme; do printf "%s -> %s\n" "$f" "$(chroot /mnt/root dpkg -S "$f" 2>/dev/null | cut -d: -f1 || echo UNOWNED)"; done'
 emit dpkg.divert       bash -c 'chroot /mnt/root dpkg-divert --list /usr/lib/os-release 2>/dev/null || true'
 emit os7.sources       bash -c 'cat /mnt/sq/etc/apt/sources.list.d/os7.sources 2>/dev/null || true'
 emit os7.keyring       bash -c 'stat -c %s /mnt/sq/usr/share/keyrings/os7-archive-keyring.gpg 2>/dev/null || echo 0'
@@ -121,6 +121,15 @@ emit os7.keyring.keys  bash -c 'gpg --batch --show-keys --with-colons /mnt/sq/us
 emit os7.auth          bash -c 'sed -n "s/^machine /machine /p;s/^login /login /p" /mnt/sq/etc/apt/auth.conf.d/os7.conf 2>/dev/null || true'
 emit os7.auth.mode     bash -c 'stat -c %a /mnt/sq/etc/apt/auth.conf.d/os7.conf 2>/dev/null || echo "(absent)"'
 emit os7.auth.owner    bash -c 'chroot /mnt/root dpkg -S /etc/apt/auth.conf.d/os7.conf 2>/dev/null | cut -d: -f1 || echo UNOWNED'
+# Q13: run-parts skips a banner script it cannot execute WITHOUT A WORD, so the
+# mode is asked of the image, and the user units are asked whether anything
+# wants them - a unit nothing starts is a file, not a feature.
+# Q5 and BRL8: the installed menu - its wait, no memory tests, and the colour
+# script, which grub-mkconfig skips WITHOUT A WORD if it is not executable. Both
+# files are conffiles of os7-console, asked of dpkg, because a plain file would
+# take an administrator's value away at the next update.
+emit grub.menuwait    bash -c 'grep -E "^GRUB_(RECORDFAIL_TIMEOUT|DISABLE_MEMTEST)=" /mnt/sq/etc/default/grub.d/50-os7-boot-menu.cfg 2>&1; stat -c "%a theme" /mnt/sq/etc/grub.d/06_os7_theme 2>&1; echo "conffiles $(chroot /mnt/root dpkg-query -W -f="\${Conffiles}\n" os7-console 2>/dev/null | grep -c -E "50-os7-boot-menu.cfg|06_os7_theme")"'
+emit update.notice     bash -c 'stat -c "%a %n" /mnt/sq/etc/update-motd.d/41-os7-update 2>&1; for u in path service; do l=/mnt/sq/usr/lib/systemd/user/graphical-session.target.wants/os7-update-notify.$u; if [ -L "$l" ]; then echo "wanted $u -> $(readlink "$l")"; else echo "NOT wanted $u"; fi; done'
 emit os7.staged.debs   bash -c 'ls /mnt/sq/usr/lib/os7/packages/ 2>/dev/null || echo "(gone)"'
 # The journal-flush ordering drop-in (BUILD-NOTES #109). Without it the flush
 # beats zfs-mount.service on every boot, journald flushes onto the boot
@@ -315,6 +324,11 @@ emit desktop.relupg    bash -c 'grep -E "^Prompt=" /mnt/sq/etc/update-manager/re
 # stdin being a pipe costs a job-control complaint on stderr and nothing else.
 emit desktop.termlogin chroot /mnt/root env -i PATH=/usr/bin:/bin DCONF_PROFILE=/etc/dconf/profile/user dconf read /org/gnome/terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9/login-shell
 emit desktop.termalt   bash -c 'readlink /mnt/sq/etc/alternatives/x-terminal-emulator 2>&1 || true'
+# Q11: the face the terminal profile names, as fontconfig RESOLVES it - a name
+# that resolves to nothing falls back to the default face without a word - and
+# the PowerShell menu entry, validated by the image's own desktop-file-validate.
+emit desktop.termfont  bash -c 'chroot /mnt/root env -i PATH=/usr/bin:/bin fc-match -f "%{family}|%{file}" "Cascadia Mono" 2>/dev/null; echo'
+emit desktop.pwshentry bash -c 'f=/usr/share/applications/os7-powershell.desktop; if [ -f /mnt/sq$f ]; then grep -E "^(Name|Exec)=" /mnt/sq$f; chroot /mnt/root desktop-file-validate $f >/dev/null 2>&1 && echo "valid" || echo "INVALID: $(chroot /mnt/root desktop-file-validate $f 2>&1 | head -3 | tr "\n" " ")"; else echo MISSING; fi'
 emit desktop.pwsh      bash -c 'readlink /mnt/sq/usr/bin/pwsh 2>&1; ls -d /mnt/sq/opt/microsoft/powershell/* 2>&1'
 emit desktop.handoff   bash -c "printf '\$PSVersionTable.PSVersion.ToString()\nexit\n' | chroot /mnt/root env -i HOME=/root TERM=dumb PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin bash --login -i 2>/dev/null || true"
 
@@ -1339,6 +1353,13 @@ def main() -> None:
             ("/usr/lib/systemd/system/os7-storage-relief.timer", "os7-backup"),
             ("/usr/libexec/os7-storage-relief", "os7-backup"),
             ("/etc/update-motd.d/40-os7-storage", "os7-backup"),
+            # SESSION-QOL-SURVEY Q13: the banner line for a staged release. In a
+            # PACKAGE, unlike 40-os7-storage's includes.chroot origin story,
+            # because the machines it speaks to are the ones that update.
+            ("/etc/update-motd.d/41-os7-update", "os7-release"),
+            # BRL8: the boot menu's 30-second wait, shortened by a drop-in.
+            ("/etc/default/grub.d/50-os7-boot-menu.cfg", "os7-console"),
+            ("/etc/grub.d/06_os7_theme", "os7-console"),
             # BUILD-NOTES #160: without this file every pwsh invocation writes
             # ~2 MB of its own module source to the journal, and a timer running
             # four times an hour fills the disk the relief exists to protect.
@@ -1406,10 +1427,29 @@ def main() -> None:
                 ("/usr/libexec/os7-container-helper-destroy", "os7-app-containers"),
                 ("/usr/libexec/os7-container-helper-install", "os7-app-containers"),
                 ("/usr/share/polkit-1/actions/org.os7.containers.policy",
-                 "os7-app-containers")):
+                 "os7-app-containers"),
+                # Q13: the desktop's half of "an update is waiting".
+                ("/usr/libexec/os7-update-notify", "os7-app-softwareupdate"),
+                ("/usr/lib/systemd/user/os7-update-notify.path",
+                 "os7-app-softwareupdate")):
             check(owners.get(path_, "").strip() == owner,
                   f"dpkg -S: {path_} belongs to {owner}",
                   owners.get(path_, "(not asked)").strip())
+        un = img.get("update.notice", "")
+        check("wanted path -> ../os7-update-notify.path" in un
+              and "wanted service -> ../os7-update-notify.service" in un,
+              "every desktop session starts the update notifier (path and service)",
+              " / ".join(l for l in un.splitlines() if "wanted" in l) or "<nothing read>")
+    mw = img.get("grub.menuwait", "")
+    check("GRUB_RECORDFAIL_TIMEOUT=5" in mw and "GRUB_DISABLE_MEMTEST=true" in mw
+          and "755 theme" in mw and "conffiles 2" in mw,
+          "the boot menu: 5 s not 30 (BRL8), no memory tests, the colour script "
+          "executable - both files conffiles of os7-console (Q5)",
+          " / ".join(l for l in mw.split("\n") if l.strip()) or "<not asked>")
+    un = img.get("update.notice", "")
+    check(un.startswith("755 "),
+          "the login banner's update line is executable — run-parts skips it silently otherwise",
+          un.splitlines()[0] if un else "<not asked>")
 
     check("os7-release" in img.get("dpkg.divert", ""),
           "/usr/lib/os-release is diverted by os7-release (UL10)",
@@ -2403,6 +2443,36 @@ def main() -> None:
         check("gnome-terminal" in img.get("desktop.termalt", ""),
               "x-terminal-emulator is the terminal OS/7 configures",
               img.get("desktop.termalt", "").strip() or "<unset>")
+
+        # -- and looks intended (SESSION-QOL-SURVEY Q11) --------------------
+        # The profile is read out of the COMPILED database, like every key
+        # above, and the face it names is asked of fontconfig: a profile that
+        # names Cascadia on an image without it draws in the default face and
+        # nothing says so.
+        prof = "terminal/legacy/profiles:/:b1dcc9dd-5262-4d8d-a863-c897e6d979b9"
+        tp = {k: dkey(prof, k) for k in ("font", "use-system-font", "use-theme-colors",
+                                         "background-color", "foreground-color",
+                                         "default-size-columns", "default-size-rows")}
+        check(tp == {"font": "'Cascadia Mono 11'", "use-system-font": "false",
+                     "use-theme-colors": "false", "background-color": "'#0C0C0C'",
+                     "foreground-color": "'#CCCCCC'", "default-size-columns": "120",
+                     "default-size-rows": "30"},
+              "the terminal profile is Cascadia Mono, Campbell, 120x30 (Q11)",
+              ", ".join(f"{k}={v or '<unset>'}" for k, v in tp.items()))
+        pal = dkey(prof, "palette")
+        check(pal.count("#") == 16 and pal.startswith("['#0C0C0C'"),
+              "the terminal palette carries sixteen colours, Campbell's black first",
+              pal or "<unset>")
+        tf = img.get("desktop.termfont", "").strip()
+        tf_family, _, tf_file = tf.partition("|")
+        check("Cascadia Mono" in tf_family.split(",") and "cascadia" in tf_file.lower(),
+              "fontconfig resolves 'Cascadia Mono' to a Cascadia file",
+              tf or "<no answer from fc-match>")
+        pe = img.get("desktop.pwshentry", "")
+        check("Name=PowerShell" in pe and "pwsh -Login" in pe and pe.strip().endswith("valid")
+              and "INVALID" not in pe,
+              "a 'PowerShell' menu entry starts pwsh as a login shell, and validates",
+              " / ".join(pe.split("\n")) or "<nothing read>")
 
         # /usr/bin/pwsh must be the VERSION-FREE path. A link into a 7.6.5
         # directory would be true today and stale after the first PowerShell

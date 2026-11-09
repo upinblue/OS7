@@ -1,0 +1,2 @@
+/etc/default/grub.d/50-os7-boot-menu.cfg
+/etc/grub.d/06_os7_theme

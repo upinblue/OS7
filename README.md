@@ -241,7 +241,7 @@ twenty minutes reaching a known failure.
 
 | Tier | Components |
 |---|---|
-| **Core, everywhere** | PowerShell 7.6.5 · .NET 10 runtime · ZFS 2.4.1 on Linux 7.0 · `authd` (the `authd-msentraid` broker is a Canonical snap and is not in the image yet) |
+| **Core, everywhere** | PowerShell 7.6.9 · .NET 10 runtime · ZFS 2.4.1 on Linux 7.0 · `authd` (the `authd-msentraid` broker is a Canonical snap and is not in the image yet) |
 | **Desktop installs (x86-64)** | GNOME 50 in OS/7 Classic · Microsoft Edge · Intune portal and `microsoft-identity-broker` · Visual Studio Code |
 | **Server installs** | Azure Connected Machine agent (Azure Arc), on both architectures |
 | **Recommended additions** | Azure CLI |

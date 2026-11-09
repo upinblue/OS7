@@ -105,8 +105,22 @@ function Get-ZfsSpace {{ param([string]$Name, [switch]$Recurse) $script:FakeSpac
 function Get-ZfsSnapshot {{ param([string]$Name, [switch]$NoRecurse) @() }}
 function Get-ZfsDataset {{
 	param([string]$Name, [string]$Type, [switch]$Recurse)
-	$script:FakeDatasets
+	$script:AskedRoots.Add($Name)
+	# What ZFS answers for `-Recurse` under a root: that dataset and its
+	# children, and nothing outside it. Without the filter every root walked
+	# returned every dataset, and three roots found each file three times.
+	@($script:FakeDatasets | Where-Object {{
+		-not $Name -or $_.Name -eq $Name -or $_.Name.StartsWith("$Name/") }})
 }}
+# Which roots Get-OS7RestoreAside asked for, so the unprivileged case can be
+# held to the DEFAULT sources and not merely to "found something".
+$script:AskedRoots = [System.Collections.Generic.List[string]]::new()
+# The module's own defaults, as OS7.Backup.ps1 defines them; that file is not
+# dot-sourced here, and the unprivileged path reads this variable.
+$script:OS7BackupDefaultSources = @('rpool/USERDATA', 'rpool/DATA/srv', 'rpool/DATA/lib/os7-domain-homes')
+# An unprivileged session: the real Get-OS7BackupPolicy throws exactly this
+# type when /etc/os7/backup.json (0600 root) cannot be opened.
+$script:PolicyUnreadable = $false
 function Get-OS7BootEnvironment {{ $script:FakeEnvironments }}
 function Format-ZfsSize {{ param($Bytes) "$Bytes bytes" }}
 function Assert-OS7Elevated {{ param($Cmdlet, $Because) }}
@@ -114,6 +128,10 @@ function New-OS7BackupRetention {{ [ordered]@{{ frequently=0; hourly=24; daily=1
 
 function Get-OS7BackupPolicy {{
 	param([switch]$ConfigOnly)
+	if ($script:PolicyUnreadable) {{
+		throw [System.UnauthorizedAccessException]::new(
+			"the backup policy is /etc/os7/backup.json, which only root can read")
+	}}
 	[pscustomobject]@{{ Sources = @([pscustomobject]@{{
 		Dataset = 'rpool/USERDATA'
 		Retention = $script:FakeRetention
@@ -1196,6 +1214,20 @@ $out['ages'] = @($all | Sort-Object Path | ForEach-Object { $_.AgeDays })
 $out['held'] = @($all | Where-Object Held | ForEach-Object { Split-Path -Leaf $_.Path } | Sort-Object)
 $out['lengths'] = @($all | Sort-Object Path | ForEach-Object { $_.Length })
 $out['olderOnly'] = @(Get-OS7RestoreAside -OlderThanDays 30).Count
+$out['rootRoots'] = @($script:AskedRoots)
+
+# --- the same question, asked by the OWNER of the files ---------------------
+# The policy is root's; the verb promises to be unprivileged. It walked
+# nothing and threw a .NET message instead (SESSION-MANUAL-APPS-AND-SHOTS §4.2).
+$script:PolicyUnreadable = $true
+$script:AskedRoots.Clear()
+$userErr = $null
+$user = @()
+try { $user = @(Get-OS7RestoreAside) } catch { $userErr = $_.Exception.Message }
+$out['userError'] = $userErr
+$out['userFound'] = $user.Count
+$out['userRoots'] = @($script:AskedRoots)
+$script:PolicyUnreadable = $false
 
 # --- and what relief does with them ----------------------------------------
 $script:FakePool = New-Pool -Capacity 85 -Size 100GB -Allocated ([int64](100GB * 0.85))
@@ -1242,6 +1274,23 @@ $out | ConvertTo-Json -Depth 4
           "differently for two files of the same age class", ", ".join(held))
     check(got["olderOnly"] == 2,
           "-OlderThanDays filters on when it was put aside", str(got["olderOnly"]))
+
+    # The owner of the files cannot read the policy (0600 root). The verb says
+    # it is unprivileged, so it must still answer — from the default sources,
+    # which is where an owner's own restores put things — and not die.
+    check(got["userError"] is None,
+          "an unprivileged caller is answered, not refused (the policy is root's)",
+          got["userError"] or "no error")
+    check(got["userFound"] == got["found"],
+          "and finds the same files root does",
+          f"{got['userFound']} as the owner, {got['found']} as root")
+    check(got["userRoots"] == ["rpool/USERDATA", "rpool/DATA/srv",
+                               "rpool/DATA/lib/os7-domain-homes"],
+          "by walking the DEFAULT sources, where an owner's own restores land",
+          ", ".join(got["userRoots"]) or "<nothing asked>")
+    check(sorted(set(got["rootRoots"])) == ["rpool/USERDATA"],
+          "while root walks what the policy names",
+          ", ".join(got["rootRoots"]) or "<nothing asked>")
 
     removed = [n.split(".os7-before-restore-")[0] for n in got["removed"]]
     kept = [n.split(".os7-before-restore-")[0] for n in got["kept"]]

@@ -1,0 +1,54 @@
+#!/bin/sh
+# OS/7 — the update line of the login banner (SESSION-QOL-SURVEY Q13).
+#
+# THIS ASKS NOTHING, by 00-os7-header's rule and 40-os7-storage's: a login
+# banner must not ask ZFS and must not start pwsh, because it runs at every
+# console login, every ssh session and every GUI terminal. It reads
+# /run/os7/update-pending, which os7-update-check writes when it has staged a
+# release and removes when there is nothing to wait for, and prints a line only
+# when there is something to say.
+#
+# TWO STATES, because the unattended check never activates (§4.2 step 10 is the
+# operator's) and the operator may have done half of it:
+#   * staged, not activated: the machine still boots what it boots, and the
+#     line says the one command that activates it;
+#   * activated, not yet booted: Windows' "restart to finish installing".
+# Which one is a FILE READ, not a ZFS question: the ESP stub names the boot
+# environment GRUB will read its menu from (OS7.psm1, "THE ESP STUB NAMES THE
+# BOOT ENVIRONMENT"). pam_motd runs this as root, which is what can read it.
+#
+# SHIPPED IN os7-release and not in includes.chroot like 40-os7-storage,
+# because a file only the medium carries never reaches a machine through
+# Update-OS7 - and the machines this line is for are the ones that update.
+set -u
+
+state=/run/os7/update-pending
+[ -r "${state}" ] || exit 0
+
+# One `sed` over one flat JSON document (ConvertTo-Json -Compress).
+field() {
+	sed -n 's/.*"'"$1"'":"\{0,1\}\([^,"}]*\)"\{0,1\}.*/\1/p' "${state}" 2>/dev/null
+}
+
+version="$(field Version)"
+be="$(field BootEnvironment)"
+[ -n "${version}" ] && [ -n "${be}" ] || exit 0
+
+activated=no
+for stub in /boot/efi/EFI/OS7/grub.cfg /boot/efi/EFI/BOOT/grub.cfg; do
+	if grep -qF "/BOOT/${be}@/grub" "${stub}" 2>/dev/null; then
+		activated=yes
+		break
+	fi
+done
+
+if [ "${activated}" = yes ]; then
+	printf 'Update:  OS/7 %s is installed. Restart to finish:  sudo Restart-Computer\n\n' \
+		"${version}"
+else
+	printf 'Update:  OS/7 %s is ready to install. It was prepared in the background\n' \
+		"${version}"
+	printf '         as %s and the machine still starts the current one.\n' "${be}"
+	printf '         Finish it:  sudo Set-OS7BootEnvironment %s\n' "${be}"
+	printf '         then:       sudo Restart-Computer\n\n'
+fi

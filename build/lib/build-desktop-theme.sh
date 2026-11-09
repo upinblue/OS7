@@ -214,6 +214,8 @@ MUST=(
 	# extension.js is an extension the Shell lists and cannot load (#162).
 	"./usr/share/gnome-shell/extensions/os7-shell@os7/metadata.json"
 	"./usr/share/gnome-shell/extensions/os7-shell@os7/extension.js"
+	# The menu entry named for the word an administrator types (Q11).
+	"./usr/share/applications/os7-powershell.desktop"
 )
 CONTENTS="$(dpkg-deb -c "${DEB}")"
 missing=0

@@ -573,6 +573,15 @@ build_os7_release() {
 	install -d "${stage}/usr/lib/systemd/system/timers.target.wants"
 	ln -sfn ../os7-update-check.timer \
 		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-update-check.timer"
+	# The login banner's line for what the check staged (Q13). EXECUTED by
+	# pam_motd's run-parts, so executable - pkg_finish would otherwise turn the
+	# bind mount's 0777 into 0644 (#117), and run-parts skips a file it cannot
+	# execute WITHOUT A WORD: the line would simply never appear.
+	chmod 0755 "${stage}/etc/update-motd.d/41-os7-update"
+	if ! head -c 2 "${stage}/etc/update-motd.d/41-os7-update" | grep -q '#!'; then
+		echo "!!! os7-release: 41-os7-update has no shebang - run-parts executes it" >&2
+		exit 1
+	fi
 
 	# The release list a process that is not root can ask for (BUILD-NOTES
 	# #193's open half): a unit that runs Get-OS7Release as root and nothing
@@ -692,6 +701,7 @@ build_os7_release() {
 		./usr/lib/systemd/system/os7-update-check.timer \
 		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
 		./usr/libexec/os7-update-check \
+		./etc/update-motd.d/41-os7-update \
 		./usr/lib/systemd/system/os7-release-list.service \
 		./usr/libexec/os7-release-list \
 		./usr/share/polkit-1/rules.d/49-os7-release-list.rules \
@@ -792,6 +802,13 @@ build_os7_console() {
 		splash_must+=("${splash}/${sprite}.png")
 	done
 
+	# THE BOOT MENU (SESSION-QOL-SURVEY Q5, BRAND-PLAN BRL8): a drop-in update-grub
+	# reads and a script it RUNS - so executable, or grub-mkconfig skips it
+	# without a word and the menu stays Debian's blue (#117: pkg_finish turns
+	# the bind mount's 0777 into 0644).
+	chmod 0644 "${stage}/etc/default/grub.d/50-os7-boot-menu.cfg"
+	chmod 0755 "${stage}/etc/grub.d/06_os7_theme"
+
 	pkg_copyright os7-console "${stage}"
 	pkg_control  os7-console "${stage}" all
 	pkg_finish   os7-console "${stage}" all \
@@ -801,6 +818,8 @@ build_os7_console() {
 		./usr/share/os7/palette-contrast.vtrgb \
 		./usr/share/os7/console-setup \
 		./usr/share/doc/os7-console-font/LICENSE \
+		./etc/default/grub.d/50-os7-boot-menu.cfg \
+		./etc/grub.d/06_os7_theme \
 		"${splash_must[@]}"
 }
 
@@ -1291,6 +1310,20 @@ build_os7_app_softwareupdate() {
 	# turn the bind mount's 0777 into 0644 (#117).
 	chmod 0755 "${stage}/usr/bin/update-manager"
 
+	# "An update is waiting" on the desktop (SESSION-QOL-SURVEY Q13): a user
+	# path unit that watches what os7-update-check writes, and the oneshot it
+	# starts - wanted by graphical-session.target for EVERY user by symlink,
+	# like os7-theme-user-setup, so it also runs once at each sign-in. The
+	# script is executed by systemd, so executable (#117).
+	chmod 0755 "${stage}/usr/libexec/os7-update-notify"
+	chmod 0644 "${stage}/usr/lib/systemd/user/os7-update-notify.service" \
+	           "${stage}/usr/lib/systemd/user/os7-update-notify.path"
+	install -d "${stage}/usr/lib/systemd/user/graphical-session.target.wants"
+	ln -sfn ../os7-update-notify.path \
+		"${stage}/usr/lib/systemd/user/graphical-session.target.wants/os7-update-notify.path"
+	ln -sfn ../os7-update-notify.service \
+		"${stage}/usr/lib/systemd/user/graphical-session.target.wants/os7-update-notify.service"
+
 	pkg_copyright os7-app-softwareupdate "${stage}"
 	pkg_control  os7-app-softwareupdate "${stage}" "${OS7_ARCH}"
 	pkg_finish   os7-app-softwareupdate "${stage}" "${OS7_ARCH}" \
@@ -1301,7 +1334,12 @@ build_os7_app_softwareupdate() {
 		./usr/lib/systemd/system/os7-update@.service \
 		./usr/share/polkit-1/rules.d/49-os7-update.rules \
 		./usr/share/applications/os7-software-update.desktop \
-		./usr/bin/update-manager
+		./usr/bin/update-manager \
+		./usr/libexec/os7-update-notify \
+		./usr/lib/systemd/user/os7-update-notify.service \
+		./usr/lib/systemd/user/os7-update-notify.path \
+		./usr/lib/systemd/user/graphical-session.target.wants/os7-update-notify.path \
+		./usr/lib/systemd/user/graphical-session.target.wants/os7-update-notify.service
 }
 
 

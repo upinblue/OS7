@@ -1,0 +1,24 @@
+#!/bin/sh
+# OS/7 — the boot menu's colours (SESSION-QOL-SURVEY Q5, 2026-11-09).
+#
+# Monochrome, the way a Windows NT boot menu was: light grey on black, the
+# chosen entry inverted.
+#
+# WHY A SCRIPT HERE AND NOT A SETTING. Ubuntu's /etc/grub.d/05_debian_theme
+# picks the colours from GRUB_DISTRIBUTOR, read in the image: `Ubuntu` or
+# `Kubuntu` get white on black, everything else gets "the traditional Debian
+# blue theme" - and OS/7's Setup writes GRUB_DISTRIBUTOR="OS/7". So every
+# installed machine's menu was cyan on blue (read out of a 1.0.0.272 machine's
+# grub.cfg), and there is no variable that says otherwise. GRUB keeps the last
+# `set` before it draws, so this file runs after 05 and says it again.
+#
+# BUILT-IN VARIABLES ONLY. menu_color_* need no module, so nothing is loaded
+# from disk - which is the rule efi-remaster.sh keeps for Secure Boot.
+#
+# A conffile of os7-console. Remove the execute bit to get Debian's blue back.
+set -e
+
+cat <<'EOF'
+set menu_color_normal=light-gray/black
+set menu_color_highlight=black/light-gray
+EOF

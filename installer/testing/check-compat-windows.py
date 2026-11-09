@@ -26,9 +26,10 @@ SO THE CONTRACT IS CHECKED IN BOTH DIRECTIONS:
     mode, not the fix.
 
 WHERE THE WINDOWS SIDE COMES FROM. WINDOWS_PARAMETERS below was recorded on
-2026-09-09 by asking a real Windows pwsh **7.6.5** — the same version OS/7
-ships, so the two sides are comparable and a difference is a platform
-difference rather than a version one:
+2026-09-09 by asking a real Windows pwsh **7.6.5**, and asked again on
+2026-11-09 of Windows pwsh **7.6.9** when the pin moved there: all 14 sets
+identical. It is the same version OS/7 ships, so the two sides are comparable
+and a difference is a platform difference rather than a version one:
 
     Get-Command <name> | ForEach-Object { $_.Parameters.Keys } # minus the
                                                                # common ones
@@ -92,7 +93,8 @@ def check(ok, what, detail=""):
     return ok
 
 
-# Recorded from a real Windows pwsh 7.6.5 on 2026-09-09. Common parameters are
+# Recorded from a real Windows pwsh 7.6.5 on 2026-09-09; re-asked of Windows
+# pwsh 7.6.9 on 2026-11-09 and unchanged in all 14. Common parameters are
 # excluded; -WhatIf and -Confirm come from SupportsShouldProcess on both sides.
 WINDOWS_PARAMETERS = {
     "Get-Service": "DependentServices DisplayName Exclude Include InputObject Name RequiredServices",
