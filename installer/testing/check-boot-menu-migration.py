@@ -48,16 +48,23 @@ cat > /fake/bin/update-grub <<'EOF'
 echo call >> /fake/state/grub.log
 case "${FAKE_GRUB:-gen}" in fail) exit 1 ;; noop) exit 0 ;; esac
 for f in /etc/default/grub /etc/default/grub.d/*.cfg; do [ -f "$f" ] && . "$f"; done
+# grub-mkconfig's SECTION MARKERS are part of what is imitated: every script's
+# output sits between `### BEGIN /etc/grub.d/<script> ###` and its END, written
+# whether the script emits anything or not. Leaving them out is how the first
+# version of this check passed a migration that grepped for the word
+# `memtest86+` and failed on bench p272 on the marker (SESSION-PREVIEW-275).
+sec() { echo "### BEGIN /etc/grub.d/$1 ###"; cat; echo "### END /etc/grub.d/$1 ###"; }
 {
-  echo "set menu_color_normal=cyan/blue"
-  echo "set menu_color_highlight=white/blue"
-  [ -x /etc/grub.d/06_os7_theme ] && /etc/grub.d/06_os7_theme
-  echo 'if [ $grub_platform = efi ]; then'
-  echo "  set timeout=${GRUB_RECORDFAIL_TIMEOUT:-30}"
-  echo "fi"
-  echo "set timeout=${GRUB_TIMEOUT:-5}"
-  [ -e /fake/state/os7be ] && echo "menuentry 'OS/7 1.0.0.0 - os7_x' --class os_7 \$menuentry_id_option 'os7-be-os7_x' {"
-  [ "${GRUB_DISABLE_MEMTEST:-}" = true ] || echo 'menuentry "Memory test (mt86+x64)" --class memtest $menuentry_id_option "memtest86+" {'
+  printf 'set menu_color_normal=cyan/blue\nset menu_color_highlight=white/blue\n' | sec 05_debian_theme
+  if [ -x /etc/grub.d/06_os7_theme ]; then /etc/grub.d/06_os7_theme | sec 06_os7_theme; fi
+  printf 'if [ $grub_platform = efi ]; then\n  set timeout=%s\nfi\nset timeout=%s\n' \
+    "${GRUB_RECORDFAIL_TIMEOUT:-30}" "${GRUB_TIMEOUT:-5}" | sec 00_header
+  if [ -e /fake/state/os7be ]; then
+    echo "menuentry 'OS/7 1.0.0.0 - os7_x' --class os_7 \$menuentry_id_option 'os7-be-os7_x' {"
+  fi | sec 09_os7-boot-environments
+  if [ "${GRUB_DISABLE_MEMTEST:-}" != true ]; then
+    printf '\tmenuentry "Memory test (mt86+x64)" --class memtest $menuentry_id_option "memtest86+" {\n\t}\n'
+  fi | sec 20_memtest86+
 } > /boot/grub/grub.cfg
 EOF
 cat > /fake/bin/pwsh <<'EOF'
@@ -87,7 +94,9 @@ run() {  # name, script, setup...
   out=$(timeout 20 sh "$script" 2>&1); rc=$?
   g=0; [ -e /fake/state/grub.log ] && g=$(wc -l < /fake/state/grub.log)
   p=0; [ -e /fake/state/pwsh.log ] && p=$(wc -l < /fake/state/pwsh.log)
-  w=$(grep -c 'set timeout=30' /boot/grub/grub.cfg 2>/dev/null); m=$(grep -c memtest86 /boot/grub/grub.cfg 2>/dev/null)
+  # ENTRIES, counted the way the migration must count them - the word is in
+  # grub-mkconfig's section marker whether there are entries or not.
+  w=$(grep -c 'set timeout=30' /boot/grub/grub.cfg 2>/dev/null); m=$(grep -c -- '--class memtest' /boot/grub/grub.cfg 2>/dev/null)
   c=$(sed -n 's/^set menu_color_normal=//p' /boot/grub/grub.cfg 2>/dev/null | tail -1)
   printf '::CASE %s rc=%s grub=%s pwsh=%s wait30=%s memtest=%s colour=%s\n' "$name" "$rc" "$g" "$p" "${w:-x}" "${m:-x}" "${c:-none}"
   printf '%s\n' "$out" | sed 's/^/::OUT /'
@@ -111,6 +120,14 @@ P=/tmp/planted-81
 sed 's/^before="$(stale)"$/before=""/' "$S" > "$P"
 if cmp -s "$S" "$P"; then echo '::PLANT missed'; else echo '::PLANT made'; fi
 run planted-updated $P 'touch /fake/state/os7be' 'previous' 'current'
+
+# THE SECOND PLANT is 1.0.0.276's own defect: the memory-test question asking
+# for the WORD, which grub-mkconfig's section marker always contains. On bench
+# p272 that rebuilt a correct menu and then failed its read-back at every boot.
+P2=/tmp/planted-81-word
+sed '/--class memtest/s/grep -Eq.*/grep -q memtest86+ "${CFG}"; then/' "$S" > "$P2"
+if cmp -s "$S" "$P2"; then echo '::PLANT2 missed'; else echo '::PLANT2 made'; fi
+run planted-word $P2 'touch /fake/state/os7be' 'previous' 'current'
 """
 
 
@@ -123,7 +140,7 @@ def main():
     got = subprocess.run(["docker", "run", "--rm", "-v", REPO + ":/repo:ro", IMAGE,
                           "bash", "-c", driver],
                          capture_output=True, text=True, encoding="utf-8", errors="replace")
-    cases, plant, current = {}, None, None
+    cases, plant, plant2, current = {}, None, None, None
     for line in (got.stdout or "").splitlines():
         if line.startswith("::CASE "):
             parts = line.split()
@@ -136,6 +153,8 @@ def main():
             cases[current]["out"] += line[6:] + "\n"
         elif line.startswith("::PLANT "):
             plant = line.split()[1]
+        elif line.startswith("::PLANT2 "):
+            plant2 = line.split()[1]
     if not cases:
         print(got.stdout[-2000:])
         print(got.stderr[-2000:], file=sys.stderr)
@@ -200,6 +219,12 @@ def main():
     check(c["rc"] == "0" and c["grub"] == "0" and c["wait30"] != "0",
           "PROVEN: without the state question, an updated machine keeps the old menu",
           "rc=%s grub=%s wait30=%s" % (c["rc"], c["grub"], c["wait30"]))
+
+    check(plant2 == "made", "the second plant found the memory-test question to rewrite")
+    c = case("planted-word")
+    check(c["rc"] == "1" and "still disagrees" in c["out"] and c["memtest"] == "0",
+          "PROVEN: asking for the word memtest86+ fails a CORRECT menu on grub-mkconfig's "
+          "section marker — 1.0.0.276's defect, red here", "rc=%s memtest=%s — %s" % (c["rc"], c["memtest"], c["last"]))
 
     print()
     if bad:

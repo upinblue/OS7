@@ -554,8 +554,12 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   GRUB settings reached an updated
                                           #   machine one release late. Eight
                                           #   cases, an administrator's 30 s left
-                                          #   alone, and a copy without the state
-                                          #   question keeps the old menu. ~10 s
+                                          #   alone; two plants - no state
+                                          #   question, and 1.0.0.276's own
+                                          #   defect (asking for the WORD
+                                          #   memtest86+, which grub-mkconfig's
+                                          #   section marker always holds, so the
+                                          #   fake writes the markers too). ~10 s
 ./installer/testing/check-reseal-migration.py
                                           #   firstboot migration 50-tpm2-reseal
                                           #   against fake cryptsetup and

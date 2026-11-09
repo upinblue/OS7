@@ -10565,6 +10565,20 @@ shipped file against a fake update-grub that decides as grub-mkconfig does:
 eight cases, and with the state question removed from a copy the updated
 machine keeps its old menu.
 
+**And the first version of that migration failed on the machine while its check
+was green** (1.0.0.276, the rehearsal 272 → 276 on the same bench): it found
+all three stale, rebuilt a CORRECT menu — no 30-second wait, monochrome, no
+memory-test entry — and then failed its own read-back at every boot, with
+`os7-migrations-firstboot.service` red. It asked for the WORD `memtest86+`, and
+grub-mkconfig writes `### BEGIN /etc/grub.d/20_memtest86+ ###` into every menu
+whether that script emits an entry or not. The check's fake generator wrote no
+section markers, so it could not see it. Now the migration counts entries
+(`menuentry … --class memtest`), the fake writes grub-mkconfig's markers, and a
+second plant restores the word — red. The old file against a menu holding only
+the marker: exit 1; the new one: exit 0; and the new one on the bench's real
+menu: "nothing to do". *A fake that imitates a generator imitates its
+bookkeeping too, or it tests a cleaner file than the one on the machine.*
+
 **Not fixed in general.** Any later release that changes `/etc/default/grub*`
 or `/etc/grub.d` meets the same delay unless it brings a migration of its own.
 Building the target's menu from the TARGET's configuration would be the

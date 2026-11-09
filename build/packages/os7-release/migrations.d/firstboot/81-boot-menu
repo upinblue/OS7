@@ -63,7 +63,13 @@ stale() {
 		grep -Eq '^[[:space:]]*set timeout=30[[:space:]]*$' "${CFG}"; then
 		out="${out} wait"
 	fi
-	if [ "$(setting GRUB_DISABLE_MEMTEST)" = true ] && grep -q 'memtest86+' "${CFG}"; then
+	# ENTRIES, not the word: grub-mkconfig writes `### BEGIN
+	# /etc/grub.d/20_memtest86+ ###` into every menu whether the script emits
+	# anything or not. The first version grepped for `memtest86+`, rebuilt a
+	# correct menu on bench p272 and then failed its own read-back on the
+	# section marker - at every boot, with the migration unit red.
+	if [ "$(setting GRUB_DISABLE_MEMTEST)" = true ] &&
+		grep -Eq '^[[:space:]]*menuentry .*--class memtest' "${CFG}"; then
 		out="${out} memtest"
 	fi
 	if [ -x "${THEME}" ]; then
