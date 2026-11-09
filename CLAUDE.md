@@ -544,6 +544,18 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   migration's own read-back is
                                           #   proven to FIRE on a copy with the
                                           #   doing removed. 24 checks, ~20 s
+./installer/testing/check-boot-menu-migration.py
+                                          #   firstboot migration 81-boot-menu
+                                          #   against a fake update-grub that
+                                          #   decides as grub-mkconfig does
+                                          #   (#198): activation builds the new
+                                          #   environment's menu from the OLD
+                                          #   one's configuration, so a release's
+                                          #   GRUB settings reached an updated
+                                          #   machine one release late. Eight
+                                          #   cases, an administrator's 30 s left
+                                          #   alone, and a copy without the state
+                                          #   question keeps the old menu. ~10 s
 ./installer/testing/check-reseal-migration.py
                                           #   firstboot migration 50-tpm2-reseal
                                           #   against fake cryptsetup and

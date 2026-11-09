@@ -1727,11 +1727,14 @@ def main() -> None:
     # else hook 0075 disables. Written as a SET rather than as two literal lists,
     # because the literal form had to be edited the first time OS/7 grew a second
     # banner and would have to be edited again for a third.
-    allowed = {"00-os7-header", "40-os7-storage", "98-reboot-required"}
+    # 41-os7-update joined them on 2026-11-09 (SESSION-QOL-SURVEY Q13) - and
+    # hook 0075's own keep-list, which named two files, disabled it on the
+    # first medium that carried it. This check is what said so.
+    allowed = {"00-os7-header", "40-os7-storage", "41-os7-update", "98-reboot-required"}
     check(set(executable) <= allowed,
           "only OS/7's own banners and the reboot notice run at login",
           " ".join(executable) or "(none)")
-    for own in ("00-os7-header", "40-os7-storage"):
+    for own in ("00-os7-header", "40-os7-storage", "41-os7-update"):
         check(any(name == own and "x" in mode for name, mode in motd),
               f"{own} is executable")
     # The one that makes a network request at login.

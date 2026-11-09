@@ -10527,3 +10527,74 @@ the cache for a release (RELEASE-PROCESS §3, steps 1–2), and
 *The general form:* **a cache is a pin nobody wrote down.** The Dockerfile says
 "the newest SDK", the layer cache said "the one from September", and the second
 is what every build got.
+
+---
+
+## #198 — a release's boot-menu configuration reaches an UPDATED machine's menu one release late, because activation builds the new menu in the old environment
+
+**Found 2026-11-09** on bench `p272`, rehearsing the field update 1.0.0.272 →
+1.0.0.275 against the cut repository before publication. 275 ships
+`/etc/default/grub.d/50-os7-boot-menu.cfg` (a 5-second wait, no memory tests)
+and `/etc/grub.d/06_os7_theme` (monochrome) in `os7-console`. After the update
+and the reboot both files were installed and `dpkg -S` named `os7-console` for
+them — and the menu GRUB had just read held `set timeout=30` twice, Debian's
+`cyan/blue` and eight memory-test entries: 272's menu, byte for byte in what
+mattered.
+
+**Why.** `Update-OS7` activates through `Set-OS7BootEnvironment`, whose steps 1
+and 4 are: run update-grub so *the running environment's* menu lists every
+environment, then copy that menu into the target's boot dataset. The running
+environment at activation is the PREVIOUS release, and update-grub reads ITS
+`/etc/default/grub*` and `/etc/grub.d`. `grub.cfg`'s mtime said so: written at
+the activation, before the reboot, and not since. Asked the other way round,
+`Set-OS7BootEnvironment` for the now-running 275 environment produced the right
+menu at once.
+
+This is #181's shape from the other side: there, OS/7's menu froze the kernel
+command line at a machine's first activation; here, activation is correct about
+the kernel line and late about everything else the release changes in GRUB's
+configuration. A fresh install is never affected — Setup runs update-grub in
+the new system.
+
+**Fixed for this configuration** by firstboot migration `81-boot-menu`, which
+asks the menu GRUB reads three questions against the running environment's
+configuration (the recordfail wait, the memory tests, the colours), rebuilds
+through `Set-OS7BootEnvironment` — as `80-boot-splash` does — only when one
+disagrees, and asks again afterwards. `check-boot-menu-migration.py` runs the
+shipped file against a fake update-grub that decides as grub-mkconfig does:
+eight cases, and with the state question removed from a copy the updated
+machine keeps its old menu.
+
+**Not fixed in general.** Any later release that changes `/etc/default/grub*`
+or `/etc/grub.d` meets the same delay unless it brings a migration of its own.
+Building the target's menu from the TARGET's configuration would be the
+general answer, and it reaches into the one function whose order exists to
+keep a machine bootable; it is not done here.
+
+*The general form:* **the process that writes a file is not always the release
+that ships its inputs.** The configuration arrived with 275; the menu was
+written by 272.
+
+## #199 — hook 0075's MOTD keep-list disabled the next OS/7 banner script
+
+**Found 2026-11-09** by `check-image.py amd64` on `OS7-1.0.0.275-amd64.iso`:
+`41-os7-update`, the staged-release line `os7-release` ships, was `0644` in the
+image. On bench `p272`, which updated to the same release, it was `0755`.
+
+Hook 0075 keeps nothing at login that OS/7 did not put there — a keep-list,
+deliberately (IL10) — and the list was two literal names, `00-os7-header` and
+`40-os7-storage`. Everything else loses its execute bit, so the third OS/7
+script was disabled by the hook that exists to keep OS/7's scripts; and
+`run-parts` skips a file it cannot execute without a word. A machine that
+updates never runs the hook, which is why the bench was right and the medium
+wrong.
+
+**Fixed:** the hook keeps every `NN-os7-*` file by name and gives each the same
+rules (executable, no `zfs`/`zpool` call); it still requires the three it knows
+to exist and to be executable afterwards. `check-image.py`'s allowed set names
+the third. Dry-run against a directory of Ubuntu's drop-ins and OS/7's three:
+OS/7's stay `0755`, Ubuntu's lose the bit, `98-reboot-required` stays.
+
+*The general form:* **a keep-list is a list somebody has to remember to extend**
+— check-image.py's comment had already said its own set "would have to be
+edited again for a third", and the hook's twin of it was the one that was not.

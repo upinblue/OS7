@@ -1,0 +1,124 @@
+#!/bin/sh
+# Q5 and BRL8 — the boot menu's wait, colours and memory tests, on a machine
+# that UPDATED to the release shipping them (SESSION-QOL-SURVEY Q5, BRAND-PLAN
+# BRL8, SESSION-PREVIEW-275).
+#
+# THE STATE: os7-console ships /etc/default/grub.d/50-os7-boot-menu.cfg and
+# /etc/grub.d/06_os7_theme, and a fresh install reads both when Setup runs
+# update-grub. A machine that UPDATES does not: Update-OS7 activates the new
+# environment through Set-OS7BootEnvironment, which generates the menu in the
+# RUNNING environment - the previous release, which has neither file - and
+# copies it into the new one (its steps 1 and 4). Measured on bench p272,
+# 1.0.0.272 -> 1.0.0.275: both files installed and owned by os7-console, and
+# the menu GRUB read after the reboot still held `set timeout=30` twice,
+# Debian's cyan/blue and eight memory-test entries. Rebuilt from the running
+# 275 environment, the same menu held none of the three.
+#
+# So this rebuilds the running environment's menu - through
+# Set-OS7BootEnvironment, the one supported way to change what boots, as
+# 80-boot-splash does - when it does not say what this environment's
+# configuration says, and otherwise does nothing at all.
+#
+# IDEMPOTENT BY ASKING FOR THE STATE, three questions of the menu GRUB reads,
+# each against the configuration as update-grub would read it (the last
+# assignment wins, /etc/default/grub first, then /etc/default/grub.d/*.cfg):
+#   1. the recordfail wait: no `set timeout=30` unless 30 is what is asked for;
+#   2. the memory tests: no memtest86+ entry when GRUB_DISABLE_MEMTEST=true;
+#   3. the colours: the last `menu_color_normal` is what 06_os7_theme says,
+#      when that script is executable.
+# An administrator who sets the wait back to 30, turns memory tests on or
+# removes 06_os7_theme's execute bit gets a menu that says so, and this agrees.
+#
+# THE EXIT CODE OF THE THING THAT WRITES IS NOT THE PROOF: the three questions
+# are asked again afterwards.
+set -u
+
+TAG="os7/81-boot-menu"
+CFG=/boot/grub/grub.cfg
+THEME=/etc/grub.d/06_os7_theme
+
+say() { echo "${TAG}: $*"; }
+
+if [ ! -f "${CFG}" ] || [ ! -f /etc/default/grub ]; then
+	say "no ${CFG} or /etc/default/grub - not a machine this GRUB menu boots, nothing to do"
+	exit 0
+fi
+
+# One setting as grub-mkconfig would see it, in a subshell so nothing leaks.
+setting() {
+	(
+		for f in /etc/default/grub /etc/default/grub.d/*.cfg; do
+			[ -f "${f}" ] && . "${f}" >/dev/null 2>&1
+		done
+		eval "printf '%s' \"\${$1:-}\""
+	)
+}
+
+# What is wrong with the menu, one word per finding; empty when nothing is.
+stale() {
+	out=""
+	wait="$(setting GRUB_RECORDFAIL_TIMEOUT)"
+	timeout="$(setting GRUB_TIMEOUT)"
+	if [ "${wait:-30}" != 30 ] && [ "${timeout}" != 30 ] &&
+		grep -Eq '^[[:space:]]*set timeout=30[[:space:]]*$' "${CFG}"; then
+		out="${out} wait"
+	fi
+	if [ "$(setting GRUB_DISABLE_MEMTEST)" = true ] && grep -q 'memtest86+' "${CFG}"; then
+		out="${out} memtest"
+	fi
+	if [ -x "${THEME}" ]; then
+		want="$(sh "${THEME}" 2>/dev/null | sed -n 's/^set menu_color_normal=//p' | tail -1)"
+		got="$(sed -n 's/^[[:space:]]*set menu_color_normal=//p' "${CFG}" | tail -1)"
+		if [ -n "${want}" ] && [ "${got}" != "${want}" ]; then
+			out="${out} colours"
+		fi
+	fi
+	printf '%s' "${out# }"
+}
+
+before="$(stale)"
+if [ -z "${before}" ]; then
+	say "the menu says what this environment's configuration says - nothing to do"
+	exit 0
+fi
+say "the menu was generated from another environment's configuration: ${before}"
+
+# ---- the menu: the same two steps as 80-boot-splash -------------------------
+if ! update-grub >/dev/null 2>&1; then
+	say "update-grub failed; the menu is unchanged"
+	exit 1
+fi
+
+if grep -q "'os7-be-" "${CFG}"; then
+	if ! command -v pwsh >/dev/null 2>&1; then
+		say "pwsh is not on PATH; OS/7's own menu is written by Set-OS7BootEnvironment"
+		exit 1
+	fi
+	say "rebuilding OS/7's menu for the running boot environment"
+	if ! pwsh -NoProfile -NonInteractive -Command '
+			$ErrorActionPreference = "Stop"
+			Import-Module OS7 -ErrorAction Stop
+			$running = @(Get-OS7BootEnvironment | Where-Object Running)
+			if ($running.Count -ne 1) {
+				throw "expected one running boot environment, found $($running.Count)"
+			}
+			Set-OS7BootEnvironment -Name $running[0].Name -Confirm:$false | Out-Null
+		'; then
+		say "Set-OS7BootEnvironment failed; the menu is still the previous environment's"
+		exit 1
+	fi
+fi
+
+# ---- ASK THE RESULT ----------------------------------------------------------
+after="$(stale)"
+if [ -n "${after}" ]; then
+	say "the menu was rebuilt and still disagrees with this environment: ${after}"
+	exit 1
+fi
+
+# stale() ran in a subshell, so what it read is asked again for the record.
+rf="$(setting GRUB_RECORDFAIL_TIMEOUT)"
+mt="on"; [ "$(setting GRUB_DISABLE_MEMTEST)" = true ] && mt="off"
+co="$(sed -n 's/^[[:space:]]*set menu_color_normal=//p' "${CFG}" | tail -1)"
+say "done: the menu is this environment's - wait ${rf:-30} s, memory tests ${mt}, colours ${co:-unset}"
+exit 0

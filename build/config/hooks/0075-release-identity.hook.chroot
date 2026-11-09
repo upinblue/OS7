@@ -305,15 +305,28 @@ echo "OS/7 hook 0075:   /etc/legal names OS/7"
 MOTD_DIR=/etc/update-motd.d
 OS7_MOTD="${MOTD_DIR}/00-os7-header"
 
-# OS/7's OWN motd scripts, both of which must survive the disabling loop below.
+# OS/7's OWN motd scripts, all of which must survive the disabling loop below.
 # 40-os7-storage is the storage line (VERSIONS-PLAN §5): it reads
 # /run/os7/storage-pressure, which os7-storage-relief.service writes, and it
 # asks ZFS nothing - the same rule 00-os7-header states for itself.
-for m in "${OS7_MOTD}" "${MOTD_DIR}/40-os7-storage"; do
+# 41-os7-update is the staged-release line (SESSION-QOL-SURVEY Q13), shipped by
+# os7-release rather than includes.chroot so it reaches machines that update.
+#
+# EVERY `NN-os7-*` FILE IS OURS, by name, and is kept - not only the ones listed.
+# The list was two names until 2026-11-09, and the third OS/7 script, the
+# update line, was disabled by this very hook on the first medium that carried
+# it: 0644 in the image, so run-parts skipped it in silence, while a machine
+# that UPDATED to the same release had it 0755 (no hook runs there).
+# check-image.py found it on OS7-1.0.0.275-amd64.iso. The three named here are
+# the ones that must EXIST; the pattern is what keeps the next one alive.
+for m in "${OS7_MOTD}" "${MOTD_DIR}/40-os7-storage" "${MOTD_DIR}/41-os7-update"; do
 	if [ ! -s "${m}" ]; then
-		echo "OS/7 hook 0075: ${m} is missing or empty (includes.chroot)" >&2
+		echo "OS/7 hook 0075: ${m} is missing or empty (includes.chroot or os7-release)" >&2
 		exit 1
 	fi
+done
+for m in "${MOTD_DIR}"/[0-9][0-9]-os7-*; do
+	[ -f "${m}" ] || continue
 	# They ship 0644 from includes.chroot - a git checkout on a filesystem with
 	# no executable bit is the normal case here, so the mode is set rather than
 	# assumed (the same trade hook 0090 makes for the backup scripts).
@@ -341,7 +354,7 @@ for f in "${MOTD_DIR}"/*; do
 	[ -f "${f}" ] || continue
 	name="$(basename "${f}")"
 	case "${name}" in
-		00-os7-header|40-os7-storage)
+		[0-9][0-9]-os7-*)
 			continue ;;
 		# The reboot notice: not Ubuntu branding, not an advertisement, and the
 		# one thing in that directory an operator would miss.
@@ -371,7 +384,7 @@ fi
 still="$(find "${MOTD_DIR}" -maxdepth 1 -type f -perm -u+x -printf '%f ' 2>/dev/null || true)"
 echo "OS/7 hook 0075:   MOTD: disabled ->${disabled:- (none)}"
 echo "OS/7 hook 0075:   MOTD: still executable -> ${still:-(none)}${kept:+ (kept:${kept} )}"
-for m in 00-os7-header 40-os7-storage; do
+for m in 00-os7-header 40-os7-storage 41-os7-update; do
 	case " ${still} " in
 		*" ${m} "*) ;;
 		*)
