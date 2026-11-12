@@ -67,7 +67,7 @@ here either — this file points, they rule.
 | The identity and access management application on top of OS/7: what it is, the layer cut against the OS, decisions IG1–IG14 | [docs/IAM-PLAN.md](docs/IAM-PLAN.md), with [docs/IAM-SCOPE.md](docs/IAM-SCOPE.md) as its capability scope — **all *Proposed*, nothing built.** It is **not an OS feature and must not become one**: AU1 is the line, and routing roles, attestation and separation of duties through the cmdlet surface would end with two hundred cmdlets of business logic in `powershell/OS7/`. Two decisions do most of the work — **IG5**, every derived fact carries its derivation (without it, individual-versus-role reporting and attestation of any kind are unimplementable *late*), and **IG6**, the plan is an artifact, which turns the reconciler, attestation and separation of duties into producers and validators of plans rather than three more engines. **The AD cmdlets are deliberately NOT its foundation** — a .NET application has `S.DS.P` natively, so what transfers is [AD-PLAN.md](docs/AD-PLAN.md)'s measured knowledge and not its code, and OS/7's AD surface should stop growing toward being a provisioning engine |
 | Previous versions of a file, the Time-Machine window, and what happens when the pool fills up, decisions V1–V19 | [docs/VERSIONS-PLAN.md](docs/VERSIONS-PLAN.md) — **the read half is built and has drawn a real file's history on a machine; the storage rule and the restore's safety snapshot are built and measured against real ZFS.** §2 measured that every prerequisite already exists and that the snapshots are ALREADY BEING TAKEN, so this is a READER and must never become a second snapshot policy (V1). The hard part is not the snapshots: it is the disk filling up, and the owner's rule is 70 warn / 80 tighten / 90 refuse, gated on whether thinning could even reach the target. **V19 is what a machine taught it** — `zfs snapshot` is root's, so a file's owner can list every version of it and cannot take the snapshot that makes restoring one undoable (M-V22). The answer is Time Machine's own: Apple takes no pre-restore snapshot either, it moves the existing file aside, so OS/7 keeps what it is about to overwrite by the strongest means available where it stands — a snapshot with privilege, a rename without ([SESSION-VERSIONS-RESTORE-SAFETY.md](docs/SESSION-VERSIONS-RESTORE-SAFETY.md)). **AND SINCE 2026-09-15 DOMAIN USERS HAVE VERSIONS AT ALL** (VL7, closed): `rpool/DATA/lib/os7-domain-homes` — where every domain account's home is — was in no backup policy, so a domain-joined machine snapshotted nobody's work. One line of defaults and a firstboot migration for machines already installed. Measuring it found the bigger one beside it: a dataset with NO snapshots returned an empty list in silence, and the window turned that into a claim — *"1 versions, back to today"* — because it asks with `-IncludeCurrent`, so V6's own sentence was unreachable for every file that EXISTS (#163). Then clicking found the refusal arriving as PowerShell's ConciseView stack trace, drawn twice ([SESSION-VERSIONS-DOMAIN-HOMES.md](docs/SESSION-VERSIONS-DOMAIN-HOMES.md)) |
 | Containers on OS/7: which engine, where its data lives, how PowerShell reaches it, who may see it, and the window an administrator controls them from, decisions CT1–CT12 | [docs/CONTAINERS-PLAN.md](docs/CONTAINERS-PLAN.md) — **the window is BUILT AND HAS RUN ON A MACHINE (2026-10-30)**: `Install-OS7ContainerHost` installed the archive's engine on an installed 1.0.0.264 with both stores on their own datasets first, and `os7-containers` drew the engine, signed in through polkit, created a container and cleaned one up ([SESSION-CONTAINERS-WINDOW.md](docs/SESSION-CONTAINERS-WINDOW.md)). The owner decided CT5's channel (a polkit helper, AND the `docker` group as an explicit, root-equivalent opt-in), moved a create dialog into v1, and asked that the window set the engine up itself — a third polkit action. The window ships on the amd64 GUI medium; the engine deliberately does not (CT3) and is set up from the window or `Install-OS7ContainerHost`. A machine found BUILD-NOTES #192 doing it: `-ErrorAction SilentlyContinue` stops swallowing a `throw` the moment a caller has a `try`. Still owed: arm64 boots, Compose deploys, O-M2/O-M6. Its §3 answers the owner's requirement — *easy to keep up to date* — first: every fact in one place and a check on every seam, so the engine version lives in the pin, the API's shape in `powershell/Docker/` (whose range IS its recordings of real engines), the judgements in `OS7.Container.ps1`, and the window renders the cmdlet's object. **Measured on a machine:** the archive's `docker.io` works on OS/7's ZFS root and makes no dataset per layer; a plain `apt install docker.io` puts the image store INSIDE the boot environment and its own dataset where no OS/7 cmdlet sees it, so the store's two datasets come first; and the engine's default bridge `172.17.0.0/16` cut a bench off from its SSH peer, so OS/7 owns and checks the ranges. The generic layer speaks the Engine API and never the CLI, because the CLI exits 0 for a start that started nothing ([SESSION-CONTAINERS-ZFS.md](docs/SESSION-CONTAINERS-ZFS.md), [SESSION-DOCKER-MODULE.md](docs/SESSION-DOCKER-MODULE.md), [SESSION-CONTAINER-STATES.md](docs/SESSION-CONTAINER-STATES.md)). **No image carries the engine yet** |
-| Software from a vendor's own apt repository: how a source is admitted, what it may supply, how it is kept current, where its state lives, and Tailscale as the first role, decisions VA1–VA17 | [docs/VENDOR-APPS-PLAN.md](docs/VENDOR-APPS-PLAN.md) — **approved as the basis 2026-11-09; the generic half has run on a machine, the Tailscale role is built and has NOT.** A vendor source is REGISTERED, not written: its key pinned by fingerprint in the pin, an apt preference that lets its origin supply only the packages named, a record; it moves inside `Update-OS7` and by a timer between releases, and the drift check is measured against a baseline OS/7 writes (#200: it had compared nothing). Tailscale follows its own stable channel (no version in the pin), its state is a dataset made before the package, its login takes a key from the secret store as a FILE, and Tailscale SSH and its own updater are off and reported when on. **M-TS17 corrected VA11 before anything ran: a login REPLACES the preferences `up` has no flag for**, so they are set after it. Everything Tailscale was measured against a local Headscale — the owner ruled out a real tailnet ([SESSION-TAILSCALE.md](docs/SESSION-TAILSCALE.md), [SESSION-VENDOR-SOURCES.md](docs/SESSION-VENDOR-SOURCES.md), [SESSION-TAILSCALE-ROLE.md](docs/SESSION-TAILSCALE-ROLE.md)) |
+| Software from a vendor's own apt repository: how a source is admitted, what it may supply, how it is kept current, where its state lives, and Tailscale as the first role, decisions VA1–VA17 | [docs/VENDOR-APPS-PLAN.md](docs/VENDOR-APPS-PLAN.md) — **approved as the basis 2026-11-09; both halves have run on a machine — the Tailscale role end to end since 2026-11-12, by `run-tailscale.py`.** A vendor source is REGISTERED, not written: its key pinned by fingerprint in the pin, an apt preference that lets its origin supply only the packages named, a record; it moves inside `Update-OS7` and by a timer between releases, and the drift check is measured against a baseline OS/7 writes (#200: it had compared nothing). Tailscale follows its own stable channel (no version in the pin), its state is a dataset made before the package, its login takes a key from the secret store as a FILE, and Tailscale SSH and its own updater are off and reported when on. **M-TS17 corrected VA11 before anything ran: a login REPLACES the preferences `up` has no flag for**, so they are set after it. Everything Tailscale was measured against a local Headscale — the owner ruled out a real tailnet ([SESSION-TAILSCALE.md](docs/SESSION-TAILSCALE.md), [SESSION-VENDOR-SOURCES.md](docs/SESSION-VENDOR-SOURCES.md), [SESSION-TAILSCALE-ROLE.md](docs/SESSION-TAILSCALE-ROLE.md)) |
 | Every trap found so far, numbered | [docs/BUILD-NOTES.md](docs/BUILD-NOTES.md) — **read before debugging** |
 | What a past session actually measured | `docs/SESSION-*.md` |
 
@@ -110,9 +110,9 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   ORDER of them, against fake zfs,
                                           #   apt and chroot - with REAL mounts
                                           #   and REAL signatures. ~3 min, no VM
-./installer/testing/check-ps-traps.py     # SIX PowerShell traps this repo has
+./installer/testing/check-ps-traps.py     # SEVEN PowerShell traps this repo has
                                           #   paid for (#65, #91, #82, #112/#119,
-                                          #   #121, #127), asked of the parser.
+                                          #   #121, #127, #203), asked of the parser.
                                           #   Seconds; needs only pwsh. #82 is the
                                           #   import-scope one: it went red on the
                                           #   tree whose ISO build had just died
@@ -132,6 +132,14 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   the join called -Enabled on a cmdlet
                                           #   whose parameter is -Startup, inside a
                                           #   catch that made it one warning line.
+                                          #   #203 is -Confirm:$false, which does
+                                          #   not cross a module boundary: a
+                                          #   ConfirmImpact=High verb of another
+                                          #   module prompts, and under
+                                          #   -NonInteractive the prompt THROWS -
+                                          #   Install-OS7Tailscale -Adopt died at
+                                          #   Stop-SystemdUnit on its first run on
+                                          #   a machine, its logic check green.
                                           #   OS7_SCAN_ROOT redirects the scan, so
                                           #   each rule can be proven to FIRE
                                           #   against a planted defect and not only
@@ -764,7 +772,7 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   defects red. Docker, minutes
 ./installer/testing/check-tailscale-logic.py
                                           #   VA9-VA16, the Tailscale role's
-                                          #   DECISIONS and their ORDER: 73
+                                          #   DECISIONS and their ORDER: 74
                                           #   checks against recorded tailscale
                                           #   1.104.5 output, the side effects
                                           #   stubbed in the module's scope -
@@ -775,7 +783,7 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   counts only a throw), preferences
                                           #   set AFTER the login (M-TS17), and
                                           #   nothing switching SSH or the
-                                          #   client's updater on. --prove: 12
+                                          #   client's updater on. --prove: 13
                                           #   planted defects, each RED. Every
                                           #   cmdlet is called INSIDE the
                                           #   module's scope - from outside, the
@@ -783,6 +791,27 @@ make repo-amd64                           # OS/7's own SIGNED package repository
                                           #   in its body never does (five MISS
                                           #   until that was found). Seconds,
                                           #   needs pwsh, any account, both hosts
+./installer/testing/run-tailscale.py all  # THE TAILSCALE ROLE ON A MACHINE, end
+                                          #   to end, against a Headscale, a peer
+                                          #   and a CA it makes PER RUN from
+                                          #   installer/testing/tailscale-lab/ -
+                                          #   never a real tailnet (the owner's
+                                          #   rule). An os7lab bench from p1-280:
+                                          #   documented login, Update-OS7, -Adopt,
+                                          #   a rollback, the timer, SSH by hand,
+                                          #   uninstall, logins by key and by URL,
+                                          #   VA16. The role's word is checked
+                                          #   against witnesses that bypass it:
+                                          #   the client's JSON, findmnt, and
+                                          #   Headscale's node list. Keys travel
+                                          #   on STDIN only. 105 checks, ~20 min,
+                                          #   x64 Windows host only (the relay's
+                                          #   address is Docker Desktop's). Its
+                                          #   first runs found three defects the
+                                          #   logic check above had passed, #203
+                                          #   among them. A machine snapshot is
+                                          #   taken WITH Headscale's database,
+                                          #   because the identity lives in both
 ./installer/testing/capture-docker-fixtures.py desktop | bench <name>
                                           #   record a REAL engine into
                                           #   powershell/Docker/tests/fixtures,

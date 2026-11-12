@@ -10702,3 +10702,58 @@ checks) and `Test-OS7Update` (31) have no `catch`. Docker, Systemd and Time do.
 *The general form:* **a verdict is only as good as the count behind it.** A test
 that can stop early and still print its verdict needs to know how many checks it
 meant to make.
+
+## #203 — `-Confirm:$false` does not cross a module boundary
+
+**Found 2026-11-12** the first time `Install-OS7Tailscale -Adopt -Confirm:$false` ran on a
+machine (`run-tailscale.py`, [SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §8). It
+died at its first step:
+
+    Exception calling "ShouldProcess" with "2" argument(s): "PowerShell is in
+    NonInteractive mode. Read and Prompt functionality is not available."
+
+The step was `Stop-SystemdUnit -Name tailscaled.service`, which is `ConfirmImpact = 'High'`
+in the Systemd module. A caller's `-Confirm:$false` sets `$ConfirmPreference` in the
+CALLER's scope, and a function of ANOTHER module resolves preference variables through its
+own module's session state — so the callee saw the global `High`, matched its own impact,
+and prompted. Under `-NonInteractive`, which is every unit, job and harness on an OS/7
+machine, a prompt is an exception. Within one module the preference does reach the callee,
+which is why the same shape inside `OS7` never failed.
+
+`check-tailscale-logic.py` was green: it stubs the systemd verbs in the module's scope, so
+the prompt they raise could not happen there. Every other caller of `Stop-`/`Restart-
+SystemdUnit` in `powershell/OS7` already passed `-Confirm:$false`; the new file was the one
+that did not.
+
+**Fixed** in `OS7.Tailscale.ps1` (all five systemd calls), and **held**: `check-ps-traps.py`
+has a seventh rule, asked of the parser — a call to a function the tree defines with
+`ConfirmImpact = 'High'`, from a file in a different module, with no `-Confirm` and no splat.
+At 0 on the fixed tree; with the defect planted back on a copy (`OS7_SCAN_ROOT`) it names
+`OS7.Tailscale.ps1:559  Stop-SystemdUnit (Systemd)` and exits 1.
+
+*The general form:* **a stub removes the behaviour it stands in for, including the parts
+nobody thought of as behaviour.** A prompt is a side effect of the callee's declaration, not
+of anything it does.
+
+## #204 — a daemon that was running when a CA was added keeps distrusting it
+
+**Found 2026-11-12** on the first run of `run-tailscale.py`
+([SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §11). The lab makes a new CA on every run
+and the bench preparation puts it into the guest's system store with `update-ca-certificates`.
+In the same second, on the same machine:
+
+    curl https://headscale.os7.test:8443/health        -> 200
+    tailscaled: fetch control key: ... x509: certificate signed by unknown authority
+
+and `tailscale up` timed out waiting for `Running`. Go reads the system's roots once, at the
+first TLS handshake, and keeps them for the life of the process; `tailscaled` had been running
+since boot, when the store held the previous run's CA. `curl` is a new process every time, so it
+was the wrong witness for the daemon's trust. Restarting the daemon after
+`update-ca-certificates` fixed it.
+
+The mechanism is Go's — its system pool is loaded once per process — so the other Go daemons on
+an OS/7 machine (`azcmagent`, `dockerd`, `containerd`) can be expected to treat a private CA added
+while they run the same way, until their next start. Expected, not measured.
+
+*The general form:* **ask the process that has to trust it, not a fresh one.** A check run in a
+new process measures the store; the daemon measures what it read when it started.

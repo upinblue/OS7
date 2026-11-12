@@ -178,13 +178,22 @@ function Get-OS7TailscaleLayout {
 	.DESCRIPTION
 		  OS7                the dataset is mounted at /var/lib/tailscale,
 		                     outside the boot environment
-		  InBootEnvironment  /var/lib/tailscale is a directory of the boot
-		                     environment — the vendor's documented install, or
-		                     somebody's apt install — and a rollback reaches it
+		  InBootEnvironment  tailscaled's state FILE is in a directory of the
+		                     boot environment — the vendor's documented
+		                     install, or somebody's apt install — and a
+		                     rollback reaches it
 		  Broken             the dataset exists and is not mounted there:
 		                     whatever tailscaled writes now lands in the boot
 		                     environment UNDER the empty mount point
 		  None               neither
+
+		THE FILE, NOT THE DIRECTORY. Destroying the dataset leaves its empty
+		mount point behind, and a layout keyed on the directory called that
+		"state in the boot environment" — so after Uninstall-OS7Tailscale
+		-RemoveState, the next Install-OS7Tailscale refused to install over
+		an identity that did not exist (run-tailscale.py, 2026-11-12). A
+		daemon that has run once has written tailscaled.state, so the file is
+		what an identity looks like.
 	#>
 	param([Parameter(Mandatory)]$Facts)
 	$d = $Facts.Dataset
@@ -192,7 +201,7 @@ function Get-OS7TailscaleLayout {
 		if ($d.Mounted -and $d.MountPoint -eq $script:OS7TailscaleStateDir -and -not $d.InBootEnvironment) { return 'OS7' }
 		return 'Broken'
 	}
-	if ($Facts.StateDirectory) { return 'InBootEnvironment' }
+	if ($Facts.StateFile) { return 'InBootEnvironment' }
 	return 'None'
 }
 
@@ -239,7 +248,7 @@ function Get-OS7TailscaleAttention {
 				'now lands in the boot environment. Install-OS7Tailscale repairs the mount.')
 		}
 		'None' {
-			$attention.Add('Tailscale is installed and has no state directory at all; the daemon has never started. ' +
+			$attention.Add('Tailscale is installed and has no state at all; the daemon has never started. ' +
 				'Install-OS7Tailscale -Adopt finishes the installation.')
 		}
 	}
@@ -556,7 +565,7 @@ function Install-OS7Tailscale {
 		Write-OS7Step "tailscale: $step"
 		switch -Regex ($step) {
 			'^stop-daemon$' {
-				Stop-SystemdUnit -Name $script:OS7TailscaleUnit | Out-Null
+				Stop-SystemdUnit -Name $script:OS7TailscaleUnit -Confirm:$false | Out-Null
 			}
 			'^dataset-at-temporary-mount$' {
 				$null = New-OS7ServiceDataset -Name $script:OS7TailscaleName -MountPoint "$($script:OS7TailscaleStateDir).os7-adopt" `
@@ -591,7 +600,7 @@ function Install-OS7Tailscale {
 				# unit is one the package's own postinst cannot start.
 				$u = @(Get-SystemdUnit -Name $script:OS7TailscaleUnit) | Select-Object -First 1
 				if ($u -and $u.LoadState -eq 'masked') {
-					Set-SystemdUnitStartup -Name $script:OS7TailscaleUnit -Startup Unmasked | Out-Null
+					Set-SystemdUnitStartup -Name $script:OS7TailscaleUnit -Startup Unmasked -Confirm:$false | Out-Null
 				}
 			}
 			'^install-package$' {
@@ -600,10 +609,10 @@ function Install-OS7Tailscale {
 			'^start-daemon$' {
 				$u = @(Get-SystemdUnit -Name $script:OS7TailscaleUnit) | Select-Object -First 1
 				if (-not $u -or $u.StartupType -ne 'enabled') {
-					Set-SystemdUnitStartup -Name $script:OS7TailscaleUnit -Startup Enabled | Out-Null
+					Set-SystemdUnitStartup -Name $script:OS7TailscaleUnit -Startup Enabled -Confirm:$false | Out-Null
 				}
 				if (-not $u -or $u.ActiveState -ne 'active') {
-					Start-SystemdUnit -Name $script:OS7TailscaleUnit | Out-Null
+					Start-SystemdUnit -Name $script:OS7TailscaleUnit -Confirm:$false | Out-Null
 				}
 				# The daemon answers a moment after systemd says active.
 				$deadline = [datetime]::UtcNow.AddSeconds(20)
@@ -612,6 +621,22 @@ function Install-OS7Tailscale {
 					if ($st.Reachable) { break }
 					Start-Sleep -Milliseconds 500
 				} while ([datetime]::UtcNow -lt $deadline)
+				# AND A NODE THAT WAS ENROLLED IS ITSELF A MOMENT AFTER THAT. Until it
+				# has spoken to its control server, `status` says NoState or
+				# Starting and carries no node id — so the identity check below
+				# read an empty id and refused a correct adoption, the first time
+				# -Adopt ran on a machine (run-tailscale.py, 2026-11-12). It waits
+				# for the daemon to leave those two states; a node that cannot
+				# reach its control server stays in Starting, and the check then
+				# fails for the reason it should.
+				if ($before -and $before.HaveNodeKey) {
+					$deadline = [datetime]::UtcNow.AddSeconds(60)
+					do {
+						$st = Get-TailscaleStatus
+						if ($st.Reachable -and $st.BackendState -notin @('NoState', 'Starting')) { break }
+						Start-Sleep -Seconds 1
+					} while ([datetime]::UtcNow -lt $deadline)
+				}
 			}
 			'^preferences-off$' {
 				# Before a login this is a statement, not a guarantee: `up` replaces
@@ -957,7 +982,7 @@ function Uninstall-OS7Tailscale {
 		$null = Remove-AptPackage -Name $script:OS7TailscalePackage -Confirm:$false
 		$u = @(Get-SystemdUnit -Name $script:OS7TailscaleUnit) | Select-Object -First 1
 		if ($u -and $u.LoadState -eq 'masked') {
-			Set-SystemdUnitStartup -Name $script:OS7TailscaleUnit -Startup Unmasked | Out-Null
+			Set-SystemdUnitStartup -Name $script:OS7TailscaleUnit -Startup Unmasked -Confirm:$false | Out-Null
 		}
 	}
 	if ($facts.Registered) {
@@ -966,6 +991,12 @@ function Uninstall-OS7Tailscale {
 	if ($RemoveState -and $facts.Dataset) {
 		Import-OS7ZfsLayer
 		Remove-ZfsDataset -Name $facts.Dataset.Dataset -Recurse -Confirm:$false | Out-Null
+		# ZFS leaves the mount point behind (measured). Empty, it is nothing;
+		# left there, it is a directory a later reader might take for state.
+		$dir = $script:OS7TailscaleStateDir
+		if ([System.IO.Directory]::Exists($dir) -and -not @([System.IO.Directory]::EnumerateFileSystemEntries($dir)).Count) {
+			[System.IO.Directory]::Delete($dir)
+		}
 	}
 	$null = Save-OS7PackageBaseline -Reason 'Uninstall-OS7Tailscale' -Confirm:$false
 

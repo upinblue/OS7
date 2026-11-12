@@ -10,11 +10,16 @@ built the same day and has run on a machine** — `powershell/Apt/`, P2-apt, `OS
 the drift repair, the `Update-OS7` steps and the two `os7-release` units, held by
 `check-package-source-logic.py` (13 scenarios against real apt, 8 planted defects red), and run on
 a bench through two updates ([SESSION-VENDOR-SOURCES.md](SESSION-VENDOR-SOURCES.md)). **Phase 2
-(the Tailscale role) is built since 2026-11-10 and has NOT run end to end on a machine**:
-`powershell/Tailscale/` against output recorded on a bench, P2-tailscale, `OS7.Tailscale.ps1`,
-VA16, held by `check-tailscale-logic.py` (73 checks, 12 planted defects red) — and one measurement
-on the way, M-TS17, corrected VA11 before any of it ran
-([SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md)). §7 step 8 is owed. The decisions below
+(the Tailscale role) is built since 2026-11-10 and HAS RUN END TO END ON A MACHINE since
+2026-11-12**: `powershell/Tailscale/` against output recorded on a bench, P2-tailscale,
+`OS7.Tailscale.ps1`, VA16, held by `check-tailscale-logic.py` (74 checks, 13 planted defects red)
+and by `run-tailscale.py` — an installed 1.0.0.280 logged in the vendor's way, updated to
+1.0.0.283, adopted with the same node answering, rolled back with the current identity answering,
+the timer, Tailscale SSH and the updater switched on by hand and reported, uninstall and reinstall
+as the same node, logins by key and by URL, VA16's refusal: 105 checks in one run. The machine
+found three defects first, with every check here green (#203 among them). One measurement before
+any of it, M-TS17, had already corrected VA11
+([SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md)). Phase 3 is owed. The decisions below
 keep the word *Proposed* until a machine has run them. The measurements behind it are
 [SESSION-TAILSCALE.md](SESSION-TAILSCALE.md) (prefix `M-TS` below, by section). Decisions are
 VA1–VA17, limitations VAL1–…, open questions O-VA…, and a measurement still owed is `O-M…`, so the
@@ -95,6 +100,9 @@ control plane decides.
 | **M-TS15** | **The vendor's documented source file beside a registered source makes apt refuse EVERY source**: `Conflicting values set for option Signed-By`, `The list of sources could not be read`, exit 100 — measured on 1.0.0.279 | [SESSION-VENDOR-SOURCES.md](SESSION-VENDOR-SOURCES.md) |
 | **M-TS16** | O-M1's answer: with a keyring that does not hold the signing key, `apt-get update --error-on=any` **exits 100**; without the switch the SAME `E:` lines arrive at exit 0. `-o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts=<dir> -o APT::List-Cleanup=0` updates that one source and leaves every other list in place (17 before, 17 after) | `powershell/Apt/tests/fixtures` (`update-restricted-*`), [SESSION-VENDOR-SOURCES.md](SESSION-VENDOR-SOURCES.md) |
 | **M-TS17** | O-M2's answer, and **NOT what Headscale documents**: a local `set --auto-update=false` made before the first login came out of `tailscale up` AND out of `tailscale login` as `Apply: true` — the control server's default — twice. `up` has no `--auto-update` flag. `set` AFTER the login held across 45 s, a daemon restart and an `up` on the running node; `down` + `up` and `logout` reset it to unset | [SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §2 |
+| **M-TS18** | O-M4's answer, for a patch-level step: after `Restore-OS7` from 1.0.0.283 (Tailscale 1.104.6, which wrote the current identity) to 1.0.0.280 (1.104.5), **the state dataset made in 283 is mounted in 280 too** — no `zfs-list.cache`, `overlay=on` — and 1.104.5 runs the current identity. Underneath the mount, 280's own directory still holds the pre-adoption identity's `tailscaled.state` (2330 bytes): VAL10 | [SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §8 |
+| **M-TS19** | Headscale (the lab's control server, not Tailscale's) gives a re-login the SAME node id by machine key with a new node key, and **does not expire a tagged node on logout** — an untagged node of a user is expired by the same client verb. The client's `client.Logout()` is what OS/7 owns and checks | [SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §10 |
+| **M-TS20** | `zfs destroy` leaves the dataset's mount point behind, empty. A layout keyed on the DIRECTORY called that "state in the boot environment" and refused the next install; the layout keys on `tailscaled.state` | [SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §9 |
 
 **Not measured, and owed before anything is called Decided:**
 
@@ -102,7 +110,8 @@ control plane decides.
 - ~~**O-M2**~~ — answered by M-TS17, against the plan: VA11 step 5 is corrected below.
 - **O-M3** — an SSH session over the tailnet while `tailscaled` restarts (what VA7's in-place
   update does).
-- **O-M4** — an older `tailscaled` on a newer state file (a rollback across a vendor update).
+- ~~**O-M4**~~ — answered by M-TS18 for a patch-level step (1.104.6 → 1.104.5). Across a minor
+  or major version it stays unmeasured.
 - **O-M5** — two registrations on one origin (`packages.microsoft.com` serves Edge and the
   Intune packages from one host) composing as M-TS2 predicts.
 - **O-M6** — a domain account refused by AD's logon rules, over Tailscale SSH. M-TS9's mechanism is
@@ -405,6 +414,11 @@ timer is the mechanism — is answered by VA7's *one updater*.
 - **VAL8** — The Tailscale half is measured against Headscale; Tailscale's own control plane is
   unmeasured (O-M7).
 - **VAL9** — arm64 is unmeasured.
+- **VAL10** — `-Adopt` removes the documented install's state from the environment it runs in and
+  cannot reach older ones: each older boot environment keeps its own copy of the node's private key
+  underneath the dataset's mount point (M-TS18, 2330 bytes). Dead on a control server that replaces
+  the key on the next login, as Headscale did; destroying the older environments is the way to be
+  rid of it.
 
 ## 6. The layers
 
@@ -448,11 +462,14 @@ fall, not rise: P2-directory's way of starting above zero.
 6. `powershell/Tailscale/`, fixtures recorded on the bench, P2-tailscale. **Done 2026-11-10.**
 7. `OS7.Tailscale.ps1` (VA10–VA15), VA16 in `OS7.Container.ps1`, `check-tailscale-logic.py`.
    **Done 2026-11-10**; VA16 is code and untested.
-8. **Owed.** **On a bench, end to end**: install, login with a key from the secret store, `Update-OS7` with
+8. **On a bench, end to end**: install, login with a key from the secret store, `Update-OS7` with
    the source registered (and the timer), a rollback that keeps the identity, `-Adopt` of a
    documented install, uninstall. Against the local Headscale, driven by a harness
    (`run-tailscale.py`) whose lab — Headscale's configuration, the client's Dockerfile — lives under
-   `installer/testing/`, with the CA and every key generated per run.
+   `installer/testing/`, with the CA and every key generated per run. **Done 2026-11-12**: 105
+   checks green in one run against release 1.0.0.283, after the machine found three defects every
+   check here had passed (#203, an identity read before the daemon had one, an empty mount point
+   read as an identity) — [SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §7–§12.
 
 **Phase 3** — a chapter in the administrator manual (DE and EN), HANDOFF's table, CLAUDE.md's
 authority table, `POWERSHELL-REFERENCE.md`.

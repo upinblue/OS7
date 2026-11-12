@@ -1,0 +1,16 @@
+{
+  // The bench tailnet's policy. tag:os7-bench is the OS/7 machine under test,
+  // logged in with a tagged key; the peer container is user-owned (lab@).
+  "tagOwners": {
+    "tag:os7-bench": ["lab@"],
+  },
+  "acls": [
+    {"action": "accept", "src": ["*"], "dst": ["*:*"]},
+  ],
+  // Lets the tailnet ALLOW Tailscale SSH to the machine, so that a machine on
+  // which somebody switched it on is a machine where it would work - which is
+  // what Get-OS7Tailscale has to report. OS/7 itself never switches it on.
+  "ssh": [
+    {"action": "accept", "src": ["lab@"], "dst": ["tag:os7-bench"], "users": ["autogroup:nonroot", "root"]},
+  ],
+}

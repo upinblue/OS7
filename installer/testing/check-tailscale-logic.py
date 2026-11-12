@@ -287,7 +287,7 @@ Check 'P3 -Adopt: Adopted' ($p.Outcome -eq 'Adopted') $p.Outcome
 $p = Plan @{}
 Check 'P4 a machine OS/7 made: only the daemon, the preferences and the baseline, AlreadyInstalled' ((($p.Steps -join ' ') -eq 'start-daemon preferences-off baseline') -and $p.Outcome -eq 'AlreadyInstalled') "$($p.Steps -join ' ') $($p.Outcome)"
 
-$p = Plan @{ Package = $null; Registered = $null; Dataset = $null; StateDirectory = $false; OtherSources = @($doc) }
+$p = Plan @{ Package = $null; Registered = $null; Dataset = $null; StateDirectory = $false; StateFile = $false; OtherSources = @($doc) }
 Check 'P5 the vendor''s source file and no package: refused without -Adopt, the file named' ([bool]$p.Refusal -and $p.Refusal -like '*tailscale.list*') $p.Refusal
 
 $p = Plan @{ Package = $null; Registered = $null; Unit = $null; Status = $null; Preference = $null }
@@ -298,6 +298,12 @@ Check 'P7 registered, but the state in the boot environment: refused without -Ad
 
 $p = Plan @{ Dataset = $broken }
 Check 'P8 dataset not mounted: repaired by mounting it, not refused' (-not $p.Refusal -and $p.Steps[0] -eq 'dataset-at-state-directory') "$($p.Refusal) $($p.Steps -join ' ')"
+
+# What Uninstall-OS7Tailscale -RemoveState left on a machine before it removed
+# it too: the dataset's EMPTY mount point (zfs destroy keeps it, measured). A
+# layout keyed on the directory refused the next install (run-tailscale.py).
+$p = Plan @{ Package = $null; Registered = $null; Dataset = $null; StateDirectory = $true; StateFile = $false; Unit = $null; Version = $null; Status = $null; Preference = $null; Policy = $null }
+Check 'P10 an empty directory where a destroyed dataset was mounted is not state: a fresh install, not a refusal' (-not $p.Refusal -and $p.Outcome -eq 'Installed' -and $p.Layout -eq 'None') "$($p.Layout) $($p.Outcome) $($p.Refusal)"
 
 foreach ($case in @(@{ n = 'fresh'; c = $fresh; a = $false }, @{ n = 'adopt'; c = $documented; a = $true }, @{ n = 'reinstall'; c = @{ Package = $null; Registered = $null } ; a = $false })) {
 	$pp = Plan $case.c -Adopt:$case.a
@@ -551,6 +557,10 @@ PLANTS = [
      "$jobError = if ($record -and $record.Error) { [string]$record.Error } else { $startError }",
      "$jobError = $startError",
      "C3 a failed job"),
+    ("an empty mount point taken for an identity (run-tailscale.py, 2026-11-12)",
+     "\tif ($Facts.StateFile) { return 'InBootEnvironment' }",
+     "\tif ($Facts.StateDirectory) { return 'InBootEnvironment' }",
+     "P10 an empty directory"),
 ]
 
 

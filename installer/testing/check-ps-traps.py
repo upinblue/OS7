@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Six PowerShell traps this repository has paid for, as a mechanism rather than a note.
+Seven PowerShell traps this repository has paid for, as a mechanism rather than a note.
 
     ./check-ps-traps.py            report, and fail if any of them got worse
 
-All six are the same kind of defect: code that reads correctly, parses
+All seven are the same kind of defect: code that reads correctly, parses
 correctly, and means something else. None produces a warning; each was found by
 a machine doing the wrong thing.
 
@@ -91,7 +91,23 @@ functions the tree DEFINES, allows PowerShell's own unambiguous-prefix rule and
 the common parameters, and skips a call that splats or a callee with a
 dynamicparam block — in each of those the source does not carry the answer.
 
-ALL SIX BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
+#203 — -Confirm:$false DOES NOT CROSS A MODULE BOUNDARY.
+A caller's -Confirm:$false sets $ConfirmPreference in the CALLER's scope, and a
+function of another module resolves preference variables through its own
+module's session state. So a ConfirmImpact='High' verb of another module,
+called without its own -Confirm, prompts — and under -NonInteractive, which is
+every unit, job and harness on an OS/7 machine, the prompt is an exception:
+"PowerShell is in NonInteractive mode. Read and Prompt functionality is not
+available." Install-OS7Tailscale -Adopt -Confirm:$false died of it at its first
+step, `Stop-SystemdUnit`, the first time it ran on a machine (2026-11-12), with
+check-tailscale-logic.py green — the logic check stubs the systemd verbs, so
+the prompt they raise cannot happen there. Every other caller of
+Stop-/Restart-SystemdUnit in the module already passed -Confirm:$false, which is
+why the rule starts at 0. Within ONE module the preference does reach the
+callee, so only calls across a module boundary count; a call that splats is
+skipped, because the hashtable may carry it.
+
+ALL SEVEN BASELINES ARE 0 AND MAY NOT RISE. check-layering.py's reasoning applies
 word for word: "a rule that is only written down erodes."
 
 It needs `pwsh` and nothing else — no container, no ZFS, no VM. The scan is
@@ -109,7 +125,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # 2026-08-27; #121 was 8 before 2026-09-01, when all eight were fixed together
 # with the scan that counts them.
 BASELINE = {"SHADOW": 0, "ARRAYPLUS": 0, "IMPORTSCOPE": 0, "STRICTPROP": 0,
-            "BARELEC": 0, "BADPARAM": 0}
+            "BARELEC": 0, "BADPARAM": 0, "CROSSCONFIRM": 0}
 
 SCAN = r'''
 $root = $env:OS7_SCAN_ROOT
@@ -130,12 +146,32 @@ $defined = [System.Collections.Generic.HashSet[string]]::new(
 $calleeParams = @{}
 $calleeUnknown = [System.Collections.Generic.HashSet[string]]::new(
     [System.StringComparer]::InvariantCultureIgnoreCase)
+# #203 needs two facts more: which MODULE (the directory under the root) each
+# function lives in, and which ones declare ConfirmImpact = 'High'.
+$moduleOf = @{}
+$highImpact = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::InvariantCultureIgnoreCase)
+function Get-ScanModule([string]$path) {
+    $rel = [System.IO.Path]::GetRelativePath($root, $path).Replace([char]92, [char]47)
+    return ($rel -split '/')[0]
+}
 foreach ($file in $files) {
     $pre = [System.Management.Automation.Language.Parser]::ParseFile(
         $file.FullName, [ref]$null, [ref]$null)
     foreach ($f in $pre.FindAll(
         { param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
         [void]$defined.Add($f.Name)
+        $moduleOf[$f.Name] = Get-ScanModule $file.FullName
+        if ($f.Body.ParamBlock) {
+            foreach ($attr in $f.Body.ParamBlock.Attributes) {
+                if ($attr.TypeName.Name -notmatch '^CmdletBinding(Attribute)?$') { continue }
+                foreach ($na in $attr.NamedArguments) {
+                    if ($na.ArgumentName -eq 'ConfirmImpact' -and ($na.Argument.Extent.Text -replace '[''"]', '') -eq 'High') {
+                        [void]$highImpact.Add($f.Name)
+                    }
+                }
+            }
+        }
 
         # Both spellings: `function f { param($a) }` and `function f ($a) {}`.
         $declared = $null
@@ -369,6 +405,41 @@ foreach ($file in $files) {
                 $file.Name, $e.Extent.StartLineNumber, $callee, $pname, $verdict)
         }
     }
+    # ---- #203 ---------------------------------------------------------
+    #
+    # A ConfirmImpact='High' verb of ANOTHER module, called without -Confirm.
+    # -Confirm:$false on the caller sets $ConfirmPreference in the CALLER's
+    # scope, and a function in another module resolves preference variables
+    # through ITS module's session state, not the caller's - so the callee
+    # prompts. Under -NonInteractive, which is every unit, job and harness on
+    # an OS/7 machine, the prompt is an exception: "PowerShell is in
+    # NonInteractive mode. Read and Prompt functionality is not available."
+    # Install-OS7Tailscale -Adopt -Confirm:$false died of exactly that at its
+    # first step, on a machine, with every logic check green - the check
+    # stubbed Stop-SystemdUnit, so the prompt it raises could not happen there.
+    # Within ONE module the preference does reach the callee, so only calls
+    # across a module boundary are counted; a call that splats is skipped,
+    # because the hashtable may carry the -Confirm.
+    $callerModule = Get-ScanModule $file.FullName
+    foreach ($c in $commands) {
+        $callee = $c.GetCommandName()
+        if (-not $callee -or -not $highImpact.Contains($callee)) { continue }
+        if ($moduleOf[$callee] -eq $callerModule) { continue }
+        $hasConfirm = $false
+        foreach ($e in $c.CommandElements) {
+            if ($e -is [System.Management.Automation.Language.VariableExpressionAst] -and $e.Splatted) {
+                $hasConfirm = $true; break
+            }
+            if ($e -is [System.Management.Automation.Language.CommandParameterAst] -and
+                $e.ParameterName.Length -ge 2 -and
+                'Confirm'.StartsWith($e.ParameterName, [System.StringComparison]::InvariantCultureIgnoreCase)) {
+                $hasConfirm = $true; break
+            }
+        }
+        if ($hasConfirm) { continue }
+        Write-Output ("CROSSCONFIRM`t{0}`t{1}`t{2}`t{3}" -f `
+            $file.Name, $c.Extent.StartLineNumber, $callee, $moduleOf[$callee])
+    }
 }
 Write-Output ("FILES`t{0}" -f $files.Count)
 '''
@@ -383,7 +454,7 @@ def find_pwsh():
 
 
 def main():
-    print("\n### six PowerShell traps, asked of the parser rather than of a regex")
+    print("\n### seven PowerShell traps, asked of the parser rather than of a regex")
 
     pwsh = find_pwsh()
     if not pwsh:
@@ -410,7 +481,7 @@ def main():
         sys.exit(1)
 
     found = {"SHADOW": [], "ARRAYPLUS": [], "IMPORTSCOPE": [], "STRICTPROP": [],
-             "BARELEC": [], "BADPARAM": [], "PARSE": []}
+             "BARELEC": [], "BADPARAM": [], "CROSSCONFIRM": [], "PARSE": []}
     files = 0
     for line in got.stdout.splitlines():
         parts = line.strip().split("\t")
@@ -464,11 +535,18 @@ def main():
     else:
         print("      (none)")
 
+    print("\n  #203 - a ConfirmImpact=High verb of another module, called without -Confirm")
+    if found["CROSSCONFIRM"]:
+        for name, line, callee, module in found["CROSSCONFIRM"]:
+            print("      %s:%s  %s  (%s) prompts, and throws under -NonInteractive" % (name, line, callee, module))
+    else:
+        print("      (none)")
+
     bad = False
     print()
     for key, label in (("SHADOW", "#65"), ("ARRAYPLUS", "#91"), ("IMPORTSCOPE", "#82"),
                        ("STRICTPROP", "#112/#119"), ("BARELEC", "#121"),
-                       ("BADPARAM", "#127")):
+                       ("BADPARAM", "#127"), ("CROSSCONFIRM", "#203")):
         n = len(found[key])
         base = BASELINE[key]
         if n > base:
@@ -487,11 +565,12 @@ def main():
         sys.exit(1)
     if bad:
         sys.exit(1)
-    print("\nAll six held: no local shadows a parameter, no array literal hides "
+    print("\nAll seven held: no local shadows a parameter, no array literal hides "
           "an append, nothing outside a function calls a cmdlet the build "
           "chroot cannot autoload, no property is read off a pipeline that "
-          "may be empty, no $LASTEXITCODE is read bare, and no call names a "
-          "parameter its callee does not have.")
+          "may be empty, no $LASTEXITCODE is read bare, no call names a "
+          "parameter its callee does not have, and no high-impact verb of "
+          "another module is called without its own -Confirm.")
 
 
 if __name__ == "__main__":

@@ -99,8 +99,9 @@ previous index files will be used"*, and **exited 0**; `apt-cache policy tailsca
 
 ## 2. The bench tailnet, and what it stands for
 
-A lab directory on the build host, outside the repository (VENDOR-APPS-PLAN §7 step 8 moves it
-into `installer/testing/`):
+A lab directory on the build host, outside the repository — since 2026-11-12 it is
+`installer/testing/tailscale-lab/`, made fresh by `run-tailscale.py` on every run, with a new CA
+each time ([SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §7):
 
 | Part | What |
 |---|---|
