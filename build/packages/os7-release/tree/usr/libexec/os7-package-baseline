@@ -1,0 +1,20 @@
+# OS/7 — write the first package baseline (VENDOR-APPS-PLAN VA8).
+#
+# Run as `pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-package-baseline`
+# by os7-package-baseline.service, once, on the first boot with no baseline.
+# No shebang on purpose: invoked as `pwsh -File`, never executed (0644) — the
+# os7-backup convention.
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+	$b = Save-OS7PackageBaseline -Reason 'first boot' -Confirm:$false
+	[Console]::Error.WriteLine("os7-package-baseline: $($b.Packages) packages recorded in $($b.Path)")
+	exit 0
+}
+catch {
+	[Console]::Error.WriteLine("os7-package-baseline: FAILED: $($_.Exception.Message)")
+	exit 1
+}

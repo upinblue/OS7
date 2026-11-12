@@ -10612,3 +10612,93 @@ OS/7's stay `0755`, Ubuntu's lose the bit, `98-reboot-required` stays.
 *The general form:* **a keep-list is a list somebody has to remember to extend**
 — check-image.py's comment had already said its own set "would have to be
 edited again for a third", and the hook's twin of it was the one that was not.
+
+---
+
+## #200 — `Get-OS7Version -CheckDrift` compared nothing on any packaged machine, twice over, and `Update-OS7`'s drift refusal could never fire
+
+**Found 2026-11-09** on a fresh 1.0.0.277 (bench `ts`) while measuring what a
+vendor package does to the update train ([SESSION-TAILSCALE.md](SESSION-TAILSCALE.md)
+§11, [VENDOR-APPS-PLAN.md](VENDOR-APPS-PLAN.md) VA8).
+
+`(Get-OS7Version -CheckDrift).Drift` answered **`Unknown`** — *"the release
+manifest records no packages_manifest hash"*. It read the hash from
+`/usr/lib/os7/release.json`; since C7 split the declared release facts
+(`release.json`, the package's) from the measured ones (`image.json`, hook
+0075's), the hash had lived in `image.json`. Every machine installed from a
+packaged medium answered Unknown, and Unknown is not a refusal.
+
+**Under that, a second defect.** Handed the right hash by hand,
+`Get-OS7PackageDrift` THREW: without `-Installed`, `@($Installed)` of an unbound
+`[string[]]` is `@($null)` — an array of ONE element — so the "ask dpkg" branch
+was skipped and `[Array]::Sort` got `$null`. `check-version-rule.py` always
+passes `-Installed`, so the branch a machine takes was the one no check ran.
+And `Update-OS7` called the check inside `try { } catch { }`, which turned the
+exception into "no drift".
+
+**And under that, a design gap:** with both repaired, a fresh 277 is `Drifted` by
+five packages — `casper`, `cifs-utils`, `finalrd`, `localechooser-data`,
+`user-setup` — which Setup removes from every install after the image was
+measured. A drift refusal that worked would have refused every update.
+
+**Fixed (VA8):** the hash is read from `release.json` and then from `image.json`;
+the list is `@($Installed | Where-Object { $_ })`; drift is measured against
+`/var/lib/os7/packages.baseline`, which OS/7 writes whenever it changes the
+package set (first boot, `Update-OS7` in the environment it builds, a vendor
+update, a role's install), and every difference is classed Intended, Image or
+Unexplained. `Update-OS7` refuses only on Unexplained against a baseline, and
+says so when the drift could not be checked. `check-package-source-logic.py`
+S11/S12 hold it, and a planted `@($Installed)` turns S12 red.
+
+*The general form:* **a refusal inside `catch { }` is a comment.** The code read
+as a gate for months; the one input that could have opened it never arrived.
+
+---
+
+## #201 — `sudo -S` swallows the rest of standard input
+
+**Found 2026-11-09** handing a test auth key to a bench's secret store over SSH
+([SESSION-TAILSCALE.md](SESSION-TAILSCALE.md) §2). With the password on the first
+line of stdin and the key on the second, `sudo -S -p '' pwsh …` ran pwsh with
+**nothing** on stdin: neither `[Console]::In.ReadLine()` nor bash's `read` (the
+control) saw the second line, while the same script without sudo read it. Where
+the rest goes was not separated; that it does not arrive was measured three ways.
+
+**The way through:** bash reads the password line itself, `sudo -S -v <<< "$pw"`
+validates the timestamp, and `sudo -n <command>` then inherits a stdin whose next
+line is the data. **Only with the here-string**: `printf … | sudo -S -v` runs sudo
+in a pipeline subshell, a different parent from the `sudo -n` after it, and the
+second answered *"interactive authentication is required"*.
+
+*The general form:* **a program that reads a secret from stdin may own all of
+stdin.** os7lab's `--sudo` sends the password and nothing else, which is why it
+never met this.
+
+---
+
+## #202 — a self-test whose checks sit in `try { } finally { }` says PASS after it stopped
+
+**Found 2026-11-10** on the first run of `Test-TailscaleModule`
+([SESSION-TAILSCALE-ROLE.md](SESSION-TAILSCALE-ROLE.md) §5). Three checks ran, a
+strict-mode `PropertyNotFoundException` was printed, and then:
+
+    Tailscale self-test: 3 passed, 0 failed
+    Tailscale self-test: PASS
+
+and pwsh exited 0. A STATEMENT-terminating error inside `try` with no `catch`
+abandons the rest of the block, runs `finally` — and execution then CONTINUES
+after the `try` statement, measured in a ten-line control. The verdict below it
+counts the checks that ran and calls them the whole test. The image check reads
+that verdict, so a module whose parser died on its second fixture would ship
+green.
+
+**Fixed** in `Test-TailscaleModule` and `Test-AptModule`: a `catch` that records
+"the self-test stopped before its end: <message>" as a failure. Proven by
+planting the defect it was found with on a copy: red, exit 1. **Still open
+elsewhere**, counted by asking the parser for every `Test-*` function whose
+top-level `try` holds more than three `Check` calls: `Test-HardwareModule` (52
+checks) and `Test-OS7Update` (31) have no `catch`. Docker, Systemd and Time do.
+
+*The general form:* **a verdict is only as good as the count behind it.** A test
+that can stop early and still print its verdict needs to know how many checks it
+meant to make.

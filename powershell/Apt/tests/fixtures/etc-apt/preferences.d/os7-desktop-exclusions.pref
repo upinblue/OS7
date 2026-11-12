@@ -1,0 +1,77 @@
+# OS/7 — packages that must never be installed on an OS/7 desktop.
+#
+# Written by build/config/hooks-amd64/0035-debrand-desktop.hook.chroot and
+# SHIPPED, on purpose: purging at build time lasts only until the first upgrade
+# re-satisfies a Recommends of ubuntu-desktop-minimal. This file is what makes
+# the removal survive an `apt full-upgrade` and a release upgrade.
+#
+# Every entry below is a Recommends of ubuntu-desktop-minimal (or, for the
+# plymouth theme, of plymouth and ubuntu-standard), and nothing Depends on any
+# of them — measured against the shipped image on 2026-08-26. A Recommends that
+# cannot be installed is simply skipped by apt, so nothing here can break a
+# dependency.
+#
+# To put one back, delete its stanza. These are defaults, not locks — the same
+# rule the dconf database in os7-desktop-theme follows.
+
+# The first-login wizard: language, privacy, "Enable Ubuntu Pro", "Help improve
+# Ubuntu". OS/7 asks its questions in os7-setup, before the machine has ever
+# booted a desktop, and asks them once.
+Package: gnome-initial-setup
+Pin: release *
+Pin-Priority: -1
+
+# Telemetry to Canonical.
+Package: ubuntu-report ubuntu-insights
+Pin: release *
+Pin-Priority: -1
+
+# Crash reporting to Canonical. A managed fleet reports to whoever manages it.
+#
+# whoopsie-preferences is NOT in this list and must not be added to it:
+# gnome-control-center DEPENDS on it, gnome-shell and ubuntu-desktop-minimal
+# depend on gnome-control-center, and purging it takes the entire desktop with
+# it. Measured, after it did. docs/BUILD-NOTES.md #87. It is the D-Bus service
+# that stores the preference; with whoopsie gone there is nothing for it to
+# enable.
+Package: whoopsie apport apport-gtk apport-core-dump-handler apport-symptoms
+Pin: release *
+Pin-Priority: -1
+
+# Ubuntu-branded help content.
+Package: ubuntu-docs gnome-user-docs
+Pin: release *
+Pin-Priority: -1
+
+# The browser of this product is Microsoft Edge (hook 0030). Note that snapd is
+# deliberately NOT pinned here: authd-msentraid is a snap.
+Package: firefox
+Pin: release *
+Pin-Priority: -1
+
+# The second terminal. OS/7's package list names gnome-terminal and its dconf
+# defaults make it start a login shell, which is what hands the session to
+# PowerShell. ptyxis arrives beside it as a Recommends, registers
+# x-terminal-emulator at the SAME priority 40, and wins the tie - so "Open in
+# Terminal" opened a terminal that lands in bash. One terminal, one answer.
+Package: ptyxis
+Pin: release *
+Pin-Priority: -1
+
+# The Ubuntu wordmark on the text boot splash. Unused while default.plymouth is
+# bgrt, and pinned so that it stays unused.
+Package: plymouth-theme-ubuntu-text
+Pin: release *
+Pin-Priority: -1
+
+# Two launchers in the Apps menu that belong to a GNOME developer's desktop and
+# not to an administrator's (SESSION-QOL-SURVEY Q2): Sysprof, a CPU profiler,
+# and Extensions, which can switch off the four extensions the OS/7 Classic
+# desktop is made of. Both are only Recommends - sysprof of
+# ubuntu-desktop-minimal, gnome-shell-extension-prefs of the Classic
+# extensions themselves - measured with apt-cache rdepends on 1.0.0.247, and a
+# purge simulation removed exactly the two. `gnome-extensions` on the command
+# line is gnome-shell's and stays.
+Package: sysprof gnome-shell-extension-prefs
+Pin: release *
+Pin-Priority: -1

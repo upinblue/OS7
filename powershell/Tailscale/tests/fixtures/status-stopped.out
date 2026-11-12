@@ -1,0 +1,266 @@
+{
+  "Version": "1.104.5-t788384763-gd9218e278",
+  "TUN": true,
+  "BackendState": "Stopped",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": [
+    "100.64.0.5",
+    "fd7a:115c:a1e0::5"
+  ],
+  "Self": {
+    "ID": "5",
+    "NodeID": 5,
+    "PublicKey": "nodekey:c2337f66062a809c1a7e1f89343dfc156e4f80346d6824cd6d6f828006a3eb36",
+    "HostName": "os7-fixture",
+    "DNSName": "os7-fixture.tailnet.os7.test.",
+    "OS": "linux",
+    "UserID": 2147455555,
+    "TailscaleIPs": [
+      "100.64.0.5",
+      "fd7a:115c:a1e0::5"
+    ],
+    "AllowedIPs": [
+      "100.64.0.5/32",
+      "fd7a:115c:a1e0::5/128"
+    ],
+    "Tags": [
+      "tag:os7-bench"
+    ],
+    "Addrs": [
+      "172.17.0.1:54261",
+      "10.0.2.15:41641",
+      "[fec0::5054:ff:fe12:3456]:41641"
+    ],
+    "CurAddr": "",
+    "Relay": "os7lab",
+    "PeerRelay": "",
+    "RxBytes": 0,
+    "TxBytes": 0,
+    "Created": "2026-11-10T14:29:06.667190467Z",
+    "LastWrite": "0001-01-01T00:00:00Z",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "LastHandshake": "0001-01-01T00:00:00Z",
+    "Online": false,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "PeerAPIURL": null,
+    "TaildropTarget": 0,
+    "NoFileSharingReason": "",
+    "Capabilities": [
+      "HTTPS://TAILSCALE.COM/s/DEPRECATED-NODE-CAPS#see-https://github.com/tailscale/tailscale/issues/11508",
+      "default-auto-update",
+      "https://tailscale.com/cap/file-sharing",
+      "https://tailscale.com/cap/is-admin",
+      "https://tailscale.com/cap/ssh"
+    ],
+    "CapMap": {
+      "default-auto-update": [
+        true
+      ],
+      "https://tailscale.com/cap/file-sharing": [],
+      "https://tailscale.com/cap/is-admin": [],
+      "https://tailscale.com/cap/ssh": []
+    },
+    "InNetworkMap": true,
+    "InMagicSock": false,
+    "InEngine": false
+  },
+  "Health": [
+    "Tailscale is stopped."
+  ],
+  "MagicDNSSuffix": "tailnet.os7.test",
+  "CurrentTailnet": {
+    "Name": "headscale.os7.test",
+    "StableID": "",
+    "MagicDNSSuffix": "tailnet.os7.test",
+    "MagicDNSEnabled": true
+  },
+  "CertDomains": null,
+  "ExtraRecords": null,
+  "Peer": {
+    "nodekey:46acdb0f0edacae7d8b17753534644ba48f46d7285f661fc006a7fe27aee1e6c": {
+      "ID": "1",
+      "NodeID": 1,
+      "PublicKey": "nodekey:46acdb0f0edacae7d8b17753534644ba48f46d7285f661fc006a7fe27aee1e6c",
+      "HostName": "lab-client",
+      "DNSName": "lab-client.tailnet.os7.test.",
+      "OS": "linux",
+      "UserID": 1,
+      "TailscaleIPs": [
+        "100.64.0.1",
+        "fd7a:115c:a1e0::1"
+      ],
+      "AllowedIPs": [
+        "100.64.0.1/32",
+        "fd7a:115c:a1e0::1/128"
+      ],
+      "Addrs": null,
+      "CurAddr": "",
+      "Relay": "os7lab",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-11-09T18:53:26.33396934Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.1:58436",
+        "http://[fd7a:115c:a1e0::1]:59780"
+      ],
+      "TaildropTarget": 3,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "nodekey:def9cde66dd6bf25b9010fc9a9311645b623174b85daa4e3064b729829c02116": {
+      "ID": "4",
+      "NodeID": 4,
+      "PublicKey": "nodekey:def9cde66dd6bf25b9010fc9a9311645b623174b85daa4e3064b729829c02116",
+      "HostName": "os7-gui",
+      "DNSName": "os7-gui.tailnet.os7.test.",
+      "OS": "linux",
+      "UserID": 2147455555,
+      "TailscaleIPs": [
+        "100.64.0.4",
+        "fd7a:115c:a1e0::4"
+      ],
+      "AllowedIPs": [
+        "100.64.0.4/32",
+        "fd7a:115c:a1e0::4/128"
+      ],
+      "Tags": [
+        "tag:os7-bench"
+      ],
+      "Addrs": null,
+      "CurAddr": "",
+      "Relay": "os7lab",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-11-09T19:32:02.396653778Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-11-09T19:32:39.083394573Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.4:37067",
+        "http://[fd7a:115c:a1e0::4]:40203"
+      ],
+      "TaildropTarget": 3,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "nodekey:f892e0229646e96af33bafdf25b0d9591e6425193f9ad7614e211651317d4819": {
+      "ID": "2",
+      "NodeID": 2,
+      "PublicKey": "nodekey:f892e0229646e96af33bafdf25b0d9591e6425193f9ad7614e211651317d4819",
+      "HostName": "os7-r1b",
+      "DNSName": "os7-r1.tailnet.os7.test.",
+      "OS": "linux",
+      "UserID": 2147455555,
+      "TailscaleIPs": [
+        "100.64.0.2",
+        "fd7a:115c:a1e0::2"
+      ],
+      "AllowedIPs": [
+        "100.64.0.2/32",
+        "fd7a:115c:a1e0::2/128"
+      ],
+      "Tags": [
+        "tag:os7-bench"
+      ],
+      "Addrs": null,
+      "CurAddr": "",
+      "Relay": "os7lab",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-11-09T18:56:54.011736097Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-11-09T19:10:45.021202162Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.2:46590",
+        "http://[fd7a:115c:a1e0::2]:47166"
+      ],
+      "TaildropTarget": 3,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "nodekey:fbf7b62a37ea4056a2481402cbae1b8b41ce6a3db9d090dab85b878b8e00bb50": {
+      "ID": "3",
+      "NodeID": 3,
+      "PublicKey": "nodekey:fbf7b62a37ea4056a2481402cbae1b8b41ce6a3db9d090dab85b878b8e00bb50",
+      "HostName": "os7-r2b",
+      "DNSName": "os7-r2.tailnet.os7.test.",
+      "OS": "linux",
+      "UserID": 2147455555,
+      "TailscaleIPs": [
+        "100.64.0.3",
+        "fd7a:115c:a1e0::3"
+      ],
+      "AllowedIPs": [
+        "100.64.0.3/32",
+        "fd7a:115c:a1e0::3/128"
+      ],
+      "Tags": [
+        "tag:os7-bench"
+      ],
+      "Addrs": null,
+      "CurAddr": "",
+      "Relay": "os7lab",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-11-09T19:13:55.77806997Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-11-09T19:20:29.627062766Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.3:34152",
+        "http://[fd7a:115c:a1e0::3]:34984"
+      ],
+      "TaildropTarget": 3,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    }
+  },
+  "User": {
+    "1": {
+      "ID": 1,
+      "LoginName": "lab",
+      "DisplayName": "lab"
+    },
+    "2147455555": {
+      "ID": 2147455555,
+      "LoginName": "tagged-devices",
+      "DisplayName": "Tagged Devices"
+    }
+  },
+  "ClientVersion": null
+}

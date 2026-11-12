@@ -1,0 +1,6 @@
+Types: deb
+URIs: https://packages.microsoft.com/ubuntu/26.04/prod
+Suites: resolute
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/microsoft-2025.gpg

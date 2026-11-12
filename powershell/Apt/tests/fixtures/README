@@ -1,0 +1,43 @@
+Recorded apt, apt-cache, dpkg-query and gpg output for Test-AptModule.
+
+Recorded 2026-11-09 on an installed OS/7 1.0.0.277 (bench `ts`, amd64), as root,
+under LC_ALL=C.UTF-8 — the locale powershell/Apt asks every program in, because
+a machine installed in German otherwise answers "Holen:" (BUILD-NOTES #176).
+recorded-with.txt names the versions: apt 3.2.1ubuntu0.1, gpg 2.4.8, dpkg 1.23.7.
+
+<name>.out is stdout and stderr as one stream, as the recording shell captured
+them; <name>.rc is the exit code. The module's parsers read both channels
+joined, so a fixture with the two interleaved is the harder case, not a
+simplification.
+
+The vendor repository in them is Tailscale's (pkgs.tailscale.com, public).
+
+  gpg-show-binary          gpg --show-keys --with-colons --with-fingerprint on
+                           Tailscale's binary keyring: one primary, one subkey
+  gpg-show-two             Microsoft's legacy keyring (one primary, no subkey)
+  gpg-show-garbage         the same against a file that is not a key (rc 2)
+  policy-pinned            apt-cache policy under the OS/7 vendor preference
+                           (origin at -1, `tailscale` at 500): tailscale has a
+                           candidate, tailscale-archive-keyring and
+                           tailscale-nginx-auth have NONE, bash is installed,
+                           and a package that does not exist prints nothing
+  policy-installed-older   tailscale 1.104.4 installed, 1.104.5 the candidate
+  policy-installed-newest  after `install --only-upgrade`
+  install-only-upgrade     that install's output
+  update-restricted-ok     `apt-get update --error-on=any` restricted to the
+                           vendor source (Dir::Etc::SourceList=/dev/null,
+                           Dir::Etc::SourceParts=<one file>)
+  update-restricted-badkey the same with a keyring that does not hold the
+                           signing key: NO_PUBKEY, rc 100
+  update-restricted-badkey-noerroron
+                           the same WITHOUT --error-on=any: the same E: lines,
+                           and rc 0 — the reason the parser judges by the lines
+                           as well as by the exit code
+  dpkg-query               two installed packages and one that does not exist
+                           (stderr first, rc 1)
+  etc-apt/                 that machine's /etc/apt/sources.list, sources.list.d
+                           and preferences.d, with the vendor source and
+                           preference OS/7 writes
+
+To re-record: the script is docs/SESSION-TAILSCALE.md's setting, the commands
+are the ones above; keep the names, because Test-AptModule reads them by name.

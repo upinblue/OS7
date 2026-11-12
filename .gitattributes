@@ -32,6 +32,11 @@
 # line endings on the first checkout that ever sees them, and a filter that has
 # already run cannot be un-run from a .gitattributes.
 powershell/Zfs/tests/fixtures/**        -text
+# Apt's and Tailscale's are recorded program output too, and Apt's
+# install-only-upgrade.out carries apt's own progress CRs — 21 lone and 4 before
+# a newline, counted 2026-11-10 — which `text=auto` would rewrite on the way in.
+powershell/Apt/tests/fixtures/**        -text
+powershell/Tailscale/tests/fixtures/**  -text
 powershell/Directory/tests/fixtures/**  -text
 docs/SESSION-*.md                       -text
 

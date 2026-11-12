@@ -573,6 +573,32 @@ build_os7_release() {
 	install -d "${stage}/usr/lib/systemd/system/timers.target.wants"
 	ln -sfn ../os7-update-check.timer \
 		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-update-check.timer"
+
+	# The vendor half (docs/VENDOR-APPS-PLAN.md VA7, VA8): the daily in-place
+	# update of registered vendor sources, and the first-boot package baseline
+	# drift is measured against. Both pwsh -File scripts, 0644, no shebang -
+	# the same convention as the update check above. The TIMER ships enabled
+	# for the update check's reason: with no source registered it says so and
+	# exits 0. The baseline unit is wanted by multi-user.target and conditioned
+	# on the baseline being ABSENT, so it runs once per environment that has
+	# none. The plan ships beside them because both units name it.
+	chmod 0644 "${stage}/usr/lib/systemd/system/os7-vendor-update.service" \
+	           "${stage}/usr/lib/systemd/system/os7-vendor-update.timer" \
+	           "${stage}/usr/lib/systemd/system/os7-package-baseline.service" \
+	           "${stage}/usr/libexec/os7-vendor-update" \
+	           "${stage}/usr/libexec/os7-package-baseline"
+	for script in os7-vendor-update os7-package-baseline; do
+		if head -c 2 "${stage}/usr/libexec/${script}" | grep -q '#!'; then
+			echo "!!! os7-release: ${script} has a shebang; it is pwsh -File, never executed" >&2
+			exit 1
+		fi
+	done
+	ln -sfn ../os7-vendor-update.timer \
+		"${stage}/usr/lib/systemd/system/timers.target.wants/os7-vendor-update.timer"
+	install -d "${stage}/usr/lib/systemd/system/multi-user.target.wants"
+	ln -sfn ../os7-package-baseline.service \
+		"${stage}/usr/lib/systemd/system/multi-user.target.wants/os7-package-baseline.service"
+	install -Dm644 "${REPO}/docs/VENDOR-APPS-PLAN.md" "${stage}/usr/share/os7/VENDOR-APPS-PLAN.md"
 	# The login banner's line for what the check staged (Q13). EXECUTED by
 	# pam_motd's run-parts, so executable - pkg_finish would otherwise turn the
 	# bind mount's 0777 into 0644 (#117), and run-parts skips a file it cannot
@@ -701,6 +727,14 @@ build_os7_release() {
 		./usr/lib/systemd/system/os7-update-check.timer \
 		./usr/lib/systemd/system/timers.target.wants/os7-update-check.timer \
 		./usr/libexec/os7-update-check \
+		./usr/lib/systemd/system/os7-vendor-update.service \
+		./usr/lib/systemd/system/os7-vendor-update.timer \
+		./usr/lib/systemd/system/timers.target.wants/os7-vendor-update.timer \
+		./usr/libexec/os7-vendor-update \
+		./usr/lib/systemd/system/os7-package-baseline.service \
+		./usr/lib/systemd/system/multi-user.target.wants/os7-package-baseline.service \
+		./usr/libexec/os7-package-baseline \
+		./usr/share/os7/VENDOR-APPS-PLAN.md \
 		./etc/update-motd.d/41-os7-update \
 		./usr/lib/systemd/system/os7-release-list.service \
 		./usr/libexec/os7-release-list \
@@ -872,7 +906,7 @@ build_os7_module() {
 	# The generic layers first and OS7 last, in the order hook 0060 checks them
 	# and for the same reason: OS7 sits on top of all of them. The same list as
 	# build.sh's fixture loop, and Docker went into both in one commit.
-	for name in Zfs Net Time Systemd Directory Hardware Docker OS7; do
+	for name in Zfs Net Time Systemd Directory Hardware Docker Apt Tailscale OS7; do
 		local src="${REPO}/powershell/${name}" dst="${root}/${name}"
 		[[ -d "${src}" ]] || { echo "!!! os7-module: ${src} is missing" >&2; exit 1; }
 		mkdir -p "${dst}"
@@ -942,6 +976,8 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/OS7/OS7.Domain.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Automation.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Container.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.PackageSource.ps1 \
+		./usr/local/share/powershell/Modules/OS7/OS7.Tailscale.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Compat.Windows.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Device.ps1 \
 		./usr/local/share/powershell/Modules/OS7/OS7.Storage.ps1 \
@@ -959,7 +995,11 @@ build_os7_module() {
 		./usr/local/share/powershell/Modules/Hardware/Hardware.psd1 \
 		./usr/local/share/powershell/Modules/Hardware/Hardware.psm1 \
 		./usr/local/share/powershell/Modules/Docker/Docker.psd1 \
-		./usr/local/share/powershell/Modules/Docker/Docker.psm1
+		./usr/local/share/powershell/Modules/Docker/Docker.psm1 \
+		./usr/local/share/powershell/Modules/Apt/Apt.psd1 \
+		./usr/local/share/powershell/Modules/Apt/Apt.psm1 \
+		./usr/local/share/powershell/Modules/Tailscale/Tailscale.psd1 \
+		./usr/local/share/powershell/Modules/Tailscale/Tailscale.psm1
 }
 
 # ---------------------------------------------------------------------------

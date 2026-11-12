@@ -1,0 +1,22 @@
+[Unit]
+# OS/7 — bring registered vendor sources forward between releases.
+# VENDOR-APPS-PLAN VA7: a vendor application follows its vendor's channel (the
+# owner's decision for Tailscale, C15's for Edge), so its fixes cannot wait for
+# OS/7's release cadence. Update-OS7 moves it at every release; this moves it in
+# between.
+#
+# DAILY, randomised, persistent — the os7-update-check timer's manners. On a
+# machine with no registered source the service says so and exits 0.
+#
+# ONE UPDATER. The vendor's own (Tailscale's `--auto-update`) is switched off by
+# the role that installs it: it would run apt in the running system with
+# --allow-downgrades, beside this and unrecorded (M-TS14).
+Description=Daily OS/7 vendor package update
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

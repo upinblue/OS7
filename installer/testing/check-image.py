@@ -489,6 +489,17 @@ emit hardware.selftest bash -c 'tail -30 /tmp/hardware.txt'
 chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Docker/Docker.psd1 -Force; Test-DockerModule' >/tmp/docker.txt 2>&1 && rc=0 || rc=$?
 echo "EXIT=$rc" >> /tmp/docker.txt
 emit docker.selftest bash -c 'tail -30 /tmp/docker.txt'
+# Apt and Tailscale, the vendor-source layers (docs/VENDOR-APPS-PLAN.md §6),
+# asked the same way. Neither needs its program: Apt replays recorded apt,
+# apt-cache, dpkg-query and gpg output, and the tailscale CLI is not on the
+# image at all - a role installs it - so Test-TailscaleModule replays the
+# 1.104.5 recordings it ships with.
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Apt/Apt.psd1 -Force; Test-AptModule' >/tmp/apt.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/apt.txt
+emit apt.selftest bash -c 'tail -30 /tmp/apt.txt'
+chroot /mnt/root env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root /usr/bin/pwsh -NoProfile -NonInteractive -Command 'Import-Module /usr/local/share/powershell/Modules/Tailscale/Tailscale.psd1 -Force; Test-TailscaleModule' >/tmp/tailscale.txt 2>&1 && rc=0 || rc=$?
+echo "EXIT=$rc" >> /tmp/tailscale.txt
+emit tailscale.selftest bash -c 'tail -30 /tmp/tailscale.txt'
 
 # The three facts about backups that are properties of the IMAGE rather than of
 # any program: the two binaries are there, the defaults file OS/7 reads its
@@ -2031,6 +2042,29 @@ def main() -> None:
               "the Docker module replays the engine recordings it ships with, "
               "and its API range equals them",
               ksummary)
+
+    # -- the Apt and Tailscale modules, asked to check themselves ----------
+    #
+    # The same three outcomes again. Apt arrived on 2026-11-09 and was not
+    # asked here until Tailscale joined it the next day; an image built
+    # before either fails by name.
+    for key, name, since, what in (
+            ("apt.selftest", "Apt", "the vendor package sources (2026-11-09)",
+             "the Apt module parses the apt, apt-cache, dpkg-query and gpg output it ships with"),
+            ("tailscale.selftest", "Tailscale", "the Tailscale role (2026-11-10)",
+             "the Tailscale module parses the tailscale 1.104.5 output it ships with")):
+        xt = img.get(key, "")
+        if ("no valid module file" in xt) or ("was not loaded" in xt):
+            check(False, f"the {name} module is on the image",
+                  f"not at /usr/local/share/powershell/Modules/{name} -- an ISO built "
+                  f"before {since}, or build.sh did not stage it")
+        elif f"{name} self-test" not in xt:
+            print(f"      note  the {name} self-test produced no verdict in this chroot "
+                  "(BUILD-NOTES #38). Run it on a booted machine.")
+        else:
+            xsummary = next((l.strip() for l in xt.splitlines()
+                             if "passed," in l and "failed" in l), "")
+            check("EXIT=0" in xt, what, xsummary)
 
     # -- the backup layer ---------------------------------------------------
     #

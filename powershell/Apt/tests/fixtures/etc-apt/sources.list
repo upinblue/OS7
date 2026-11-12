@@ -1,0 +1,6 @@
+deb https://snapshot.ubuntu.com/ubuntu/20261109T000000Z/ resolute main restricted universe multiverse
+deb-src https://snapshot.ubuntu.com/ubuntu/20261109T000000Z/ resolute main restricted universe multiverse
+deb https://snapshot.ubuntu.com/ubuntu/20261109T000000Z/ resolute-security main restricted universe multiverse
+deb-src https://snapshot.ubuntu.com/ubuntu/20261109T000000Z/ resolute-security main restricted universe multiverse
+deb https://snapshot.ubuntu.com/ubuntu/20261109T000000Z/ resolute-updates main restricted universe multiverse
+deb-src https://snapshot.ubuntu.com/ubuntu/20261109T000000Z/ resolute-updates main restricted universe multiverse

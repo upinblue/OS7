@@ -1,0 +1,43 @@
+# OS/7 — bring registered vendor sources forward, in place (VENDOR-APPS-PLAN VA7).
+#
+# Run as `pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-vendor-update`
+# by os7-vendor-update.service, by an Intune remediation or by an Azure Arc
+# run-command — one file for all three, the os7-update-check convention.
+#
+#   0  every source verified (whether or not anything moved), or none registered
+#   1  a source did not verify, its keyring changed, or an upgrade failed
+#
+# No shebang on purpose: invoked as `pwsh -File`, never executed (0644).
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+try {
+	Import-Module OS7 -ErrorAction Stop
+}
+catch {
+	[Console]::Error.WriteLine("os7-vendor-update: FAILED: the OS7 module did not import: $($_.Exception.Message)")
+	exit 1
+}
+
+try {
+	$sources = @(Get-OS7PackageSource | Where-Object { $_.UpdatePolicy -eq 'Follow' })
+	if (-not $sources.Count) {
+		[Console]::Error.WriteLine('os7-vendor-update: nothing to do: no registered source follows its vendor')
+		exit 0
+	}
+	$results = @(Update-OS7PackageSource -All -Confirm:$false)
+	$bad = 0
+	foreach ($r in $results) {
+		$what = if ($r.Error) { "FAILED: $($r.Error)" }
+		elseif (@($r.Moved).Count) { 'moved ' + (@($r.Moved) -join '; ') }
+		else { 'verified, nothing to move' }
+		[Console]::Error.WriteLine("os7-vendor-update: $($r.Name): $what")
+		if ($r.Error -or -not $r.Verified) { $bad++ }
+	}
+	exit $(if ($bad) { 1 } else { 0 })
+}
+catch {
+	[Console]::Error.WriteLine("os7-vendor-update: FAILED: $($_.Exception.Message)")
+	exit 1
+}

@@ -1,0 +1,5 @@
+apt 3.2.1 (amd64)
+gpg (GnuPG) 2.4.8
+apt	3.2.1ubuntu0.1
+dpkg	1.23.7ubuntu1
+gpg	2.4.8-4ubuntu3.1

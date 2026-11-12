@@ -2467,14 +2467,60 @@ function Update-OS7 {
 		# §5: apt is still on the machine and somebody eventually types it. A
 		# release applied to a drifted system is not the system its manifest
 		# describes, and the resulting version number would be a lie.
+		#
+		# THIS REFUSAL HAD NEVER FIRED, and could not (docs/VENDOR-APPS-PLAN.md
+		# VA8, M-TS13): Get-OS7Version read the manifest hash from the wrong
+		# file, the drift function threw on its first line when it was given a
+		# hash, and the `catch { }` that used to be here turned both into "no
+		# drift". So it is now (1) said out loud when it cannot be checked, and
+		# (2) a refusal ONLY for what is Unexplained against the BASELINE — what
+		# changed since OS/7 last changed the package set and is neither a
+		# registered vendor source's nor an image source's. Against the image's
+		# manifest (a machine with no baseline yet) every installed machine
+		# differs by what Setup removes, so that is reported and not refused.
 		$drift = $null
-		try { $drift = (Get-OS7Version -CheckDrift).Drift } catch { }
-		if ($drift -and $drift.State -eq 'Drifted' -and -not $Force) {
+		try { $drift = (Get-OS7Version -CheckDrift).Drift }
+		catch {
+			Write-Warning "the package drift could not be checked: $($_.Exception.Message)"
+			Write-OS7UpdateLog "drift: NOT checked, $($_.Exception.Message)"
+		}
+		if ($drift -and $drift.State -eq 'Drifted') {
+			$unexplained = @($drift.Unexplained)
+			if ($drift.Reference -eq 'Baseline' -and $unexplained.Count -and -not $Force) {
+				$shown = (@($unexplained | Select-Object -First 8) -join ', ') +
+					$(if ($unexplained.Count -gt 8) { ", and $($unexplained.Count - 8) more" } else { '' })
+				throw [System.InvalidOperationException]::new(
+					"this machine's packages changed outside OS/7 since it last changed them (§5): $shown. " +
+					'Applying a release on top produces a version number that describes nothing. ' +
+					'(Get-OS7Version -CheckDrift).Drift says what moved. If the change was deliberate, ' +
+					"Save-OS7PackageBaseline -Reason '<why>' records it as intended; -Force proceeds anyway.")
+			}
+			$why = "drift against the $($drift.Reference.ToLowerInvariant()): $($drift.Differences) difference(s), " +
+				"$(@($drift.Intended).Count) from registered vendor sources, $(@($drift.Image).Count) from image " +
+				"sources, $($unexplained.Count) unexplained"
+			Write-OS7UpdateLog $why
+			if ($unexplained.Count) { Write-Warning "$why — proceeding: $($drift.Note)" }
+		}
+
+		# TWO SOURCES THAT NAME ONE REPOSITORY WITH DIFFERENT KEYRINGS make apt
+		# refuse EVERY source (measured on 1.0.0.279: "Conflicting values set for
+		# option Signed-By", exit 100) — the vendor's documented install beside a
+		# registered source is exactly that. The update would fail several steps
+		# later saying the OS/7 suite is unreachable: true, and pointing the wrong
+		# way. Asked HERE, of the running system the clone is about to copy, and
+		# not in the clone: a refusal after the clone leaves the new environment
+		# and the rpool/DATA snapshot behind (measured, the first version of this
+		# check did exactly that), and a retry in the same minute then collides
+		# with the snapshot's name.
+		$conflicts = @()
+		try { $conflicts = @(Get-OS7SourceConflict) } catch { $conflicts = @() }
+		if ($conflicts.Count) {
+			$c = $conflicts[0]
 			throw [System.InvalidOperationException]::new(
-				"this machine has drifted from its manifest — packages have changed outside " +
-				'the update train (§5). Applying a release on top of that produces a version ' +
-				'number that describes nothing. Get-OS7Version -CheckDrift says what moved; ' +
-				'-Force proceeds anyway.')
+				"apt cannot read this machine's sources: $(@($c.Files) -join ' and ') both name $($c.Source) with " +
+				"different keyrings ($(@($c.SignedBy) -join ', ')), and apt then refuses every source. Remove the " +
+				'one that is not the registered source (Get-OS7PackageSource -All names it), then update. Nothing ' +
+				'has been changed.')
 		}
 
 		$beName = New-OS7BootEnvironmentName -Release $to
@@ -2492,6 +2538,10 @@ function Update-OS7 {
 			# it; an empty list on a machine with no DKMS modules is the normal
 			# case and means the same thing as "nothing to check".
 			Drivers         = @()
+			# What registered and image vendor sources moved in the new
+			# environment (VENDOR-APPS-PLAN VA6). M-TS5: the clone took a vendor
+			# package to a new version and this object had nowhere to say so.
+			VendorPackages  = @()
 			Reason          = $null
 		}
 
@@ -2697,6 +2747,21 @@ function Update-OS7 {
 			[System.IO.Directory]::CreateDirectory("$root/etc/apt/sources.list.d") | Out-Null
 			[System.IO.File]::WriteAllText("$root$($script:OS7AptSource)", $os7src + "`n")
 
+			# ---- 4'. Vendor sources (VENDOR-APPS-PLAN VA5, VA6) -----------
+			#
+			# Registered sources take part DELIBERATELY: each one's key is read
+			# back first and one whose keyring changed is set aside for this run.
+			# Unregistered ones are named. And the package set is written down,
+			# so what a vendor source moved can be said afterwards (M-TS5).
+			# BOOKKEEPING MUST NOT FAIL AN UPDATE, and must not be silent either:
+			# a failure here is a warning and a line in update.log.
+			$vendorState = $null
+			try { $vendorState = Enter-OS7UpdateVendorSources -Root $root }
+			catch {
+				Write-Warning "the vendor sources could not be prepared: $($_.Exception.Message)"
+				Write-OS7UpdateLog "vendor: NOT prepared, $($_.Exception.Message)"
+			}
+
 			# ---- 5. apt: install, upgrade, autoremove — in that order ------
 			#
 			# THE KERNEL PACKAGES GO IN HERE, and so, through their postinst
@@ -2759,6 +2824,15 @@ function Update-OS7 {
 					'satisfied at the requested version.')
 			}
 
+			# ---- 5'. What the vendor sources moved (VA6) ------------------
+			if ($vendorState) {
+				try { $plan.VendorPackages = @(Exit-OS7UpdateVendorSources -Root $root -State $vendorState) }
+				catch {
+					Write-Warning "what the vendor sources moved could not be determined: $($_.Exception.Message)"
+					Write-OS7UpdateLog "vendor: moves NOT determined, $($_.Exception.Message)"
+				}
+			}
+
 			# ---- 6. deleted by C10 — but verified, see the function --------
 			$branding = Assert-OS7Branding -Root $root
 
@@ -2793,6 +2867,18 @@ function Update-OS7 {
 					(($pending | ForEach-Object { $_.Substring($root.Length) }) -join "`n") + "`n")
 				Write-OS7Step ("$($pending.Count) migration(s) must run on the target's FIRST " +
 					'BOOT and have been recorded, not run')
+			}
+
+			# ---- 6''' The package baseline (VA8) --------------------------
+			#
+			# OS/7 has just made this environment's package set, so this is what
+			# its drift is measured against from its first boot on. Written in
+			# the ENVIRONMENT (/var/lib/os7 is inside it), never on the running
+			# system, whose baseline describes the running system.
+			try { $null = Save-OS7PackageBaseline -Root $root -Reason "Update-OS7 $from -> $to" -Confirm:$false }
+			catch {
+				Write-Warning "the package baseline could not be written: $($_.Exception.Message)"
+				Write-OS7UpdateLog "baseline: NOT written, $($_.Exception.Message)"
 			}
 
 			# ---- 7. The initramfs -----------------------------------------

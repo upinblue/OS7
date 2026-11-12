@@ -1,0 +1,34 @@
+[Unit]
+# OS/7 — record the package set this machine starts from. VENDOR-APPS-PLAN VA8.
+#
+# `Get-OS7Version -CheckDrift` measures "what changed since OS/7 last changed the
+# package set", and something has to say what that set was. Update-OS7 writes it
+# into every environment it builds, a vendor update and a role's install write
+# it when they change packages — and on a machine Setup installed, or one that
+# took this release before the baseline existed, nothing has yet. This is that
+# first writing: on the first boot that finds no baseline.
+#
+# WHY NOT SETUP. Setup removes five packages from every install after the image
+# was measured (M-TS13), so the image's manifest cannot be the reference, and
+# the moment Setup finishes is not the moment the machine first runs. The first
+# boot is the first time this environment's package set is what it will be.
+#
+# A ROLLBACK DOES NOT RE-ARM THIS, and does not need to: the baseline lives in
+# /var/lib/os7, inside the boot environment, so an older environment carries the
+# baseline that describes it — or none, in which case this runs again there.
+Description=OS/7 package baseline (first boot)
+Documentation=file:///usr/share/os7/VENDOR-APPS-PLAN.md
+
+Requires=zfs.target
+After=zfs.target zfs-mount.service os7-migrations-firstboot.service
+
+ConditionPathExists=!/var/lib/os7/packages.baseline
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=TZ=UTC
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-package-baseline
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# OS/7's own repository. CURATION-AND-DELIVERY-PLAN.md C7.
+# Owned by os7-release; edit the release pin, not this file.
+Types: deb
+URIs: https://u661569-sub2.your-storagebox.de
+Suites: os7-1.0
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/os7-archive-keyring.gpg
+Enabled: no

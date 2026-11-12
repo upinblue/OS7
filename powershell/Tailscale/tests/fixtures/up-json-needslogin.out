@@ -1,0 +1,5 @@
+{
+	"AuthURL": "https://headscale.os7.test:8443/register/hskey-authreq-OS7FIXTURE000000000000000",
+	"QR": "data:image/png;base64,OS7FIXTURE=",
+	"BackendState": "NeedsLogin"
+}

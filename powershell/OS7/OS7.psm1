@@ -295,6 +295,13 @@ function Import-OS7ZfsLayer {
 # ---------------------------------------------------------------------------
 $script:OS7ReleaseManifest  = '/usr/lib/os7/release.json'
 $script:OS7PackagesManifest = '/usr/lib/os7/packages.manifest'
+# The MEASURED facts about the image (hook 0075). Since C7 split declared from
+# measured, the packages_manifest hash lives here and NOT in release.json — and
+# Get-OS7Version read release.json for it for months (M-TS13).
+$script:OS7ImageManifest    = '/usr/lib/os7/image.json'
+# What OS/7 itself last made this environment's package set (VENDOR-APPS VA8).
+# Inside the boot environment on purpose, like C10's migration record.
+$script:OS7PackageBaseline  = '/var/lib/os7/packages.baseline'
 $script:OS7OsRelease        = '/etc/os-release'
 
 function Read-OS7ReleaseManifest {
@@ -424,37 +431,59 @@ function Get-OS7OsReleaseField {
 function Get-OS7PackageDrift {
 	<#
 	.SYNOPSIS
-		What this machine holds against what the release recorded. Internal.
+		What this machine holds against what OS/7 last made it. Internal.
 
 	.DESCRIPTION
-		docs/RELEASE-AND-UPDATE-PLAN.md §5. The manifest hook 0075 wrote is
-		`package<TAB>version<TAB>architecture`, sorted under LC_ALL=C — NOT
-		`dpkg --get-selections`, which records names and an install state and so
-		cannot see a kernel moving from 7.0.0-30 to 7.0.0-31 (BUILD-NOTES #37).
-		This recomputes that file from the running system and compares.
+		docs/RELEASE-AND-UPDATE-PLAN.md §5, as docs/VENDOR-APPS-PLAN.md VA8
+		corrects it. Each line is `package<TAB>version<TAB>architecture`,
+		sorted under LC_ALL=C — NOT `dpkg --get-selections`, which records names
+		and an install state and so cannot see a kernel moving from 7.0.0-30 to
+		7.0.0-31 (BUILD-NOTES #37).
 
-		THREE OUTCOMES, NOT TWO. `Unknown` is a first-class result and is what
-		comes back when there is no dpkg, no manifest, or no recorded hash — a
-		check that cannot distinguish absence of evidence from evidence of
-		absence will eventually report the first as the second, which is the
-		failure this whole repository keeps re-learning (IDENTITY-PLAN I7).
+		TWO REFERENCES, AND THE OBJECT SAYS WHICH ONE ANSWERED:
 
-		AND `Drifted` IS THE EXPECTED STATE ON A REAL MACHINE, at least at
-		first: Phase 3 installs azcmagent after the image was measured, so an
-		installed system legitimately differs from the ISO it came from. That is
-		why this reports WHAT changed and not merely THAT something did.
+		  Baseline  /var/lib/os7/packages.baseline — what OS/7 itself last made
+		            this environment: written at first boot, by Update-OS7 in the
+		            environment it builds, by a vendor update and by a role's
+		            install (Save-OS7PackageBaseline). The question it answers is
+		            the one the update train needs: has somebody changed packages
+		            since OS/7 last did?
+		  Image     the medium's manifest and its hash — the only reference on a
+		            machine that has no baseline yet. It answers a different
+		            question (is this the image?), and every installed machine
+		            differs from its image by the five packages Setup removes
+		            (M-TS13), so Update-OS7 reports it and does not refuse on it.
+
+		AND EVERY DIFFERENCE IS CLASSED: Intended (a package a registered
+		vendor source supplies), Image (moved by a source the medium shipped —
+		Edge, today) or Unexplained (somebody ran apt). Update-OS7 refuses only
+		on Unexplained against a Baseline.
+
+		THREE OUTCOMES, NOT TWO. `Unknown` is what comes back when there is no
+		dpkg, no baseline and no recorded hash — a check that cannot distinguish
+		absence of evidence from evidence of absence will eventually report the
+		first as the second (IDENTITY-PLAN I7).
+
+		THIS FUNCTION COMPARED NOTHING FOR MONTHS, AND TWICE OVER (M-TS13). Its
+		caller read the hash from release.json after C7 had moved it to
+		image.json, so every machine answered Unknown; and `@($Installed)` of an
+		unbound [string[]] is `@($null)`, whose Count is 1, so dpkg was never
+		asked and the sort below threw — inside Update-OS7's try/catch, which
+		turned the drift refusal into a statement nothing could reach.
 
 	.PARAMETER Installed
 		The package list, as dpkg-query would emit it. Defaults to asking this
-		machine. Two callers want to hand one in: a future Update-OS7, which has
-		to compare a STAGED boot environment rather than the running one, and
-		installer/testing/check-version-rule.py — which is how the sort and the
-		hashing below are checked at all on a host with no dpkg.
+		machine. installer/testing/check-version-rule.py hands one in, which is
+		how the sort and the hashing are checked on a host with no dpkg.
+
+	.PARAMETER BaselinePath
+		The baseline. When the file is absent the image's manifest answers.
 	#>
 	param(
 		[string]$Recorded,
 		[string]$ManifestPath = $script:OS7PackagesManifest,
-		[string[]]$Installed
+		[string[]]$Installed,
+		[string]$BaselinePath = $script:OS7PackageBaseline
 	)
 
 	$unknown = {
@@ -462,39 +491,34 @@ function Get-OS7PackageDrift {
 		[pscustomobject]@{
 			PSTypeName  = 'OS7.VersionDrift'
 			State       = 'Unknown'
+			Reference   = $null
 			Packages    = $null
 			Differences = $null
 			Added       = @()
 			Removed     = @()
 			Changed     = @()
+			Intended    = @()
+			Image       = @()
+			Unexplained = @()
 			Installed   = $null
 			Recorded    = $Recorded
 			Note        = $why
 		}
 	}
 
-	if (-not $Recorded) {
-		return (& $unknown 'the release manifest records no packages_manifest hash to compare against.')
-	}
-
-	$raw = @($Installed)
+	# @( | Where-Object) AND NOT @($Installed): an unbound [string[]] is $null,
+	# and @($null) is an array of ONE element. That single character of
+	# difference is why this function never asked dpkg.
+	$raw = @($Installed | Where-Object { $_ })
 	if ($raw.Count -eq 0) {
-		if (-not (Get-Command dpkg-query -CommandType Application -ErrorAction SilentlyContinue)) {
-			return (& $unknown 'dpkg-query is not on this system, so what is installed cannot be listed.')
+		try {
+			Import-OS7AptLayer
+			$raw = @(Get-AptPackage | ForEach-Object { "$($_.BinaryPackage)`t$($_.Version)`t$($_.Architecture)" })
 		}
-		# The SAME format string hook 0075 uses, byte for byte. A different one
-		# would hash differently while every package matched.
-		$raw = @(& dpkg-query -W '-f=${binary:Package}\t${Version}\t${Architecture}\n' 2>$null)
-
-		# $LASTEXITCODE through Test-Path, not directly. It is an automatic
-		# variable the engine sets when a native command COMPLETES THROUGH the
-		# pipeline, and there is at least one way for that not to happen even
-		# after the command has visibly run (measured on Windows against a .cmd
-		# shim, 2026-08-26). Reading it unguarded under Set-StrictMode is then a
-		# terminating error inside the function whose entire job is to report
-		# that it could not tell.
-		$code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { $null }
-		if ($code -ne 0 -or $raw.Count -eq 0) {
+		catch {
+			return (& $unknown "the package list could not be read: $($_.Exception.Message)")
+		}
+		if ($raw.Count -eq 0) {
 			return (& $unknown 'dpkg-query returned nothing; the package list could not be read.')
 		}
 	}
@@ -511,80 +535,138 @@ function Get-OS7PackageDrift {
 	$digest = [System.Security.Cryptography.SHA256]::HashData(
 		[System.Text.Encoding]::UTF8.GetBytes($text))
 
-	# `$computed`, NOT `$installed` — BUILD-NOTES #65, hit again here and caught
-	# by check-version-rule.py on its first run. PowerShell variable names are
-	# case-insensitive, so `$installed` IS the `-Installed` parameter, and
-	# assigning a string to a [string[]] coerces it to a one-element ARRAY.
-	# Everything downstream still worked: `@('sha256:x') -eq 'sha256:x'` returns
-	# the matching element, which is truthy, so the Clean case passed and only
-	# the value that reached the caller was wrong. Never reuse a parameter name
-	# for a local.
+	# `$computed`, NOT `$installed` — BUILD-NOTES #65. PowerShell variable names
+	# are case-insensitive, so `$installed` IS the `-Installed` parameter.
 	$computed = 'sha256:' + (($digest | ForEach-Object { $_.ToString('x2') }) -join '')
 
-	if ($computed -eq $Recorded) {
-		return [pscustomobject]@{
-			PSTypeName  = 'OS7.VersionDrift'
-			State       = 'Clean'
-			Packages    = $lines.Count
-			Differences = 0
-			Added       = @()
-			Removed     = @()
-			Changed     = @()
-			Installed   = $computed
-			Recorded    = $Recorded
-			Note        = 'every package and version matches what this release recorded.'
-		}
-	}
-
-	# The hashes differ, so say what differs. Without the shipped manifest the
-	# only honest answer is "something", and that is what gets reported.
 	$now = @{}
 	foreach ($line in $lines) {
 		$f = $line.Split("`t")
 		if ($f.Count -ge 2) { $now[$f[0]] = $f[1] }
 	}
+
+	# THE REFERENCE. The baseline when there is one; the image otherwise.
 	$then = @{}
-	if (Test-Path -LiteralPath $ManifestPath) {
-		foreach ($line in (Get-Content -LiteralPath $ManifestPath)) {
+	$reference = $null
+	if ($BaselinePath -and [System.IO.File]::Exists($BaselinePath)) {
+		$reference = 'Baseline'
+		foreach ($line in [System.IO.File]::ReadAllLines($BaselinePath)) {
+			if (-not $line -or $line.StartsWith('#')) { continue }
 			$f = $line.Split("`t")
 			if ($f.Count -ge 2) { $then[$f[0]] = $f[1] }
 		}
 	}
-
-	if ($then.Count -eq 0) {
-		return [pscustomobject]@{
-			PSTypeName  = 'OS7.VersionDrift'
-			State       = 'Drifted'
-			Packages    = $lines.Count
-			Differences = $null
-			Added       = @()
-			Removed     = @()
-			Changed     = @()
-			Installed   = $computed
-			Recorded    = $Recorded
-			Note        = "the hashes differ, but $ManifestPath is not readable, " +
-			              'so which packages moved cannot be said.'
+	else {
+		$reference = 'Image'
+		if (-not $Recorded) {
+			return (& $unknown ('there is no package baseline yet and the release manifest records no ' +
+				'packages_manifest hash to compare against.'))
+		}
+		if ($computed -eq $Recorded) {
+			return [pscustomobject]@{
+				PSTypeName  = 'OS7.VersionDrift'
+				State       = 'Clean'
+				Reference   = $reference
+				Packages    = $lines.Count
+				Differences = 0
+				Added       = @()
+				Removed     = @()
+				Changed     = @()
+				Intended    = @()
+				Image       = @()
+				Unexplained = @()
+				Installed   = $computed
+				Recorded    = $Recorded
+				Note        = 'every package and version matches what this release recorded.'
+			}
+		}
+		if (Test-Path -LiteralPath $ManifestPath) {
+			foreach ($line in (Get-Content -LiteralPath $ManifestPath)) {
+				$f = $line.Split("`t")
+				if ($f.Count -ge 2) { $then[$f[0]] = $f[1] }
+			}
+		}
+		if ($then.Count -eq 0) {
+			return [pscustomobject]@{
+				PSTypeName  = 'OS7.VersionDrift'
+				State       = 'Drifted'
+				Reference   = $reference
+				Packages    = $lines.Count
+				Differences = $null
+				Added       = @()
+				Removed     = @()
+				Changed     = @()
+				Intended    = @()
+				Image       = @()
+				Unexplained = @()
+				Installed   = $computed
+				Recorded    = $Recorded
+				Note        = "the hashes differ, but $ManifestPath is not readable, " +
+				              'so which packages moved cannot be said.'
+			}
 		}
 	}
 
 	$added   = @($now.Keys   | Where-Object { -not $then.ContainsKey($_) } | Sort-Object)
 	$removed = @($then.Keys  | Where-Object { -not $now.ContainsKey($_)  } | Sort-Object)
-	$changed = @($now.Keys |
-		Where-Object { $then.ContainsKey($_) -and $then[$_] -ne $now[$_] } |
-		Sort-Object |
-		ForEach-Object { "$_ $($then[$_]) -> $($now[$_])" })
+	$changedNames = @($now.Keys | Where-Object { $then.ContainsKey($_) -and $then[$_] -ne $now[$_] } | Sort-Object)
+	$changed = @($changedNames | ForEach-Object { "$_ $($then[$_]) -> $($now[$_])" })
 
+	# THE CLASSES (VA8). A registered source's packages are Intended by name.
+	# Anything else that is there now is asked of apt: installed from a host an
+	# Image source is on, it is Image. Everything left — and every removal that
+	# is not a registered package — is Unexplained. Asking apt failing is NOT a
+	# reason to call a change intended: it stays Unexplained.
+	$intended = [System.Collections.Generic.List[string]]::new()
+	$image = [System.Collections.Generic.List[string]]::new()
+	$unexplained = [System.Collections.Generic.List[string]]::new()
+	$origin = $null
+	try { $origin = Get-OS7PackageOriginClass } catch { $origin = $null }
+	$regPkgs = if ($origin) { $origin.RegisteredPackages } else { @{} }
+	$present = @($added + $changedNames | Where-Object { -not $regPkgs.ContainsKey(($_ -split ':')[0]) })
+	$fromImage = @{}
+	if ($present.Count -and $origin -and @($origin.ImageHosts).Count -and -not $PSBoundParameters.ContainsKey('Installed')) {
+		try {
+			foreach ($p in @(Get-AptPolicy -Package @($present | ForEach-Object { ($_ -split ':')[0] } | Select-Object -Unique))) {
+				if ($p.InstalledOrigin -and @($origin.ImageHosts) -contains $p.InstalledOrigin) { $fromImage[$p.Package] = $true }
+			}
+		}
+		catch { }
+	}
+	foreach ($n in @($added + $changedNames + $removed)) {
+		$bare = ($n -split ':')[0]
+		if ($regPkgs.ContainsKey($bare)) { $intended.Add($n) }
+		elseif ($fromImage.ContainsKey($bare) -and $removed -notcontains $n) { $image.Add($n) }
+		else { $unexplained.Add($n) }
+	}
+
+	$differences = $added.Count + $removed.Count + $changed.Count
 	return [pscustomobject]@{
 		PSTypeName  = 'OS7.VersionDrift'
-		State       = 'Drifted'
+		State       = if ($differences -eq 0) { 'Clean' } else { 'Drifted' }
+		Reference   = $reference
 		Packages    = $lines.Count
-		Differences = $added.Count + $removed.Count + $changed.Count
+		Differences = $differences
 		Added       = $added
 		Removed     = $removed
 		Changed     = $changed
+		Intended    = $intended.ToArray()
+		Image       = $image.ToArray()
+		Unexplained = $unexplained.ToArray()
 		Installed   = $computed
 		Recorded    = $Recorded
-		Note        = 'this machine is not the package set the release recorded.'
+		Note        = if ($differences -eq 0) {
+			if ($reference -eq 'Baseline') { 'every package and version matches what OS/7 last made this machine.' }
+			else { 'every package and version matches what this release recorded.' }
+		}
+		elseif ($reference -eq 'Baseline') {
+			"$($unexplained.Count) change(s) since OS/7 last changed the package set are unexplained; " +
+			"$($intended.Count) are a registered vendor source's, $($image.Count) a source the medium shipped."
+		}
+		else {
+			'this machine is not the package set the release recorded. There is no package baseline yet; ' +
+			'Save-OS7PackageBaseline records the set as it is now.'
+		}
 	}
 }
 
@@ -757,8 +839,19 @@ function Get-OS7Version {
 				"another root's manifest ($Path). Not checked.")
 		}
 		else {
-			$out['Drift'] = Get-OS7PackageDrift `
-				-Recorded ([string](Get-OS7ManifestField $doc 'packages_manifest'))
+			# release.json FIRST, image.json beside it SECOND. C7 split the
+			# declared release facts (release.json, the os7-release package's)
+			# from the measured ones (image.json, hook 0075's), and the manifest
+			# hash went with the measured half — while this line went on asking
+			# release.json, so every packaged machine answered Unknown (M-TS13).
+			# release.json still wins when it carries one, because an older medium
+			# wrote it there.
+			$recorded = [string](Get-OS7ManifestField $doc 'packages_manifest')
+			if (-not $recorded) {
+				$img = Read-OS7ReleaseManifest -Path $script:OS7ImageManifest
+				$recorded = [string](Get-OS7ManifestField $img 'packages_manifest')
+			}
+			$out['Drift'] = Get-OS7PackageDrift -Recorded $recorded
 		}
 	}
 
@@ -3165,6 +3258,11 @@ function Restore-OS7 {
 # everything it depends on, before Compat.Windows, and still before
 # OS7.Update.ps1, which stays last. docs/CONTAINERS-PLAN.md CT6 and CT8.
 #
+# OS7.Tailscale.ps1 goes right after OS7.PackageSource.ps1, whose verbs it calls
+# (Register-, Get-, Unregister-OS7PackageSource, Save-OS7PackageBaseline), and
+# after OS7.Automation.ps1, whose Start-OS7Job its login runs through. Nothing
+# here calls it. docs/VENDOR-APPS-PLAN.md VA9-VA16.
+#
 # OS7.Compat.Windows.ps1 is SECOND TO LAST, and the position is the same rule
 # once more: it is the only file here that calls across nearly all the others —
 # Get-OS7Service and its verbs, Set-OS7TimeZone, Get-OS7Domain, Get-OS7Version
@@ -3173,7 +3271,7 @@ function Restore-OS7 {
 foreach ($part in @('OS7.Backup.ps1', 'OS7.BackupTarget.ps1', 'OS7.BackupRestore.ps1',
 		'OS7.BackupSelfTest.ps1', 'OS7.Home.ps1', 'OS7.Network.ps1', 'OS7.Time.ps1', 'OS7.SecureBoot.ps1', 'OS7.Remoting.ps1', 'OS7.Service.ps1', 'OS7.ScheduledTask.ps1', 'OS7.RemoteDesktop.ps1', 'OS7.AccountLockout.ps1', 'OS7.Management.ps1',
 		'OS7.Directory.ps1', 'OS7.DirectoryObject.ps1', 'OS7.Domain.ps1',
-		'OS7.Automation.ps1', 'OS7.Container.ps1',
+		'OS7.Automation.ps1', 'OS7.Container.ps1', 'OS7.PackageSource.ps1', 'OS7.Tailscale.ps1',
 		'OS7.Compat.Windows.ps1', 'OS7.Storage.ps1', 'OS7.Device.ps1', 'OS7.Update.ps1')) {
 	$file = [System.IO.Path]::Combine($PSScriptRoot, $part)
 	if (-not [System.IO.File]::Exists($file)) {
@@ -3380,6 +3478,18 @@ Export-ModuleMember -Function Get-OS7Version,
 	Get-OS7ContainerOperator, Add-OS7ContainerOperator, Remove-OS7ContainerOperator,
 	Get-OS7ContainerHost, Install-OS7ContainerHost,
 	Get-OS7ContainerVerb, Invoke-OS7ContainerVerb,
+	# Vendor package sources (docs/VENDOR-APPS-PLAN.md VA2-VA8): a vendor
+	# repository admitted with its key pinned and the packages it may supply
+	# named, kept current between releases, and the package baseline drift is
+	# measured against.
+	Register-OS7PackageSource, Get-OS7PackageSource, Unregister-OS7PackageSource,
+	Update-OS7PackageSource, Save-OS7PackageBaseline,
+	# Tailscale, the first vendor application role (docs/VENDOR-APPS-PLAN.md
+	# VA9-VA16): its state on a dataset of its own before the package, its
+	# source registered from the release, a login by a key from the secret
+	# store or by URL, and Tailscale SSH and its own updater switched off.
+	Get-OS7Tailscale, Install-OS7Tailscale, Connect-OS7Tailscale, Disconnect-OS7Tailscale,
+	Set-OS7Tailscale, Uninstall-OS7Tailscale,
 	# The only cmdlet in this product that sends anything to a third party.
 	# Nothing calls it.
 	Send-OS7HardwareProbe

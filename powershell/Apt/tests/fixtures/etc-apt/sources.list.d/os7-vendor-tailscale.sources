@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://pkgs.tailscale.com/stable/ubuntu
+Suites: resolute
+Components: main
+Signed-By: /etc/os7/keyrings/tailscale.gpg

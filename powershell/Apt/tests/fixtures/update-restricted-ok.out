@@ -1,0 +1,5 @@
+Get:1 https://pkgs.tailscale.com/stable/ubuntu resolute InRelease
+Get:2 https://pkgs.tailscale.com/stable/ubuntu resolute/main amd64 Packages [16.8 kB]
+Get:3 https://pkgs.tailscale.com/stable/ubuntu resolute/main all Packages [351 B]
+Fetched 23.8 kB in 1s (45.3 kB/s)
+Reading package lists...

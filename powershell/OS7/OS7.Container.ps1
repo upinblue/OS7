@@ -1858,7 +1858,14 @@ function Test-OS7ContainerRangeCollision {
 		[Parameter(Mandatory)][string[]]$Range,
 		[string[]]$Address = @(),
 		[string[]]$Route = @(),
-		[string[]]$Peer = @()
+		[string[]]$Peer = @(),
+		# VENDOR-APPS-PLAN VA16: the tailnet's whole range, when this machine
+		# is a tailnet node. Not an address and not a main-table route, so the
+		# two sets above cannot see it: Tailscale puts its peers in table 52,
+		# and DROPS traffic from 100.64.0.0/10 arriving on any other interface
+		# (measured: a stand-in bridge in 100.65.0.0/24 got no answer from the
+		# host, ts-input's drop counter 0 -> 13; SESSION-TAILSCALE §10).
+		[string[]]$Tailnet = @()
 	)
 
 	$overlaps = { param($a, $b) $a.First -le $b.Last -and $b.First -le $a.Last }
@@ -1867,7 +1874,8 @@ function Test-OS7ContainerRangeCollision {
 		if (-not $rn) { "'$r' is not an IPv4 range."; continue }
 		foreach ($set in @(@{ What = 'an address of this machine'; Items = $Address },
 				@{ What = 'a route of this machine'; Items = $Route },
-				@{ What = 'the address of an SSH session open now'; Items = $Peer })) {
+				@{ What = 'the address of an SSH session open now'; Items = $Peer },
+				@{ What = "this machine's tailnet (Tailscale drops traffic from it on every other interface)"; Items = $Tailnet })) {
 			foreach ($x in @($set.Items)) {
 				if (-not $x) { continue }
 				$xn = ConvertTo-OS7Ipv4Network -Cidr $x
@@ -2048,7 +2056,7 @@ function Install-OS7ContainerHost {
 		Install-OS7ContainerHost
 
 	.EXAMPLE
-		Install-OS7ContainerHost -Bridge 100.64.0.1/24 -AddressPool 100.65.0.0/16
+		Install-OS7ContainerHost -Bridge 10.215.0.1/24 -AddressPool 10.216.0.0/16
 	#>
 	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 	[OutputType('OS7.ContainerHostInstall')]
@@ -2076,10 +2084,14 @@ function Install-OS7ContainerHost {
 	$routes = @(Get-NetRoute | Where-Object { $_.Family -eq 'IPv4' -and -not $_.IsDefault -and $_.Destination -and $_.InterfaceName -ne 'docker0' } |
 			ForEach-Object { $_.Destination })
 	$peers = @(Get-OS7SshPeer | Sort-Object -Unique)
+	# A TAILNET NODE RESERVES 100.64.0.0/10 (VA16). Asked of the links, not of
+	# the package: a tailscale0 that is up is what makes the range unusable,
+	# whoever installed it.
+	$tailnet = @(if (@(Get-NetLink | Where-Object { $_.Name -eq 'tailscale0' }).Count) { '100.64.0.0/10' })
 	$bridgeNet = ConvertTo-OS7Ipv4Network -Cidr $Bridge
 	if (-not $bridgeNet) { throw [System.ArgumentException]::new("-Bridge '$Bridge' is not an IPv4 address with a prefix length, like 10.213.0.1/24.") }
 	if ($before.Access -eq 'NoEngine') {
-		$collisions = @(Test-OS7ContainerRangeCollision -Range @($Bridge, $AddressPool) -Address $addresses -Route $routes -Peer $peers)
+		$collisions = @(Test-OS7ContainerRangeCollision -Range @($Bridge, $AddressPool) -Address $addresses -Route $routes -Peer $peers -Tailnet $tailnet)
 		if ($collisions.Count) {
 			throw [System.InvalidOperationException]::new(
 				"Install-OS7ContainerHost refused before writing anything: the engine would take an address range " +

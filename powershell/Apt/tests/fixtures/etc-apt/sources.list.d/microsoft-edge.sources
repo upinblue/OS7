@@ -1,0 +1,11 @@
+### THIS FILE IS AUTOMATICALLY CONFIGURED ###
+# Changes to this file will not be preserved.
+# This file will not be recreated if removed.
+X-Repolib-Name: Microsoft Edge
+Types: deb
+URIs: https://packages.microsoft.com/repos/edge-stable
+Suites: stable
+Components: main
+Architectures: amd64
+Architectures: amd64
+Signed-By: /usr/share/keyrings/microsoft-edge.gpg

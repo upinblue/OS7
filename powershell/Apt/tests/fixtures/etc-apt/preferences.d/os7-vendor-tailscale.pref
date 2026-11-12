@@ -1,0 +1,7 @@
+Package: *
+Pin: origin pkgs.tailscale.com
+Pin-Priority: -1
+
+Package: tailscale
+Pin: origin pkgs.tailscale.com
+Pin-Priority: 500

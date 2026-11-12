@@ -271,6 +271,21 @@
 		'Get-OS7ContainerOperator', 'Add-OS7ContainerOperator', 'Remove-OS7ContainerOperator',
 		'Get-OS7ContainerHost', 'Install-OS7ContainerHost',
 		'Get-OS7ContainerVerb', 'Invoke-OS7ContainerVerb',
+		# Vendor package sources (docs/VENDOR-APPS-PLAN.md VA2-VA8). A vendor's
+		# repository is REGISTERED, not written: its key pinned by fingerprint,
+		# an apt preference that lets it supply only the packages named, and a
+		# record. What it supplies moves with Update-OS7 and, between releases,
+		# with Update-OS7PackageSource (the timer). Save-OS7PackageBaseline is
+		# the reference -CheckDrift measures against.
+		'Register-OS7PackageSource', 'Get-OS7PackageSource', 'Unregister-OS7PackageSource',
+		'Update-OS7PackageSource', 'Save-OS7PackageBaseline',
+		# Tailscale as an OS/7 role (docs/VENDOR-APPS-PLAN.md VA9-VA16). The state
+		# is an identity, so it lives on a dataset made before the package; the
+		# login takes a key from the secret store as a FILE; Tailscale SSH and the
+		# client's own updater are switched off and reported when someone turns
+		# them on. Nothing here switches either on.
+		'Get-OS7Tailscale', 'Install-OS7Tailscale', 'Connect-OS7Tailscale',
+		'Disconnect-OS7Tailscale', 'Set-OS7Tailscale', 'Uninstall-OS7Tailscale',
 		# The ONLY cmdlet in this product that transmits anything about the
 		# machine to a third party. Nothing calls it, ConfirmImpact is High, and
 		# the tool it needs is deliberately not on an OS/7 image.

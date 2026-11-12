@@ -4,12 +4,12 @@ The layering rules: powershell/OS7 reaches a subsystem only through its module.
 
     ./check-layering.py            report, and fail if any rule got worse
 
-EIGHT RULES SINCE 2026-10-29, and they are the same rule eight times. This
-line read TWO while the list below held four, FIVE while it held five and
-gained a sixth, and SIX while P2-automation went in: every one of P2-time,
-P2-systemd, P2-directory, P2-hardware and P2-automation arrived under it and
-only some of them touched it. P2-docker touched it. Count the RULES list, not
-this sentence.
+TEN RULES SINCE 2026-11-10 (P2-tailscale), and they are the same rule ten
+times. This line read TWO while the list below held four, FIVE while it held
+five and gained a sixth, and SIX while P2-automation went in: every one of
+P2-time, P2-systemd, P2-directory, P2-hardware and P2-automation arrived under
+it and only some of them touched it. P2-docker, P2-apt and P2-tailscale touched
+it. Count the RULES list, not this sentence.
 
 Z1 (docs/ZFS-POWERSHELL-PLAN.md) says Layer 3 (`powershell/OS7`) never invokes
 `zfs` or `zpool` itself — every ZFS operation goes through Layer 2
@@ -292,6 +292,66 @@ RULES = [
         "powershell/OS7 reaches the container engine only through the Docker module",
         extra=r"-UnixSocket\b|docker\.sock|containerd\.sock",
     ),
+    Rule(
+        "P2-apt", "does powershell/OS7 reach apt, dpkg or gpg directly?", "Apt",
+        # 10, AND IT STARTED ABOVE ZERO ON PURPOSE (2026-11-09,
+        # docs/VENDOR-APPS-PLAN.md §6). The update train ran apt in a chroot
+        # long before there was a layer to route it through, and rewriting a
+        # train that has run on machines to satisfy a check is the wrong order
+        # — P2-systemd's argument. Where they are, counted by this rule's own
+        # pattern:
+        #
+        #   OS7.psm1          0  was 1 (dpkg-query, for the drift check) until
+        #                        Get-OS7PackageDrift asked Get-AptPackage
+        #                        instead; the baseline said 11 for a day after,
+        #                        because IMPROVED passes (lowered 2026-11-10)
+        #   OS7.Management.ps1 1 dpkg-query, the Intune agent's version
+        #   OS7.Update.ps1    9  `dpkg --print-architecture` three times, the
+        #                        connectivity probe's `apt-get update`, and the
+        #                        update train's apt-get/apt-cache/dpkg-query in
+        #                        the clone
+        #
+        # THE PATTERN IS WIDER THAN direct()'s, and it has to be: the update
+        # train passes apt to `chroot` as an ARRAY ELEMENT —
+        # `Invoke-OS7InRoot -Command @('apt-cache', 'policy', …)` — and the
+        # connectivity probe runs `& env LC_ALL=C.UTF-8 apt-get …`. Neither
+        # shape is an invocation direct() can see, and a rule blind to the two
+        # shapes the code actually uses would have measured 5 and called it
+        # the truth. So `extra` matches a QUOTED program name and the `& env`
+        # form. `gpg` is listed for the keyring question Get-AptKeyring owns;
+        # `gpgv`, which verifies the OS/7 index, is a different program and is
+        # not matched (\b).
+        10,
+        ("apt-get", "apt-cache", "apt-mark", "apt", "dpkg", "dpkg-query",
+         "dpkg-deb", "gpg"),
+        "powershell/OS7 reaches apt, dpkg and gpg only through the Apt module",
+        extra=r"""['"](?:apt-get|apt-cache|apt-mark|dpkg-query|dpkg|dpkg-deb|gpg)['"]"""
+              r"""|&\s*env\s[^\n]*?(?<![\w$-])(?:apt-get|apt-cache|apt-mark|dpkg-query|dpkg)\b""",
+    ),
+    Rule(
+        "P2-tailscale", "does powershell/OS7 reach the Tailscale client directly?",
+        "Tailscale",
+        # 0, AND 0 THE DAY IT WAS WRITTEN (2026-11-10), before OS7.Tailscale.ps1
+        # had a line in it - docs/VENDOR-APPS-PLAN.md VA10.
+        #
+        # THE SHAPE THIS RULE EXISTS FOR IS A STRING, NOT A CALL. The role logs
+        # in through Start-OS7Job (VA12), whose command is TEXT that a unit runs
+        # later - so the way round powershell/Tailscale is `-Command '& /usr/bin/
+        # tailscale up …'`, which direct() cannot see because a path precedes
+        # the name. Phase 0 recorded the login exactly that way, and the job
+        # runner counts only a THROW as failure, so a native `up` that exited 1
+        # was a job that succeeded. `extra` matches the program by path, the
+        # `& env` form, and the LocalAPI socket the CLI talks to: a product
+        # cmdlet speaking to /localapi/ would be parsing an internal API nobody
+        # recorded. The PACKAGE name 'tailscale' is deliberately NOT matched -
+        # the role registers, installs and reports that package by name.
+        0,
+        ("tailscale", "tailscaled"),
+        "powershell/OS7 reaches the Tailscale client only through the Tailscale module",
+        extra=r"""(?<![\w$-])/usr/s?bin/tailscaled?\b"""
+              r"""|&\s*env\s[^\n]*?(?<![\w$-/])tailscaled?\b"""
+              r"""|tailscaled\.sock|/localapi/""",
+    ),
 ]
 
 
@@ -308,7 +368,14 @@ def scan(rule):
                     if line.lstrip().startswith("#"):
                         continue
                     if rule.hit(line):
-                        hits.append((os.path.relpath(path, REPO), n, line.strip()))
+                        # A planted copy may sit on another drive (OS7_LAYER3 on
+                        # D: while the repository is on C:), and relpath cannot
+                        # cross drives on Windows.
+                        try:
+                            shown = os.path.relpath(path, REPO)
+                        except ValueError:
+                            shown = path
+                        hits.append((shown, n, line.strip()))
     return hits
 
 

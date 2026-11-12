@@ -1,0 +1,1 @@
+Failed to connect to local Tailscale daemon for /localapi/v0/prefs; systemd tailscaled.service not running. Error: dial unix /var/run/tailscale/tailscaled.sock: connect: no such file or directory

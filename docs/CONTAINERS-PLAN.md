@@ -459,6 +459,11 @@ Phase 2 (CT10) comes after all eight.
   `100.64.0.0/10` (carrier-grade NAT, rarely routed inside a company) or from `10.0.0.0/8`
   (common, but larger and usually easier to step around) are the two candidates. CT7's check
   makes either one safe to propose, because it refuses the collision before the engine starts.
+  **The CGNAT candidate is gone since 2026-11-10** ([VENDOR-APPS-PLAN.md](VENDOR-APPS-PLAN.md)
+  VA16): a Tailscale node takes `100.64.0.0/10` for its tailnet and drops traffic from that range
+  on every other interface, so CT7's check now refuses it whenever a `tailscale0` link exists, and
+  `Install-OS7ContainerHost`'s help example moved to `10.215.0.1/24` / `10.216.0.0/16`. The
+  refusal is code and has not run on a machine.
 - **O-CT7 — Machines where somebody already ran `apt install docker.io`.** They carry
   `rpool/var/lib/docker`, which no OS/7 cmdlet lists, and an image store inside the boot
   environment (M-CT8). `Get-OS7Container` should recognise that layout and say so. Moving the

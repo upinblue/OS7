@@ -1,0 +1,32 @@
+[Unit]
+# OS/7 — the vendor half of keeping a machine current (VENDOR-APPS-PLAN VA7).
+#
+# Runs Update-OS7PackageSource -All: per registered source with policy Follow,
+# the keyring checked against the record, the index updated for that source
+# alone and fail-loud, and its INSTALLED packages upgraded with
+# `apt-get install --only-upgrade <names>`. Never `full-upgrade`: the pinned
+# archive moves with a release and not between them.
+#
+# IN PLACE, not into a new boot environment — the package is outside the
+# release. What moved is in /var/log/os7/vendor-update.log (outside the boot
+# environment) and the journal.
+#
+# THE EXIT-CODE CONTRACT, the update check's shape:
+#   0  every source verified, whether or not anything moved
+#   1  a source did not verify, its keyring changed, or an upgrade failed
+Description=OS/7 vendor package update — registered sources, in place
+Documentation=file:///usr/share/os7/VENDOR-APPS-PLAN.md
+
+Wants=network-online.target
+After=network-online.target zfs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=TZ=UTC
+ExecStart=/usr/bin/pwsh -NoProfile -NonInteractive -File /usr/libexec/os7-vendor-update
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+
+# No [Install]: the timer starts this.

@@ -1,0 +1,9 @@
+{
+	"majorMinorPatch": "1.104.5",
+	"short": "1.104.5",
+	"long": "1.104.5-t788384763-gd9218e278",
+	"gitCommit": "78838476328d1a97dc05400ad23086a9dbe616da",
+	"extraGitCommit": "d9218e278237adcb8bfc039e82a4ad1912554b4f",
+	"tailscaleGoGitHash": "7ef7b403648ac3a9481a6e88e8b894eff50b0167",
+	"cap": 148
+}

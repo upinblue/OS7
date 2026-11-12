@@ -1,0 +1,15 @@
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Solving dependencies...
+The following packages will be upgraded:
+  tailscale
+1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Need to get 40.8 MB of archives.
+After this operation, 42.0 kB of additional disk space will be used.
+Get:1 https://pkgs.tailscale.com/stable/ubuntu resolute/main amd64 tailscale amd64 1.104.5 [40.8 MB]
+Fetched 40.8 MB in 2s (24.8 MB/s)
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 157531 files and directories currently installed.)
+Preparing to unpack .../tailscale_1.104.5_amd64.deb ...
+Unpacking tailscale (1.104.5) over (1.104.4) ...
+Setting up tailscale (1.104.5) ...
